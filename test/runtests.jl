@@ -8,5 +8,6 @@ if !isempty(ARGS)
     end
 else
     # Default behavior: run all tests
-	include("io/io_test.jl")
+    include("io/io_test.jl")
+    include("utils/utils_test.jl")
 end
