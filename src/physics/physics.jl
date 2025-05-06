@@ -35,12 +35,12 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Pressure gradient: -∇P/(n*m)
     # Calculate temperature gradients (simplified)
-    dTdR = zeros(FT, RP.NZ, RP.NR)
-    dTdZ = zeros(FT, RP.NZ, RP.NR)
+    dTdR = zeros(FT, RP.G.NZ, RP.G.NR)
+    dTdZ = zeros(FT, RP.G.NZ, RP.G.NR)
 
     # Simple centered differencing for the gradient
-    dTdR[:,2:end-1] .= (RP.plasma.Te_eV[:,3:end] .- RP.plasma.Te_eV[:,1:end-2]) / (2*RP.dR)
-    dTdZ[2:end-1,:] .= (RP.plasma.Te_eV[3:end,:] .- RP.plasma.Te_eV[1:end-2,:]) / (2*RP.dZ)
+    dTdR[:,2:end-1] .= (RP.plasma.Te_eV[:,3:end] .- RP.plasma.Te_eV[:,1:end-2]) / (2*RP.G.dR)
+    dTdZ[2:end-1,:] .= (RP.plasma.Te_eV[3:end,:] .- RP.plasma.Te_eV[1:end-2,:]) / (2*RP.G.dZ)
 
     # Parallel component of the gradient: b·∇T
     dTds = RP.fields.bR .* dTdR + RP.fields.bZ .* dTdZ
@@ -59,7 +59,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         nu_ei_mom = RP.plasma.nu_ei
         accel_drag = -nu_ei_mom .* RP.plasma.ue_para
     else
-        accel_drag = zeros(FT, RP.NZ, RP.NR)
+        accel_drag = zeros(FT, RP.G.NZ, RP.G.NR)
     end
 
     # Total acceleration
@@ -202,17 +202,17 @@ function update_power_terms!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @warn "update_power_terms! not fully implemented yet"
 
     # Initialize all power terms to zero
-    RP.plasma.ePowers.diffu .= zeros(FT, RP.NZ, RP.NR)
-    RP.plasma.ePowers.conv .= zeros(FT, RP.NZ, RP.NR)
-    RP.plasma.ePowers.heat .= zeros(FT, RP.NZ, RP.NR)
-    RP.plasma.ePowers.drag .= zeros(FT, RP.NZ, RP.NR)
-    RP.plasma.ePowers.equi .= zeros(FT, RP.NZ, RP.NR)
-    RP.plasma.ePowers.iz .= zeros(FT, RP.NZ, RP.NR)
-    RP.plasma.ePowers.exc .= zeros(FT, RP.NZ, RP.NR)
-    RP.plasma.ePowers.dilution .= zeros(FT, RP.NZ, RP.NR)
+    RP.plasma.ePowers.diffu .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ePowers.conv .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ePowers.heat .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ePowers.drag .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ePowers.equi .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ePowers.iz .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ePowers.exc .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ePowers.dilution .= zeros(FT, RP.G.NZ, RP.G.NR)
 
-    RP.plasma.iPowers.atomic .= zeros(FT, RP.NZ, RP.NR)
-    RP.plasma.iPowers.equi .= zeros(FT, RP.NZ, RP.NR)
+    RP.plasma.iPowers.atomic .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.iPowers.equi .= zeros(FT, RP.G.NZ, RP.G.NR)
 
     # Calculate ohmic heating (simplified)
     # P_ohmic = j·E = σ·E²

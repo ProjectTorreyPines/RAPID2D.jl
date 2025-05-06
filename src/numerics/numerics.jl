@@ -25,8 +25,8 @@ function construct_An_diffu(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Placeholder implementation - will be filled in later
     @warn "construct_An_diffu not fully implemented yet"
 
-    NR = RP.NR
-    NZ = RP.NZ
+    NR = RP.G.NR
+    NZ = RP.G.NZ
     N = NR * NZ
 
     # Initialize index and coefficient arrays for sparse matrix construction
@@ -117,8 +117,8 @@ function construct_An_convec(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Placeholder implementation - will be filled in later
     @warn "construct_An_convec not fully implemented yet"
 
-    NR = RP.NR
-    NZ = RP.NZ
+    NR = RP.G.NR
+    NZ = RP.G.NZ
     N = NR * NZ
 
     # For now, just return an empty sparse matrix
@@ -166,8 +166,8 @@ function update_ne!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Placeholder implementation - will be filled in later
     @warn "update_ne! not fully implemented yet"
 
-    NR = RP.NR
-    NZ = RP.NZ
+    NR = RP.G.NR
+    NZ = RP.G.NZ
     N = NR * NZ
 
     # In the Implicit scheme, we solve (I - Δt·θ·A)·n^{k+1} = n^k + Δt·(1-θ)·A·n^k + Δt·S^k
@@ -272,7 +272,7 @@ function cal_neRHS_diffu_term!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # 2. Return the resulting diffusion term
 
     # For now, return a zero array
-    RP.operators.neRHS_diffu .= zeros(FT, RP.NZ, RP.NR)
+    RP.operators.neRHS_diffu .= zeros(FT, RP.G.NZ, RP.G.NR)
 
     return RP.operators.neRHS_diffu
 end
@@ -288,7 +288,7 @@ function cal_neRHS_convec_term!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # 2. Return the resulting convection term
 
     # For now, return a zero array
-    RP.operators.neRHS_convec .= zeros(FT, RP.NZ, RP.NR)
+    RP.operators.neRHS_convec .= zeros(FT, RP.G.NZ, RP.G.NR)
 
     return RP.operators.neRHS_convec
 end

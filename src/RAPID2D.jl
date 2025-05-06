@@ -32,6 +32,7 @@ include("io/io.jl")
 include("numerics/numerics.jl")
 
 # Include utility functions
+include("utils/grid.jl")  # Grid-related utility functions
 include("utils/utils.jl")
 
 # Export types from various modules for convenience
@@ -42,7 +43,9 @@ function initialize_simulation(; NR::Int=100, NZ::Int=100,
                                FT::Type{<:AbstractFloat}=Float64,
                                t_start::AbstractFloat=0.0,
                                t_end::AbstractFloat=1.0e-3,
-                               dt::AbstractFloat=1.0e-9)
+                               dt::AbstractFloat=1.0e-9,
+                               R_range::Tuple{<:Real,<:Real}=(1.0, 2.0),
+                               Z_range::Tuple{<:Real,<:Real}=(-1.0, 1.0))
     # Convert to correct floating-point type
     t_start_FT = FT(t_start)
     t_end_FT = FT(t_end)
@@ -50,6 +53,9 @@ function initialize_simulation(; NR::Int=100, NZ::Int=100,
 
     # Create a new RAPID instance with the specified grid
     RP = RAPID{FT}(NR, NZ; t_start=t_start_FT, t_end=t_end_FT, dt=dt_FT)
+
+    # Initialize the grid geometry
+    initialize_rapid_grid!(RP, R_range, Z_range)
 
     # Load physical constants
     load_constants!(RP.config)

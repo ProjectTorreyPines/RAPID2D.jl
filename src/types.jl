@@ -350,6 +350,72 @@ mutable struct SimulationFlags
     end
 end
 
+
+"""
+    GridGeometry{FT<:AbstractFloat}
+
+Contains the geometric properties of the computational grid.
+
+# Fields
+- `NR`: Number of radial grid points
+- `NZ`: Number of vertical grid points
+- `R1D`: 1D array of radial grid coordinates
+- `Z1D`: 1D array of vertical grid coordinates
+- `R2D`: 2D array of radial grid coordinates
+- `Z2D`: 2D array of vertical grid coordinates
+- `dR`: Radial grid spacing
+- `dZ`: Vertical grid spacing
+- `Jacob`: Jacobian determinant at grid points
+- `inv_Jacob`: Inverse of Jacobian determinant
+- `BDY_idx`: Indices of boundary points
+"""
+mutable struct GridGeometry{FT<:AbstractFloat}
+    # Grid dimensions
+    NR::Int                  # Number of radial grid points
+    NZ::Int                  # Number of vertical grid points
+
+    # Grid coordinates
+    R1D::Vector{FT}          # 1D radial coordinates
+    Z1D::Vector{FT}          # 1D vertical coordinates
+    R2D::Matrix{FT}          # 2D radial coordinates
+    Z2D::Matrix{FT}          # 2D vertical coordinates
+
+    # Grid metrics
+    dR::FT                   # Radial grid spacing
+    dZ::FT                   # Vertical grid spacing
+    Jacob::Matrix{FT}        # Jacobian determinant
+    inv_Jacob::Matrix{FT}    # Inverse of Jacobian determinant
+
+    # Boundary indices
+    BDY_idx::Vector{Int}     # Indices of boundary points
+
+    # Constructor with dimensions
+    function GridGeometry{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
+        # Pre-allocate arrays
+        R1D = Vector{FT}(undef, NR)
+        Z1D = Vector{FT}(undef, NZ)
+        R2D = zeros(FT, NZ, NR)
+        Z2D = zeros(FT, NZ, NR)
+        Jacob = zeros(FT, NZ, NR)
+        inv_Jacob = zeros(FT, NZ, NR)
+        BDY_idx = Int[]
+
+        return new{FT}(
+            NR, NZ,
+            R1D, Z1D, R2D, Z2D,
+            FT(0.0), FT(0.0),
+            Jacob, inv_Jacob,
+            BDY_idx
+        )
+    end
+
+    # Convenience constructor
+    function GridGeometry(NR::Int, NZ::Int)
+        return GridGeometry{Float64}(NR, NZ)
+    end
+end
+
+
 """
     RAPID{FT<:AbstractFloat}
 
@@ -358,21 +424,8 @@ The main simulation structure containing all simulation data.
 Fields include grid information, physical fields, and simulation state.
 """
 mutable struct RAPID{FT<:AbstractFloat}
-    # Grid dimensions
-    NR::Int                     # Number of radial grid points
-    NZ::Int                     # Number of vertical grid points
-
-    # Grid coordinates
-    R1D::Vector{FT}              # 1D radial coordinates
-    Z1D::Vector{FT}              # 1D vertical coordinates
-    R2D::Matrix{FT}              # 2D radial coordinates
-    Z2D::Matrix{FT}              # 2D vertical coordinates
-
-    # Grid metrics
-    dR::FT                       # Radial grid spacing
-    dZ::FT                       # Vertical grid spacing
-    Jacob::Matrix{FT}            # Jacobian
-    inv_Jacob::Matrix{FT}        # Inverse Jacobian
+    # Grid geometry
+    G::GridGeometry{FT}         # Grid geometry containing all grid-related properties
 
     # Wall geometry
     wall::WallGeometry{FT}       # Wall geometry data
@@ -382,7 +435,6 @@ mutable struct RAPID{FT<:AbstractFloat}
     cell_state::Matrix{Int}      # Cell state (1 inside wall, -1 outside)
     in_wall_idx::Vector{Int}     # Linear indices of cells inside wall
     out_wall_idx::Vector{Int}    # Linear indices of cells outside wall
-    BDY_idx::Vector{Int}         # Linear indices of boundary cells
 
     # Volume elements
     inVol2D::Matrix{FT}          # Volume elements inside wall
@@ -424,9 +476,8 @@ mutable struct RAPID{FT<:AbstractFloat}
         # Create a new RAPID instance
         RP = new{FT}()
 
-        # Set grid dimensions
-        RP.NR = NR
-        RP.NZ = NZ
+        # Initialize grid geometry
+        RP.G = GridGeometry{FT}(NR, NZ)
 
         # Initialize time parameters
         RP.step = 0
@@ -444,36 +495,27 @@ mutable struct RAPID{FT<:AbstractFloat}
         # Initialize diagnostics
         RP.diagnostics = Dict{Symbol, Any}()
 
-        # Create empty arrays with correct dimensions
-        RP.R1D = Vector{FT}(undef, NR)
-        RP.Z1D = Vector{FT}(undef, NZ)
-        RP.R2D = zeros(FT, NZ, NR)
-        RP.Z2D = zeros(FT, NZ, NR)
-        RP.Jacob = zeros(FT, NZ, NR)
-        RP.inv_Jacob = zeros(FT, NZ, NR)
-
         # Create empty wall data (will be properly initialized later)
         RP.wall = WallGeometry{FT}(Vector{FT}(), Vector{FT}())
-        RP.damping_func = zeros(FT, NZ, NR)
+        RP.damping_func = zeros(FT, RP.G.NZ, RP.G.NR)
 
         # Initialize grid masks with empty or zero-filled arrays
-        RP.cell_state = zeros(Int, NZ, NR)
+        RP.cell_state = zeros(Int, RP.G.NZ, RP.G.NR)
         RP.in_wall_idx = Vector{Int}()
         RP.out_wall_idx = Vector{Int}()
-        RP.BDY_idx = Vector{Int}()
 
         # Initialize volume elements
-        RP.inVol2D = zeros(FT, NZ, NR)
+        RP.inVol2D = zeros(FT, RP.G.NZ, RP.G.NR)
         RP.device_inVolume = FT(0.0)
 
         # Initialize physical state objects
-        RP.plasma = PlasmaState{FT}(NR, NZ)
-        RP.fields = Fields{FT}(NR, NZ)
-        RP.transport = Transport{FT}(NR, NZ)
-        RP.operators = Operators{FT}(NR, NZ)
+        RP.plasma = PlasmaState{FT}(RP.G.NR, RP.G.NZ)
+        RP.fields = Fields{FT}(RP.G.NR, RP.G.NZ)
+        RP.transport = Transport{FT}(RP.G.NR, RP.G.NZ)
+        RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
 
         # Initialize previous state
-        RP.prev_n = zeros(FT, NZ, NR)
+        RP.prev_n = zeros(FT, RP.G.NZ, RP.G.NR)
 
         # Empty dictionaries
         RP.eRRC = Dict{Symbol, Any}()
@@ -485,4 +527,4 @@ mutable struct RAPID{FT<:AbstractFloat}
 end
 
 # Export types
-export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, RAPID
+export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, RAPID, GridGeometry

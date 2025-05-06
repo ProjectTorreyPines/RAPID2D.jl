@@ -34,15 +34,15 @@ Calculate diffusion coefficients based on field configuration and turbulence mod
 """
 function calculate_diffusion_coefficients!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Base diffusion coefficients
-    RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.NZ, RP.NR)
-    RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.NZ, RP.NR)
+    RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.G.NZ, RP.G.NR)
+    RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.G.NZ, RP.G.NR)
 
     # Add turbulent diffusion if enabled
     if RP.flags.turb_ExB_mixing
         # In a real implementation, turbulent diffusion would be calculated based on
         # field line connection length, ExB drifts, etc.
-        RP.transport.Dturb_para .= zeros(FT, RP.NZ, RP.NR)
-        RP.transport.Dturb_perp .= zeros(FT, RP.NZ, RP.NR)
+        RP.transport.Dturb_para .= zeros(FT, RP.G.NZ, RP.G.NR)
+        RP.transport.Dturb_perp .= zeros(FT, RP.G.NZ, RP.G.NR)
 
         # Add turbulent diffusion to base diffusion
         RP.transport.Dpara .+= RP.transport.Dturb_para
@@ -78,19 +78,19 @@ Calculate particle fluxes based on density gradients and transport coefficients.
 """
 function calculate_particle_fluxes!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Initialize arrays for density gradients
-    dndR = zeros(FT, RP.NZ, RP.NR)
-    dndZ = zeros(FT, RP.NZ, RP.NR)
+    dndR = zeros(FT, RP.G.NZ, RP.G.NR)
+    dndZ = zeros(FT, RP.G.NZ, RP.G.NR)
 
     # Calculate density gradients (using forward/central/backward differences)
     # R-direction
-    dndR[:,1] .= (RP.plasma.ne[:,2] .- RP.plasma.ne[:,1])/RP.dR
-    dndR[:,2:end-1] .= (RP.plasma.ne[:,3:end] .- RP.plasma.ne[:,1:end-2])/(2*RP.dR)
-    dndR[:,end] .= (RP.plasma.ne[:,end] .- RP.plasma.ne[:,end-1])/RP.dR
+    dndR[:,1] .= (RP.plasma.ne[:,2] .- RP.plasma.ne[:,1])/RP.G.dR
+    dndR[:,2:end-1] .= (RP.plasma.ne[:,3:end] .- RP.plasma.ne[:,1:end-2])/(2*RP.G.dR)
+    dndR[:,end] .= (RP.plasma.ne[:,end] .- RP.plasma.ne[:,end-1])/RP.G.dR
 
     # Z-direction
-    dndZ[1,:] .= (RP.plasma.ne[2,:] .- RP.plasma.ne[1,:])/RP.dZ
-    dndZ[2:end-1,:] .= (RP.plasma.ne[3:end,:] .- RP.plasma.ne[1:end-2,:])/(2*RP.dZ)
-    dndZ[end,:] .= (RP.plasma.ne[end,:] .- RP.plasma.ne[end-1,:])/RP.dZ
+    dndZ[1,:] .= (RP.plasma.ne[2,:] .- RP.plasma.ne[1,:])/RP.G.dZ
+    dndZ[2:end-1,:] .= (RP.plasma.ne[3:end,:] .- RP.plasma.ne[1:end-2,:])/(2*RP.G.dZ)
+    dndZ[end,:] .= (RP.plasma.ne[end,:] .- RP.plasma.ne[end-1,:])/RP.G.dZ
 
     # Calculate fluxes
     # Diffusive flux: -D⋅∇n
