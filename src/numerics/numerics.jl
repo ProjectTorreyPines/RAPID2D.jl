@@ -311,7 +311,7 @@ function cal_neRHS_src_term!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.operators.neRHS_src .= src_rate * RP.plasma.ne .* RP.plasma.n_H2_gas
 
     # Zero source outside wall
-    RP.operators.neRHS_src[RP.out_wall_idx] .= FT(0.0)
+    RP.operators.neRHS_src[RP.out_wall_nids] .= FT(0.0)
 
     return RP.operators.neRHS_src
 end

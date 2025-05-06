@@ -205,7 +205,7 @@ Calculate the volume integral of a field quantity over the domain inside the wal
 """
 function calculate_volume_integral(RP::RAPID{FT}, field::Matrix{FT}) where {FT<:AbstractFloat}
     # Element-wise multiplication of field by volume elements inside the wall
-    return sum(field .* RP.inVol2D)
+    return sum(field .* RP.G.inVol2D)
 end
 
 """
@@ -215,8 +215,8 @@ Print the current status of the simulation.
 """
 function print_status(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Calculate volume-averaged quantities
-    ne_avg = sum(RP.plasma.ne .* RP.inVol2D) / RP.device_inVolume
-    Te_avg = sum(RP.plasma.Te_eV .* RP.plasma.ne .* RP.inVol2D) / sum(RP.plasma.ne .* RP.inVol2D)
+    ne_avg = sum(RP.plasma.ne .* RP.G.inVol2D) / RP.device_inVolume
+    Te_avg = sum(RP.plasma.Te_eV .* RP.plasma.ne .* RP.G.inVol2D) / sum(RP.plasma.ne .* RP.G.inVol2D)
 
     # Get maximum values
     ne_max = maximum(RP.plasma.ne)
@@ -230,11 +230,11 @@ function print_status(RP::RAPID{FT}) where {FT<:AbstractFloat}
     println("Electron temperature: avg = $(round(Te_avg, digits=2)) eV, max = $(round(Te_max, digits=2)) eV")
 
     # Calculate total plasma current
-    current = sum(RP.plasma.Jphi .* RP.inVol2D)
+    current = sum(RP.plasma.Jphi .* RP.G.inVol2D)
     println("Total plasma current: $(round(current/1e3, digits=2)) kA")
 
     # Calculate ohmic heating power
-    ohmic_power = sum(RP.plasma.ePowers.heat .* RP.inVol2D)
+    ohmic_power = sum(RP.plasma.ePowers.heat .* RP.G.inVol2D)
     println("Ohmic heating power: $(round(ohmic_power/1e3, digits=2)) kW")
 
     # Print performance metrics

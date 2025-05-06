@@ -352,6 +352,46 @@ end
 
 
 """
+    NodeState{FT<:AbstractFloat}
+
+Contains information about the grid nodes in relation to the wall.
+
+# Fields
+- `rid`: Radial index of each node
+- `zid`: Vertical index of each node
+- `nid`: Linear index of each node
+- `state`: Node state (-1: outside, 0: boundary, 1: inside)
+- `in_wall_nids`: Linear indices of nodes inside wall
+- `out_wall_nids`: Linear indices of nodes outside wall
+- `on_wall_nids`: Linear indices of nodes on the wall
+"""
+mutable struct NodeState{FT<:AbstractFloat}
+    rid::Matrix{Int}          # Radial index of each node
+    zid::Matrix{Int}          # Vertical index of each node
+    nid::Matrix{Int}      # Linear index of each node
+    state::Matrix{FT}         # Node state (-1: outside, 0: boundary, 1: inside)
+    in_wall_nids::Vector{Int}  # Linear indices of nodes inside wall
+    out_wall_nids::Vector{Int} # Linear indices of nodes outside wall
+    on_wall_nids::Vector{Int}  # Linear indices of nodes on the wall
+
+    # Constructor
+    function NodeState{FT}(NZ::Int, NR::Int) where FT<:AbstractFloat
+        rid = zeros(Int, NZ, NR)
+        zid = zeros(Int, NZ, NR)
+        nid = zeros(Int, NZ, NR)
+        state = fill(NaN, NZ, NR)
+
+        return new{FT}(rid, zid, nid, state, Int[], Int[], Int[])
+    end
+
+    # Convenience constructor
+    function NodeState(NZ::Int, NR::Int)
+        return NodeState{Float64}(NZ, NR)
+    end
+end
+
+
+"""
     GridGeometry{FT<:AbstractFloat}
 
 Contains the geometric properties of the computational grid.
@@ -367,7 +407,9 @@ Contains the geometric properties of the computational grid.
 - `dZ`: Vertical grid spacing
 - `Jacob`: Jacobian determinant at grid points
 - `inv_Jacob`: Inverse of Jacobian determinant
+- `inVol2D`: Volume of each grid cell
 - `BDY_idx`: Indices of boundary points
+- `nodes`: Node information
 """
 mutable struct GridGeometry{FT<:AbstractFloat}
     # Grid dimensions
@@ -385,9 +427,13 @@ mutable struct GridGeometry{FT<:AbstractFloat}
     dZ::FT                   # Vertical grid spacing
     Jacob::Matrix{FT}        # Jacobian determinant
     inv_Jacob::Matrix{FT}    # Inverse of Jacobian determinant
+	inVol2D::Matrix{FT}      # Volume of each grid cell
 
     # Boundary indices
     BDY_idx::Vector{Int}     # Indices of boundary points
+
+    # Node information
+    nodes::NodeState{FT}     # Information about grid nodes
 
     # Constructor with dimensions
     function GridGeometry{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
@@ -398,14 +444,17 @@ mutable struct GridGeometry{FT<:AbstractFloat}
         Z2D = zeros(FT, NZ, NR)
         Jacob = zeros(FT, NZ, NR)
         inv_Jacob = zeros(FT, NZ, NR)
+		inVol2D = zeros(FT, NZ, NR)
         BDY_idx = Int[]
+        nodes = NodeState{FT}(NZ, NR)
 
         return new{FT}(
             NR, NZ,
             R1D, Z1D, R2D, Z2D,
             FT(0.0), FT(0.0),
-            Jacob, inv_Jacob,
-            BDY_idx
+            Jacob, inv_Jacob, inVol2D,
+            BDY_idx,
+            nodes
         )
     end
 
@@ -433,11 +482,10 @@ mutable struct RAPID{FT<:AbstractFloat}
 
     # Grid masks
     cell_state::Matrix{Int}      # Cell state (1 inside wall, -1 outside)
-    in_wall_idx::Vector{Int}     # Linear indices of cells inside wall
-    out_wall_idx::Vector{Int}    # Linear indices of cells outside wall
+    in_wall_nids::Vector{Int}     # Linear indices of cells inside wall
+    out_wall_nids::Vector{Int}    # Linear indices of cells outside wall
 
     # Volume elements
-    inVol2D::Matrix{FT}          # Volume elements inside wall
     device_inVolume::FT          # Total volume inside wall
 
     # Reaction rate coefficients
@@ -501,11 +549,10 @@ mutable struct RAPID{FT<:AbstractFloat}
 
         # Initialize grid masks with empty or zero-filled arrays
         RP.cell_state = zeros(Int, RP.G.NZ, RP.G.NR)
-        RP.in_wall_idx = Vector{Int}()
-        RP.out_wall_idx = Vector{Int}()
+        RP.in_wall_nids = Vector{Int}()
+        RP.out_wall_nids = Vector{Int}()
 
         # Initialize volume elements
-        RP.inVol2D = zeros(FT, RP.G.NZ, RP.G.NR)
         RP.device_inVolume = FT(0.0)
 
         # Initialize physical state objects
@@ -527,4 +574,4 @@ mutable struct RAPID{FT<:AbstractFloat}
 end
 
 # Export types
-export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, RAPID, GridGeometry
+export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, RAPID, GridGeometry, NodeState

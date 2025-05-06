@@ -104,19 +104,19 @@ function update_snapshot1D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Calculate and store 1D diagnostics
     # Average electron density
-    RP.diagnostics.snap1D[:ne_avg][idx] = sum(RP.plasma.ne .* RP.inVol2D) / RP.device_inVolume
+    RP.diagnostics.snap1D[:ne_avg][idx] = sum(RP.plasma.ne .* RP.G.inVol2D) / RP.device_inVolume
 
     # Average electron energy
-    avg_eErg_eV = sum(1.5 * RP.plasma.Te_eV .* RP.plasma.ne .* RP.inVol2D) /
-                 sum(RP.plasma.ne .* RP.inVol2D)
+    avg_eErg_eV = sum(1.5 * RP.plasma.Te_eV .* RP.plasma.ne .* RP.G.inVol2D) /
+                 sum(RP.plasma.ne .* RP.G.inVol2D)
     RP.diagnostics.snap1D[:avg_mean_eErg_eV][idx] = avg_eErg_eV
 
     # Average parallel electric fields
-    RP.diagnostics.snap1D[:avg_Epara_vac][idx] = sum(RP.fields.E_para_vac .* RP.inVol2D) / RP.device_inVolume
-    RP.diagnostics.snap1D[:avg_Epara_tot][idx] = sum(RP.fields.E_para_tot .* RP.inVol2D) / RP.device_inVolume
+    RP.diagnostics.snap1D[:avg_Epara_vac][idx] = sum(RP.fields.E_para_vac .* RP.G.inVol2D) / RP.device_inVolume
+    RP.diagnostics.snap1D[:avg_Epara_tot][idx] = sum(RP.fields.E_para_tot .* RP.G.inVol2D) / RP.device_inVolume
 
     # Calculate total toroidal current (simplified)
-    RP.diagnostics.snap1D[:I_tor][idx] = sum(RP.plasma.Jphi .* RP.inVol2D)
+    RP.diagnostics.snap1D[:I_tor][idx] = sum(RP.plasma.Jphi .* RP.G.inVol2D)
 
     # Increment index
     RP.diagnostics.snap1D[:idx] += 1

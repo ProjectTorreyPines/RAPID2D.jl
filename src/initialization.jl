@@ -39,14 +39,14 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
                                                          RP.G.R1D, RP.G.Z1D,
                                                          RP.wall.R, RP.wall.Z)
 
+    # Set up grid and wall information
+    setup_grid_and_wall!(RP)
+
     # Update vacuum fields
     update_vacuum_fields!(RP)
 
     # Initialize reaction rate coefficients
     initialize_reaction_rates!(RP)
-
-    # Set up grid and wall information
-    setup_grid_and_wall!(RP)
 
     # Initialize physical fields
     initialize_physical_fields!(RP)
@@ -114,8 +114,8 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         RP.operators.A_GS = construct_A_GS(RP)
 
         # Calculate Green's function for boundaries if needed
-        Rsrc = RP.G.R2D[RP.in_wall_idx]
-        Zsrc = RP.G.Z2D[RP.in_wall_idx]
+        Rsrc = RP.G.R2D[RP.in_wall_nids]
+        Zsrc = RP.G.Z2D[RP.in_wall_nids]
         Rdest = RP.G.R2D[RP.G.BDY_idx]
         Zdest = RP.G.Z2D[RP.G.BDY_idx]
 
@@ -291,6 +291,8 @@ function update_vacuum_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Initialize total parallel E-field
     F.E_para_tot .= F.E_para_vac
 
+	Main.@infiltrate
+
     return RP
 end
 
@@ -332,34 +334,35 @@ function setup_grid_and_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     in_Wall_state = is_inside_wall(RP.G.R2D, RP.G.Z2D, RP.wall)
 
     # Find linear indices of points outside and inside the wall
-    RP.out_wall_idx = findall(.!in_Wall_state[:])
-    RP.in_wall_idx = findall(in_Wall_state[:])
+    RP.out_wall_nids = findall(.!in_Wall_state[:])
+    RP.in_wall_nids = findall(in_Wall_state[:])
 
-    # Create node information matrices
-    RP.node_rid = zeros(Int, NZ, NR)
-    RP.node_zid = zeros(Int, NZ, NR)
-    RP.node_ALL_nid = zeros(Int, NZ, NR)
-    RP.node_state = fill(NaN, NZ, NR)
+    # Fill in node information using the NodeState struct
+    nodes = RP.G.nodes
 
-    # Fill in node information
+    # Fill in node indices information
     for j in 1:NR
         for i in 1:NZ
-            RP.node_zid[i, j] = i
-            RP.node_rid[i, j] = j
-            RP.node_ALL_nid[i, j] = LinearIndices((NZ, NR))[i, j]
+            nodes.zid[i, j] = i
+            nodes.rid[i, j] = j
+            nodes.nid[i, j] = LinearIndices((NZ, NR))[i, j]
         end
     end
 
     # Mark node state (-1 for outside, +1 for inside)
-    RP.node_state[RP.out_wall_idx] .= -1
-    RP.node_state[RP.in_wall_idx] .= 1
+    nodes.state[RP.out_wall_nids] .= -1
+    nodes.state[RP.in_wall_nids] .= 1
+
+    # Store indices in the NodeState
+    nodes.in_wall_nids = copy(RP.in_wall_nids)
+    nodes.out_wall_nids = copy(RP.out_wall_nids)
 
     # Find nodes on the wall (boundary nodes)
-    RP.on_wall_idx = Int[]
-    for k in 1:length(RP.out_wall_idx)
-        nid = RP.out_wall_idx[k]
-        rid = RP.node_rid[nid]
-        zid = RP.node_zid[nid]
+    nodes.on_wall_nids = Int[]
+    for k in 1:length(RP.out_wall_nids)
+        nid = RP.out_wall_nids[k]
+        rid = nodes.rid[nid]
+        zid = nodes.zid[nid]
 
         # Define neighborhood indices, making sure they are within bounds
         ngh_rids = max(1, rid-1):min(NR, rid+1)
@@ -367,19 +370,22 @@ function setup_grid_and_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
         # Check if this outside point has any inside neighbors
         # If sum is greater than -N (where N is number of neighbors), some neighbors are inside
-        if sum(RP.node_state[ngh_zids, ngh_rids]) > -length(ngh_rids)*length(ngh_zids)
-            push!(RP.on_wall_idx, nid)
+        if sum(nodes.state[ngh_zids, ngh_rids]) > -length(ngh_rids)*length(ngh_zids)
+            push!(nodes.on_wall_nids, nid)
         end
     end
 
+    # Mark on-wall nodes with state = 0
+    nodes.state[nodes.on_wall_nids] .= 0
+
     # Initialize cell state (1 for inside wall, -1 for outside)
     RP.cell_state = fill(-1, NZ, NR)
-    RP.cell_state[RP.in_wall_idx] .= 1
+    RP.cell_state[RP.in_wall_nids] .= 1
 
     # Calculate inVol2D - volume elements inside the wall
-    RP.inVol2D = zeros(FT, NZ, NR)
-    RP.inVol2D[RP.in_wall_idx] .= RP.G.Jacob[RP.in_wall_idx] * RP.G.dR * RP.G.dZ
-    RP.device_inVolume = sum(RP.inVol2D)
+    RP.G.inVol2D = zeros(FT, NZ, NR)
+    RP.G.inVol2D[RP.in_wall_nids] .= RP.G.Jacob[RP.in_wall_nids] * RP.G.dR * RP.G.dZ
+    RP.device_inVolume = sum(RP.G.inVol2D)
 
     return RP
 end
@@ -392,7 +398,7 @@ function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.ne .= FT(1.0e12) * ones(FT, RP.G.NZ, RP.G.NR)
 
     # Zero outside wall
-    RP.plasma.ne[RP.out_wall_idx] .= FT(0.0)
+    RP.plasma.ne[RP.out_wall_nids] .= FT(0.0)
 
     # Ion density matches electron for now
     RP.plasma.ni .= copy(RP.plasma.ne)
@@ -408,7 +414,7 @@ function initialize_temperature!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.Te_eV .= FT(2.0) * ones(FT, RP.G.NZ, RP.G.NR)
 
     # Zero outside wall
-    RP.plasma.Te_eV[RP.out_wall_idx] .= RP.config.min_Te
+    RP.plasma.Te_eV[RP.out_wall_nids] .= RP.config.min_Te
 
     # Ion temperature matches electron for now
     RP.plasma.Ti_eV .= copy(RP.plasma.Te_eV)
