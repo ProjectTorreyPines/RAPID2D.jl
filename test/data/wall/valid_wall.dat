@@ -1,0 +1,24 @@
+# Initial Comments are allowed
+# Wall data in polygon shape (tokamak-like)
+# R values must be positive
+# Format: R Z
+
+WALL_NUM 12
+
+# Top part of tokamak shape
+1.5 0.5
+1.4 0.6
+1.2 0.65
+1.0 0.6
+
+# Bottom part of tokamak shape
+0.8 0.4
+0.7 0.0
+0.8 -0.4
+1.0 -0.6
+1.2 -0.65
+1.4 -0.6
+1.5 -0.5
+
+# Close back to the right side
+1.7 0.0
