@@ -112,11 +112,11 @@ function update_snapshot1D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.diagnostics.snap1D[:avg_mean_eErg_eV][idx] = avg_eErg_eV
 
     # Average parallel electric fields
-    RP.diagnostics.snap1D[:avg_Epara_vac][idx] = sum(RP.fields.E_para_vac .* RP.G.inVol2D) / RP.device_inVolume
+    RP.diagnostics.snap1D[:avg_Epara_ext][idx] = sum(RP.fields.E_para_ext .* RP.G.inVol2D) / RP.device_inVolume
     RP.diagnostics.snap1D[:avg_Epara_tot][idx] = sum(RP.fields.E_para_tot .* RP.G.inVol2D) / RP.device_inVolume
 
     # Calculate total toroidal current (simplified)
-    RP.diagnostics.snap1D[:I_tor][idx] = sum(RP.plasma.Jphi .* RP.G.inVol2D)
+    RP.diagnostics.snap1D[:I_tor][idx] = sum(RP.plasma.Jϕ .* RP.G.inVol2D)
 
     # Increment index
     RP.diagnostics.snap1D[:idx] += 1
@@ -211,7 +211,7 @@ function save_snapshot2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
             # Write fields
             write(file, "E_para_tot", RP.fields.E_para_tot)
-            write(file, "E_para_vac", RP.fields.E_para_vac)
+            write(file, "E_para_ext", RP.fields.E_para_ext)
 
             # Write simulation metadata
             write(file, "step", RP.step)

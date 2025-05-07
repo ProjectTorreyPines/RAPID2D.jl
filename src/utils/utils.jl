@@ -230,7 +230,7 @@ function print_status(RP::RAPID{FT}) where {FT<:AbstractFloat}
     println("Electron temperature: avg = $(round(Te_avg, digits=2)) eV, max = $(round(Te_max, digits=2)) eV")
 
     # Calculate total plasma current
-    current = sum(RP.plasma.Jphi .* RP.G.inVol2D)
+    current = sum(RP.plasma.Jϕ .* RP.G.inVol2D)
     println("Total plasma current: $(round(current/1e3, digits=2)) kA")
 
     # Calculate ohmic heating power

@@ -43,7 +43,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     setup_grid_and_wall!(RP)
 
     # Update vacuum fields
-    update_vacuum_fields!(RP)
+    update_external_fields!(RP)
 
     # Initialize reaction rate coefficients
     initialize_reaction_rates!(RP)
@@ -243,58 +243,57 @@ function cal_damping_function_outside_wall(RP::RAPID{FT},
     return damping
 end
 
-function update_vacuum_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "update_vacuum_fields! implementation needed"
+# function update_external_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+#     # Placeholder implementation - will be filled in later
+#     @warn "update_external_fields! implementation needed"
 
-    # Create simple toroidal field - B_phi = B0*R0/R
-    R0 = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
-    B0 = abs(RP.config.R0B0 / R0)
+#     # Create simple toroidal field - B_ϕ = B0*R0/R
+#     R0 = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
+#     B0 = abs(RP.config.R0B0 / R0)
 
-	F = RP.fields
+#     F = RP.fields
 
-    F.Bϕ .= RP.config.R0B0 ./ RP.G.R2D
-    F.BR .= zeros(FT, RP.G.NZ, RP.G.NR)
-    F.BZ .= zeros(FT, RP.G.NZ, RP.G.NR)
+#     F.Bϕ .= RP.config.R0B0 ./ RP.G.R2D
+#     F.BR .= zeros(FT, RP.G.NZ, RP.G.NR)
+#     F.BZ .= zeros(FT, RP.G.NZ, RP.G.NR)
 
-    # Simple uniform loop voltage
-    F.Eϕ .= FT(0.5) .* ones(FT, RP.G.NZ, RP.G.NR)
+#     # Simple uniform loop voltage
+#     F.LV_ext .= FT(0.5)
+#     F.Eϕ .= F.LV_ext ./ (2.0*pi*RP.G.R2D)
 
-    # Copy to vacuum fields
-    F.BR_vac .= F.BR
-    F.BZ_vac .= F.BZ
+#     # Copy to external fields
+#     F.BR_ext .= F.BR
+#     F.BZ_ext .= F.BZ
 
-    # Calculate field magnitudes
-    F.Bpol .= sqrt.(F.BR.^2 .+ F.BZ.^2)
-    F.Btot .= sqrt.(F.Bpol.^2 .+ F.Bϕ.^2)
+#     # Calculate field magnitudes
+#     F.Bpol .= sqrt.(F.BR.^2 .+ F.BZ.^2)
+#     F.Btot .= sqrt.(F.Bpol.^2 .+ F.Bϕ.^2)
 
-    # Calculate unit vectors
-    # Avoid division by zero
-    epsilon = FT(1.0e-10)
-    mask = F.Btot .< epsilon
+#     # Calculate unit vectors
+#     # Avoid division by zero
+#     epsilon = FT(1.0e-10)
+#     mask = F.Btot .< epsilon
 
-    b_denominator = copy(F.Btot)
-    b_denominator[mask] .= FT(1.0)
+#     b_denominator = copy(F.Btot)
+#     b_denominator[mask] .= FT(1.0)
 
-    F.bR .= F.BR ./ b_denominator
-    F.bZ .= F.BZ ./ b_denominator
-    F.bϕ .= F.Bϕ ./ b_denominator
+#     F.bR .= F.BR ./ b_denominator
+#     F.bZ .= F.BZ ./ b_denominator
+#     F.bϕ .= F.Bϕ ./ b_denominator
 
-    # Zero out unit vectors where total field is near zero
-    F.bR[mask] .= FT(0.0)
-    F.bZ[mask] .= FT(0.0)
-    F.bϕ[mask] .= FT(1.0) # Default to toroidal direction
+#     # Zero out unit vectors where total field is near zero
+#     F.bR[mask] .= FT(0.0)
+#     F.bZ[mask] .= FT(0.0)
+#     F.bϕ[mask] .= FT(1.0) # Default to toroidal direction
 
-    # Set vacuum parallel E-field
-    F.E_para_vac .= F.Eϕ .* F.bϕ
+#     # Set external parallel E-field
+#     F.E_para_ext .= F.Eϕ .* F.bϕ
 
-    # Initialize total parallel E-field
-    F.E_para_tot .= F.E_para_vac
+#     # Initialize total parallel E-field
+#     F.E_para_tot .= F.E_para_ext
 
-	Main.@infiltrate
-
-    return RP
-end
+#     return RP
+# end
 
 function initialize_reaction_rates!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Placeholder implementation - will be filled in later
@@ -474,7 +473,7 @@ function initialize_snap1D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         :I_tor => zeros(FT, n_snapshots),
         :ne_avg => zeros(FT, n_snapshots),
         :avg_mean_eErg_eV => zeros(FT, n_snapshots),
-        :avg_Epara_vac => zeros(FT, n_snapshots),
+        :avg_Epara_ext => zeros(FT, n_snapshots),
         :avg_Epara_tot => zeros(FT, n_snapshots)
     )
 
@@ -521,20 +520,20 @@ function initialize_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     snap2D[:B_pol] = zeros(FT, dims_3d)
     snap2D[:u_pol] = zeros(FT, dims_3d)
     snap2D[:E_para_tot] = zeros(FT, dims_3d)
-    snap2D[:E_para_vac] = zeros(FT, dims_3d)
+    snap2D[:E_para_ext] = zeros(FT, dims_3d)
     snap2D[:mean_ExB_pol] = zeros(FT, dims_3d)
     snap2D[:E_self_pol] = zeros(FT, dims_3d)
     snap2D[:BR_self] = zeros(FT, dims_3d)
     snap2D[:BZ_self] = zeros(FT, dims_3d)
-    snap2D[:Ephi_self] = zeros(FT, dims_3d)
+    snap2D[:Eϕ_self] = zeros(FT, dims_3d)
 
     # Current
     snap2D[:Jpara_R] = zeros(FT, dims_3d)
     snap2D[:Jpara_Z] = zeros(FT, dims_3d)
-    snap2D[:Jpara_phi] = zeros(FT, dims_3d)
+    snap2D[:Jpara_ϕ] = zeros(FT, dims_3d)
 
     # Poloidal flux
-    snap2D[:psi_vac] = zeros(FT, dims_3d)
+    snap2D[:psi_ext] = zeros(FT, dims_3d)
     snap2D[:psi_self] = zeros(FT, dims_3d)
 
     # Ion properties

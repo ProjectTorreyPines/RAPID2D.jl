@@ -134,11 +134,11 @@ mutable struct PlasmaState{FT<:AbstractFloat}
     # Velocities - vector components
     ueR::Matrix{FT}     # Electron R velocity [m/s]
     ueZ::Matrix{FT}     # Electron Z velocity [m/s]
-    ueϕ::Matrix{FT}   # Electron phi velocity [m/s]
+    ueϕ::Matrix{FT}   # Electron ϕ velocity [m/s]
 
     uiR::Matrix{FT}     # Ion R velocity [m/s]
     uiZ::Matrix{FT}     # Ion Z velocity [m/s]
-    uiϕ::Matrix{FT}   # Ion phi velocity [m/s]
+    uiϕ::Matrix{FT}   # Ion ϕ velocity [m/s]
 
     # Collision parameters
     lnA::Matrix{FT}     # Coulomb logarithm
@@ -190,74 +190,101 @@ Contains the electromagnetic field variables.
 Fields include components of the magnetic and electric fields.
 """
 mutable struct Fields{FT<:AbstractFloat}
-    # Magnetic field components
-    BR::Matrix{FT}        # Radial magnetic field [T]
-    BZ::Matrix{FT}        # Vertical magnetic field [T]
-    Bϕ::Matrix{FT}      # Toroidal magnetic field [T]
+    # External fields
+    BR_ext::Matrix{FT}       # External radial magnetic field [T]
+    BZ_ext::Matrix{FT}       # External vertical magnetic field [T]
+    LV_ext::Matrix{FT}       # External Loop Voltage [V]
+    psi_ext::Matrix{FT}      # External magnetic flux [Wb/rad]
+    Eϕ_ext::Matrix{FT}     # External toroidal electric field [V/m]
+    E_para_ext::Matrix{FT}   # External parallel electric field [V/m]
 
-    # Derived magnetic field quantities
+    # Self-generated fields
+    BR_self::Matrix{FT}      # Self-generated radial magnetic field [T]
+    BZ_self::Matrix{FT}      # Self-generated vertical magnetic field [T]
+    psi_self::Matrix{FT}     # Self-generated magnetic flux [Wb/rad]
+    Eϕ_self::Matrix{FT}    # Self-generated toroidal electric field [V/m]
+    E_para_self_ES::Matrix{FT} # Electrostatic self-generated parallel electric field [V/m]
+    E_para_self_EM::Matrix{FT} # Electromagnetic self-generated parallel electric field [V/m]
+
+    # Total fields - external + self-generated
+    BR::Matrix{FT}        # Total radial magnetic field [T]
+    BZ::Matrix{FT}        # Total vertical magnetic field [T]
+    Bϕ::Matrix{FT}        # Toroidal magnetic field [T]
+
+    # Derived field quantities
     Bpol::Matrix{FT}      # Poloidal magnetic field [T]
     Btot::Matrix{FT}      # Total magnetic field [T]
 
     # Magnetic field unit vectors
     bR::Matrix{FT}        # Radial unit vector
     bZ::Matrix{FT}        # Vertical unit vector
-    bϕ::Matrix{FT}      # Toroidal unit vector
-
-    # Vacuum magnetic field components
-    BR_vac::Matrix{FT}    # Vacuum radial magnetic field [T]
-    BZ_vac::Matrix{FT}    # Vacuum vertical magnetic field [T]
+    bϕ::Matrix{FT}        # Toroidal unit vector
 
     # Electric field components
     ER::Matrix{FT}        # Radial electric field [V/m]
     EZ::Matrix{FT}        # Vertical electric field [V/m]
-    Eϕ::Matrix{FT}      # Toroidal electric field [V/m]
+    Eϕ::Matrix{FT}        # Toroidal electric field [V/m]
 
-    # Parallel electric fields
-    E_para_vac::Matrix{FT}  # Vacuum parallel electric field [V/m]
+    # Parallel electric field
     E_para_ind::Matrix{FT}  # Induced parallel electric field [V/m]
     E_para_tot::Matrix{FT}  # Total parallel electric field [V/m]
 
-    # Flux quantities
-    psi::Matrix{FT}       # Poloidal flux [Wb/rad]
-    psi_vac::Matrix{FT}   # Vacuum poloidal flux [Wb/rad]
+    # Magnetic flux
+    psi::Matrix{FT}       # Total magnetic flux [Wb/rad]
 
     # Constructor
     function Fields{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
-        # Pre-allocate arrays
+        # Initialize external fields
+        BR_ext = zeros(FT, NZ, NR)
+        BZ_ext = zeros(FT, NZ, NR)
+        LV_ext = zeros(FT, NZ, NR)
+        psi_ext = zeros(FT, NZ, NR)
+        Eϕ_ext = zeros(FT, NZ, NR)
+        E_para_ext = zeros(FT, NZ, NR)
+
+        # Initialize self-generated fields
+        BR_self = zeros(FT, NZ, NR)
+        BZ_self = zeros(FT, NZ, NR)
+        psi_self = zeros(FT, NZ, NR)
+        Eϕ_self = zeros(FT, NZ, NR)
+        E_para_self_ES = zeros(FT, NZ, NR)
+        E_para_self_EM = zeros(FT, NZ, NR)
+
+        # Initialize total fields
         BR = zeros(FT, NZ, NR)
         BZ = zeros(FT, NZ, NR)
         Bϕ = zeros(FT, NZ, NR)
 
+        # Initialize derived field quantities
         Bpol = zeros(FT, NZ, NR)
         Btot = zeros(FT, NZ, NR)
 
+        # Initialize magnetic field unit vectors
         bR = zeros(FT, NZ, NR)
         bZ = zeros(FT, NZ, NR)
         bϕ = zeros(FT, NZ, NR)
 
-        BR_vac = zeros(FT, NZ, NR)
-        BZ_vac = zeros(FT, NZ, NR)
-
+        # Initialize electric field components
         ER = zeros(FT, NZ, NR)
         EZ = zeros(FT, NZ, NR)
         Eϕ = zeros(FT, NZ, NR)
 
-        E_para_vac = zeros(FT, NZ, NR)
+        # Initialize parallel electric field
         E_para_ind = zeros(FT, NZ, NR)
         E_para_tot = zeros(FT, NZ, NR)
 
+        # Initialize magnetic flux
         psi = zeros(FT, NZ, NR)
-        psi_vac = zeros(FT, NZ, NR)
 
         return new{FT}(
+            BR_ext, BZ_ext, LV_ext, psi_ext, Eϕ_ext, E_para_ext,
+            BR_self, BZ_self, psi_self, Eϕ_self, E_para_self_ES, E_para_self_EM,
             BR, BZ, Bϕ,
             Bpol, Btot,
             bR, bZ, bϕ,
-            BR_vac, BZ_vac,
             ER, EZ, Eϕ,
-            E_para_vac, E_para_ind, E_para_tot,
-            psi, psi_vac
+            E_para_ind, E_para_tot,
+            psi
         )
     end
 end
@@ -464,6 +491,13 @@ mutable struct GridGeometry{FT<:AbstractFloat}
     end
 end
 
+"""
+    AbstractExternalField{FT<:AbstractFloat}
+
+Abstract type for all external electromagnetic field sources.
+Concrete implementations must provide methods to compute or interpolate field values at specified times.
+"""
+abstract type AbstractExternalField{FT<:AbstractFloat} end
 
 """
     RAPID{FT<:AbstractFloat}
@@ -487,6 +521,9 @@ mutable struct RAPID{FT<:AbstractFloat}
 
     # Volume elements
     device_inVolume::FT          # Total volume inside wall
+
+    # External field source
+    external_field::Union{Nothing, AbstractExternalField{FT}}  # External electromagnetic field source
 
     # Reaction rate coefficients
     eRRC::Dict{Symbol, Any}     # Electron reaction rate coefficients

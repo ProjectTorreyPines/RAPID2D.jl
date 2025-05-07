@@ -1,5 +1,5 @@
 """
-RAPID2D.jl - Rapid Analysis of Plasma Initialization and Dynamics in 2D
+RAPID2D.jl - Rapid Analysis of Plasma Initiation and Dynamics in 2D
 
 A Julia implementation of the RAPID-2D plasma modeling code for axisymmetric
 (R,Z) plasma simulation with a focus on tokamak startup, current drive, and
@@ -13,17 +13,17 @@ using Statistics
 using HDF5
 using Printf
 
-# Import submodules
+# Include type definitions
 include("constants.jl")
 include("types.jl")
 include("initialization.jl")
 
 # Include the field-related functionality
+include("physics/fields.jl")
+include("physics/transport.jl")
 
 # Include the physics models
 include("physics/physics.jl")
-include("physics/fields.jl")
-include("physics/transport.jl")
 
 # Include the IO-related functionality
 include("io/io.jl")
