@@ -294,8 +294,6 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, file_path::String) where {FT<:Abst
     initial_time = extF.time_s[1]
     update_external_fields!(RP, initial_time)
 
-    # Store a reference to external field data for later use
-    RP.vacF = extF
 
     return RP
 end
@@ -559,14 +557,11 @@ function update_coulomb_logarithm!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 function initialize_snap1D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "initialize_snap1D! implementation needed"
-
     # Calculate the number of snapshots
     n_snapshots = Int(ceil((RP.t_end_s - RP.t_start_s) / RP.config.snap1D_Interval_s)) + 1
 
     # Create basic snapshot structure
-    RP.diagnostics.snap1D = Dict{Symbol, Any}(
+    RP.diagnostics[:snap1D] = Dict{Symbol, Any}(
         :idx => 1,
         :time_s => zeros(FT, n_snapshots),
         :I_tor => zeros(FT, n_snapshots),
@@ -685,13 +680,13 @@ function initialize_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Store initial values
     # Only storing ne and neRHS_src initially as in the MATLAB version
-    if hasfield(typeof(RP), :ne) && hasfield(typeof(RP), :neRHS_src)
-        snap2D[:ne][:,:,1] = RP.ne
+    if hasfield(typeof(RP.plasma), :ne) && hasfield(typeof(RP), :neRHS_src)
+        snap2D[:ne][:,:,1] = RP.plasma.ne
         snap2D[:neRHS_src][:,:,1] = RP.neRHS_src
     end
 
     # Assign to the diagnostics structure
-    RP.diagnostics.snap2D = snap2D
+    RP.diagnostics[:snap2D] = snap2D
 
     return RP
 end
