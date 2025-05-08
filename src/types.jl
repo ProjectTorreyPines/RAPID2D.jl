@@ -355,28 +355,84 @@ end
 
 Contains boolean flags that control various aspects of the simulation.
 """
-mutable struct SimulationFlags
+Base.@kwdef mutable struct SimulationFlags
+    # Method selection flags
+    eRRC_method::String = "EoverP_Erg"        # Electron reaction rate coefficient method
+    iRRC_method::String = "ud_T"              # Ion reaction rate coefficient method
+    ud_method::String = "Xsec"                # Drift velocity method
+    Ionz_method::String = "Xsec"              # Ionization method
+    upara_or_uRphiZ::String = "upara"         # Velocity representation
+
+    # Visualization flags
+    vis1D::Bool = true                        # Enable 1D visualization
+    vis2D::Bool = true                        # Enable 2D visualization
+
     # Physics flags
-    diffu::Bool        # Enable diffusion
-    convec::Bool       # Enable convection
-    Ampere::Bool       # Enable Ampere's law (magnetic field update)
-    Implicit::Bool     # Use implicit methods
+    diffu::Bool = true                        # Enable diffusion
+    convec::Bool = true                       # Enable convection
+    upwind::Bool = true                       # Use upwind scheme for convection
+    src::Bool = true                          # Enable particle sources
+    mean_ExB::Bool = true                     # Include mean ExB drift
+    diaMag_drift::Bool = false                # Include diamagnetic drift
+    turb_ExB_mixing::Bool = true              # Include turbulent ExB mixing
+    E_para_self_ES::Bool = true               # Include self-electrostatic parallel E-field
+    E_para_self_EM::Bool = true               # Include self-electromagnetic parallel E-field
+    neg_n_correction::Bool = true             # Correct negative densities
+    Te_evolve::Bool = true                    # Evolve electron temperature
+    ud_evolve::Bool = true                    # Evolve drift velocity
+    Gas_evolve::Bool = true                   # Evolve neutral gas density
+    Coulomb_Collision::Bool = true            # Include Coulomb collisions
+    Spitzer_Resistivity::Bool = true          # Include Spitzer resistivity
+    Update_gFac::Bool = true                  # Update g factor for generalized EDF
+    update_ni_independently::Bool = true      # Update ion density independently
+    Secondary_Electron::Bool = true           # Include secondary electron emission
+
+    # Field-related flags
+    Ampere::Bool = false                      # Enable Ampere's law (magnetic field update)
+
+    # Transport flags
+    Include_ud_convec_term::Bool = true       # Include convection term in drift velocity equation
+    Include_ud_diffu_term::Bool = true        # Include diffusion term in drift velocity equation
+    Include_Te_convec_term::Bool = true       # Include convection term in Te equation
+    Include_Te_diffu_term::Bool = true        # Include diffusion term in Te equation
+    evolve_ud_inWall_only::Bool = false       # Only evolve drift velocity inside wall
+    evolve_Te_inWall_only::Bool = false       # Only evolve Te inside wall
+    Damp_Transp_outWall::Bool = true          # Damp transport outside wall
 
     # Numerical settings
-    Ampere_nstep::Int  # Frequency of Ampere's law updates
+    Ampere_nstep::Int = 10                    # Steps between Ampere's law updates
+    FLF_nstep::Int = 10                       # Steps between field line following updates
+    Implicit::Bool = true                     # Use implicit methods
+    Implicit_weight::Float64 = 0.5            # Weight for implicit scheme
+    Adapt_dt::Bool = false                    # Use adaptive time stepping
 
-    # Constructor with defaults
-    function SimulationFlags()
-        return new(
-            true,   # diffu
-            true,   # convec
-            false,  # Ampere
-            true,   # Implicit
-            10      # Ampere_nstep
-        )
-    end
+    # Temperature limits
+    min_Te::Float64 = 0.001                   # Minimum electron temperature (eV)
+    max_Te::Float64 = 500.0                   # Maximum electron temperature (eV)
+
+    # Global force balance
+    Global_Force_Balance::Bool = false        # Include global toroidal force balance
+
+    # Control system
+    Control::Dict{Symbol, Any} = Dict{Symbol, Any}(:state => false, :target_R => nothing)
+
+    # Numerical stability controls
+    Limit_too_negative_Diffusion::Dict{Symbol, Any} = Dict{Symbol, Any}(
+        :state => true,
+        :limit_lower_bound_ratio => -0.1  # -0.1*n
+    )
+
+    # Current threshold for Ampere's equation
+    Ampere_Itor_threshold::Float64 = 0.0      # Current threshold for Ampere equation
+
+    # Debug flags
+    tmp_test::Bool = false                    # Enable temporary tests
+    tmp_fig::Int = 100                        # Figure number for temporary tests
+
+    # Initial parameters
+    ini_gFac::Float64 = 1.0                   # Initial g factor value
+    gamma_2nd_electron::Float64 = 0.1         # Secondary electron emission coefficient
 end
-
 
 """
     NodeState{FT<:AbstractFloat}
