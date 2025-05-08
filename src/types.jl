@@ -107,7 +107,28 @@ Fields:
 struct WallGeometry{FT<:AbstractFloat}
     R::Vector{FT}  # Radial coordinates
     Z::Vector{FT}  # Vertical coordinates
-end
+
+    function WallGeometry{FT}() where {FT<:AbstractFloat}
+        return new{FT}(Vector{FT}(), Vector{FT}())
+    end
+    # Constructor ensuring the wall is a closed loop
+    function WallGeometry{FT}(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat}
+        @assert length(R) == length(Z) "R and Z must have the same length"
+        @assert length(R) >= 3 "At least 3 points needed to define a wall unless creating an empty placeholder"
+
+        # Check if the wall is closed (first point equals last point)
+        if R[1] != R[end] || Z[1] != Z[end]
+            # Add the first point at the end to close the loop
+            push!(R, R[1])
+            push!(Z, Z[1])
+        end
+
+        new{FT}(R, Z)
+    end
+    end
+
+# Constructor that infers the floating-point type
+WallGeometry(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat} = WallGeometry{FT}(R, Z)
 
 """
     PlasmaState{FT<:AbstractFloat}
@@ -636,8 +657,8 @@ mutable struct RAPID{FT<:AbstractFloat}
         # Initialize diagnostics
         RP.diagnostics = Dict{Symbol, Any}()
 
-        # Create empty wall data (will be properly initialized later)
-        RP.wall = WallGeometry{FT}(Vector{FT}(), Vector{FT}())
+        # Create emtpy wall geometry
+        RP.wall = WallGeometry{FT}()
         RP.damping_func = zeros(FT, RP.G.NZ, RP.G.NR)
 
         # Initialize grid masks with empty or zero-filled arrays
@@ -661,6 +682,9 @@ mutable struct RAPID{FT<:AbstractFloat}
         RP.eRRC = Dict{Symbol, Any}()
         RP.iRRC = Dict{Symbol, Any}()
         RP.tElap = Dict{Symbol, Float64}()
+
+        # Set external field to nothing initially
+        RP.external_field = nothing
 
         return RP
     end
