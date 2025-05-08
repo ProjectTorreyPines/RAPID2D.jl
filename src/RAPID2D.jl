@@ -12,6 +12,8 @@ using LinearAlgebra
 using Statistics
 using HDF5
 using Printf
+using DelimitedFiles
+using Interpolations
 
 # Include type definitions
 include("constants.jl")
@@ -37,6 +39,10 @@ include("utils/utils.jl")
 
 # Export types from various modules for convenience
 export PlasmaConstants  # Physical constants
+export AbstractExternalField, TimeSeriesExternalField  # External field types
+
+# Export IO functions for external field data
+export read_break_input_file, read_external_field_time_series, load_external_field_data!
 
 # Function to initialize RAPID2D simulation
 function initialize_simulation(; NR::Int=100, NZ::Int=100,

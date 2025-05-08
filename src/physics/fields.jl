@@ -17,8 +17,11 @@ export update_external_fields!,
        flf_analysis_of_field_lines_in_RZ_plane
 
 # Export external field types and functions
-export AbstractExternalField, ExternalFieldData
-export get_fields_at_time, interpolate_fields, read_external_field_data
+export AbstractExternalField, TimeSeriesExternalField
+export get_fields_at_time, interpolate_fields
+
+# Required imports for field calculations
+using LinearAlgebra
 
 """
     update_self_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -130,30 +133,36 @@ function flf_analysis_of_field_lines_in_RZ_plane(RP::RAPID{FT}) where {FT<:Abstr
 end
 
 """
-    update_external_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_external_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
 
-Update external fields based on current simulation time.
+Update external fields based on current simulation time or specified time.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance
+- `time_s::FT`: Time at which to update fields (default: current simulation time)
+
+# Returns
+- `RP::RAPID{FT}`: The updated RAPID instance
 """
-function update_external_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_external_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
     # Use manual mode if no external field source is specified
     if RP.external_field === nothing
         if RP.config.device_Name == "manual"
             # Manual settings already applied during initialization, nothing to do
-            return
+            return RP
         else
             error("No external field source specified")
         end
     end
 
-    # Get external fields at current time
-    BR_ext, BZ_ext, LV_ext, psi_ext = get_fields_at_time(
-        RP.external_field, RP.time_s, RP.G)
+    # Get external fields at specified time
+    F = get_fields_at_time(RP.external_field, time_s, RP.G)
 
     # Update field components
-    RP.fields.BR_ext .= BR_ext
-    RP.fields.BZ_ext .= BZ_ext
-    RP.fields.LV_ext .= LV_ext
-    RP.fields.psi_ext .= psi_ext
+    RP.fields.BR_ext .= F.BR
+    RP.fields.BZ_ext .= F.BZ
+    RP.fields.LV_ext .= F.LV
+    RP.fields.psi_ext .= F.psi
 
     # Calculate toroidal electric field
     RP.fields.Eϕ_ext .= RP.fields.LV_ext ./ (2π * RP.G.R2D)
@@ -163,9 +172,6 @@ function update_external_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.fields.BZ .= RP.fields.BZ_ext .+ RP.fields.BZ_self
     RP.fields.Eϕ .= RP.fields.Eϕ_ext .+ RP.fields.Eϕ_self
     RP.fields.psi .= RP.fields.psi_ext .+ RP.fields.psi_self
-
-    # Calculate parallel electric field
-    RP.fields.E_para_ext .= RP.fields.Eϕ_ext .* RP.fields.bϕ
 
     # Update field-related calculations
     calculate_field_magnitudes!(RP)
@@ -180,63 +186,99 @@ end
 # -----------------------------------------------------------------------------
 
 """
-    ExternalFieldData{FT<:AbstractFloat} <: AbstractExternalField{FT}
+    TimeSeriesExternalField{FT<:AbstractFloat} <: AbstractExternalField{FT}
 
-Stores pre-computed external electromagnetic field data from files or other sources.
-Provides interpolated BR, BZ, LV, psi values at specific times.
+Stores time series data for external electromagnetic fields.
+
+# Fields
+- `time_s::Vector{FT}`: Time points in seconds
+- `BR::Array{FT,3}`: Radial magnetic field component [T] (NZ×NR×NT)
+- `BZ::Array{FT,3}`: Vertical magnetic field component [T] (NZ×NR×NT)
+- `psi::Array{FT,3}`: Magnetic flux [Wb/rad] (NZ×NR×NT)
+- `LV::Array{FT,3}`: Loop voltage [V] (NZ×NR×NT)
+- `R::Matrix{FT}`: 2D grid of R coordinates [m]
+- `Z::Matrix{FT}`: 2D grid of Z coordinates [m]
+- `R_NUM::Int`: Number of R grid points
+- `Z_NUM::Int`: Number of Z grid points
+- `R_MIN::FT`: Minimum R value [m]
+- `R_MAX::FT`: Maximum R value [m]
+- `Z_MIN::FT`: Minimum Z value [m]
+- `Z_MAX::FT`: Maximum Z value [m]
 """
-mutable struct ExternalFieldData{FT<:AbstractFloat} <: AbstractExternalField{FT}
-    # Time data
-    time_s::Vector{FT}
+mutable struct TimeSeriesExternalField{FT<:AbstractFloat} <: AbstractExternalField{FT}
+    time_s::Vector{FT}    # Time points [s]
 
-    # Field data - 3D arrays (Z, R, time)
-    BR::Array{FT, 3}         # Radial magnetic field [T]
-    BZ::Array{FT, 3}         # Vertical magnetic field [T]
-    LV::Array{FT, 3}         # Loop Voltage [V]
-    psi::Array{FT, 3}        # Magnetic flux [Wb/rad]
+    # Field components
+    BR::Array{FT,3}       # Radial magnetic field [T]
+    BZ::Array{FT,3}       # Vertical magnetic field [T]
+    psi::Array{FT,3}      # Magnetic flux [Wb/rad]
+    LV::Array{FT,3}       # Loop voltage [V]
 
-    # Metadata
-    description::String      # Data description
+    # Grid geometry
+    R::Matrix{FT}         # R coordinates [m]
+    Z::Matrix{FT}         # Z coordinates [m]
+    R_NUM::Int            # Number of R grid points
+    Z_NUM::Int            # Number of Z grid points
+    R_MIN::FT             # Minimum R value [m]
+    R_MAX::FT             # Maximum R value [m]
+    Z_MIN::FT             # Minimum Z value [m]
+    Z_MAX::FT             # Maximum Z value [m]
+end
 
-    # Internal constructor
-    function ExternalFieldData{FT}(
-        time_s::Vector{FT},
-        BR::Array{FT, 3},
-        BZ::Array{FT, 3},
-        LV::Array{FT, 3},
-        psi::Array{FT, 3};
-        description::String = ""
-    ) where FT<:AbstractFloat
-        # Dimension validation
-        if size(BR, 3) != length(time_s) ||
-           size(BZ, 3) != length(time_s) ||
-           size(LV, 3) != length(time_s) ||
-           size(psi, 3) != length(time_s)
-            error("Time dimension must match the length of time_s vector")
-        end
+"""
+    get_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid::GridGeometry{FT}) where {FT<:AbstractFloat}
 
-        return new{FT}(time_s, BR, BZ, LV, psi, description)
+Interpolate field values at a specific time from time series data.
+
+# Arguments
+- `field::TimeSeriesExternalField{FT}`: The time series external field data
+- `time::FT`: The time at which to get field values
+- `grid::GridGeometry{FT}`: Grid geometry (not used for TimeSeriesExternalField but included for API consistency)
+
+# Returns
+- `NamedTuple`: Contains fields BR, BZ, LV, psi interpolated at the specified time
+"""
+function get_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid=nothing) where {FT<:AbstractFloat}
+    # Find the time indices for interpolation
+    if time <= field.time_s[1]
+        # Before first time point - use first time point
+        idx = 1
+        t_weight = FT(0)
+    elseif time >= field.time_s[end]
+        # After last time point - use last time point
+        idx = length(field.time_s) - 1
+        t_weight = FT(1)
+    else
+        # Find the appropriate time interval
+        idx = searchsortedlast(field.time_s, time)
+        # Calculate interpolation weight
+        t_weight = (time - field.time_s[idx]) / (field.time_s[idx+1] - field.time_s[idx])
     end
-end
 
-# External constructor (allows type inference)
-function ExternalFieldData(
-    time_s::Vector{FT},
-    BR::Array{FT, 3},
-    BZ::Array{FT, 3},
-    LV::Array{FT, 3},
-    psi::Array{FT, 3};
-    description::String = ""
-) where FT<:AbstractFloat
-    return ExternalFieldData{FT}(time_s, BR, BZ, LV, psi; description=description)
+    # Linear interpolation in time
+    BR = (1 - t_weight) * field.BR[:, :, idx] + t_weight * field.BR[:, :, idx+1]
+    BZ = (1 - t_weight) * field.BZ[:, :, idx] + t_weight * field.BZ[:, :, idx+1]
+    psi = (1 - t_weight) * field.psi[:, :, idx] + t_weight * field.psi[:, :, idx+1]
+    LV = (1 - t_weight) * field.LV[:, :, idx] + t_weight * field.LV[:, :, idx+1]
+
+    return (
+        BR = BR,
+        BZ = BZ,
+        LV = LV,
+        psi = psi,
+        time_s = time
+    )
 end
 
 """
-    interpolate_fields(ef::ExternalFieldData{FT}, time_s::FT) where {FT<:AbstractFloat}
+    interpolate_fields(ef::TimeSeriesExternalField{FT}, time_s::FT) where {FT<:AbstractFloat}
 
 Linearly interpolates field values from stored data at the given time.
+
+# Returns
+- `NamedTuple`: Contains fields BR, BZ, LV, psi interpolated at the specified time
 """
-function interpolate_fields(ef::ExternalFieldData{FT}, time_s::FT) where {FT<:AbstractFloat}
+function interpolate_fields(ef::TimeSeriesExternalField{FT}, time_s::FT) where {FT<:AbstractFloat}
     # Check time range
     if time_s < ef.time_s[1] || time_s > ef.time_s[end]
         @warn "Time $(time_s)s is outside the data range [$(ef.time_s[1]), $(ef.time_s[end])]s"
@@ -260,25 +302,11 @@ function interpolate_fields(ef::ExternalFieldData{FT}, time_s::FT) where {FT<:Ab
     LV = @. (1-w) * ef.LV[:,:,idx] + w * ef.LV[:,:,idx+1]
     psi = @. (1-w) * ef.psi[:,:,idx] + w * ef.psi[:,:,idx+1]
 
-    return BR, BZ, LV, psi
-end
-
-"""
-    get_fields_at_time(ef::AbstractExternalField{FT}, time_s::FT, grid::GridGeometry{FT})
-
-Returns external field components at the specified time.
-All AbstractExternalField types must implement this function.
-"""
-function get_fields_at_time(ef::ExternalFieldData{FT}, time_s::FT, grid::GridGeometry{FT}) where {FT<:AbstractFloat}
-    return interpolate_fields(ef, time_s)
-end
-
-"""
-    read_external_field_data(file_path::String, ::Type{FT}=Float64) where {FT<:AbstractFloat}
-
-Reads external electromagnetic field data from a file and creates an ExternalFieldData object.
-"""
-function read_external_field_data(file_path::String, ::Type{FT}=Float64) where {FT<:AbstractFloat}
-    # Currently a simple implementation, needs proper implementation based on actual file format
-    error("The read_external_field_data function is not yet implemented")
+    return (
+        BR = BR,
+        BZ = BZ,
+        LV = LV,
+        psi = psi,
+        time_s = time_s
+    )
 end
