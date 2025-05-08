@@ -685,11 +685,11 @@ Load external field data from files and set it as the external field source for 
 """
 function load_external_field_data!(RP::RAPID{FT}, file_path::String="./";
                                 r_num::Union{Int,Nothing}=nothing,
-                                r_min::Union{Float64,Nothing}=nothing,
-                                r_max::Union{Float64,Nothing}=nothing,
+                                r_min::Union{FT,Nothing}=nothing,
+                                r_max::Union{FT,Nothing}=nothing,
                                 z_num::Union{Int,Nothing}=nothing,
-                                z_min::Union{Float64,Nothing}=nothing,
-                                z_max::Union{Float64,Nothing}=nothing) where {FT<:AbstractFloat}
+                                z_min::Union{FT,Nothing}=nothing,
+                                z_max::Union{FT,Nothing}=nothing) where {FT<:AbstractFloat}
 
     # If grid parameters are not provided, use current grid parameters from RP
     if isnothing(r_num)
