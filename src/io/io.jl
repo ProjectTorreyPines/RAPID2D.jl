@@ -4,6 +4,8 @@ I/O module for RAPID2D.
 Contains functions for file input/output, including:
 - Reading input data
 - Saving simulation results
+- Loading external field data
+- Reading device geometry
 - Data visualization
 """
 
@@ -11,10 +13,15 @@ Contains functions for file input/output, including:
 export save_snapshot,
        write_output_file,
        read_input_file,
-       update_snapshot!,
        save_snapshot2D,
-       read_device_wall_data,
+
+       # Wall geometry functions
        read_wall_data_file,
+       read_device_wall_data,
+       read_device_wall_data!,
+       is_inside_wall,
+
+       # External field functions
        read_break_input_file,
        read_external_field_time_series,
        load_external_field_data!
@@ -29,10 +36,18 @@ using Interpolations
 import RAPID2D: TimeSeriesExternalField, AbstractExternalField, update_external_fields!
 import RAPID2D: get_fields_at_time  # Import this to avoid duplicate definition
 
+# =============================================================================
+# Snapshot and diagnostic functions
+# =============================================================================
+
 """
     save_snapshot(RP::RAPID{FT}, snapshot_type::Symbol) where {FT<:AbstractFloat}
 
 Save a snapshot of the current simulation state.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance
+- `snapshot_type::Symbol`: Type of snapshot to save (`:snap1D` or `:snap2D`)
 """
 function save_snapshot(RP::RAPID{FT}, snapshot_type::Symbol) where {FT<:AbstractFloat}
     if snapshot_type == :snap1D
@@ -47,56 +62,12 @@ function save_snapshot(RP::RAPID{FT}, snapshot_type::Symbol) where {FT<:Abstract
 end
 
 """
-    write_output_file(RP::RAPID{FT}, filename::String=nothing) where {FT<:AbstractFloat}
-
-Write simulation results to file.
-"""
-function write_output_file(RP::RAPID{FT}, filename::String=nothing) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "write_output_file not fully implemented yet"
-
-    # Generate default filename if none provided
-    if isnothing(filename)
-        # Format time with leading zeros
-        time_str = @sprintf("%08.6f", RP.time_s)
-
-        # Construct filename
-        filename = joinpath(
-            RP.config.Output_path,
-            "$(RP.config.Output_prefix)$(RP.config.Output_name)_t=$(time_str)s.jld2"
-        )
-    end
-
-    # Create output directory if it doesn't exist
-    mkpath(dirname(filename))
-
-    # In a real implementation, we would save all relevant data to a JLD2 file
-    # For now, just print a message
-    println("Would save data to: $filename")
-
-    return nothing
-end
-
-"""
-    read_input_file(RP::RAPID{FT}, filename::String) where {FT<:AbstractFloat}
-
-Read input data from file.
-"""
-function read_input_file(RP::RAPID{FT}, filename::String) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "read_input_file not fully implemented yet"
-
-    # In a real implementation, we would read data from a file
-    # For now, just print a message
-    println("Would read data from: $filename")
-
-    return RP
-end
-
-"""
     update_snapshot1D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update 1D diagnostic snapshots.
+Update 1D diagnostic snapshots in the RAPID object.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance to update
 """
 function update_snapshot1D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Get current index
@@ -140,7 +111,10 @@ end
 """
     update_snapshot2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update 2D diagnostic snapshots.
+Update 2D diagnostic snapshots in the RAPID object.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance to update
 """
 function update_snapshot2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Get current index
@@ -189,6 +163,9 @@ end
     save_snapshot2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Save a 2D snapshot of the current simulation state and write to file if needed.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance
 """
 function save_snapshot2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # First update the snapshot data
@@ -238,16 +215,80 @@ function save_snapshot2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 """
+    write_output_file(RP::RAPID{FT}, filename::String=nothing) where {FT<:AbstractFloat}
+
+Write simulation results to file.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance
+- `filename::String=nothing`: Optional filename for output (default generates name based on time)
+"""
+function write_output_file(RP::RAPID{FT}, filename::String=nothing) where {FT<:AbstractFloat}
+    # Placeholder implementation - will be filled in later
+    @warn "write_output_file not fully implemented yet"
+
+    # Generate default filename if none provided
+    if isnothing(filename)
+        # Format time with leading zeros
+        time_str = @sprintf("%08.6f", RP.time_s)
+
+        # Construct filename
+        filename = joinpath(
+            RP.config.Output_path,
+            "$(RP.config.Output_prefix)$(RP.config.Output_name)_t=$(time_str)s.jld2"
+        )
+    end
+
+    # Create output directory if it doesn't exist
+    mkpath(dirname(filename))
+
+    # In a real implementation, we would save all relevant data to a JLD2 file
+    # For now, just print a message
+    println("Would save data to: $filename")
+
+    return nothing
+end
+
+"""
+    read_input_file(RP::RAPID{FT}, filename::String) where {FT<:AbstractFloat}
+
+Read input data from file.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance to load data into
+- `filename::String`: Path to the input file to read
+
+# Returns
+- `RP::RAPID{FT}`: The updated RAPID instance
+"""
+function read_input_file(RP::RAPID{FT}, filename::String) where {FT<:AbstractFloat}
+    # Placeholder implementation - will be filled in later
+    @warn "read_input_file not fully implemented yet"
+
+    # In a real implementation, we would read data from a file
+    # For now, just print a message
+    println("Would read data from: $filename")
+
+    return RP
+end
+
+# =============================================================================
+# Wall geometry functions
+# =============================================================================
+
+"""
     read_device_wall_data(RP::RAPID{FT}, wall_file_name::String=nothing) where {FT<:AbstractFloat}
 
-Read the device wall geometry data from a file.
+Read the device wall geometry data from a file. This is a non-mutating function that returns
+a new RAPID instance with the wall field updated.
 
-The function reads wall data from a file named "{device_Name}_First_Wall.dat" in the input path
-unless a specific wall_file_name is provided.
-The file should contain the number of wall points in the first line (formatted as "WALL_NUM X")
-followed by the (R,Z) coordinates of each point.
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance
+- `wall_file_name::String=nothing`: Optional specific wall file to read. If not provided,
+  will use "{device_Name}_First_Wall.dat" in the input path.
 
-Returns the RAPID object with the wall field updated.
+# Returns
+- `RP::RAPID{FT}`: The RAPID object with the wall field updated
 """
 function read_device_wall_data(RP::RAPID{FT}, wall_file_name::String=nothing) where {FT<:AbstractFloat}
     # Use provided file name or construct default file path
@@ -257,6 +298,68 @@ function read_device_wall_data(RP::RAPID{FT}, wall_file_name::String=nothing) wh
 
     # Read the wall data and assign to RAPID instance
     RP.wall = read_wall_data_file(file_path, FT)
+
+    return RP
+end
+
+"""
+    read_device_wall_data!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Read the wall geometry data for the device from a file and update the RAPID object in-place.
+This is the Julia version of the MATLAB 'Read_Device_Wall_Data' function.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation object to update
+
+# Returns
+- `RP::RAPID{FT}`: The updated RAPID instance
+"""
+function read_device_wall_data!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Construct the wall data file path
+    wall_file_name = joinpath(RP.config.Input_path, "$(RP.config.device_Name)_First_Wall.dat")
+
+    if !isfile(wall_file_name)
+        error("Wall data file not found: $wall_file_name")
+    end
+
+    # Read the wall data file
+    wall_data = open(wall_file_name, "r") do file
+        lines = readlines(file)
+
+        # Extract the number of wall points from the first line
+        wall_num_match = match(r"WALL_NUM\s+(\d+)", lines[1])
+        if wall_num_match === nothing
+            error("Cannot parse WALL_NUM from wall data file")
+        end
+
+        wall_num = parse(Int, wall_num_match[1])
+
+        # Read the wall coordinates
+        wall_points = zeros(FT, wall_num, 2)
+        for i in 1:wall_num
+            if i+1 > length(lines)
+                error("Wall data file has fewer lines than expected")
+            end
+
+            # Parse R, Z coordinates
+            coords = split(lines[i+1])
+            if length(coords) < 2
+                error("Invalid wall data format at line $(i+1)")
+            end
+
+            wall_points[i, 1] = parse(FT, coords[1])  # R coordinate
+            wall_points[i, 2] = parse(FT, coords[2])  # Z coordinate
+        end
+
+        return (N = wall_num, points = wall_points)
+    end
+
+    # Create the wall geometry object
+    # Close the loop by adding the first point at the end
+    R = [wall_data.points[:, 1]..., wall_data.points[1, 1]]
+    Z = [wall_data.points[:, 2]..., wall_data.points[1, 2]]
+
+    RP.wall = WallGeometry{FT}(R, Z)
 
     return RP
 end
@@ -365,6 +468,53 @@ function read_wall_data_file(file_path::String, FT::Type{<:AbstractFloat}=Float6
         return WallGeometry{FT}(wall_R, wall_Z)
     end
 end
+
+"""
+    is_inside_wall(R::AbstractArray{FT}, Z::AbstractArray{FT}, wall::WallGeometry{FT}) where {FT<:AbstractFloat}
+
+Determine if points (R,Z) are inside the wall boundary.
+This is the Julia version of the MATLAB 'Is_in_Wall' function.
+
+# Arguments
+- `R`: R coordinates of points to check
+- `Z`: Z coordinates of points to check
+- `wall`: Wall geometry object
+
+# Returns
+- Boolean array indicating if each point is inside the wall
+"""
+function is_inside_wall(R::AbstractArray{FT}, Z::AbstractArray{FT}, wall::WallGeometry{FT}) where {FT<:AbstractFloat}
+    # Use Julia's built-in point-in-polygon test
+    # First, make sure R and Z have compatible dimensions
+    @assert size(R) == size(Z) "R and Z must have the same dimensions"
+
+    # Create output array
+    result = similar(R, Bool)
+
+    # Test each point
+    for i in eachindex(R, Z)
+        # Point-in-polygon test using ray casting algorithm
+        inside = false
+        r, z = R[i], Z[i]
+
+        # Loop through each edge of the polygon
+        for j in 1:length(wall.R)-1
+            # Edge from (wall.R[j], wall.Z[j]) to (wall.R[j+1], wall.Z[j+1])
+            if ((wall.Z[j] <= z < wall.Z[j+1]) || (wall.Z[j+1] <= z < wall.Z[j])) &&
+               (r < wall.R[j] + (wall.R[j+1] - wall.R[j]) * (z - wall.Z[j]) / (wall.Z[j+1] - wall.Z[j]))
+                inside = !inside
+            end
+        end
+
+        result[i] = inside
+    end
+
+    return result
+end
+
+# =============================================================================
+# External field data functions
+# =============================================================================
 
 """
     read_break_input_file(file_path::String, FT::Type{<:AbstractFloat}=Float64)
@@ -477,6 +627,43 @@ function read_break_input_file(file_path::String, FT::Type{<:AbstractFloat}=Floa
 end
 
 """
+    read_break_input_file(RP::RAPID{FT}, file_name::String) where {FT<:AbstractFloat}
+
+Read a BREAK input file and convert it to the format used by the RAPID simulation.
+This version takes a RAPID instance for type information and returns a standardized format.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation object (used for type information)
+- `file_name::String`: Path to the input file
+
+# Returns
+- `NamedTuple`: A named tuple containing the field data
+"""
+function read_break_input_file(RP::RAPID{FT}, file_name::String) where {FT<:AbstractFloat}
+    # Use the generic function to read the file data
+    data = read_break_input_file(file_name, FT)
+
+    # Return a consistent format matching what RAPID expects
+    return data
+end
+
+"""
+    meshgrid(x, y)
+
+Create a meshgrid similar to MATLAB's meshgrid function.
+
+# Arguments
+- `x`: 1D array of x coordinates
+- `y`: 1D array of y coordinates
+
+# Returns
+- `Tuple{Matrix, Matrix}`: 2D matrices of x and y coordinates
+"""
+function meshgrid(x, y)
+    return (repeat(x', length(y), 1), repeat(y, 1, length(x)))
+end
+
+"""
     create_new_grid_with_target_resolution(ori_data, target_r_1d, target_z_1d)
 
 Interpolate field data to a new grid with specified resolution.
@@ -494,7 +681,7 @@ function create_new_grid_with_target_resolution(ori_data, target_r_1d, target_z_
     new_r, new_z = meshgrid(target_r_1d, target_z_1d)
 
     # Define interpolation objects
-    # Use cubic spline interpolation for accuracy
+    # Use linear interpolation for stability
     itp_br = interpolate((ori_data.Z[:, 1], ori_data.R[1, :]), ori_data.BR, Gridded(Linear()))
     itp_bz = interpolate((ori_data.Z[:, 1], ori_data.R[1, :]), ori_data.BZ, Gridded(Linear()))
     itp_psi = interpolate((ori_data.Z[:, 1], ori_data.R[1, :]), ori_data.psi, Gridded(Linear()))
@@ -525,22 +712,6 @@ function create_new_grid_with_target_resolution(ori_data, target_r_1d, target_z_
 end
 
 """
-    meshgrid(x, y)
-
-Create a meshgrid similar to MATLAB's meshgrid function.
-
-# Arguments
-- `x`: 1D array of x coordinates
-- `y`: 1D array of y coordinates
-
-# Returns
-- `Tuple{Matrix, Matrix}`: 2D matrices of x and y coordinates
-"""
-function meshgrid(x, y)
-    return (repeat(x', length(y), 1), repeat(y, 1, length(x)))
-end
-
-"""
     read_external_field_time_series(file_path::String="./";
                                     r_num::Union{Int,Nothing}=nothing,
                                     r_min::Union{Float64,Nothing}=nothing,
@@ -548,7 +719,7 @@ end
                                     z_num::Union{Int,Nothing}=nothing,
                                     z_min::Union{Float64,Nothing}=nothing,
                                     z_max::Union{Float64,Nothing}=nothing,
-                                    FT::DataType=Float64) where {FT<:AbstractFloat}
+                                    FT::Type{<:AbstractFloat}=Float64)
 
 Read a time series of external field data from BREAK input files.
 
@@ -560,7 +731,7 @@ Read a time series of external field data from BREAK input files.
 - `z_num::Union{Int,Nothing}`: Number of Z grid points (default: use value from first file)
 - `z_min::Union{Float64,Nothing}`: Minimum Z value (default: use value from first file)
 - `z_max::Union{Float64,Nothing}`: Maximum Z value (default: use value from first file)
-- `FT::DataType=Float64`: Float type to use (default: Float64)
+- `FT::Type{<:AbstractFloat}=Float64`: Float type to use (default: Float64)
 
 # Returns
 - `TimeSeriesExternalField{FT}`: Time series of external field data
@@ -572,7 +743,7 @@ function read_external_field_time_series(file_path::String="./";
                                          z_num::Union{Int,Nothing}=nothing,
                                          z_min::Union{Float64,Nothing}=nothing,
                                          z_max::Union{Float64,Nothing}=nothing,
-                                         FT::Type{<:AbstractFloat}=Float64);
+                                         FT::Type{<:AbstractFloat}=Float64)
 
     # Ensure file_path ends with a path separator
     if !endswith(file_path, Base.Filesystem.path_separator)
@@ -666,11 +837,11 @@ end
 """
     load_external_field_data!(RP::RAPID{FT}, file_path::String="./";
                             r_num::Union{Int,Nothing}=nothing,
-                            r_min::Union{Float64,Nothing}=nothing,
-                            r_max::Union{Float64,Nothing}=nothing,
+                            r_min::Union{FT,Nothing}=nothing,
+                            r_max::Union{FT,Nothing}=nothing,
                             z_num::Union{Int,Nothing}=nothing,
-                            z_min::Union{Float64,Nothing}=nothing,
-                            z_max::Union{Float64,Nothing}=nothing) where {FT<:AbstractFloat}
+                            z_min::Union{FT,Nothing}=nothing,
+                            z_max::Union{FT,Nothing}=nothing) where {FT<:AbstractFloat}
 
 Load external field data from files and set it as the external field source for the RAPID simulation.
 
@@ -691,23 +862,23 @@ function load_external_field_data!(RP::RAPID{FT}, file_path::String="./";
                                 z_min::Union{FT,Nothing}=nothing,
                                 z_max::Union{FT,Nothing}=nothing) where {FT<:AbstractFloat}
 
-    # If grid parameters are not provided, use current grid parameters from RP
-    if isnothing(r_num)
+    # Use the grid parameters from RP if not provided
+    if isnothing(r_num) && hasfield(typeof(RP.G), :NR)
         r_num = RP.G.NR
     end
-    if isnothing(r_min)
+    if isnothing(r_min) && hasfield(typeof(RP.G), :R1D) && !isempty(RP.G.R1D)
         r_min = minimum(RP.G.R1D)
     end
-    if isnothing(r_max)
+    if isnothing(r_max) && hasfield(typeof(RP.G), :R1D) && !isempty(RP.G.R1D)
         r_max = maximum(RP.G.R1D)
     end
-    if isnothing(z_num)
+    if isnothing(z_num) && hasfield(typeof(RP.G), :NZ)
         z_num = RP.G.NZ
     end
-    if isnothing(z_min)
+    if isnothing(z_min) && hasfield(typeof(RP.G), :Z1D) && !isempty(RP.G.Z1D)
         z_min = minimum(RP.G.Z1D)
     end
-    if isnothing(z_max)
+    if isnothing(z_max) && hasfield(typeof(RP.G), :Z1D) && !isempty(RP.G.Z1D)
         z_max = maximum(RP.G.Z1D)
     end
 

@@ -31,7 +31,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     else
         file_path = joinpath(RP.config.Input_path, RP.config.device_Name,
                             RP.config.shot_Name)
-        set_RZ_B_E_from_file!(RP, file_path)
+        load_external_field_data!(RP, file_path)
     end
 
     # Initialize damping function
@@ -42,8 +42,8 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Set up grid and wall information
     setup_grid_and_wall!(RP)
 
-    # Update vacuum fields
-    update_external_fields!(RP)
+    # Load external field data
+    # load_external_field_data!(RP)
 
     # Initialize reaction rate coefficients
     initialize_reaction_rates!(RP)
@@ -155,18 +155,28 @@ function initialize_diagnostics!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-# Placeholder for detailed implementations
+"""
+    set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Set up electromagnetic fields manually for a test case.
+This initializes a simple geometry with analytical field configurations.
+"""
 function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "set_RZ_B_E_manually! implementation needed"
+    # Set grid dimensions
+    NR = RP.G.NR > 0 ? RP.G.NR : 50  # Default if not already set
+    NZ = RP.G.NZ > 0 ? RP.G.NZ : 100 # Default if not already set
 
-    # Basic grid setup
-    RP.G.R1D = collect(range(FT(1.0), FT(2.0), length=RP.G.NR))
-    RP.G.Z1D = collect(range(FT(-0.5), FT(0.5), length=RP.G.NZ))
+    # Set domain boundaries
+    R_max = FT(2.4)
+    R_min = FT(0.8)
+    Z_max = FT(1.2)
+    Z_min = FT(-1.2)
 
-    # Create 2D grid
-    RP.G.R2D = repeat(RP.G.R1D', RP.G.NZ, 1)
-    RP.G.Z2D = repeat(RP.G.Z1D, 1, RP.G.NR)
+    # Create a 2D grid
+    RP.G.R1D = collect(range(R_min, R_max, length=NR))
+    RP.G.Z1D = collect(range(Z_min, Z_max, length=NZ))
+    RP.G.R2D = repeat(RP.G.R1D', NZ, 1)
+    RP.G.Z2D = repeat(RP.G.Z1D, 1, NR)
 
     # Grid spacing
     RP.G.dR = RP.G.R1D[2] - RP.G.R1D[1]
@@ -174,29 +184,118 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Jacobian - for cylindrical coordinates, this is r
     RP.G.Jacob = copy(RP.G.R2D)
-    RP.G.inv_Jacob = 1.0 ./ RP.G.Jacob
+    RP.G.inv_Jacob = FT(1.0) ./ RP.G.Jacob
 
-    # Create a circular wall
-    theta = collect(range(0, 2π, length=100))
-    center_R = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
-    center_Z = (RP.G.Z1D[1] + RP.G.Z1D[end]) / 2
-    radius = min((RP.G.R1D[end] - RP.G.R1D[1]),
-                (RP.G.Z1D[end] - RP.G.Z1D[1])) * 0.45
+    # Create rectangular wall
+    RP.wall = WallGeometry{FT}(
+        [FT(1.0), FT(2.0), FT(2.0), FT(1.0), FT(1.0)],  # Wall R coordinates
+        [FT(-1.0), FT(-1.0), FT(1.0), FT(1.0), FT(-1.0)]  # Wall Z coordinates
+    )
 
-    wall_R = center_R .+ radius .* cos.(theta)
-    wall_Z = center_Z .+ radius .* sin.(theta)
+    # Initialize fields if not already created
+    if !isdefined(RP, :fields) || isnothing(RP.fields)
+        RP.fields = Fields{FT}(NZ, NR)
+    end
 
-    RP.wall = WallGeometry{FT}(wall_R, wall_Z)
+    # Set basic field strengths
+    Bpol = FT(5e-3)  # Poloidal field strength
+
+    # Create fields
+    RP.fields.Bϕ = RP.config.R0B0 ./ RP.G.R2D
+    RP.fields.BR = zeros(FT, NZ, NR)
+    RP.fields.BZ = Bpol * ones(FT, NZ, NR)
+
+    # Compute derived field quantities
+    RP.fields.Bpol = sqrt.(RP.fields.BR.^2 .+ RP.fields.BZ.^2)
+    RP.fields.Btot = sqrt.(RP.fields.BR.^2 .+ RP.fields.BZ.^2 .+ RP.fields.Bϕ.^2)
+
+    # Unit vectors for the fields
+    RP.fields.bR = RP.fields.BR ./ RP.fields.Btot
+    RP.fields.bZ = RP.fields.BZ ./ RP.fields.Btot
+    RP.fields.bϕ = RP.fields.Bϕ ./ RP.fields.Btot
+
+    # Electric field
+    Eϕ = FT(0.3) * mean(RP.G.R1D) ./ RP.G.R2D  # 0.3 V/m
+    RP.fields.Eϕ_ext = Eϕ
+    RP.fields.LV_ext = Eϕ .* (2 * π * RP.G.R2D)
+
+    # Parallel component of E
+    RP.fields.E_para_ext = Eϕ .* (RP.fields.Bϕ ./ RP.fields.Btot)
+
+    # Initialize other field components
+    RP.fields.BR_ext = copy(RP.fields.BR)
+    RP.fields.BZ_ext = copy(RP.fields.BZ)
+    RP.fields.psi_ext = zeros(FT, NZ, NR)
+
+    # Copy external fields to total fields initially
+    RP.fields.E_para_tot = copy(RP.fields.E_para_ext)
 
     return RP
 end
 
-function set_RZ_B_E_from_file!(RP::RAPID{FT}, file_path::String) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "set_RZ_B_E_from_file! implementation needed"
+"""
+    set_RZ_B_E_from_file!(RP::RAPID{FT}, file_path::String) where {FT<:AbstractFloat}
 
-    # Just call the manual method for now
-    set_RZ_B_E_manually!(RP)
+Set up electromagnetic fields from external files.
+This function loads field data from the specified path and initializes the simulation grid.
+"""
+function set_RZ_B_E_from_file!(RP::RAPID{FT}, file_path::String) where {FT<:AbstractFloat}
+
+
+    # Read device wall data
+    read_device_wall_data!(RP)
+
+    # Extract grid dimensions from the external field data
+    NR = extF.R_NUM
+    NZ = extF.Z_NUM
+    R_max = extF.R_MAX
+    R_min = extF.R_MIN
+    Z_max = extF.Z_MAX
+    Z_min = extF.Z_MIN
+
+    # Set grid dimensions
+    RP.G.NR = NR
+    RP.G.NZ = NZ
+
+    # Create 2D grid
+    RP.G.R1D = collect(range(R_min, R_max, length=NR))
+    RP.G.Z1D = collect(range(Z_min, Z_max, length=NZ))
+    RP.G.R2D = repeat(RP.G.R1D', NZ, 1)
+    RP.G.Z2D = repeat(RP.G.Z1D, 1, NR)
+
+    # Grid spacing
+    RP.G.dR = RP.G.R1D[2] - RP.G.R1D[1]
+    RP.G.dZ = RP.G.Z1D[2] - RP.G.Z1D[1]
+
+    # Jacobian - for cylindrical coordinates, this is r
+    RP.G.Jacob = copy(RP.G.R2D)
+    RP.G.inv_Jacob = FT(1.0) ./ RP.G.Jacob
+
+    # Initialize fields structure if not already created
+    if !isdefined(RP, :fields) || isnothing(RP.fields)
+        RP.fields = Fields{FT}(NZ, NR)
+    end
+
+    # Set toroidal field (this is the only field calculated directly rather than from external data)
+    RP.fields.Bϕ = RP.config.R0B0 ./ RP.G.R2D
+
+    # Store external field data for time interpolation
+    RP.external_field = read_external_field_time_series(file_path, FT=FT)
+
+    # Initialize self-field components to zero
+    RP.fields.BR_self = zeros(FT, NZ, NR)
+    RP.fields.BZ_self = zeros(FT, NZ, NR)
+    RP.fields.psi_self = zeros(FT, NZ, NR)
+    RP.fields.Eϕ_self = zeros(FT, NZ, NR)
+
+    # Use update_external_fields! to handle the interpolation and derived field calculations
+    # This ensures consistent field handling between initialization and runtime updates
+    # Start at the first time point in the data
+    initial_time = extF.time_s[1]
+    update_external_fields!(RP, initial_time)
+
+    # Store a reference to external field data for later use
+    RP.vacF = extF
 
     return RP
 end
@@ -596,3 +695,5 @@ function initialize_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     return RP
 end
+
+export initialize!
