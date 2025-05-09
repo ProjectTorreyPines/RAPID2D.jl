@@ -100,75 +100,72 @@ WallGeometry(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat} = WallGeome
 """
     PlasmaState{FT<:AbstractFloat}
 
-Contains the plasma state variables.
-
-Fields include density, temperature, and velocity components for electrons and ions.
+Contains the plasma state variables including density, temperature, and velocity components.
 """
 Base.@kwdef mutable struct PlasmaState{FT<:AbstractFloat}
+    # Dimensions
+    dims::Tuple{Int,Int}
+
+    # Gas temperature (scalar)
+    T_gas_eV::FT = FT(0.026)           # Gas temperature [eV]
+
     # Densities
-    ne::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Electron density [m^-3]
-    ni::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Ion density [m^-3]
-    n_H2_gas::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # H2 gas density [m^-3]
+    ne::Matrix{FT} = zeros(FT, dims)    # Electron density [m^-3]
+    ni::Matrix{FT} = zeros(FT, dims)    # Ion density [m^-3]
+    n_H2_gas::Matrix{FT} = zeros(FT, dims)  # H2 gas density [m^-3]
 
     # Temperatures
-    Te_eV::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # Electron temperature [eV]
-    Ti_eV::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # Ion temperature [eV]
-    T_gas_eV::FT = FT(0.026)         # Gas temperature [eV], defaults to room temperature ~300K
+    Te_eV::Matrix{FT} = zeros(FT, dims) # Electron temperature [eV]
+    Ti_eV::Matrix{FT} = zeros(FT, dims) # Ion temperature [eV]
 
     # Velocities - parallel components
-    ue_para::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Electron parallel velocity [m/s]
-    ui_para::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Ion parallel velocity [m/s]
+    ue_para::Matrix{FT} = zeros(FT, dims)  # Electron parallel velocity [m/s]
+    ui_para::Matrix{FT} = zeros(FT, dims)  # Ion parallel velocity [m/s]
 
     # Velocities - vector components
-    ueR::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Electron R velocity [m/s]
-    ueZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Electron Z velocity [m/s]
-    ueϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)   # Electron ϕ velocity [m/s]
-
-    uiR::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Ion R velocity [m/s]
-    uiZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Ion Z velocity [m/s]
-    uiϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)   # Ion ϕ velocity [m/s]
+    ueR::Matrix{FT} = zeros(FT, dims)   # Electron R velocity [m/s]
+    ueZ::Matrix{FT} = zeros(FT, dims)   # Electron Z velocity [m/s]
+    ueϕ::Matrix{FT} = zeros(FT, dims)   # Electron ϕ velocity [m/s]
+    uiR::Matrix{FT} = zeros(FT, dims)   # Ion R velocity [m/s]
+    uiZ::Matrix{FT} = zeros(FT, dims)   # Ion Z velocity [m/s]
+    uiϕ::Matrix{FT} = zeros(FT, dims)   # Ion ϕ velocity [m/s]
 
     # Collision parameters
-    lnA::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Coulomb logarithm
-    nu_ei::Matrix{FT} = Matrix{FT}(undef, 0, 0)   # Electron-ion collision frequency [1/s]
-    sptz_fac::Matrix{FT} = Matrix{FT}(undef, 0, 0) # Spitzer factor for conductivity
+    lnA::Matrix{FT} = zeros(FT, dims)   # Coulomb logarithm
+    nu_ei::Matrix{FT} = zeros(FT, dims) # Electron-ion collision frequency [1/s]
+    sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
 
-    # Constructor for matrices with specific dimensions
-    function PlasmaState{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
-        # Pre-allocate arrays
-        ne = zeros(FT, NZ, NR)
-        ni = zeros(FT, NZ, NR)
-        n_H2_gas = zeros(FT, NZ, NR)
+    # Current densities
+    Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
 
-        Te_eV = zeros(FT, NZ, NR)
-        Ti_eV = zeros(FT, NZ, NR)
-        T_gas_eV = FT(0.026)  # Room temperature ~300K
+    # Power sources/sinks
+    ePowers::Dict{Symbol, Matrix{FT}} = Dict{Symbol, Matrix{FT}}(
+        :tot => zeros(FT, dims),
+        :diffu => zeros(FT, dims),
+        :conv => zeros(FT, dims),
+        :heat => zeros(FT, dims),
+        :drag => zeros(FT, dims),
+        :equi => zeros(FT, dims),
+        :iz => zeros(FT, dims),
+        :exc => zeros(FT, dims),
+        :dilution => zeros(FT, dims)
+    )
 
-        ue_para = zeros(FT, NZ, NR)
-        ui_para = zeros(FT, NZ, NR)
-
-        ueR = zeros(FT, NZ, NR)
-        ueZ = zeros(FT, NZ, NR)
-        ueϕ = zeros(FT, NZ, NR)
-
-        uiR = zeros(FT, NZ, NR)
-        uiZ = zeros(FT, NZ, NR)
-        uiϕ = zeros(FT, NZ, NR)
-
-        lnA = zeros(FT, NZ, NR)
-        nu_ei = zeros(FT, NZ, NR)
-        sptz_fac = zeros(FT, NZ, NR)
-
-        return new{FT}(
-            ne, ni, n_H2_gas,
-            Te_eV, Ti_eV, T_gas_eV,
-            ue_para, ui_para,
-            ueR, ueZ, ueϕ,
-            uiR, uiZ, uiϕ,
-            lnA, nu_ei, sptz_fac
-        )
-    end
+    iPowers::Dict{Symbol, Matrix{FT}} = Dict{Symbol, Matrix{FT}}(
+        :tot => zeros(FT, dims),
+        :atomic => zeros(FT, dims),
+        :equi => zeros(FT, dims)
+    )
 end
+
+# Constructor with separate dimensions
+function PlasmaState{FT}(NR::Int, NZ::Int; kwargs...) where {FT<:AbstractFloat}
+    return PlasmaState{FT}(dims=(NZ, NR); kwargs...)
+end
+
+# Type-inferring convenience constructor
+PlasmaState(dims::Tuple{Int,Int}, ::Type{FT}=Float64; kwargs...) where {FT<:AbstractFloat} =
+    PlasmaState{FT}(dims=dims; kwargs...)
 
 """
     Fields{FT<:AbstractFloat}
@@ -178,65 +175,60 @@ Contains the electromagnetic field variables.
 Fields include components of the magnetic and electric fields.
 """
 Base.@kwdef mutable struct Fields{FT<:AbstractFloat}
+    # Dimensions
+    dims::Tuple{Int,Int}
+
     # External fields
-    BR_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)       # External radial magnetic field [T]
-    BZ_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)       # External vertical magnetic field [T]
-    LV_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)       # External Loop Voltage [V]
-    psi_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # External magnetic flux [Wb/rad]
-    Eϕ_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # External toroidal electric field [V/m]
-    E_para_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)   # External parallel electric field [V/m]
+    BR_ext::Matrix{FT} = zeros(FT, dims)        # External radial magnetic field [T]
+    BZ_ext::Matrix{FT} = zeros(FT, dims)        # External vertical magnetic field [T]
+    LV_ext::Matrix{FT} = zeros(FT, dims)        # External Loop Voltage [V]
+    psi_ext::Matrix{FT} = zeros(FT, dims)       # External magnetic flux [Wb/rad]
+    Eϕ_ext::Matrix{FT} = zeros(FT, dims)        # External toroidal electric field [V/m]
+    E_para_ext::Matrix{FT} = zeros(FT, dims)    # External parallel electric field [V/m]
 
     # Self-generated fields
-    BR_self::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Self-generated radial magnetic field [T]
-    BZ_self::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Self-generated vertical magnetic field [T]
-    psi_self::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Self-generated magnetic flux [Wb/rad]
-    Eϕ_self::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # Self-generated toroidal electric field [V/m]
-    E_para_self_ES::Matrix{FT} = Matrix{FT}(undef, 0, 0) # Electrostatic self-generated parallel electric field [V/m]
-    E_para_self_EM::Matrix{FT} = Matrix{FT}(undef, 0, 0) # Electromagnetic self-generated parallel electric field [V/m]
+    BR_self::Matrix{FT} = zeros(FT, dims)       # Self-generated radial magnetic field [T]
+    BZ_self::Matrix{FT} = zeros(FT, dims)       # Self-generated vertical magnetic field [T]
+    psi_self::Matrix{FT} = zeros(FT, dims)      # Self-generated magnetic flux [Wb/rad]
+    Eϕ_self::Matrix{FT} = zeros(FT, dims)       # Self-generated toroidal electric field [V/m]
+    E_para_self_ES::Matrix{FT} = zeros(FT, dims) # Electrostatic self-generated parallel electric field [V/m]
+    E_para_self_EM::Matrix{FT} = zeros(FT, dims) # Electromagnetic self-generated parallel electric field [V/m]
 
     # Total fields - external + self-generated
-    BR::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Total radial magnetic field [T]
-    BZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Total vertical magnetic field [T]
-    Bϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Toroidal magnetic field [T]
+    BR::Matrix{FT} = zeros(FT, dims)            # Total radial magnetic field [T]
+    BZ::Matrix{FT} = zeros(FT, dims)            # Total vertical magnetic field [T]
+    Bϕ::Matrix{FT} = zeros(FT, dims)            # Toroidal magnetic field [T]
 
     # Derived field quantities
-    Bpol::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Poloidal magnetic field [T]
-    Btot::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Total magnetic field [T]
+    Bpol::Matrix{FT} = zeros(FT, dims)          # Poloidal magnetic field [T]
+    Btot::Matrix{FT} = zeros(FT, dims)          # Total magnetic field [T]
 
     # Magnetic field unit vectors
-    bR::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Radial unit vector
-    bZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Vertical unit vector
-    bϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Toroidal unit vector
+    bR::Matrix{FT} = zeros(FT, dims)            # Radial unit vector
+    bZ::Matrix{FT} = zeros(FT, dims)            # Vertical unit vector
+    bϕ::Matrix{FT} = zeros(FT, dims)            # Toroidal unit vector
 
     # Electric field components
-    ER::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Radial electric field [V/m]
-    EZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Vertical electric field [V/m]
-    Eϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Toroidal electric field [V/m]
+    ER::Matrix{FT} = zeros(FT, dims)            # Radial electric field [V/m]
+    EZ::Matrix{FT} = zeros(FT, dims)            # Vertical electric field [V/m]
+    Eϕ::Matrix{FT} = zeros(FT, dims)            # Toroidal electric field [V/m]
 
     # Parallel electric field
-    E_para_ind::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Induced parallel electric field [V/m]
-    E_para_tot::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Total parallel electric field [V/m]
+    E_para_ind::Matrix{FT} = zeros(FT, dims)    # Induced parallel electric field [V/m]
+    E_para_tot::Matrix{FT} = zeros(FT, dims)    # Total parallel electric field [V/m]
 
     # Magnetic flux
-    psi::Matrix{FT} = Matrix{FT}(undef, 0, 0)       # Total magnetic flux [Wb/rad]
-
-    # Constructor for matrices with specific dimensions
-    function Fields{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
-        # Initialize all fields with zeros
-        matrices = [zeros(FT, NZ, NR) for _ in 1:27]
-
-        return new{FT}(
-            matrices[1], matrices[2], matrices[3], matrices[4], matrices[5], matrices[6],
-            matrices[7], matrices[8], matrices[9], matrices[10], matrices[11], matrices[12],
-            matrices[13], matrices[14], matrices[15],
-            matrices[16], matrices[17],
-            matrices[18], matrices[19], matrices[20],
-            matrices[21], matrices[22], matrices[23],
-            matrices[24], matrices[25],
-            matrices[26]
-        )
-    end
+    psi::Matrix{FT} = zeros(FT, dims)           # Total magnetic flux [Wb/rad]
 end
+
+# Constructor with separate dimensions
+function Fields{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
+    return Fields{FT}(dims=(NZ, NR))
+end
+
+# Type-inferring convenience constructor
+Fields(dims::Tuple{Int,Int}, ::Type{FT}=Float64) where {FT<:AbstractFloat} =
+    Fields{FT}(dims=dims)
 
 """
     Transport{FT<:AbstractFloat}
@@ -246,32 +238,31 @@ Contains the transport coefficients for the plasma.
 Fields include diffusion coefficients in different directions.
 """
 Base.@kwdef mutable struct Transport{FT<:AbstractFloat}
+    # Dimensions
+    dims::Tuple{Int,Int}
+
     # Base diffusivity values
     Dpara0::FT = FT(1.0)            # Base parallel diffusion coefficient [m²/s]
     Dperp0::FT = FT(0.1)            # Base perpendicular diffusion coefficient [m²/s]
 
     # Spatially-varying diffusion coefficients
-    Dpara::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Parallel diffusion coefficient [m²/s]
-    Dperp::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Perpendicular diffusion coefficient [m²/s]
+    Dpara::Matrix{FT} = zeros(FT, dims)  # Parallel diffusion coefficient [m²/s]
+    Dperp::Matrix{FT} = zeros(FT, dims)  # Perpendicular diffusion coefficient [m²/s]
 
     # Diffusion tensor components
-    DRR::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # R-R component of diffusion tensor
-    DRZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # R-Z component of diffusion tensor
-    DZZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # Z-Z component of diffusion tensor
-
-    # Constructor for matrices with specific dimensions
-    function Transport{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
-        # Pre-allocate arrays
-        Dpara = zeros(FT, NZ, NR)
-        Dperp = zeros(FT, NZ, NR)
-
-        DRR = zeros(FT, NZ, NR)
-        DRZ = zeros(FT, NZ, NR)
-        DZZ = zeros(FT, NZ, NR)
-
-        return new{FT}(FT(1.0), FT(0.1), Dpara, Dperp, DRR, DRZ, DZZ)
-    end
+    DRR::Matrix{FT} = zeros(FT, dims)    # R-R component of diffusion tensor
+    DRZ::Matrix{FT} = zeros(FT, dims)    # R-Z component of diffusion tensor
+    DZZ::Matrix{FT} = zeros(FT, dims)    # Z-Z component of diffusion tensor
 end
+
+# Constructor with separate dimensions
+function Transport{FT}(NR::Int, NZ::Int; Dpara0::FT=FT(1.0), Dperp0::FT=FT(0.1)) where FT<:AbstractFloat
+    return Transport{FT}(dims=(NZ, NR), Dpara0=Dpara0, Dperp0=Dperp0)
+end
+
+# Type-inferring convenience constructor
+Transport(dims::Tuple{Int,Int}, ::Type{FT}=Float64; kwargs...) where {FT<:AbstractFloat} =
+    Transport{FT}(dims=dims; kwargs...)
 
 """
     Operators{FT<:AbstractFloat}
@@ -280,18 +271,27 @@ Contains the numerical operators used in the simulation.
 
 Fields include various matrices for solving different parts of the model.
 """
-mutable struct Operators{FT<:AbstractFloat}
+Base.@kwdef mutable struct Operators{FT<:AbstractFloat}
+    # Dimensions
+    dims::Tuple{Int,Int}
+
     # Operators for solving equations
-    A_GS::SparseMatrixCSC{FT, Int}  # Matrix for Grad-Shafranov equation
+    A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Matrix for Grad-Shafranov equation
 
-    # Constructor
-    function Operators{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
-        # Initialize with empty sparse matrix of correct type
-        # Will be populated later when needed
-        A_GS = spzeros(FT, NR*NZ, NR*NZ)
+    # RHS vectors for various equations
+    neRHS_diffu::Matrix{FT} = zeros(FT, dims)  # RHS for diffusion term in electron continuity
+    neRHS_convec::Matrix{FT} = zeros(FT, dims) # RHS for convection term in electron continuity
+    neRHS_src::Matrix{FT} = zeros(FT, dims)    # RHS for source term in electron continuity
+end
 
-        return new{FT}(A_GS)
-    end
+# Constructor with separate dimensions
+function Operators{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
+    return Operators{FT}(dims=(NZ, NR))
+end
+
+# Dimensional tuple with type inference constructor
+function Operators(dims::Tuple{Int,Int}, ::Type{FT}=Float64) where FT<:AbstractFloat
+    return Operators{FT}(dims=dims)
 end
 
 """
@@ -502,181 +502,118 @@ abstract type AbstractExternalField{FT<:AbstractFloat} end
 """
     RAPID{FT<:AbstractFloat}
 
-The main simulation structure containing all simulation data.
-
-Fields include grid information, physical fields, and simulation state.
+The main simulation structure containing all simulation data including grid information,
+physical fields, and simulation state.
 """
 mutable struct RAPID{FT<:AbstractFloat}
-    # Grid geometry
-    G::GridGeometry{FT}         # Grid geometry containing all grid-related properties
-
-    # Wall geometry
-    wall::WallGeometry{FT}       # Wall geometry data
-    damping_func::Matrix{FT}     # Damping function outside wall
+    # Grid and wall geometry
+    G::GridGeometry{FT}               # Grid geometry
+    wall::WallGeometry{FT}            # Wall geometry data
+    damping_func::Matrix{FT}          # Damping function outside wall
 
     # Grid masks
-    cell_state::Matrix{Int}      # Cell state (1 inside wall, -1 outside)
-    in_wall_nids::Vector{Int}     # Linear indices of cells inside wall
-    out_wall_nids::Vector{Int}    # Linear indices of cells outside wall
-
-    # Volume elements
-    device_inVolume::FT          # Total volume inside wall
+    cell_state::Matrix{Int}           # Cell state (1 inside wall, -1 outside)
+    in_wall_nids::Vector{Int}         # Linear indices of cells inside wall
+    out_wall_nids::Vector{Int}        # Linear indices of cells outside wall
+    device_inVolume::FT               # Total volume inside wall
 
     # External field source
-    external_field::Union{Nothing, AbstractExternalField{FT}}  # External electromagnetic field source
+    external_field::Union{Nothing, AbstractExternalField{FT}}  # External EM field source
 
     # Reaction rate coefficients
-    eRRC::Dict{Symbol, Any}     # Electron reaction rate coefficients
-    iRRC::Dict{Symbol, Any}     # Ion reaction rate coefficients
+    eRRC::Dict{Symbol, Any}           # Electron reaction rate coefficients
+    iRRC::Dict{Symbol, Any}           # Ion reaction rate coefficients
 
     # Physical components
-    config::SimulationConfig{FT} # Simulation configuration
-    flags::SimulationFlags      # Simulation flags
-    plasma::PlasmaState{FT}     # Plasma state variables
-    fields::Fields{FT}           # Field variables
-    transport::Transport{FT}     # Transport coefficients
-    operators::Operators{FT}     # Numerical operators
+    config::SimulationConfig{FT}      # Simulation configuration
+    flags::SimulationFlags            # Simulation flags
+    plasma::PlasmaState{FT}           # Plasma state variables
+    fields::Fields{FT}                # Field variables
+    transport::Transport{FT}          # Transport coefficients
+    operators::Operators{FT}          # Numerical operators
 
     # Time evolution
-    step::Int                   # Current time step
-    time_s::FT                   # Current time [s]
-    t_start_s::FT                # Start time [s]
-    t_end_s::FT                  # End time [s]
-    dt::FT                       # Time step [s]
+    step::Int                         # Current time step
+    time_s::FT                        # Current time [s]
+    t_start_s::FT                     # Start time [s]
+    t_end_s::FT                       # End time [s]
+    dt::FT                            # Time step [s]
 
-    # Previous state for time stepping
-    prev_n::Matrix{FT}           # Previous density
+    # Previous state and diagnostics
+    prev_n::Matrix{FT}                # Previous density
+    tElap::Dict{Symbol, Float64}      # Elapsed times
+    diagnostics::Dict{Symbol, Any}    # Diagnostic data
 
-    # Performance tracking
-    tElap::Dict{Symbol, Float64} # Elapsed times for different parts
+    # Primary constructor - from config
+    function RAPID{FT}(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
+        # Get grid dimensions
+        NR, NZ = config.NR, config.NZ
+        dims = (NZ, NR)
 
-    # Diagnostics
-    diagnostics::Dict{Symbol, Any} # Diagnostic data
+        # Initialize sub-components
+        G = GridGeometry{FT}(NR, NZ)
+        wall = WallGeometry{FT}()
+        plasma = PlasmaState{FT}(dims)
+        fields = Fields{FT}(dims)
+        transport = Transport{FT}(dims; Dpara0=config.Dpara0, Dperp0=config.Dperp0)
+        operators = Operators{FT}(dims)
+        flags = SimulationFlags()
 
-    # Constructor
-    function RAPID{FT}(NR::Int, NZ::Int;
-                      t_start::FT=FT(0.0),
-                      t_end::FT=FT(1.0e-3),
-                      dt::FT=FT(1.0e-9)) where FT<:AbstractFloat
-        # Create a new RAPID instance
-        RP = new{FT}()
+        # Initialize matrices
+        damping_func = zeros(FT, dims)
+        cell_state = zeros(Int, dims)
+        prev_n = zeros(FT, dims)
 
-        # Initialize grid geometry
-        RP.G = GridGeometry{FT}(NR, NZ)
+        # Initialize empty containers
+        in_wall_nids = Vector{Int}()
+        out_wall_nids = Vector{Int}()
+        eRRC = Dict{Symbol, Any}()
+        iRRC = Dict{Symbol, Any}()
+        tElap = Dict{Symbol, Float64}()
+        diagnostics = Dict{Symbol, Any}()
 
-        # Initialize time parameters
-        RP.step = 0
-        RP.time_s = t_start
-        RP.t_start_s = t_start
-        RP.t_end_s = t_end
-        RP.dt = dt
-
-        # Create default configuration
-        RP.config = SimulationConfig{FT}()
-
-        # Create flags with defaults
-        RP.flags = SimulationFlags()
-
-        # Initialize diagnostics
-        RP.diagnostics = Dict{Symbol, Any}()
-
-        # Create emtpy wall geometry
-        RP.wall = WallGeometry{FT}()
-        RP.damping_func = zeros(FT, RP.G.NZ, RP.G.NR)
-
-        # Initialize grid masks with empty or zero-filled arrays
-        RP.cell_state = zeros(Int, RP.G.NZ, RP.G.NR)
-        RP.in_wall_nids = Vector{Int}()
-        RP.out_wall_nids = Vector{Int}()
-
-        # Initialize volume elements
-        RP.device_inVolume = FT(0.0)
-
-        # Initialize physical state objects
-        RP.plasma = PlasmaState{FT}(RP.G.NR, RP.G.NZ)
-        RP.fields = Fields{FT}(RP.G.NR, RP.G.NZ)
-        RP.transport = Transport{FT}(RP.G.NR, RP.G.NZ)
-        RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
-
-        # Initialize previous state
-        RP.prev_n = zeros(FT, RP.G.NZ, RP.G.NR)
-
-        # Empty dictionaries
-        RP.eRRC = Dict{Symbol, Any}()
-        RP.iRRC = Dict{Symbol, Any}()
-        RP.tElap = Dict{Symbol, Float64}()
-
-        # Set external field to nothing initially
-        RP.external_field = nothing
-
-        return RP
-    end
-
-    # Constructor from SimulationConfig
-    function RAPID{FT}(config::SimulationConfig{FT}) where FT<:AbstractFloat
-        # Create a new RAPID instance
-        RP = new{FT}()
-
-        # Extract grid dimensions from config
-        NR = config.NR
-        NZ = config.NZ
-
-        # Initialize grid geometry
-        RP.G = GridGeometry{FT}(NR, NZ)
-
-        # Initialize time parameters from config
-        RP.step = 0
-        RP.time_s = config.t_start_s
-        RP.t_start_s = config.t_start_s
-        RP.t_end_s = config.t_end_s
-        RP.dt = config.dt
-
-        # Store the provided configuration
-        RP.config = config
-
-        # Create flags with defaults
-        RP.flags = SimulationFlags()
-
-        # Initialize diagnostics
-        RP.diagnostics = Dict{Symbol, Any}()
-
-        # Create empty wall geometry
-        RP.wall = WallGeometry{FT}()
-        RP.damping_func = zeros(FT, RP.G.NZ, RP.G.NR)
-
-        # Initialize grid masks with empty or zero-filled arrays
-        RP.cell_state = zeros(Int, RP.G.NZ, RP.G.NR)
-        RP.in_wall_nids = Vector{Int}()
-        RP.out_wall_nids = Vector{Int}()
-
-        # Initialize volume elements
-        RP.device_inVolume = FT(0.0)
-
-        # Initialize physical state objects
-        RP.plasma = PlasmaState{FT}(RP.G.NR, RP.G.NZ)
-        RP.fields = Fields{FT}(RP.G.NR, RP.G.NZ)
-        RP.transport = Transport{FT}(RP.G.NR, RP.G.NZ)
-
-        # Initialize transport parameters from config
-        RP.transport.Dpara0 = config.Dpara0
-        RP.transport.Dperp0 = config.Dperp0
-
-        RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
-
-        # Initialize previous state
-        RP.prev_n = zeros(FT, RP.G.NZ, RP.G.NR)
-
-        # Empty dictionaries
-        RP.eRRC = Dict{Symbol, Any}()
-        RP.iRRC = Dict{Symbol, Any}()
-        RP.tElap = Dict{Symbol, Float64}()
-
-        # Set external field to nothing initially
-        RP.external_field = nothing
-
-        return RP
+        # Create and return new instance
+        return new{FT}(
+            G, wall, damping_func,
+            cell_state, in_wall_nids, out_wall_nids, FT(0.0),
+            nothing,  # external_field
+            eRRC, iRRC,
+            config, flags, plasma, fields, transport, operators,
+            0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
+            prev_n, tElap, diagnostics
+        )
     end
 end
+
+# Convenience constructors
+
+"""
+    RAPID{FT}(NR::Int, NZ::Int; kwargs...)
+
+Create a RAPID instance with the specified grid dimensions.
+"""
+function RAPID{FT}(NR::Int, NZ::Int;
+                  t_start::FT=FT(0.0),
+                  t_end::FT=FT(1.0e-3),
+                  dt::FT=FT(1.0e-9),
+                  kwargs...) where {FT<:AbstractFloat}
+    # Create a default config with provided dimensions and time params
+    config = SimulationConfig{FT}(;
+        NR=NR,
+        NZ=NZ,
+        t_start_s=t_start,
+        t_end_s=t_end,
+        dt=dt,
+        kwargs...
+    )
+
+    # Use the primary constructor
+    return RAPID{FT}(config)
+end
+
+# Type-inferring constructor
+RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
+RAPID(config::SimulationConfig{FT}) where {FT<:AbstractFloat} = RAPID{FT}(config)
 
 # Export types
 export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, RAPID, GridGeometry, NodeState
