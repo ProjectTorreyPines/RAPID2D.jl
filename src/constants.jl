@@ -24,46 +24,23 @@ Fields:
 - `electron_mass_eV`: Electron mass [eV/c²]
 - `proton_mass_eV`: Proton mass [eV/c²]
 """
-struct PlasmaConstants{FT<:AbstractFloat}
+Base.@kwdef struct PlasmaConstants{FT<:AbstractFloat}
     # Basic physical constants
-    ee::FT         # Elementary charge [C]
-    me::FT         # Electron mass [kg]
-    mi::FT         # Ion mass (H2+) [kg]
-    mp::FT         # Proton mass [kg]
-    eps0::FT       # Vacuum permittivity [F/m]
-    mu0::FT        # Vacuum permeability [H/m]
-    kB::FT         # Boltzmann constant [J/K]
-    c_light::FT    # Speed of light in vacuum [m/s]
-    room_T_eV::FT  # Room temperature [eV]
+    ee::FT = FT(1.602176634e-19)    # Elementary charge [C]
+    me::FT = FT(9.1093837015e-31)   # Electron mass [kg]
+    mi::FT = FT(3.34754699166e-27)  # H2+ ion mass [kg]
+    mp::FT = FT(1.67262192369e-27)  # Proton mass [kg]
+    eps0::FT = FT(8.8541878128e-12) # Vacuum permittivity [F/m]
+    mu0::FT = FT(1.25663706212e-6)  # Vacuum permeability [H/m]
+    kB::FT = FT(1.380649e-23)       # Boltzmann constant [J/K]
+    c_light::FT = FT(299792458.0)   # Speed of light in vacuum [m/s]
+    room_T_eV::FT = FT(0.026)       # Room temperature [eV]
 
     # Derived constants
-    eV_to_J::FT    # Conversion from eV to J [J/eV]
-    eV_to_K::FT    # Conversion from eV to K [K/eV]
-    electron_mass_eV::FT # Electron mass [eV/c²]
-    proton_mass_eV::FT   # Proton mass [eV/c²]
-
-    # Constructor with default values
-    function PlasmaConstants{FT}() where FT<:AbstractFloat
-        # Basic constants
-        ee = FT(1.602176634e-19)    # Elementary charge [C]
-        me = FT(9.1093837015e-31)   # Electron mass [kg]
-        mp = FT(1.67262192369e-27)  # Proton mass [kg]
-        mi = FT(3.34754699166e-27)  # H2+ ion mass [kg]
-        eps0 = FT(8.8541878128e-12) # Vacuum permittivity [F/m]
-        mu0 = FT(1.25663706212e-6)  # Vacuum permeability [H/m]
-        kB = FT(1.380649e-23)       # Boltzmann constant [J/K]
-        c_light = FT(299792458.0)   # Speed of light in vacuum [m/s]
-        room_T_eV = FT(0.026)       # Room temperature [eV]
-
-        # Derived constants
-        eV_to_J = ee                  # 1 eV in J
-        eV_to_K = ee / kB             # 1 eV in K
-        electron_mass_eV = me * c_light^2 / eV_to_J  # Electron mass in eV/c²
-        proton_mass_eV = mp * c_light^2 / eV_to_J    # Proton mass in eV/c²
-
-        new{FT}(ee, me, mi, mp, eps0, mu0, kB, c_light, room_T_eV,
-                eV_to_J, eV_to_K, electron_mass_eV, proton_mass_eV)
-    end
+    eV_to_J::FT = ee                             # 1 eV in J
+    eV_to_K::FT = ee / kB                        # 1 eV in K
+    electron_mass_eV::FT = me * c_light^2 / eV_to_J  # Electron mass in eV/c²
+    proton_mass_eV::FT = mp * c_light^2 / eV_to_J    # Proton mass in eV/c²
 end
 
 # Export structures and functions

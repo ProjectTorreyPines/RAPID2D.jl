@@ -10,113 +10,59 @@ import RAPID2D: PlasmaConstants
 
 Contains simulation configuration parameters.
 """
-mutable struct SimulationConfig{FT<:AbstractFloat}
+Base.@kwdef mutable struct SimulationConfig{FT<:AbstractFloat}
     # Device parameters
-    device_Name::String         # Device name
-    shot_Name::String           # Shot name
+    device_Name::String = "manual"     # Device name
+    shot_Name::String = "test"         # Shot name
 
     # Grid dimensions
-    NR::Int                     # Number of radial grid points
-    NZ::Int                     # Number of vertical grid points
-    R_min::FT                   # Minimum radial coordinate
-    R_max::FT                   # Maximum radial coordinate
-    Z_min::FT                   # Minimum vertical coordinate
-    Z_max::FT                   # Maximum vertical coordinate
+    NR::Int = 100                      # Number of radial grid points
+    NZ::Int = 100                      # Number of vertical grid points
+    R_min::FT = FT(1.0)                # Minimum radial coordinate
+    R_max::FT = FT(2.0)                # Maximum radial coordinate
+    Z_min::FT = FT(-1.0)               # Minimum vertical coordinate
+    Z_max::FT = FT(1.0)                # Maximum vertical coordinate
 
     # Time parameters
-    t_start_s::FT               # Simulation start time [s]
-    t_end_s::FT                 # Simulation end time [s]
-    dt::FT                      # Time step [s]
+    t_start_s::FT = FT(0.0)            # Simulation start time [s]
+    t_end_s::FT = FT(1.0e-3)           # Simulation end time [s]
+    dt::FT = FT(1.0e-9)                # Time step [s]
 
     # Physical constants
-    constants::PlasmaConstants{FT}  # Consolidated physical constants
+    constants::PlasmaConstants{FT} = PlasmaConstants{FT}()  # Consolidated physical constants
 
     # Legacy physical constants (for backward compatibility)
-    ee::FT                       # Elementary charge (C)
-    me::FT                       # Electron mass (kg)
-    mi::FT                       # Ion mass (kg)
-    eps0::FT                     # Vacuum permittivity (F/m)
-    mu0::FT                      # Vacuum permeability (H/m)
-    kB::FT                       # Boltzmann constant (J/K)
+    ee::FT = FT(1.602176634e-19)       # Elementary charge (C)
+    me::FT = FT(9.1093837015e-31)      # Electron mass (kg)
+    mi::FT = FT(3.34754699166e-27)     # Ion mass (kg)
+    eps0::FT = FT(8.8541878128e-12)    # Vacuum permittivity (F/m)
+    mu0::FT = FT(1.25663706212e-6)     # Vacuum permeability (H/m)
+    kB::FT = FT(1.380649e-23)          # Boltzmann constant (J/K)
 
     # Field configuration
-    R0B0::FT                     # On-axis R0*B0 value
+    R0B0::FT = FT(2.0)                 # On-axis R0*B0 value
 
     # Initial conditions
-    prefilled_gas_pressure::FT   # Prefilled gas pressure (Pa)
+    prefilled_gas_pressure::FT = FT(0.1)  # Prefilled gas pressure (Pa)
 
     # Limits
-    min_Te::FT                   # Minimum electron temperature (eV)
-    max_Te::FT                   # Maximum electron temperature (eV)
+    min_Te::FT = FT(0.05)              # Minimum electron temperature (eV)
+    max_Te::FT = FT(100.0)             # Maximum electron temperature (eV)
 
     # Transport parameters
-    Dpara0::FT                   # Base parallel diffusion coefficient
-    Dperp0::FT                   # Base perpendicular diffusion coefficient
+    Dpara0::FT = FT(1.0)               # Base parallel diffusion coefficient
+    Dperp0::FT = FT(0.1)               # Base perpendicular diffusion coefficient
 
     # Paths
-    Input_path::String          # Path to input files
-    Output_path::String         # Path to output files
-    Output_prefix::String       # Prefix for output files
-    Output_name::String         # Name for output files
+    Input_path::String = "./input"     # Path to input files
+    Output_path::String = "./output"   # Path to output files
+    Output_prefix::String = ""         # Prefix for output files
+    Output_name::String = "RAPID2D"    # Name for output files
 
     # Output intervals
-    snap1D_Interval_s::FT        # Time interval for 1D snapshots
-    snap2D_Interval_s::FT        # Time interval for 2D snapshots
-    write_File_Interval_s::FT    # Time interval for file writing
-
-    function SimulationConfig{FT}() where FT<:AbstractFloat
-        # Create default PlasmaConstants object
-        constants = PlasmaConstants{FT}()
-
-        return new{FT}(
-            "manual",         # device_Name
-            "test",           # shot_Name
-
-            100,              # NR (default grid size)
-            100,              # NZ (default grid size)
-            FT(1.0),          # R_min
-            FT(2.0),          # R_max
-            FT(-1.0),         # Z_min
-            FT(1.0),          # Z_max
-
-            FT(0.0),          # t_start_s
-            FT(1.0e-3),       # t_end_s
-            FT(1.0e-9),       # dt
-
-            constants,        # constants (initialized default)
-
-            FT(1.602176634e-19),  # ee
-            FT(9.1093837015e-31), # me
-            FT(3.34754699166e-27),# mi (H2+ ion mass)
-            FT(8.8541878128e-12), # eps0
-            FT(1.25663706212e-6), # mu0
-            FT(1.380649e-23),     # kB
-
-            FT(2.0),              # R0B0
-
-            FT(0.1),              # prefilled_gas_pressure (Pa)
-
-            FT(0.05),             # min_Te (eV)
-            FT(100.0),            # max_Te (eV)
-
-            FT(1.0),              # Dpara0 (m²/s)
-            FT(0.1),              # Dperp0 (m²/s)
-
-            "./input",           # Input_path
-            "./output",          # Output_path
-            "",                  # Output_prefix
-            "RAPID2D",           # Output_name
-
-            FT(1.0e-5),           # snap1D_Interval_s
-            FT(1.0e-4),           # snap2D_Interval_s
-            FT(1.0e-3)            # write_File_Interval_s
-        )
-    end
-
-    # Default constructor for non-parameterized use
-    function SimulationConfig()
-        return SimulationConfig{Float64}()
-    end
+    snap1D_Interval_s::FT = FT(1.0e-5)  # Time interval for 1D snapshots
+    snap2D_Interval_s::FT = FT(1.0e-4)  # Time interval for 2D snapshots
+    write_File_Interval_s::FT = FT(1.0e-3)  # Time interval for file writing
 end
 
 """
@@ -128,13 +74,10 @@ Fields:
 - `R`: Radial coordinates of wall points
 - `Z`: Vertical coordinates of wall points
 """
-struct WallGeometry{FT<:AbstractFloat}
-    R::Vector{FT}  # Radial coordinates
-    Z::Vector{FT}  # Vertical coordinates
+Base.@kwdef struct WallGeometry{FT<:AbstractFloat}
+    R::Vector{FT} = Vector{FT}()  # Radial coordinates
+    Z::Vector{FT} = Vector{FT}()  # Vertical coordinates
 
-    function WallGeometry{FT}() where {FT<:AbstractFloat}
-        return new{FT}(Vector{FT}(), Vector{FT}())
-    end
     # Constructor ensuring the wall is a closed loop
     function WallGeometry{FT}(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat}
         @assert length(R) == length(Z) "R and Z must have the same length"
@@ -149,7 +92,7 @@ struct WallGeometry{FT<:AbstractFloat}
 
         new{FT}(R, Z)
     end
-    end
+end
 
 # Constructor that infers the floating-point type
 WallGeometry(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat} = WallGeometry{FT}(R, Z)
@@ -161,36 +104,36 @@ Contains the plasma state variables.
 
 Fields include density, temperature, and velocity components for electrons and ions.
 """
-mutable struct PlasmaState{FT<:AbstractFloat}
+Base.@kwdef mutable struct PlasmaState{FT<:AbstractFloat}
     # Densities
-    ne::Matrix{FT}      # Electron density [m^-3]
-    ni::Matrix{FT}      # Ion density [m^-3]
-    n_H2_gas::Matrix{FT}  # H2 gas density [m^-3]
+    ne::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Electron density [m^-3]
+    ni::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Ion density [m^-3]
+    n_H2_gas::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # H2 gas density [m^-3]
 
     # Temperatures
-    Te_eV::Matrix{FT}    # Electron temperature [eV]
-    Ti_eV::Matrix{FT}    # Ion temperature [eV]
-    T_gas_eV::FT         # Gas temperature [eV]
+    Te_eV::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # Electron temperature [eV]
+    Ti_eV::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # Ion temperature [eV]
+    T_gas_eV::FT = FT(0.026)         # Gas temperature [eV], defaults to room temperature ~300K
 
     # Velocities - parallel components
-    ue_para::Matrix{FT}  # Electron parallel velocity [m/s]
-    ui_para::Matrix{FT}  # Ion parallel velocity [m/s]
+    ue_para::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Electron parallel velocity [m/s]
+    ui_para::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Ion parallel velocity [m/s]
 
     # Velocities - vector components
-    ueR::Matrix{FT}     # Electron R velocity [m/s]
-    ueZ::Matrix{FT}     # Electron Z velocity [m/s]
-    ueϕ::Matrix{FT}   # Electron ϕ velocity [m/s]
+    ueR::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Electron R velocity [m/s]
+    ueZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Electron Z velocity [m/s]
+    ueϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)   # Electron ϕ velocity [m/s]
 
-    uiR::Matrix{FT}     # Ion R velocity [m/s]
-    uiZ::Matrix{FT}     # Ion Z velocity [m/s]
-    uiϕ::Matrix{FT}   # Ion ϕ velocity [m/s]
+    uiR::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Ion R velocity [m/s]
+    uiZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Ion Z velocity [m/s]
+    uiϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)   # Ion ϕ velocity [m/s]
 
     # Collision parameters
-    lnA::Matrix{FT}     # Coulomb logarithm
-    nu_ei::Matrix{FT}   # Electron-ion collision frequency [1/s]
-    sptz_fac::Matrix{FT} # Spitzer factor for conductivity
+    lnA::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Coulomb logarithm
+    nu_ei::Matrix{FT} = Matrix{FT}(undef, 0, 0)   # Electron-ion collision frequency [1/s]
+    sptz_fac::Matrix{FT} = Matrix{FT}(undef, 0, 0) # Spitzer factor for conductivity
 
-    # Constructor
+    # Constructor for matrices with specific dimensions
     function PlasmaState{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
         # Pre-allocate arrays
         ne = zeros(FT, NZ, NR)
@@ -234,102 +177,63 @@ Contains the electromagnetic field variables.
 
 Fields include components of the magnetic and electric fields.
 """
-mutable struct Fields{FT<:AbstractFloat}
+Base.@kwdef mutable struct Fields{FT<:AbstractFloat}
     # External fields
-    BR_ext::Matrix{FT}       # External radial magnetic field [T]
-    BZ_ext::Matrix{FT}       # External vertical magnetic field [T]
-    LV_ext::Matrix{FT}       # External Loop Voltage [V]
-    psi_ext::Matrix{FT}      # External magnetic flux [Wb/rad]
-    Eϕ_ext::Matrix{FT}     # External toroidal electric field [V/m]
-    E_para_ext::Matrix{FT}   # External parallel electric field [V/m]
+    BR_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)       # External radial magnetic field [T]
+    BZ_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)       # External vertical magnetic field [T]
+    LV_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)       # External Loop Voltage [V]
+    psi_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # External magnetic flux [Wb/rad]
+    Eϕ_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # External toroidal electric field [V/m]
+    E_para_ext::Matrix{FT} = Matrix{FT}(undef, 0, 0)   # External parallel electric field [V/m]
 
     # Self-generated fields
-    BR_self::Matrix{FT}      # Self-generated radial magnetic field [T]
-    BZ_self::Matrix{FT}      # Self-generated vertical magnetic field [T]
-    psi_self::Matrix{FT}     # Self-generated magnetic flux [Wb/rad]
-    Eϕ_self::Matrix{FT}    # Self-generated toroidal electric field [V/m]
-    E_para_self_ES::Matrix{FT} # Electrostatic self-generated parallel electric field [V/m]
-    E_para_self_EM::Matrix{FT} # Electromagnetic self-generated parallel electric field [V/m]
+    BR_self::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Self-generated radial magnetic field [T]
+    BZ_self::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Self-generated vertical magnetic field [T]
+    psi_self::Matrix{FT} = Matrix{FT}(undef, 0, 0)     # Self-generated magnetic flux [Wb/rad]
+    Eϕ_self::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # Self-generated toroidal electric field [V/m]
+    E_para_self_ES::Matrix{FT} = Matrix{FT}(undef, 0, 0) # Electrostatic self-generated parallel electric field [V/m]
+    E_para_self_EM::Matrix{FT} = Matrix{FT}(undef, 0, 0) # Electromagnetic self-generated parallel electric field [V/m]
 
     # Total fields - external + self-generated
-    BR::Matrix{FT}        # Total radial magnetic field [T]
-    BZ::Matrix{FT}        # Total vertical magnetic field [T]
-    Bϕ::Matrix{FT}        # Toroidal magnetic field [T]
+    BR::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Total radial magnetic field [T]
+    BZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Total vertical magnetic field [T]
+    Bϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Toroidal magnetic field [T]
 
     # Derived field quantities
-    Bpol::Matrix{FT}      # Poloidal magnetic field [T]
-    Btot::Matrix{FT}      # Total magnetic field [T]
+    Bpol::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Poloidal magnetic field [T]
+    Btot::Matrix{FT} = Matrix{FT}(undef, 0, 0)      # Total magnetic field [T]
 
     # Magnetic field unit vectors
-    bR::Matrix{FT}        # Radial unit vector
-    bZ::Matrix{FT}        # Vertical unit vector
-    bϕ::Matrix{FT}        # Toroidal unit vector
+    bR::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Radial unit vector
+    bZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Vertical unit vector
+    bϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Toroidal unit vector
 
     # Electric field components
-    ER::Matrix{FT}        # Radial electric field [V/m]
-    EZ::Matrix{FT}        # Vertical electric field [V/m]
-    Eϕ::Matrix{FT}        # Toroidal electric field [V/m]
+    ER::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Radial electric field [V/m]
+    EZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Vertical electric field [V/m]
+    Eϕ::Matrix{FT} = Matrix{FT}(undef, 0, 0)        # Toroidal electric field [V/m]
 
     # Parallel electric field
-    E_para_ind::Matrix{FT}  # Induced parallel electric field [V/m]
-    E_para_tot::Matrix{FT}  # Total parallel electric field [V/m]
+    E_para_ind::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Induced parallel electric field [V/m]
+    E_para_tot::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Total parallel electric field [V/m]
 
     # Magnetic flux
-    psi::Matrix{FT}       # Total magnetic flux [Wb/rad]
+    psi::Matrix{FT} = Matrix{FT}(undef, 0, 0)       # Total magnetic flux [Wb/rad]
 
-    # Constructor
+    # Constructor for matrices with specific dimensions
     function Fields{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
-        # Initialize external fields
-        BR_ext = zeros(FT, NZ, NR)
-        BZ_ext = zeros(FT, NZ, NR)
-        LV_ext = zeros(FT, NZ, NR)
-        psi_ext = zeros(FT, NZ, NR)
-        Eϕ_ext = zeros(FT, NZ, NR)
-        E_para_ext = zeros(FT, NZ, NR)
-
-        # Initialize self-generated fields
-        BR_self = zeros(FT, NZ, NR)
-        BZ_self = zeros(FT, NZ, NR)
-        psi_self = zeros(FT, NZ, NR)
-        Eϕ_self = zeros(FT, NZ, NR)
-        E_para_self_ES = zeros(FT, NZ, NR)
-        E_para_self_EM = zeros(FT, NZ, NR)
-
-        # Initialize total fields
-        BR = zeros(FT, NZ, NR)
-        BZ = zeros(FT, NZ, NR)
-        Bϕ = zeros(FT, NZ, NR)
-
-        # Initialize derived field quantities
-        Bpol = zeros(FT, NZ, NR)
-        Btot = zeros(FT, NZ, NR)
-
-        # Initialize magnetic field unit vectors
-        bR = zeros(FT, NZ, NR)
-        bZ = zeros(FT, NZ, NR)
-        bϕ = zeros(FT, NZ, NR)
-
-        # Initialize electric field components
-        ER = zeros(FT, NZ, NR)
-        EZ = zeros(FT, NZ, NR)
-        Eϕ = zeros(FT, NZ, NR)
-
-        # Initialize parallel electric field
-        E_para_ind = zeros(FT, NZ, NR)
-        E_para_tot = zeros(FT, NZ, NR)
-
-        # Initialize magnetic flux
-        psi = zeros(FT, NZ, NR)
+        # Initialize all fields with zeros
+        matrices = [zeros(FT, NZ, NR) for _ in 1:27]
 
         return new{FT}(
-            BR_ext, BZ_ext, LV_ext, psi_ext, Eϕ_ext, E_para_ext,
-            BR_self, BZ_self, psi_self, Eϕ_self, E_para_self_ES, E_para_self_EM,
-            BR, BZ, Bϕ,
-            Bpol, Btot,
-            bR, bZ, bϕ,
-            ER, EZ, Eϕ,
-            E_para_ind, E_para_tot,
-            psi
+            matrices[1], matrices[2], matrices[3], matrices[4], matrices[5], matrices[6],
+            matrices[7], matrices[8], matrices[9], matrices[10], matrices[11], matrices[12],
+            matrices[13], matrices[14], matrices[15],
+            matrices[16], matrices[17],
+            matrices[18], matrices[19], matrices[20],
+            matrices[21], matrices[22], matrices[23],
+            matrices[24], matrices[25],
+            matrices[26]
         )
     end
 end
@@ -341,21 +245,21 @@ Contains the transport coefficients for the plasma.
 
 Fields include diffusion coefficients in different directions.
 """
-mutable struct Transport{FT<:AbstractFloat}
+Base.@kwdef mutable struct Transport{FT<:AbstractFloat}
     # Base diffusivity values
-    Dpara0::FT            # Base parallel diffusion coefficient [m²/s]
-    Dperp0::FT            # Base perpendicular diffusion coefficient [m²/s]
+    Dpara0::FT = FT(1.0)            # Base parallel diffusion coefficient [m²/s]
+    Dperp0::FT = FT(0.1)            # Base perpendicular diffusion coefficient [m²/s]
 
     # Spatially-varying diffusion coefficients
-    Dpara::Matrix{FT}     # Parallel diffusion coefficient [m²/s]
-    Dperp::Matrix{FT}     # Perpendicular diffusion coefficient [m²/s]
+    Dpara::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Parallel diffusion coefficient [m²/s]
+    Dperp::Matrix{FT} = Matrix{FT}(undef, 0, 0)  # Perpendicular diffusion coefficient [m²/s]
 
     # Diffusion tensor components
-    DRR::Matrix{FT}       # R-R component of diffusion tensor
-    DRZ::Matrix{FT}       # R-Z component of diffusion tensor
-    DZZ::Matrix{FT}       # Z-Z component of diffusion tensor
+    DRR::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # R-R component of diffusion tensor
+    DRZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # R-Z component of diffusion tensor
+    DZZ::Matrix{FT} = Matrix{FT}(undef, 0, 0)    # Z-Z component of diffusion tensor
 
-    # Constructor
+    # Constructor for matrices with specific dimensions
     function Transport{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
         # Pre-allocate arrays
         Dpara = zeros(FT, NZ, NR)
@@ -365,12 +269,7 @@ mutable struct Transport{FT<:AbstractFloat}
         DRZ = zeros(FT, NZ, NR)
         DZZ = zeros(FT, NZ, NR)
 
-        return new{FT}(
-            FT(1.0),    # Dpara0 default
-            FT(0.1),    # Dperp0 default
-            Dpara, Dperp,
-            DRR, DRZ, DZZ
-        )
+        return new{FT}(FT(1.0), FT(0.1), Dpara, Dperp, DRR, DRZ, DZZ)
     end
 end
 
