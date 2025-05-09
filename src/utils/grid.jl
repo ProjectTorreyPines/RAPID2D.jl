@@ -41,8 +41,8 @@ function initialize_grid_geometry!(
     # Generate 2D coordinate arrays
     for j in 1:grid.NZ
         for i in 1:grid.NR
-            grid.R2D[j, i] = grid.R1D[i]
-            grid.Z2D[j, i] = grid.Z1D[j]
+            grid.R2D[i, j] = grid.R1D[i]
+            grid.Z2D[i, j] = grid.Z1D[j]
         end
     end
 

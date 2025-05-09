@@ -383,8 +383,7 @@ function cal_damping_function_outside_wall(RP::RAPID{FT},
     NR = length(R1D)
 
     # Create 2D grid if not already available
-    R2D = repeat(R1D', NZ, 1)
-    Z2D = repeat(Z1D, 1, NR)
+    R2D, Z2D = meshgrid(R1D, Z1D)
 
     # Simplified damping function - 1 inside wall, decaying outside
     damping = ones(FT, NR, NZ)
@@ -397,8 +396,8 @@ function cal_damping_function_outside_wall(RP::RAPID{FT},
     max_radius = maximum(sqrt.((Wall_R .- center_R).^2 .+ (Wall_Z .- center_Z).^2))
 
     # Calculate distance from center for each grid point
-    for i in 1:NZ
-        for j in 1:NR
+    for j in 1:NZ
+        for i in 1:NR
             r = sqrt((R2D[i,j] - center_R)^2 + (Z2D[i,j] - center_Z)^2)
 
             # Apply damping outside the wall

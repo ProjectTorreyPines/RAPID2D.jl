@@ -35,8 +35,8 @@ function construct_An_diffu(RP::RAPID{FT}) where {FT<:AbstractFloat}
     coeff_vec = FT[]
 
     # Placeholder implementation - simplified diffusion stencil
-    for j in 1:NR
-        for i in 1:NZ
+    for j in 1:NZ
+        for i in 1:NR
             # Linear index of current point
             idx = (j-1)*NZ + i
 

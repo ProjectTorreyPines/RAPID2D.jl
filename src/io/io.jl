@@ -557,12 +557,12 @@ function read_break_input_file(file_path::String, FT::Type{<:AbstractFloat}=Floa
         end
 
         # Reshape the data into 2D matrices
-        R = reshape(data[1:expected_rows, 1], (z_num, r_num))
-        Z = reshape(data[1:expected_rows, 2], (z_num, r_num))
-        BR = reshape(data[1:expected_rows, 3], (z_num, r_num))
-        BZ = reshape(data[1:expected_rows, 4], (z_num, r_num))
-        psi = reshape(data[1:expected_rows, 5], (z_num, r_num))
-        LV = reshape(data[1:expected_rows, 6], (z_num, r_num))
+        R = transpose(reshape(data[1:expected_rows, 1], (z_num, r_num)))
+        Z = transpose(reshape(data[1:expected_rows, 2], (z_num, r_num)))
+        BR = transpose(reshape(data[1:expected_rows, 3], (z_num, r_num)))
+        BZ = transpose(reshape(data[1:expected_rows, 4], (z_num, r_num)))
+        psi = transpose(reshape(data[1:expected_rows, 5], (z_num, r_num)))
+        LV = transpose(reshape(data[1:expected_rows, 6], (z_num, r_num)))
 
         # Return as a named tuple
         return (
@@ -616,8 +616,8 @@ Create a meshgrid similar to MATLAB's meshgrid function.
 # Returns
 - `Tuple{Matrix, Matrix}`: 2D matrices of x and y coordinates
 """
-function meshgrid(x, y)
-    return (repeat(x', length(y), 1), repeat(y, 1, length(x)))
+function meshgrid(x1D::AbstractVector, y1D::AbstractVector)
+    return (repeat(x1D, 1, length(y1D)), repeat(y1D', length(x1D), 1))
 end
 
 """
@@ -639,16 +639,19 @@ function create_new_grid_with_target_resolution(ori_data, target_r_1d, target_z_
 
     # Define interpolation objects
     # Use linear interpolation for stability
-    itp_br = interpolate((ori_data.Z[:, 1], ori_data.R[1, :]), ori_data.BR, Gridded(Linear()))
-    itp_bz = interpolate((ori_data.Z[:, 1], ori_data.R[1, :]), ori_data.BZ, Gridded(Linear()))
-    itp_psi = interpolate((ori_data.Z[:, 1], ori_data.R[1, :]), ori_data.psi, Gridded(Linear()))
-    itp_lv = interpolate((ori_data.Z[:, 1], ori_data.R[1, :]), ori_data.LV, Gridded(Linear()))
+    itp_br = interpolate((ori_data.R[:, 1], ori_data.Z[1, :]), ori_data.BR, Gridded(Linear()))
+    itp_bz = interpolate((ori_data.R[:, 1], ori_data.Z[1, :]), ori_data.BZ, Gridded(Linear()))
+    itp_psi = interpolate((ori_data.R[:, 1], ori_data.Z[1, :]), ori_data.psi, Gridded(Linear()))
+    itp_lv = interpolate((ori_data.R[:, 1], ori_data.Z[1, :]), ori_data.LV, Gridded(Linear()))
 
+
+    new_br = [itp_br(r, z) for r in target_r_1d, z in target_z_1d]
     # Interpolate to new grid
-    new_br = [itp_br(z, r) for z in target_z_1d, r in target_r_1d]
-    new_bz = [itp_bz(z, r) for z in target_z_1d, r in target_r_1d]
-    new_psi = [itp_psi(z, r) for z in target_z_1d, r in target_r_1d]
-    new_lv = [itp_lv(z, r) for z in target_z_1d, r in target_r_1d]
+    # Note: Order is important - we need to pass (r, z) to match how the interpolation object was created
+    new_br = [itp_br(r, z) for r in target_r_1d, z in target_z_1d]
+    new_bz = [itp_bz(r, z) for r in target_r_1d, z in target_z_1d]
+    new_psi = [itp_psi(r, z) for r in target_r_1d, z in target_z_1d]
+    new_lv = [itp_lv(r, z) for r in target_r_1d, z in target_z_1d]
 
     # Return interpolated data as a named tuple
     return (
@@ -750,10 +753,10 @@ function read_external_field_time_series(file_path::String="./";
     # Preallocate arrays for time series data
     n_time = length(times)
     time_series = Vector{FT}(undef, n_time)
-    br_series = Array{FT, 3}(undef, NR, NZ, n_time)
-    bz_series = Array{FT, 3}(undef, NR, NZ, n_time)
-    psi_series = Array{FT, 3}(undef, NR, NZ, n_time)
-    lv_series = Array{FT, 3}(undef, NR, NZ, n_time)
+    br_series = Array{FT, 3}(undef, nr, nz, n_time)
+    bz_series = Array{FT, 3}(undef, nr, nz, n_time)
+    psi_series = Array{FT, 3}(undef, nr, nz, n_time)
+    lv_series = Array{FT, 3}(undef, nr, nz, n_time)
 
     # Process each file
     for (t, (time_s, file)) in enumerate(times)
