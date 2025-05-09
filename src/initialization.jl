@@ -3,11 +3,84 @@ Initialization functions for RAPID2D simulations.
 """
 
 """
+    validate_config!(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
+
+Validates that all required parameters in the configuration are properly set.
+Throws an error if any required parameter is missing or has an invalid value.
+
+# Arguments
+- `config::SimulationConfig{FT}`: The simulation configuration to validate
+
+# Raises
+- `ArgumentError`: If any required parameter is missing or invalid
+"""
+function validate_config!(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
+    missing_params = String[]
+
+    # Check required physical parameters
+    if isnothing(config.prefilled_gas_pressure)
+        push!(missing_params, "prefilled_gas_pressure")
+    end
+
+    if isnothing(config.R0B0)
+        push!(missing_params, "R0B0")
+    end
+
+    # Check grid parameters if manual configuration
+    if config.device_Name == "manual"
+        # For manual setup, we need R_min, R_max, Z_min, Z_max
+        if isnothing(config.R_min)
+            push!(missing_params, "R_min")
+        end
+
+        if isnothing(config.R_max)
+            push!(missing_params, "R_max")
+        end
+
+        if isnothing(config.Z_min)
+            push!(missing_params, "Z_min")
+        end
+
+        if isnothing(config.Z_max)
+            push!(missing_params, "Z_max")
+        end
+    end
+
+    # Raise error if any required parameters are missing
+    if !isempty(missing_params)
+        error_msg = "Missing required configuration parameters: $(join(missing_params, ", ")). " *
+                   "Please set these parameters before creating the RAPID object."
+        throw(ArgumentError(error_msg))
+    end
+
+    # Additional validation for parameter values
+    if !isnothing(config.prefilled_gas_pressure) && config.prefilled_gas_pressure <= 0
+        throw(ArgumentError("prefilled_gas_pressure must be positive"))
+    end
+
+    if !isnothing(config.R_min) && !isnothing(config.R_max) && config.R_min >= config.R_max
+        throw(ArgumentError("R_min must be less than R_max"))
+    end
+
+    if !isnothing(config.Z_min) && !isnothing(config.Z_max) && config.Z_min >= config.Z_max
+        throw(ArgumentError("Z_min must be less than Z_max"))
+    end
+
+    return nothing
+end
+
+# Export the function
+export validate_config!
+
+"""
     initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Initialize all components of the RAPID simulation.
 """
 function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Validate configuration parameters first
+    validate_config!(RP.config)
+
     # Initialize time tracking
     RP.tElap = Dict{Symbol, Float64}(
         :Main => 0.0,
