@@ -33,8 +33,8 @@ function update_self_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @warn "update_self_fields! not fully implemented yet"
 
     # Just a dummy operation until proper implementation
-    RP.fields.BR_self .= zeros(FT, RP.G.NZ, RP.G.NR)
-    RP.fields.BZ_self .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.fields.BR_self .= zeros(FT, RP.G.NR, RP.G.NZ)
+    RP.fields.BZ_self .= zeros(FT, RP.G.NR, RP.G.NZ)
 
     # Update total fields
     RP.fields.BR .= RP.fields.BR_ext .+ RP.fields.BR_self
@@ -123,9 +123,9 @@ function flf_analysis_of_field_lines_in_RZ_plane(RP::RAPID{FT}) where {FT<:Abstr
 
     # Create a placeholder FLF structure
     FLF = Dict{Symbol, Any}(
-        :Lpol_forward => zeros(FT, RP.G.NZ, RP.G.NR),
-        :Lpol_backward => zeros(FT, RP.G.NZ, RP.G.NR),
-        :Lpol_tot => zeros(FT, RP.G.NZ, RP.G.NR),
+        :Lpol_forward => zeros(FT, RP.G.NR, RP.G.NZ),
+        :Lpol_backward => zeros(FT, RP.G.NR, RP.G.NZ),
+        :Lpol_tot => zeros(FT, RP.G.NR, RP.G.NZ),
         :is_closed => zeros(Int, RP.G.NZ*RP.G.NR)
     )
 
@@ -192,10 +192,10 @@ Stores time series data for external electromagnetic fields.
 
 # Fields
 - `time_s::Vector{FT}`: Time points in seconds
-- `BR::Array{FT,3}`: Radial magnetic field component [T] (NZ×NR×NT)
-- `BZ::Array{FT,3}`: Vertical magnetic field component [T] (NZ×NR×NT)
-- `psi::Array{FT,3}`: Magnetic flux [Wb/rad] (NZ×NR×NT)
-- `LV::Array{FT,3}`: Loop voltage [V] (NZ×NR×NT)
+- `BR::Array{FT,3}`: Radial magnetic field component [T] (NR×NZ×NT)
+- `BZ::Array{FT,3}`: Vertical magnetic field component [T] (NR×NZ×NT)
+- `psi::Array{FT,3}`: Magnetic flux [Wb/rad] (NR×NZ×NT)
+- `LV::Array{FT,3}`: Loop voltage [V] (NR×NZ×NT)
 - `R::Matrix{FT}`: 2D grid of R coordinates [m]
 - `Z::Matrix{FT}`: 2D grid of Z coordinates [m]
 - `R_NUM::Int`: Number of R grid points

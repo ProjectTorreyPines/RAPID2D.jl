@@ -215,7 +215,7 @@ function update_ne!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         end
 
         # Update density using forward Euler
-        RP.plasma.ne .+= RP.dt .* reshape(rhs, NZ, NR)
+        RP.plasma.ne .+= RP.dt .* reshape(rhs, NR, NZ)
 
         # Apply boundary conditions and enforce positivity
         if RP.flags.neg_n_correction
@@ -272,7 +272,7 @@ function cal_neRHS_diffu_term!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # 2. Return the resulting diffusion term
 
     # For now, return a zero array
-    RP.operators.neRHS_diffu .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.operators.neRHS_diffu .= zeros(FT, RP.G.NR, RP.G.NZ)
 
     return RP.operators.neRHS_diffu
 end
@@ -288,7 +288,7 @@ function cal_neRHS_convec_term!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # 2. Return the resulting convection term
 
     # For now, return a zero array
-    RP.operators.neRHS_convec .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.operators.neRHS_convec .= zeros(FT, RP.G.NR, RP.G.NZ)
 
     return RP.operators.neRHS_convec
 end

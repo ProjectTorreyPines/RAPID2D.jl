@@ -34,15 +34,15 @@ Calculate diffusion coefficients based on field configuration and turbulence mod
 """
 function calculate_diffusion_coefficients!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Base diffusion coefficients
-    RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.G.NZ, RP.G.NR)
-    RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.G.NZ, RP.G.NR)
+    RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.G.NR, RP.G.NZ)
+    RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.G.NR, RP.G.NZ)
 
     # Add turbulent diffusion if enabled
     if RP.flags.turb_ExB_mixing
         # In a real implementation, turbulent diffusion would be calculated based on
         # field line connection length, ExB drifts, etc.
-        RP.transport.Dturb_para .= zeros(FT, RP.G.NZ, RP.G.NR)
-        RP.transport.Dturb_perp .= zeros(FT, RP.G.NZ, RP.G.NR)
+        RP.transport.Dturb_para .= zeros(FT, RP.G.NR, RP.G.NZ)
+        RP.transport.Dturb_perp .= zeros(FT, RP.G.NR, RP.G.NZ)
 
         # Add turbulent diffusion to base diffusion
         RP.transport.Dpara .+= RP.transport.Dturb_para
@@ -78,8 +78,8 @@ Calculate particle fluxes based on density gradients and transport coefficients.
 """
 function calculate_particle_fluxes!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Initialize arrays for density gradients
-    dndR = zeros(FT, RP.G.NZ, RP.G.NR)
-    dndZ = zeros(FT, RP.G.NZ, RP.G.NR)
+    dndR = zeros(FT, RP.G.NR, RP.G.NZ)
+    dndZ = zeros(FT, RP.G.NR, RP.G.NZ)
 
     # Calculate density gradients (using forward/central/backward differences)
     # R-direction

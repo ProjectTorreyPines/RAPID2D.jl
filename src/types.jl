@@ -104,7 +104,7 @@ Contains the plasma state variables including density, temperature, and velocity
 """
 @kwdef mutable struct PlasmaState{FT<:AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int} # (NZ, NR)
+    dims::Tuple{Int,Int} # (NR, NZ)
 
     # Gas temperature (scalar)
     T_gas_eV::FT = FT(0.026)           # Gas temperature [eV]
@@ -162,7 +162,7 @@ function PlasmaState{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
     return PlasmaState{FT}(dims=dimensions)
 end
 function PlasmaState{FT}(NR::Int, NZ::Int; kwargs...) where {FT<:AbstractFloat}
-    return PlasmaState{FT}(dims=(NZ, NR); kwargs...)
+    return PlasmaState{FT}(dims=(NR, NZ); kwargs...)
 end
 
 
@@ -175,7 +175,7 @@ Fields include components of the magnetic and electric fields.
 """
 @kwdef mutable struct Fields{FT<:AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int} # (NZ, NR)
+    dims::Tuple{Int,Int} # (NR, NZ)
 
     # External fields
     BR_ext::Matrix{FT} = zeros(FT, dims)        # External radial magnetic field [T]
@@ -225,7 +225,7 @@ function Fields{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
     return Fields{FT}(dims=dimensions)
 end
 function Fields{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
-    return Fields{FT}(dims=(NZ, NR))
+    return Fields{FT}(dims=(NR, NZ))
 end
 
 """
@@ -237,7 +237,7 @@ Fields include diffusion coefficients in different directions.
 """
 @kwdef mutable struct Transport{FT<:AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int}
+    dims::Tuple{Int,Int} # (NR, NZ)
 
     # Base diffusivity values
     Dpara0::FT = FT(1.0)            # Base parallel diffusion coefficient [m²/s]
@@ -258,7 +258,7 @@ function Transport{FT}(dimensions::Tuple{Int,Int}; Dpara0::FT=FT(1.0), Dperp0::F
     return Transport{FT}(dims=dimensions, Dpara0=Dpara0, Dperp0=Dperp0)
 end
 function Transport{FT}(NR::Int, NZ::Int; Dpara0::FT=FT(1.0), Dperp0::FT=FT(0.1)) where FT<:AbstractFloat
-    return Transport{FT}(dims=(NZ, NR), Dpara0=Dpara0, Dperp0=Dperp0)
+    return Transport{FT}(dims=(NR, NZ), Dpara0=Dpara0, Dperp0=Dperp0)
 end
 
 
@@ -271,7 +271,7 @@ Fields include various matrices for solving different parts of the model.
 """
 @kwdef mutable struct Operators{FT<:AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int}
+    dims::Tuple{Int,Int} # (NR, NZ)
 
     # Operators for solving equations
     A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Matrix for Grad-Shafranov equation
@@ -283,13 +283,12 @@ Fields include various matrices for solving different parts of the model.
 end
 
 # Constructor with separate dimensions
-function Operators{FT}(dimensions::Tuple{Int,Int}) where FT<:AbstractFloat
+function Operators{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
     return Operators{FT}(dims=dimensions)
 end
-function Operators{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
-    return Operators{FT}(dims=(NZ, NR))
+function Operators{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
+    return Operators{FT}(dims=(NR, NZ))
 end
-
 
 
 """
@@ -400,18 +399,18 @@ mutable struct NodeState{FT<:AbstractFloat}
     on_wall_nids::Vector{Int}  # Linear indices of nodes on the wall
 
     # Constructor
-    function NodeState{FT}(NZ::Int, NR::Int) where FT<:AbstractFloat
-        rid = zeros(Int, NZ, NR)
-        zid = zeros(Int, NZ, NR)
-        nid = zeros(Int, NZ, NR)
-        state = fill(NaN, NZ, NR)
+    function NodeState{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
+        rid = zeros(Int, NR, NZ)
+        zid = zeros(Int, NR, NZ)
+        nid = zeros(Int, NR, NZ)
+        state = fill(NaN, NR, NZ)
 
         return new{FT}(rid, zid, nid, state, Int[], Int[], Int[])
     end
 
     # Convenience constructor
-    function NodeState(NZ::Int, NR::Int)
-        return NodeState{Float64}(NZ, NR)
+    function NodeState(NR::Int, NZ::Int)
+        return NodeState{Float64}(NR, NZ)
     end
 end
 
@@ -465,13 +464,13 @@ mutable struct GridGeometry{FT<:AbstractFloat}
         # Pre-allocate arrays
         R1D = Vector{FT}(undef, NR)
         Z1D = Vector{FT}(undef, NZ)
-        R2D = zeros(FT, NZ, NR)
-        Z2D = zeros(FT, NZ, NR)
-        Jacob = zeros(FT, NZ, NR)
-        inv_Jacob = zeros(FT, NZ, NR)
-		inVol2D = zeros(FT, NZ, NR)
+        R2D = zeros(FT, NR, NZ)
+        Z2D = zeros(FT, NR, NZ)
+        Jacob = zeros(FT, NR, NZ)
+        inv_Jacob = zeros(FT, NR, NZ)
+		inVol2D = zeros(FT, NR, NZ)
         BDY_idx = Int[]
-        nodes = NodeState{FT}(NZ, NR)
+        nodes = NodeState{FT}(NR, NZ)
 
         return new{FT}(
             NR, NZ,
@@ -546,7 +545,7 @@ mutable struct RAPID{FT<:AbstractFloat}
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
         # Get grid dimensions
         NR, NZ = config.NR, config.NZ
-        dims = (NZ, NR)
+        dims = (NR, NZ)
 
         # Initialize sub-components
         G = GridGeometry{FT}(NR, NZ)

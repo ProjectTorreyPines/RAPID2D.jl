@@ -750,10 +750,10 @@ function read_external_field_time_series(file_path::String="./";
     # Preallocate arrays for time series data
     n_time = length(times)
     time_series = Vector{FT}(undef, n_time)
-    br_series = Array{FT, 3}(undef, nz, nr, n_time)
-    bz_series = Array{FT, 3}(undef, nz, nr, n_time)
-    psi_series = Array{FT, 3}(undef, nz, nr, n_time)
-    lv_series = Array{FT, 3}(undef, nz, nr, n_time)
+    br_series = Array{FT, 3}(undef, NR, NZ, n_time)
+    bz_series = Array{FT, 3}(undef, NR, NZ, n_time)
+    psi_series = Array{FT, 3}(undef, NR, NZ, n_time)
+    lv_series = Array{FT, 3}(undef, NR, NZ, n_time)
 
     # Process each file
     for (t, (time_s, file)) in enumerate(times)

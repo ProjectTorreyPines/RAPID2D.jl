@@ -79,13 +79,13 @@ function initialize_physical_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.transport.Dperp0 = FT(RP.config.Dperp0)
 
     # Initialize transport coefficients
-    RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.G.NZ, RP.G.NR)
-    RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.G.NZ, RP.G.NR)
+    RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.G.NR, RP.G.NZ)
+    RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.G.NR, RP.G.NZ)
 
     # Set initial gas density
     RP.plasma.n_H2_gas .= RP.config.prefilled_gas_pressure ./
                            (RP.plasma.T_gas_eV * RP.config.ee) .*
-                           ones(FT, RP.G.NZ, RP.G.NR)
+                           ones(FT, RP.G.NR, RP.G.NZ)
 
     # Initialize density and temperature
     initialize_density!(RP)
@@ -194,7 +194,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Initialize fields if not already created
     if !isdefined(RP, :fields) || isnothing(RP.fields)
-        RP.fields = Fields{FT}(NZ, NR)
+        RP.fields = Fields{FT}(NR, NZ)
     end
 
     # Set basic field strengths
@@ -202,8 +202,8 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Create fields
     RP.fields.Bϕ = RP.config.R0B0 ./ RP.G.R2D
-    RP.fields.BR = zeros(FT, NZ, NR)
-    RP.fields.BZ = Bpol * ones(FT, NZ, NR)
+    RP.fields.BR = zeros(FT, NR, NZ)
+    RP.fields.BZ = Bpol * ones(FT, NR, NZ)
 
     # Compute derived field quantities
     RP.fields.Bpol = sqrt.(RP.fields.BR.^2 .+ RP.fields.BZ.^2)
@@ -225,7 +225,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Initialize other field components
     RP.fields.BR_ext = copy(RP.fields.BR)
     RP.fields.BZ_ext = copy(RP.fields.BZ)
-    RP.fields.psi_ext = zeros(FT, NZ, NR)
+    RP.fields.psi_ext = zeros(FT, NR, NZ)
 
     # Copy external fields to total fields initially
     RP.fields.E_para_tot = copy(RP.fields.E_para_ext)
@@ -273,7 +273,7 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, file_path::String) where {FT<:Abst
 
     # Initialize fields structure if not already created
     if !isdefined(RP, :fields) || isnothing(RP.fields)
-        RP.fields = Fields{FT}(NZ, NR)
+        RP.fields = Fields{FT}(NR, NZ)
     end
 
     # Set toroidal field (this is the only field calculated directly rather than from external data)
@@ -283,10 +283,10 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, file_path::String) where {FT<:Abst
     RP.external_field = read_external_field_time_series(file_path, FT=FT)
 
     # Initialize self-field components to zero
-    RP.fields.BR_self = zeros(FT, NZ, NR)
-    RP.fields.BZ_self = zeros(FT, NZ, NR)
-    RP.fields.psi_self = zeros(FT, NZ, NR)
-    RP.fields.Eϕ_self = zeros(FT, NZ, NR)
+    RP.fields.BR_self = zeros(FT, NR, NZ)
+    RP.fields.BZ_self = zeros(FT, NR, NZ)
+    RP.fields.psi_self = zeros(FT, NR, NZ)
+    RP.fields.Eϕ_self = zeros(FT, NR, NZ)
 
     # Use update_external_fields! to handle the interpolation and derived field calculations
     # This ensures consistent field handling between initialization and runtime updates
@@ -314,7 +314,7 @@ function cal_damping_function_outside_wall(RP::RAPID{FT},
     Z2D = repeat(Z1D, 1, NR)
 
     # Simplified damping function - 1 inside wall, decaying outside
-    damping = ones(FT, NZ, NR)
+    damping = ones(FT, NR, NZ)
 
     # Find center of wall
     center_R = sum(Wall_R) / length(Wall_R)
@@ -351,8 +351,8 @@ end
 #     F = RP.fields
 
 #     F.Bϕ .= RP.config.R0B0 ./ RP.G.R2D
-#     F.BR .= zeros(FT, RP.G.NZ, RP.G.NR)
-#     F.BZ .= zeros(FT, RP.G.NZ, RP.G.NR)
+#     F.BR .= zeros(FT, RP.G.NR, RP.G.NZ)
+#     F.BZ .= zeros(FT, RP.G.NR, RP.G.NZ)
 
 #     # Simple uniform loop voltage
 #     F.LV_ext .= FT(0.5)
@@ -408,24 +408,6 @@ function setup_grid_and_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     NR = RP.G.NR
     NZ = RP.G.NZ
 
-    # Define boundary indices - the perimeter of the domain
-    BDY_Rid = vcat(
-        fill(1, NZ),          # Left edge
-        2:(NR-1),             # Bottom edge
-        fill(NR, NZ),         # Right edge
-        (NR-1):-1:2           # Top edge
-    )
-
-    BDY_Zid = vcat(
-        1:NZ,                 # Left edge
-        fill(NZ, NR-2),       # Bottom edge
-        NZ:-1:1,              # Right edge
-        fill(1, NR-2)         # Top edge
-    )
-
-    # Convert to linear indices
-    RP.G.BDY_idx = LinearIndices((NZ, NR))[CartesianIndex.(BDY_Zid, BDY_Rid)]
-
     # Determine wall indices using is_inside_wall with WallGeometry object
     in_Wall_state = is_inside_wall(RP.G.R2D, RP.G.Z2D, RP.wall)
 
@@ -437,11 +419,11 @@ function setup_grid_and_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     nodes = RP.G.nodes
 
     # Fill in node indices information
-    for j in 1:NR
-        for i in 1:NZ
-            nodes.zid[i, j] = i
-            nodes.rid[i, j] = j
-            nodes.nid[i, j] = LinearIndices((NZ, NR))[i, j]
+    for j in 1:NZ
+        for i in 1:NR
+            nodes.rid[i, j] = i
+            nodes.zid[i, j] = j
+            nodes.nid[i, j] = LinearIndices((NR, NZ))[i, j]
         end
     end
 
@@ -466,7 +448,7 @@ function setup_grid_and_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
         # Check if this outside point has any inside neighbors
         # If sum is greater than -N (where N is number of neighbors), some neighbors are inside
-        if sum(nodes.state[ngh_zids, ngh_rids]) > -length(ngh_rids)*length(ngh_zids)
+        if sum(nodes.state[ngh_rids, ngh_zids]) > -length(ngh_rids)*length(ngh_zids)
             push!(nodes.on_wall_nids, nid)
         end
     end
@@ -475,11 +457,11 @@ function setup_grid_and_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     nodes.state[nodes.on_wall_nids] .= 0
 
     # Initialize cell state (1 for inside wall, -1 for outside)
-    RP.cell_state = fill(-1, NZ, NR)
+    RP.cell_state = fill(-1, NR, NZ)
     RP.cell_state[RP.in_wall_nids] .= 1
 
     # Calculate inVol2D - volume elements inside the wall
-    RP.G.inVol2D = zeros(FT, NZ, NR)
+    RP.G.inVol2D = zeros(FT, NR, NZ)
     RP.G.inVol2D[RP.in_wall_nids] .= RP.G.Jacob[RP.in_wall_nids] * RP.G.dR * RP.G.dZ
     RP.device_inVolume = sum(RP.G.inVol2D)
 
@@ -491,7 +473,7 @@ function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @warn "initialize_density! implementation needed"
 
     # Set small initial seed density inside wall
-    RP.plasma.ne .= FT(1.0e12) * ones(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ne .= FT(1.0e12) * ones(FT, RP.G.NR, RP.G.NZ)
 
     # Zero outside wall
     RP.plasma.ne[RP.out_wall_nids] .= FT(0.0)
@@ -507,7 +489,7 @@ function initialize_temperature!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @warn "initialize_temperature! implementation needed"
 
     # Set initial electron temperature
-    RP.plasma.Te_eV .= FT(2.0) * ones(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.Te_eV .= FT(2.0) * ones(FT, RP.G.NR, RP.G.NZ)
 
     # Zero outside wall
     RP.plasma.Te_eV[RP.out_wall_nids] .= RP.config.min_Te
@@ -523,8 +505,8 @@ function initialize_velocities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @warn "initialize_velocities! implementation needed"
 
     # Set initial velocities to zero
-    RP.plasma.ue_para .= zeros(FT, RP.G.NZ, RP.G.NR)
-    RP.plasma.ui_para .= zeros(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.ue_para .= zeros(FT, RP.G.NR, RP.G.NZ)
+    RP.plasma.ui_para .= zeros(FT, RP.G.NR, RP.G.NZ)
 
     # Initialize vector components
     RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
@@ -543,7 +525,7 @@ function update_coulomb_logarithm!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @warn "update_coulomb_logarithm! implementation needed"
 
     # Set coulomb logarithm to a constant value for now
-    RP.plasma.lnA .= FT(10.0) * ones(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.lnA .= FT(10.0) * ones(FT, RP.G.NR, RP.G.NZ)
 
     # Calculate collision frequency
     # ν_ei = n_e e^4 ln Λ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)
@@ -551,7 +533,7 @@ function update_coulomb_logarithm!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.nu_ei .= RP.plasma.ne * FT(1.0e-6) ./ (RP.plasma.Te_eV).^(1.5)
 
     # Spitzer factor - set to 0.51 for Z=1
-    RP.plasma.sptz_fac .= FT(0.51) * ones(FT, RP.G.NZ, RP.G.NR)
+    RP.plasma.sptz_fac .= FT(0.51) * ones(FT, RP.G.NR, RP.G.NZ)
 
     return RP
 end
@@ -584,11 +566,11 @@ function initialize_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         :step => zeros(Int, max_snapshots),
         :dt => zeros(FT, max_snapshots),
         :time_s => zeros(FT, max_snapshots),
-        :dims => (RP.G.NZ, RP.G.NR, max_snapshots)
+        :dims => (RP.G.NR, RP.G.NZ, max_snapshots)
     )
 
     # Pre-allocate arrays for storing physical quantities
-    dims_3d = (RP.G.NZ, RP.G.NR, max_snapshots)
+    dims_3d = (RP.G.NR, RP.G.NZ, max_snapshots)
 
     # Electron properties
     snap2D[:ne] = zeros(FT, dims_3d)

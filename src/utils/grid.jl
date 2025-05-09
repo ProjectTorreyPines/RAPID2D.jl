@@ -55,10 +55,10 @@ function initialize_grid_geometry!(
     # Define boundary indices - the perimeter of the domain using linear indices
     # This combines all four edges of the domain and ensures unique, sorted indices
     grid.BDY_idx = sort(unique([
-        LinearIndices((grid.NZ, grid.NR))[1,:];       # Top edge
-        LinearIndices((grid.NZ, grid.NR))[end,:];     # Bottom edge
-        LinearIndices((grid.NZ, grid.NR))[:,1];       # Left edge
-        LinearIndices((grid.NZ, grid.NR))[:,end]      # Right edge
+        LinearIndices((grid.NR, grid.NZ))[:,1];       # Bottom edge
+        LinearIndices((grid.NR, grid.NZ))[:,end];     # Top edge
+        LinearIndices((grid.NR, grid.NZ))[1,:];       # Left edge
+        LinearIndices((grid.NR, grid.NZ))[end,:]      # Right edge
     ]))
 
     return grid
