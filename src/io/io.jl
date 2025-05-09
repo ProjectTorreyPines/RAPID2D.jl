@@ -17,7 +17,6 @@ export save_snapshot,
 
        # Wall geometry functions
        read_wall_data_file,
-       read_device_wall_data,
        read_device_wall_data!,
 
        # External field functions
@@ -276,7 +275,7 @@ end
 # =============================================================================
 
 """
-    read_device_wall_data(RP::RAPID{FT}, wall_file_name::String=nothing) where {FT<:AbstractFloat}
+    read_device_wall_data!(RP::RAPID{FT}, wall_file_name::String=nothing) where {FT<:AbstractFloat}
 
 Read the device wall geometry data from a file. This is a non-mutating function that returns
 a new RAPID instance with the wall field updated.
@@ -286,8 +285,6 @@ a new RAPID instance with the wall field updated.
 - `wall_file_name::String=nothing`: Optional specific wall file to read. If not provided,
   will use "{device_Name}_First_Wall.dat" in the input path.
 
-# Returns
-- `RP::RAPID{FT}`: The RAPID object with the wall field updated
 """
 function read_device_wall_data!(RP::RAPID{FT}, wall_file_name::String="") where {FT<:AbstractFloat}
     # Use provided file name or construct default file path
@@ -297,30 +294,8 @@ function read_device_wall_data!(RP::RAPID{FT}, wall_file_name::String="") where 
 
     # Read the wall data and assign to RAPID instance
     RP.wall = read_wall_data_file(file_path, FT)
-
-    return RP
 end
 
-# """
-#     read_device_wall_data!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-
-# Read the wall geometry data for the device from a file and update the RAPID object in-place.
-# This is the Julia version of the MATLAB 'Read_Device_Wall_Data' function.
-
-# # Arguments
-# - `RP::RAPID{FT}`: The RAPID simulation object to update
-
-# # Returns
-# - `RP::RAPID{FT}`: The updated RAPID instance
-# """
-# function read_device_wall_data!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-#     # Construct the wall data file path
-#     wall_file_name = joinpath(RP.config.Input_path, "$(RP.config.device_Name)_First_Wall.dat")
-
-#     RP.wall = read_wall_data_file(file_path, FT)
-
-#     return RP
-# end
 
 """
     read_wall_data_file(file_path::String, FT::Type{<:AbstractFloat}=Float64)
@@ -344,7 +319,7 @@ wall = read_wall_data_file("path/to/wall.dat", Float32) # Using Float32
 ```
 """
 function read_wall_data_file(file_path::String, FT::Type{<:AbstractFloat}=Float64)
-    @assert isfile(file_path) "Wall data file not found: $wall_file_name"
+    @assert isfile(file_path) "Wall data file not found: $file_path"
 
     # Open the file for reading
     open(file_path, "r") do file

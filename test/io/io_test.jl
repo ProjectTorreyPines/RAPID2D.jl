@@ -54,7 +54,7 @@ using RAPID2D
 
             # Test with a non-existent file
             missing_file = joinpath(test_dir, "nonexistent.dat")
-            @test_throws SystemError RAPID2D.read_wall_data_file(missing_file)
+            @test_throws AssertionError RAPID2D.read_wall_data_file(missing_file)
         end
 
         @testset "read_device_wall_data" begin
@@ -66,7 +66,7 @@ using RAPID2D
 
             # Test with an explicit file
             wall_file = joinpath(test_dir, "valid_wall.dat")
-            RP = RAPID2D.read_device_wall_data(RP, wall_file)
+            RAPID2D.read_device_wall_data!(RP, wall_file)
 
             # Check that the wall was loaded correctly
             @test length(RP.wall.R) == 13  # 12 points + 1 for closing the loop
