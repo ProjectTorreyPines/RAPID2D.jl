@@ -66,31 +66,5 @@ struct PlasmaConstants{FT<:AbstractFloat}
     end
 end
 
-"""
-    load_constants!(config)
-
-Load physical constants into the configuration struct.
-
-# Arguments
-- `config`: Configuration struct to be populated with constants
-"""
-function load_constants!(config)
-    # Check if the config already has a parameterized type, or use Float64 as default
-    FT = isa(config, SimulationConfig{<:AbstractFloat}) ? eltype(config.R0B0) : Float64
-
-    # Create physical constants with the appropriate floating-point type
-    config.constants = PlasmaConstants{FT}()
-
-    # Update legacy fields for backward compatibility
-    config.ee = config.constants.ee
-    config.me = config.constants.me
-    config.mi = config.constants.mi
-    config.eps0 = config.constants.eps0
-    config.mu0 = config.constants.mu0
-    config.kB = config.constants.kB
-
-    return nothing
-end
-
 # Export structures and functions
-export PlasmaConstants, load_constants!
+export PlasmaConstants
