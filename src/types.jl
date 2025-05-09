@@ -10,7 +10,7 @@ import RAPID2D: PlasmaConstants
 
 Contains simulation configuration parameters.
 """
-Base.@kwdef mutable struct SimulationConfig{FT<:AbstractFloat}
+@kwdef mutable struct SimulationConfig{FT<:AbstractFloat}
     # Device parameters
     device_Name::String = "manual"     # Device name
     shot_Name::String = "test"         # Shot name
@@ -74,37 +74,37 @@ Fields:
 - `R`: Radial coordinates of wall points
 - `Z`: Vertical coordinates of wall points
 """
-Base.@kwdef struct WallGeometry{FT<:AbstractFloat}
-    R::Vector{FT} = Vector{FT}()  # Radial coordinates
-    Z::Vector{FT} = Vector{FT}()  # Vertical coordinates
+@kwdef struct WallGeometry{FT<:AbstractFloat}
+    R::Vector{FT} = Vector{FT}()
+    Z::Vector{FT} = Vector{FT}()
+end
 
-    # Constructor ensuring the wall is a closed loop
-    function WallGeometry{FT}(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat}
+
+function WallGeometry(R::Vector{FT}, Z::Vector{FT}, check_wall::Bool) where {FT<:AbstractFloat}
+    if check_wall
         @assert length(R) == length(Z) "R and Z must have the same length"
         @assert length(R) >= 3 "At least 3 points needed to define a wall unless creating an empty placeholder"
 
-        # Check if the wall is closed (first point equals last point)
-        if R[1] != R[end] || Z[1] != Z[end]
-            # Add the first point at the end to close the loop
-            push!(R, R[1])
-            push!(Z, Z[1])
+        new_R, new_Z = copy(R), copy(Z)
+        if new_R[1] != new_R[end] || new_Z[1] != new_Z[end]
+            push!(new_R, new_R[1])
+            push!(new_Z, new_Z[1])
         end
 
-        new{FT}(R, Z)
+        return WallGeometry{FT}(; R=new_R, Z=new_Z)
+    else
+        return WallGeometry{FT}(; R, Z)
     end
 end
-
-# Constructor that infers the floating-point type
-WallGeometry(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat} = WallGeometry{FT}(R, Z)
 
 """
     PlasmaState{FT<:AbstractFloat}
 
 Contains the plasma state variables including density, temperature, and velocity components.
 """
-Base.@kwdef mutable struct PlasmaState{FT<:AbstractFloat}
+@kwdef mutable struct PlasmaState{FT<:AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int}
+    dims::Tuple{Int,Int} # (NZ, NR)
 
     # Gas temperature (scalar)
     T_gas_eV::FT = FT(0.026)           # Gas temperature [eV]
@@ -158,14 +158,13 @@ Base.@kwdef mutable struct PlasmaState{FT<:AbstractFloat}
     )
 end
 
-# Constructor with separate dimensions
+function PlasmaState{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
+    return PlasmaState{FT}(dims=dimensions)
+end
 function PlasmaState{FT}(NR::Int, NZ::Int; kwargs...) where {FT<:AbstractFloat}
     return PlasmaState{FT}(dims=(NZ, NR); kwargs...)
 end
 
-# Type-inferring convenience constructor
-PlasmaState(dims::Tuple{Int,Int}, ::Type{FT}=Float64; kwargs...) where {FT<:AbstractFloat} =
-    PlasmaState{FT}(dims=dims; kwargs...)
 
 """
     Fields{FT<:AbstractFloat}
@@ -174,9 +173,9 @@ Contains the electromagnetic field variables.
 
 Fields include components of the magnetic and electric fields.
 """
-Base.@kwdef mutable struct Fields{FT<:AbstractFloat}
+@kwdef mutable struct Fields{FT<:AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int}
+    dims::Tuple{Int,Int} # (NZ, NR)
 
     # External fields
     BR_ext::Matrix{FT} = zeros(FT, dims)        # External radial magnetic field [T]
@@ -222,13 +221,12 @@ Base.@kwdef mutable struct Fields{FT<:AbstractFloat}
 end
 
 # Constructor with separate dimensions
+function Fields{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
+    return Fields{FT}(dims=dimensions)
+end
 function Fields{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
     return Fields{FT}(dims=(NZ, NR))
 end
-
-# Type-inferring convenience constructor
-Fields(dims::Tuple{Int,Int}, ::Type{FT}=Float64) where {FT<:AbstractFloat} =
-    Fields{FT}(dims=dims)
 
 """
     Transport{FT<:AbstractFloat}
@@ -237,7 +235,7 @@ Contains the transport coefficients for the plasma.
 
 Fields include diffusion coefficients in different directions.
 """
-Base.@kwdef mutable struct Transport{FT<:AbstractFloat}
+@kwdef mutable struct Transport{FT<:AbstractFloat}
     # Dimensions
     dims::Tuple{Int,Int}
 
@@ -256,13 +254,13 @@ Base.@kwdef mutable struct Transport{FT<:AbstractFloat}
 end
 
 # Constructor with separate dimensions
+function Transport{FT}(dimensions::Tuple{Int,Int}; Dpara0::FT=FT(1.0), Dperp0::FT=FT(0.1)) where FT<:AbstractFloat
+    return Transport{FT}(dims=dimensions, Dpara0=Dpara0, Dperp0=Dperp0)
+end
 function Transport{FT}(NR::Int, NZ::Int; Dpara0::FT=FT(1.0), Dperp0::FT=FT(0.1)) where FT<:AbstractFloat
     return Transport{FT}(dims=(NZ, NR), Dpara0=Dpara0, Dperp0=Dperp0)
 end
 
-# Type-inferring convenience constructor
-Transport(dims::Tuple{Int,Int}, ::Type{FT}=Float64; kwargs...) where {FT<:AbstractFloat} =
-    Transport{FT}(dims=dims; kwargs...)
 
 """
     Operators{FT<:AbstractFloat}
@@ -271,7 +269,7 @@ Contains the numerical operators used in the simulation.
 
 Fields include various matrices for solving different parts of the model.
 """
-Base.@kwdef mutable struct Operators{FT<:AbstractFloat}
+@kwdef mutable struct Operators{FT<:AbstractFloat}
     # Dimensions
     dims::Tuple{Int,Int}
 
@@ -285,21 +283,21 @@ Base.@kwdef mutable struct Operators{FT<:AbstractFloat}
 end
 
 # Constructor with separate dimensions
+function Operators{FT}(dimensions::Tuple{Int,Int}) where FT<:AbstractFloat
+    return Operators{FT}(dims=dimensions)
+end
 function Operators{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
     return Operators{FT}(dims=(NZ, NR))
 end
 
-# Dimensional tuple with type inference constructor
-function Operators(dims::Tuple{Int,Int}, ::Type{FT}=Float64) where FT<:AbstractFloat
-    return Operators{FT}(dims=dims)
-end
+
 
 """
     SimulationFlags
 
 Contains boolean flags that control various aspects of the simulation.
 """
-Base.@kwdef mutable struct SimulationFlags
+@kwdef mutable struct SimulationFlags
     # Method selection flags
     eRRC_method::String = "EoverP_Erg"        # Electron reaction rate coefficient method
     iRRC_method::String = "ud_T"              # Ion reaction rate coefficient method

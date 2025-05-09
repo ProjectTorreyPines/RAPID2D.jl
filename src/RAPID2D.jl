@@ -86,8 +86,8 @@ function create_rapid_object(;
     Z_range = (config.Z_min, config.Z_max)
     initialize_grid_geometry!(RP.G, R_range, Z_range)
 
-    # Load physical constants
-    load_constants!(RP.config)
+    # # Load physical constants
+    # load_constants!(RP.config)
 
     # Perform full physics initialization
     initialize!(RP)

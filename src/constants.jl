@@ -24,7 +24,7 @@ Fields:
 - `electron_mass_eV`: Electron mass [eV/c²]
 - `proton_mass_eV`: Proton mass [eV/c²]
 """
-Base.@kwdef struct PlasmaConstants{FT<:AbstractFloat}
+@kwdef struct PlasmaConstants{FT<:AbstractFloat}
     # Basic physical constants
     ee::FT = FT(1.602176634e-19)    # Elementary charge [C]
     me::FT = FT(9.1093837015e-31)   # Electron mass [kg]
