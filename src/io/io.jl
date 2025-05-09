@@ -19,7 +19,6 @@ export save_snapshot,
        read_wall_data_file,
        read_device_wall_data,
        read_device_wall_data!,
-       is_inside_wall,
 
        # External field functions
        read_break_input_file,
@@ -469,48 +468,6 @@ function read_wall_data_file(file_path::String, FT::Type{<:AbstractFloat}=Float6
     end
 end
 
-"""
-    is_inside_wall(R::AbstractArray{FT}, Z::AbstractArray{FT}, wall::WallGeometry{FT}) where {FT<:AbstractFloat}
-
-Determine if points (R,Z) are inside the wall boundary.
-This is the Julia version of the MATLAB 'Is_in_Wall' function.
-
-# Arguments
-- `R`: R coordinates of points to check
-- `Z`: Z coordinates of points to check
-- `wall`: Wall geometry object
-
-# Returns
-- Boolean array indicating if each point is inside the wall
-"""
-function is_inside_wall(R::AbstractArray{FT}, Z::AbstractArray{FT}, wall::WallGeometry{FT}) where {FT<:AbstractFloat}
-    # Use Julia's built-in point-in-polygon test
-    # First, make sure R and Z have compatible dimensions
-    @assert size(R) == size(Z) "R and Z must have the same dimensions"
-
-    # Create output array
-    result = similar(R, Bool)
-
-    # Test each point
-    for i in eachindex(R, Z)
-        # Point-in-polygon test using ray casting algorithm
-        inside = false
-        r, z = R[i], Z[i]
-
-        # Loop through each edge of the polygon
-        for j in 1:length(wall.R)-1
-            # Edge from (wall.R[j], wall.Z[j]) to (wall.R[j+1], wall.Z[j+1])
-            if ((wall.Z[j] <= z < wall.Z[j+1]) || (wall.Z[j+1] <= z < wall.Z[j])) &&
-               (r < wall.R[j] + (wall.R[j+1] - wall.R[j]) * (z - wall.Z[j]) / (wall.Z[j+1] - wall.Z[j]))
-                inside = !inside
-            end
-        end
-
-        result[i] = inside
-    end
-
-    return result
-end
 
 # =============================================================================
 # External field data functions
