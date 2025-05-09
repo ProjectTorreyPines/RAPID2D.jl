@@ -11,22 +11,28 @@ import RAPID2D: PlasmaConstants
 Contains simulation configuration parameters.
 """
 @kwdef mutable struct SimulationConfig{FT<:AbstractFloat}
+    # Paths
+    Input_path::String = "./input"     # Path to input files
+    Output_path::String = "./output"   # Path to output files
+    Output_prefix::String = ""         # Prefix for output files
+    Output_name::String = "RAPID2D"    # Name for output files
+
     # Device parameters
     device_Name::String = "manual"     # Device name
     shot_Name::String = "test"         # Shot name
 
     # Grid dimensions
-    NR::Int = 100                      # Number of radial grid points
+    NR::Int = 50                       # Number of radial grid points
     NZ::Int = 100                      # Number of vertical grid points
-    R_min::FT = FT(1.0)                # Minimum radial coordinate
-    R_max::FT = FT(2.0)                # Maximum radial coordinate
-    Z_min::FT = FT(-1.0)               # Minimum vertical coordinate
-    Z_max::FT = FT(1.0)                # Maximum vertical coordinate
+    R_min::Union{FT,Nothing} = nothing       # Minimum radial coordinate
+    R_max::Union{FT,Nothing} = nothing       # Maximum radial coordinate
+    Z_min::Union{FT,Nothing} = nothing       # Minimum vertical coordinate
+    Z_max::Union{FT,Nothing} = nothing       # Maximum vertical coordinate
 
     # Time parameters
     t_start_s::FT = FT(0.0)            # Simulation start time [s]
     t_end_s::FT = FT(1.0e-3)           # Simulation end time [s]
-    dt::FT = FT(1.0e-9)                # Time step [s]
+    dt::FT = FT(10e-6)                # Time step [s]
 
     # Physical constants
     constants::PlasmaConstants{FT} = PlasmaConstants{FT}()  # Consolidated physical constants
@@ -40,29 +46,23 @@ Contains simulation configuration parameters.
     kB::FT = FT(1.380649e-23)          # Boltzmann constant (J/K)
 
     # Field configuration
-    R0B0::FT = FT(2.0)                 # On-axis R0*B0 value
+    R0B0::Union{FT,Nothing} = nothing                 # On-axis R0*B0 value
 
     # Initial conditions
-    prefilled_gas_pressure::FT = FT(0.1)  # Prefilled gas pressure (Pa)
+    prefilled_gas_pressure::Union{FT,Nothing} = nothing  # Prefilled gas pressure (Pa)
 
     # Limits
     min_Te::FT = FT(0.05)              # Minimum electron temperature (eV)
     max_Te::FT = FT(100.0)             # Maximum electron temperature (eV)
 
     # Transport parameters
-    Dpara0::FT = FT(1.0)               # Base parallel diffusion coefficient
-    Dperp0::FT = FT(0.1)               # Base perpendicular diffusion coefficient
-
-    # Paths
-    Input_path::String = "./input"     # Path to input files
-    Output_path::String = "./output"   # Path to output files
-    Output_prefix::String = ""         # Prefix for output files
-    Output_name::String = "RAPID2D"    # Name for output files
+    Dpara0::FT = FT(0.0)               # Base parallel diffusion coefficient
+    Dperp0::FT = FT(0.0)               # Base perpendicular diffusion coefficient
 
     # Output intervals
-    snap1D_Interval_s::FT = FT(1.0e-5)  # Time interval for 1D snapshots
-    snap2D_Interval_s::FT = FT(1.0e-4)  # Time interval for 2D snapshots
-    write_File_Interval_s::FT = FT(1.0e-3)  # Time interval for file writing
+    snap1D_Interval_s::FT = FT(20e-6)  # Time interval for 1D snapshots
+    snap2D_Interval_s::FT = FT(100e-6)  # Time interval for 2D snapshots
+    write_File_Interval_s::FT = FT(1e-3)  # Time interval for file writing
 end
 
 """
@@ -176,6 +176,9 @@ Fields include components of the magnetic and electric fields.
 @kwdef mutable struct Fields{FT<:AbstractFloat}
     # Dimensions
     dims::Tuple{Int,Int} # (NR, NZ)
+
+    # R0B0
+    R0B0::FT = FT(0.0)
 
     # External fields
     BR_ext::Matrix{FT} = zeros(FT, dims)        # External radial magnetic field [T]
