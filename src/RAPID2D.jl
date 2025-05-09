@@ -81,11 +81,6 @@ function create_rapid_object(;
     # Create a RAPID object directly from the configuration
     RP = RAPID{FT}(config)
 
-    # Initialize the grid geometry using config's R/Z range values
-    R_range = (config.R_min, config.R_max)
-    Z_range = (config.Z_min, config.Z_max)
-    initialize_grid_geometry!(RP.G, R_range, Z_range)
-
     # # Load physical constants
     # load_constants!(RP.config)
 

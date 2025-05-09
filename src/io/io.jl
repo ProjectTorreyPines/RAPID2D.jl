@@ -32,7 +32,7 @@ using DelimitedFiles
 using Interpolations
 
 # Import from fields module
-import RAPID2D: TimeSeriesExternalField, AbstractExternalField, update_external_fields!
+import RAPID2D: TimeSeriesExternalField, AbstractExternalField, update_fields!
 import RAPID2D: get_fields_at_time  # Import this to avoid duplicate definition
 
 # =============================================================================
@@ -289,9 +289,9 @@ a new RAPID instance with the wall field updated.
 # Returns
 - `RP::RAPID{FT}`: The RAPID object with the wall field updated
 """
-function read_device_wall_data(RP::RAPID{FT}, wall_file_name::String=nothing) where {FT<:AbstractFloat}
+function read_device_wall_data!(RP::RAPID{FT}, wall_file_name::String="") where {FT<:AbstractFloat}
     # Use provided file name or construct default file path
-    file_path = isnothing(wall_file_name) ?
+    file_path = isempty(wall_file_name) ?
         joinpath(RP.config.Input_path, "$(RP.config.device_Name)_First_Wall.dat") :
         wall_file_name
 
@@ -301,67 +301,26 @@ function read_device_wall_data(RP::RAPID{FT}, wall_file_name::String=nothing) wh
     return RP
 end
 
-"""
-    read_device_wall_data!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+# """
+#     read_device_wall_data!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Read the wall geometry data for the device from a file and update the RAPID object in-place.
-This is the Julia version of the MATLAB 'Read_Device_Wall_Data' function.
+# Read the wall geometry data for the device from a file and update the RAPID object in-place.
+# This is the Julia version of the MATLAB 'Read_Device_Wall_Data' function.
 
-# Arguments
-- `RP::RAPID{FT}`: The RAPID simulation object to update
+# # Arguments
+# - `RP::RAPID{FT}`: The RAPID simulation object to update
 
-# Returns
-- `RP::RAPID{FT}`: The updated RAPID instance
-"""
-function read_device_wall_data!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Construct the wall data file path
-    wall_file_name = joinpath(RP.config.Input_path, "$(RP.config.device_Name)_First_Wall.dat")
+# # Returns
+# - `RP::RAPID{FT}`: The updated RAPID instance
+# """
+# function read_device_wall_data!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+#     # Construct the wall data file path
+#     wall_file_name = joinpath(RP.config.Input_path, "$(RP.config.device_Name)_First_Wall.dat")
 
-    if !isfile(wall_file_name)
-        error("Wall data file not found: $wall_file_name")
-    end
+#     RP.wall = read_wall_data_file(file_path, FT)
 
-    # Read the wall data file
-    wall_data = open(wall_file_name, "r") do file
-        lines = readlines(file)
-
-        # Extract the number of wall points from the first line
-        wall_num_match = match(r"WALL_NUM\s+(\d+)", lines[1])
-        if wall_num_match === nothing
-            error("Cannot parse WALL_NUM from wall data file")
-        end
-
-        wall_num = parse(Int, wall_num_match[1])
-
-        # Read the wall coordinates
-        wall_points = zeros(FT, wall_num, 2)
-        for i in 1:wall_num
-            if i+1 > length(lines)
-                error("Wall data file has fewer lines than expected")
-            end
-
-            # Parse R, Z coordinates
-            coords = split(lines[i+1])
-            if length(coords) < 2
-                error("Invalid wall data format at line $(i+1)")
-            end
-
-            wall_points[i, 1] = parse(FT, coords[1])  # R coordinate
-            wall_points[i, 2] = parse(FT, coords[2])  # Z coordinate
-        end
-
-        return (N = wall_num, points = wall_points)
-    end
-
-    # Create the wall geometry object
-    # Close the loop by adding the first point at the end
-    R = [wall_data.points[:, 1]..., wall_data.points[1, 1]]
-    Z = [wall_data.points[:, 2]..., wall_data.points[1, 2]]
-
-    RP.wall = WallGeometry{FT}(R, Z)
-
-    return RP
-end
+#     return RP
+# end
 
 """
     read_wall_data_file(file_path::String, FT::Type{<:AbstractFloat}=Float64)
@@ -385,6 +344,8 @@ wall = read_wall_data_file("path/to/wall.dat", Float32) # Using Float32
 ```
 """
 function read_wall_data_file(file_path::String, FT::Type{<:AbstractFloat}=Float64)
+    @assert isfile(file_path) "Wall data file not found: $wall_file_name"
+
     # Open the file for reading
     open(file_path, "r") do file
         # Read lines until we find the WALL_NUM declaration, skipping comments
@@ -672,7 +633,7 @@ function create_new_grid_with_target_resolution(ori_data, target_r_1d, target_z_
 end
 
 """
-    read_external_field_time_series(file_path::String="./";
+    read_external_field_time_series(dir_path::String="./";
                                     r_num::Union{Int,Nothing}=nothing,
                                     r_min::Union{Float64,Nothing}=nothing,
                                     r_max::Union{Float64,Nothing}=nothing,
@@ -684,7 +645,7 @@ end
 Read a time series of external field data from BREAK input files.
 
 # Arguments
-- `file_path::String`: Path to the directory containing field data files (default: "./")
+- `dir_path::String`: Path to the directory containing field data files (default: "./")
 - `r_num::Union{Int,Nothing}`: Number of R grid points (default: use value from first file)
 - `r_min::Union{Float64,Nothing}`: Minimum R value (default: use value from first file)
 - `r_max::Union{Float64,Nothing}`: Maximum R value (default: use value from first file)
@@ -696,25 +657,25 @@ Read a time series of external field data from BREAK input files.
 # Returns
 - `TimeSeriesExternalField{FT}`: Time series of external field data
 """
-function read_external_field_time_series(file_path::String="./";
+function read_external_field_time_series(dir_path::String="./";
+                                         FT::Type{T}=Float64,
                                          r_num::Union{Int,Nothing}=nothing,
-                                         r_min::Union{Float64,Nothing}=nothing,
-                                         r_max::Union{Float64,Nothing}=nothing,
+                                         r_min::Union{T,Nothing}=nothing,
+                                         r_max::Union{T,Nothing}=nothing,
                                          z_num::Union{Int,Nothing}=nothing,
-                                         z_min::Union{Float64,Nothing}=nothing,
-                                         z_max::Union{Float64,Nothing}=nothing,
-                                         FT::Type{<:AbstractFloat}=Float64)
+                                         z_min::Union{T,Nothing}=nothing,
+                                         z_max::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
 
-    # Ensure file_path ends with a path separator
-    if !endswith(file_path, Base.Filesystem.path_separator)
-        file_path = file_path * Base.Filesystem.path_separator
+    # Ensure dir_path ends with a path separator
+    if !endswith(dir_path, Base.Filesystem.path_separator)
+        dir_path = dir_path * Base.Filesystem.path_separator
     end
 
     # Find all .dat files in the directory
-    files = filter(f -> endswith(f, ".dat"), readdir(file_path; join=true))
+    files = filter(f -> endswith(f, ".dat"), readdir(dir_path; join=true))
 
     if isempty(files)
-        error("No .dat files found in directory: $file_path")
+        error("No .dat files found in directory: $dir_path")
     end
 
     # Read the time from each file and sort by time
@@ -795,7 +756,7 @@ function read_external_field_time_series(file_path::String="./";
 end
 
 """
-    load_external_field_data!(RP::RAPID{FT}, file_path::String="./";
+    load_external_field_data!(RP::RAPID{FT}, dir_path::String="./";
                             r_num::Union{Int,Nothing}=nothing,
                             r_min::Union{FT,Nothing}=nothing,
                             r_max::Union{FT,Nothing}=nothing,
@@ -807,14 +768,14 @@ Load external field data from files and set it as the external field source for 
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance
-- `file_path::String`: Path to the directory containing field data files (default: "./")
+- `dir_path::String`: Path to the directory containing field data files (default: "./")
 - `r_num`, `r_min`, `r_max`, `z_num`, `z_min`, `z_max`: Optional grid parameters
   (if not provided, use values from the first file or current grid)
 
 # Returns
 - `RP::RAPID{FT}`: The updated RAPID instance
 """
-function load_external_field_data!(RP::RAPID{FT}, file_path::String="./";
+function load_external_field_data!(RP::RAPID{FT}, dir_path::String="./";
                                 r_num::Union{Int,Nothing}=nothing,
                                 r_min::Union{FT,Nothing}=nothing,
                                 r_max::Union{FT,Nothing}=nothing,
@@ -822,43 +783,20 @@ function load_external_field_data!(RP::RAPID{FT}, file_path::String="./";
                                 z_min::Union{FT,Nothing}=nothing,
                                 z_max::Union{FT,Nothing}=nothing) where {FT<:AbstractFloat}
 
-    # Use the grid parameters from RP if not provided
-    if isnothing(r_num) && hasfield(typeof(RP.G), :NR)
-        r_num = RP.G.NR
-    end
-    if isnothing(r_min) && hasfield(typeof(RP.G), :R1D) && !isempty(RP.G.R1D)
-        r_min = minimum(RP.G.R1D)
-    end
-    if isnothing(r_max) && hasfield(typeof(RP.G), :R1D) && !isempty(RP.G.R1D)
-        r_max = maximum(RP.G.R1D)
-    end
-    if isnothing(z_num) && hasfield(typeof(RP.G), :NZ)
-        z_num = RP.G.NZ
-    end
-    if isnothing(z_min) && hasfield(typeof(RP.G), :Z1D) && !isempty(RP.G.Z1D)
-        z_min = minimum(RP.G.Z1D)
-    end
-    if isnothing(z_max) && hasfield(typeof(RP.G), :Z1D) && !isempty(RP.G.Z1D)
-        z_max = maximum(RP.G.Z1D)
-    end
-
     # Read the external field data
     ext_field = read_external_field_time_series(
-        file_path;
-        r_num=r_num,
-        r_min=r_min,
-        r_max=r_max,
-        z_num=z_num,
-        z_min=z_min,
-        z_max=z_max,
+        dir_path;
+        r_num,
+        r_min,
+        r_max,
+        z_num,
+        z_min,
+        z_max,
         FT=FT
     )
 
     # Set the external field data in the RAPID instance
     RP.external_field = ext_field
-
-    # Update the fields with the initial time
-    update_external_fields!(RP, RP.time_s)
 
     return RP
 end
