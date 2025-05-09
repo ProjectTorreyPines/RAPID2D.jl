@@ -44,29 +44,54 @@ export AbstractExternalField, TimeSeriesExternalField  # External field types
 # Export IO functions for external field data
 export read_break_input_file, read_external_field_time_series, load_external_field_data!
 
-# Function to initialize RAPID2D simulation
-function initialize_simulation(; NR::Int=100, NZ::Int=100,
-                               FT::Type{<:AbstractFloat}=Float64,
-                               t_start::AbstractFloat=0.0,
-                               t_end::AbstractFloat=1.0e-3,
-                               dt::AbstractFloat=1.0e-9,
-                               R_range::Tuple{<:Real,<:Real}=(1.0, 2.0),
-                               Z_range::Tuple{<:Real,<:Real}=(-1.0, 1.0))
-    # Convert to correct floating-point type
-    t_start_FT = FT(t_start)
-    t_end_FT = FT(t_end)
-    dt_FT = FT(dt)
+"""
+    create_rapid_object(;
+        FT::Type{<:AbstractFloat}=Float64,
+        config::SimulationConfig{FT}=SimulationConfig{FT}()
+    ) where {FT<:AbstractFloat}
 
-    # Create a new RAPID instance with the specified grid
-    RP = RAPID{FT}(NR, NZ; t_start=t_start_FT, t_end=t_end_FT, dt=dt_FT)
+Create and initialize a RAPID object.
 
-    # Initialize the grid geometry
-    initialize_rapid_grid!(RP, R_range, Z_range)
+# Arguments
+- `FT::Type{<:AbstractFloat}=Float64`: Floating-point type to use for calculations.
+- `config::SimulationConfig{FT}=SimulationConfig{FT}()`: Configuration parameters for the RAPID object.
+  Defines physics parameters, device setup, time stepping, grid dimensions, etc.
+
+# Returns
+- `RAPID{FT}`: A fully initialized RAPID instance ready for time advancement.
+
+# Example
+```julia
+# Using default configuration
+rp = create_rapid_object()
+
+# Using custom configuration
+config = SimulationConfig{Float64}()
+config.device_Name = "KSTAR"
+config.shot_Name = "001234"
+config.NR = 200  # Higher resolution grid
+config.NZ = 200
+rp = create_rapid_object(config=config)
+```
+"""
+function create_rapid_object(;
+    config::SimulationConfig{FT}=SimulationConfig{Float64}(),
+) where {FT<:AbstractFloat}
+
+    # Create a RAPID object directly from the configuration
+    RP = RAPID{FT}(config)
+
+    # Initialize the grid geometry using config's R/Z range values
+    R_range = (config.R_min, config.R_max)
+    Z_range = (config.Z_min, config.Z_max)
+    initialize_grid_geometry!(RP.G, R_range, Z_range)
 
     # Load physical constants
     load_constants!(RP.config)
 
-    # Return the initialized simulation
+    # Perform full physics initialization
+    initialize!(RP)
+
     return RP
 end
 
@@ -113,6 +138,6 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
 end
 
 # Export main functions
-export initialize_simulation, run_simulation!, advance_timestep!
+export create_rapid_object, initialize_simulation, run_simulation!, advance_timestep!
 
 end # module RAPID2D

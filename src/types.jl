@@ -15,6 +15,19 @@ mutable struct SimulationConfig{FT<:AbstractFloat}
     device_Name::String         # Device name
     shot_Name::String           # Shot name
 
+    # Grid dimensions
+    NR::Int                     # Number of radial grid points
+    NZ::Int                     # Number of vertical grid points
+    R_min::FT                   # Minimum radial coordinate
+    R_max::FT                   # Maximum radial coordinate
+    Z_min::FT                   # Minimum vertical coordinate
+    Z_max::FT                   # Maximum vertical coordinate
+
+    # Time parameters
+    t_start_s::FT               # Simulation start time [s]
+    t_end_s::FT                 # Simulation end time [s]
+    dt::FT                      # Time step [s]
+
     # Physical constants
     constants::PlasmaConstants{FT}  # Consolidated physical constants
 
@@ -58,6 +71,17 @@ mutable struct SimulationConfig{FT<:AbstractFloat}
         return new{FT}(
             "manual",         # device_Name
             "test",           # shot_Name
+
+            100,              # NR (default grid size)
+            100,              # NZ (default grid size)
+            FT(1.0),          # R_min
+            FT(2.0),          # R_max
+            FT(-1.0),         # Z_min
+            FT(1.0),          # Z_max
+
+            FT(0.0),          # t_start_s
+            FT(1.0e-3),       # t_end_s
+            FT(1.0e-9),       # dt
 
             constants,        # constants (initialized default)
 
@@ -673,6 +697,71 @@ mutable struct RAPID{FT<:AbstractFloat}
         RP.plasma = PlasmaState{FT}(RP.G.NR, RP.G.NZ)
         RP.fields = Fields{FT}(RP.G.NR, RP.G.NZ)
         RP.transport = Transport{FT}(RP.G.NR, RP.G.NZ)
+        RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
+
+        # Initialize previous state
+        RP.prev_n = zeros(FT, RP.G.NZ, RP.G.NR)
+
+        # Empty dictionaries
+        RP.eRRC = Dict{Symbol, Any}()
+        RP.iRRC = Dict{Symbol, Any}()
+        RP.tElap = Dict{Symbol, Float64}()
+
+        # Set external field to nothing initially
+        RP.external_field = nothing
+
+        return RP
+    end
+
+    # Constructor from SimulationConfig
+    function RAPID{FT}(config::SimulationConfig{FT}) where FT<:AbstractFloat
+        # Create a new RAPID instance
+        RP = new{FT}()
+
+        # Extract grid dimensions from config
+        NR = config.NR
+        NZ = config.NZ
+
+        # Initialize grid geometry
+        RP.G = GridGeometry{FT}(NR, NZ)
+
+        # Initialize time parameters from config
+        RP.step = 0
+        RP.time_s = config.t_start_s
+        RP.t_start_s = config.t_start_s
+        RP.t_end_s = config.t_end_s
+        RP.dt = config.dt
+
+        # Store the provided configuration
+        RP.config = config
+
+        # Create flags with defaults
+        RP.flags = SimulationFlags()
+
+        # Initialize diagnostics
+        RP.diagnostics = Dict{Symbol, Any}()
+
+        # Create empty wall geometry
+        RP.wall = WallGeometry{FT}()
+        RP.damping_func = zeros(FT, RP.G.NZ, RP.G.NR)
+
+        # Initialize grid masks with empty or zero-filled arrays
+        RP.cell_state = zeros(Int, RP.G.NZ, RP.G.NR)
+        RP.in_wall_nids = Vector{Int}()
+        RP.out_wall_nids = Vector{Int}()
+
+        # Initialize volume elements
+        RP.device_inVolume = FT(0.0)
+
+        # Initialize physical state objects
+        RP.plasma = PlasmaState{FT}(RP.G.NR, RP.G.NZ)
+        RP.fields = Fields{FT}(RP.G.NR, RP.G.NZ)
+        RP.transport = Transport{FT}(RP.G.NR, RP.G.NZ)
+
+        # Initialize transport parameters from config
+        RP.transport.Dpara0 = config.Dpara0
+        RP.transport.Dperp0 = config.Dperp0
+
         RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
 
         # Initialize previous state
