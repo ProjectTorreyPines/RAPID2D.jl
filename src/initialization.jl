@@ -111,7 +111,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
                                                          RP.wall.R, RP.wall.Z)
 
     # Set up grid and wall information
-    setup_grid_and_wall!(RP)
+    setup_grid_nodes_state!(RP)
 
     # Initialize reaction rate coefficients
     initialize_reaction_rates!(RP)
@@ -430,7 +430,7 @@ function initialize_reaction_rates!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-function setup_grid_and_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function setup_grid_nodes_state!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Determine boundary indices
     NR = RP.G.NR
     NZ = RP.G.NZ
