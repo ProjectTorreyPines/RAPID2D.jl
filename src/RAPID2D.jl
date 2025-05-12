@@ -7,6 +7,7 @@ plasma dynamics.
 """
 module RAPID2D
 
+using StaticArrays
 using SparseArrays
 using LinearAlgebra
 using Statistics
@@ -26,6 +27,9 @@ include("physics/transport.jl")
 
 # Include the physics models
 include("physics/physics.jl")
+
+# Include the cross-section models
+include("reactions/electron_Xsec.jl")
 
 # Include the IO-related functionality
 include("io/io.jl")
