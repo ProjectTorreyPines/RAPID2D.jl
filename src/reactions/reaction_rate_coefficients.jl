@@ -57,23 +57,39 @@ struct Electron_RRCs{FT<:AbstractFloat}
     Momentum::RRC_EoverP_Erg{FT}
     Total_Excitation::RRC_EoverP_Erg{FT}
 
-	function Electron_RRCs(eRRC_EoverP_Erg_fileName::String)
-		# Create RRC objects for each reaction type from the given H5 file
-		h5fid = h5open(eRRC_EoverP_Erg_fileName,"r");
+	Dissoc_Ionz::RRC_T_ud{FT}
+	Halpha::RRC_T_ud{FT}
+	Recomb_H2Ion::RRC_T_ud{FT}
+	Recomb_H3Ion::RRC_T_ud{FT}
 
-		# Read the data from the HDF5 file
+	function Electron_RRCs(eRRC_EoverP_Erg_fileName::String, eRRC_T_ud_fileName::String)
+		@assert isfile(eRRC_EoverP_Erg_fileName) "File not found: $eRRC_EoverP_Erg_fileName"
+		@assert isfile(eRRC_T_ud_fileName) "File not found: $eRRC_T_ud_fileName"
+
+		# Create RRC_EoverP_Erg objects for each reaction type from the given H5 file
+		h5fid = h5open(eRRC_EoverP_Erg_fileName,"r");
 		EoverP = read(h5fid, "EoverP")
 		Erg_eV = read(h5fid, "Erg_eV")
-
 		Ionization = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Ionization"))
 		Momentum = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Momentum"))
 		Total_Excitation = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Total_Excitation"))
-
 		close(h5fid)
+
+		# Create RRC_T_ud objects for each reaction type from the given H5 file
+		h5fid = h5open(eRRC_T_ud_fileName,"r");
+		T_eV = read(h5fid, "T_eV")
+		ud_para = read(h5fid, "ud_para")
+		Dissoc_Ionz = RRC_EoverP_Erg(T_eV, ud_para, read(h5fid, "Dissoc_Ionz"))
+		Halpha = RRC_EoverP_Erg(T_eV, ud_para, read(h5fid, "Halpha"))
+		Recomb_H2Ion = RRC_EoverP_Erg(T_eV, ud_para, read(h5fid, "Recomb_H2Ion"))
+		Recomb_H3Ion = RRC_EoverP_Erg(T_eV, ud_para, read(h5fid, "Recomb_H3Ion"))
+		close(h5fid)
+
 
 		FT = eltype(EoverP)  # Determine the floating-point type from the data
 
-		new{FT}(Ionization, Momentum, Total_Excitation)
+		new{FT}(Ionization, Momentum, Total_Excitation,
+			Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion)
 	end
 end
 
@@ -84,20 +100,16 @@ struct H2_Ion_RRCs{FT<:AbstractFloat}
 	Projectile_Dissociation::RRC_T_ud{FT}
 	Particle_Exchange::RRC_T_ud{FT}
 
-	function H2_Ion_RRCs(iRRC_EoverP_Erg_fileName::String)
-		# Create RRC objects for each reaction type from the given H5 file
-		h5fid = h5open(iRRC_EoverP_Erg_fileName,"r");
-
-		# Read the data from the HDF5 file
+	function H2_Ion_RRCs(iRRCs_T_ud_fileName::String)
+		# Create RRC_T_ud objects for each reaction type from the given H5 file
+		h5fid = h5open(iRRCs_T_ud_fileName,"r");
 		T_eV = read(h5fid, "T_eV")
 		ud_para = read(h5fid, "ud_para")
-
 		Elastic = RRC_T_ud(T_eV, ud_para, read(h5fid, "Elastic"))
 		Charge_Exchange = RRC_T_ud(T_eV, ud_para, read(h5fid, "Charge_Exchange"))
 		Target_Ionization = RRC_T_ud(T_eV, ud_para, read(h5fid, "Target_Ionization"))
 		Projectile_Dissociation = RRC_T_ud(T_eV, ud_para, read(h5fid, "Projectile_Dissociation"))
 		Particle_Exchange = RRC_T_ud(T_eV, ud_para, read(h5fid, "Particle_Exchange"))
-
 		close(h5fid)
 
 		FT = eltype(T_eV)  # Determine the floating-point type from the data
@@ -105,7 +117,6 @@ struct H2_Ion_RRCs{FT<:AbstractFloat}
 		new{FT}(Elastic, Charge_Exchange, Target_Ionization, Projectile_Dissociation, Particle_Exchange)
 	end
 end
-
 
 function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
 	if hasfield(eRRCs, reaction)
@@ -126,7 +137,6 @@ function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Sym
 		throw(ArgumentError("Invalid reaction type: $reaction"))
 	end
 end
-
 
 function get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
 	if hasfield(iRRCs, reaction)
