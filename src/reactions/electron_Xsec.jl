@@ -607,3 +607,14 @@ function Xsec_Electron_Recombination_with_H3_Ion!(in_Energy_eV::AbstractVector{F
     end
 end
 
+"""
+    Xsec_Electron_Recombination_with_H3_Ion(in_Energy_eV::AbstractVector{Float64})
+
+Calculate electron recombination cross-sections with H3+ ions.
+"""
+function Xsec_Electron_Recombination_with_H3_Ion(in_Energy_eV::AbstractVector{Float64})
+    out_Xsec = zeros(Float64, length(in_Energy_eV))
+    Xsec_Electron_Recombination_with_H3_Ion!(in_Energy_eV, out_Xsec)
+    return out_Xsec
+end
+
