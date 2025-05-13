@@ -154,7 +154,7 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT<:AbstractFloa
     initialize_velocities!(RP)
 
     # Update Coulomb collision parameters
-    update_coulomb_logarithm!(RP)
+    update_coulomb_collision_parameters!(RP)
 
     return RP
 end
@@ -524,20 +524,52 @@ function initialize_velocities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-function update_coulomb_logarithm!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "update_coulomb_logarithm! implementation needed"
+function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # NRL formula for Coulomb logarithm
+    # Note that NRL uses cgs units for density and eV for temperature
 
-    # Set coulomb logarithm to a constant value for now
-    RP.plasma.lnA .= FT(10.0) * ones(FT, RP.G.NR, RP.G.NZ)
+    # Constants needed for calculation
+    mass_proton = RP.config.constants.mp # proton mass [kg]
+    μ = RP.config.constants.mi / mass_proton   # ion mass / proton mass
+    me_over_mi = RP.config.constants.me / RP.config.constants.mi  # electron to ion mass ratio
 
-    # Calculate collision frequency
-    # ν_ei = n_e e^4 ln Λ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)
-    # simplified for now
-    RP.plasma.nu_ei .= RP.plasma.ne * FT(1.0e-6) ./ (RP.plasma.Te_eV).^(1.5)
+    # Calculate temperature ratio threshold
+    Ti_mass_ratio = RP.plasma.Ti_eV * me_over_mi
 
-    # Spitzer factor - set to 0.51 for Z=1
-    RP.plasma.sptz_fac .= FT(0.51) * ones(FT, RP.G.NR, RP.G.NZ)
+    # Create index masks for different temperature regimes
+    idx1 = @. (RP.plasma.Te_eV < Ti_mass_ratio)  # very low Te case
+    idx2 = @. (!idx1 & (RP.plasma.Te_eV > 10 * RP.plasma.Zeff^2))  # normal Te case
+    idx3 = @. (!idx1 & !idx2)  # low Te case
+
+    # Calculate Coulomb logarithm based on different regimes
+    # Very low Te case
+    @. RP.plasma.lnΛ[idx1] = 16.0 - log(sqrt(RP.plasma.ni[idx1] * 1e-6) *
+                                (RP.plasma.Ti_eV[idx1])^(-1.5) *
+                                RP.plasma.Zeff[idx1]^2 * μ)
+
+    # Normal Te case (Te_eV > 10*Zeff^2)
+    @. RP.plasma.lnΛ[idx2] = 24.0 - log(sqrt(RP.plasma.ne[idx2] * 1e-6) /
+                                  RP.plasma.Te_eV[idx2])
+
+    # Low Te case
+    @. RP.plasma.lnΛ[idx3] = 23.0 - log(sqrt(RP.plasma.ne[idx3] * 1e-6) *
+                                 RP.plasma.Zeff[idx3] *
+                                 (RP.plasma.Te_eV[idx3])^(-1.5))
+
+    # Handle non-finite values (NaN, Inf) or non-real values
+    not_valid = @. !isfinite(RP.plasma.lnΛ) | !isreal(RP.plasma.lnΛ)
+    @. RP.plasma.lnΛ[not_valid] = FT(10.0)  # base value
+
+    # Update collision frequency
+    # ν_ei = n_e e^4 lnΛ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)
+    ν_factor_Maxwellian = FT(1.863033936542749e-40)  # sqrt(2)*ee^4/(12π^(1.5)*ϵ0^2*sqrt(me))
+    @. RP.plasma.ν_ei = ν_factor_Maxwellian * RP.plasma.Zeff^2 * RP.plasma.ni *
+                        RP.plasma.lnΛ * (RP.config.constants.ee * RP.plasma.Te_eV)^(-1.5)
+
+    Zeff = RP.plasma.Zeff
+    @. RP.plasma.sptz_fac = (1+1.198*Zeff+0.222*Zeff^2)/(1+2.966*Zeff+0.753*Zeff^2);
+    # Set Spitzer factor to 0.51 for Zeff=1
+    RP.plasma.sptz_fac[Zeff.==1] .= FT(0.510469472194728);
 
     return RP
 end
@@ -632,7 +664,7 @@ function initialize_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     snap2D[:mean_aZ_by_JxB] = zeros(FT, dims_3d)
 
     # Other physics parameters
-    snap2D[:lnA] = zeros(FT, dims_3d)
+    snap2D[:lnΛ] = zeros(FT, dims_3d)
     snap2D[:L_mixing] = zeros(FT, dims_3d)
     snap2D[:nc_para] = zeros(FT, dims_3d)
     snap2D[:nc_perp] = zeros(FT, dims_3d)

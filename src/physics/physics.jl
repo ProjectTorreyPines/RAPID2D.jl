@@ -13,7 +13,7 @@ export update_ue_para!,
        update_ui_para!,
        update_te!,
        update_ti!,
-       update_coulomb_logarithm!,
+       update_coulomb_collision_parameters!,
        update_power_terms!
 
 """
@@ -56,8 +56,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     if RP.flags.Coulomb_Collision
         # Electron momentum loss rate due to e-i collisions
         # Simplified implementation
-        nu_ei_mom = RP.plasma.nu_ei
-        accel_drag = -nu_ei_mom .* RP.plasma.ue_para
+        ν_ei_mom = RP.plasma.ν_ei
+        accel_drag = -ν_ei_mom .* RP.plasma.ue_para
     else
         accel_drag = zeros(FT, RP.G.NR, RP.G.NZ)
     end
@@ -227,7 +227,7 @@ function update_power_terms!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         # Electron-ion energy equilibration rate (simplified)
         # P_ei = 3 m_e/m_i · n_e · ν_ei · (T_i - T_e)
         mass_ratio = RP.config.me / RP.config.mi
-        equi_power = 3.0 * mass_ratio * RP.plasma.ne .* RP.plasma.nu_ei .*
+        equi_power = 3.0 * mass_ratio * RP.plasma.ne .* RP.plasma.ν_ei .*
                     (RP.plasma.Ti_eV .- RP.plasma.Te_eV) * RP.config.ee
 
         RP.plasma.ePowers.equi .= equi_power
