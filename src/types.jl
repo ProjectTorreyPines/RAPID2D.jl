@@ -5,6 +5,12 @@ Type definitions for RAPID2D.jl
 # Importing the PlasmaConstants from constants.jl
 import RAPID2D: PlasmaConstants
 
+# Abstract types for reaction rate coefficients for a specific species
+"""
+    AbstractElectronRRCs{T<:AbstractFloat}
+"""
+abstract type AbstractSpeciesRRCs{FT<:AbstractFloat} end
+
 """
     SimulationConfig{FT<:AbstractFloat}
 
@@ -521,8 +527,8 @@ mutable struct RAPID{FT<:AbstractFloat}
     external_field::Union{Nothing, AbstractExternalField{FT}}  # External EM field source
 
     # Reaction rate coefficients
-    eRRC::Dict{Symbol, Any}           # Electron reaction rate coefficients
-    iRRC::Dict{Symbol, Any}           # Ion reaction rate coefficients
+    eRRCs::AbstractSpeciesRRCs{FT}    # Electron reaction rate coefficients
+    iRRCs::AbstractSpeciesRRCs{FT}    # H2 Ion reaction rate coefficients
 
     # Physical components
     config::SimulationConfig{FT}      # Simulation configuration
@@ -567,8 +573,8 @@ mutable struct RAPID{FT<:AbstractFloat}
         # Initialize empty containers
         in_wall_nids = Vector{Int}()
         out_wall_nids = Vector{Int}()
-        eRRC = Dict{Symbol, Any}()
-        iRRC = Dict{Symbol, Any}()
+        eRRC = load_electron_RRCs()
+        iRRC = load_H2_Ion_RRCs()
         tElap = Dict{Symbol, Float64}()
         diagnostics = Dict{Symbol, Any}()
 

@@ -90,7 +90,7 @@ struct RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 end
 
 """
-    Electron_RRCs{FT<:AbstractFloat}
+    Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
 
 Container for electron-related reaction rate coefficient models.
 Stores various reaction models for electron-neutral and electron-ion interactions.
@@ -104,7 +104,7 @@ Stores various reaction models for electron-neutral and electron-ion interaction
 - `Recomb_H2Ion`: Rate coefficient for H2+ recombination
 - `Recomb_H3Ion`: Rate coefficient for H3+ recombination
 """
-struct Electron_RRCs{FT<:AbstractFloat}
+struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
     Ionization::RRC_EoverP_Erg{FT}
     Momentum::RRC_EoverP_Erg{FT}
     Total_Excitation::RRC_EoverP_Erg{FT}
@@ -146,7 +146,7 @@ struct Electron_RRCs{FT<:AbstractFloat}
 end
 
 """
-    H2_Ion_RRCs{FT<:AbstractFloat}
+    H2_Ion_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
 
 Container for H2+ ion-related reaction rate coefficient models.
 Stores various reaction models for H2+ interactions with background gas.
@@ -158,7 +158,7 @@ Stores various reaction models for H2+ interactions with background gas.
 - `Projectile_Dissociation`: Rate coefficient for dissociation of projectile ions
 - `Particle_Exchange`: Rate coefficient for particle exchange processes
 """
-struct H2_Ion_RRCs{FT<:AbstractFloat}
+struct H2_Ion_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
     Elastic::RRC_T_ud{FT}
     Charge_Exchange::RRC_T_ud{FT}
     Target_Ionization::RRC_T_ud{FT}

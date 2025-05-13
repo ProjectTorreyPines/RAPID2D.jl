@@ -102,7 +102,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     setup_grid_nodes_state!(RP)
 
     # Initialize reaction rate coefficients
-    initialize_reaction_rates!(RP)
+    initialize_RRCs!(RP)
 
     # update E,B fields
     update_fields!(RP)
@@ -407,14 +407,24 @@ function distance_point_edge(point::Vector{FT}, edge::Matrix{FT}) where {FT<:Abs
     end
 end
 
-function initialize_reaction_rates!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "initialize_reaction_rates! implementation needed"
+function load_electron_RRCs()
+    RRC_data_dir = joinpath(dirname(@__DIR__), "RRC_data")
+    eRRCs_EoverP_Erg_file = joinpath(RRC_data_dir, "eRRCs_EoverP_Erg.h5")
+    eRRCs_T_ud_file = joinpath(RRC_data_dir, "eRRCs_T_ud.h5")
+    eRRCs = Electron_RRCs(eRRCs_EoverP_Erg_file, eRRCs_T_ud_file)
+    return eRRCs
+end
 
-    # Just create empty dictionaries for now
-    RP.eRRC = Dict{Symbol, Any}()
-    RP.iRRC = Dict{Symbol, Any}()
+function load_H2_Ion_RRCs()
+    RRC_data_dir = joinpath(dirname(@__DIR__), "RRC_data")
+    iRRCs_T_ud_file = joinpath(RRC_data_dir, "iRRCs_T_ud.h5")
+    iRRCs = H2_Ion_RRCs(iRRCs_T_ud_file)
+    return iRRCs
+end
 
+function initialize_RRCs!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    RP.eRRCs = load_electron_RRCs()
+    RP.iRRCs = load_H2_Ion_RRCs()
     return RP
 end
 
