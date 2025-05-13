@@ -198,15 +198,15 @@ Automatically selects appropriate physical parameters from the RAPID model.
 - RRC (reaction rate coefficient) values at each spatial point
 """
 function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
-	if hasfield(eRRCs, reaction)
-		mass = RP.constants.me;
-		ee = RP.constants.ee;
+	if hasfield(typeof(eRRCs), reaction)
+		mass = RP.config.constants.me;
+		ee = RP.config.constants.ee;
 
 		RRC = getfield(eRRCs, reaction)
 		if RRC isa RRC_EoverP_Erg
-			mean_eErg_eV = 1.5*RP.plasma.Te_eV + 0.5*mass*RP.plasma.ue_para^2/ee;
-			abs_Epara_over_pGas = abs(RP.fields.E_para_tot./(RP.plasma.n_H2_gas.*RP.plasma.T_gas_eV*ee));
-			return RRC.itp.(mean_eErg_eV, abs_Epara_over_pGas)
+			mean_eErg_eV = @. 1.5*RP.plasma.Te_eV + 0.5*mass*RP.plasma.ue_para^2/ee;
+			abs_Epara_over_pGas = @. abs(RP.fields.E_para_tot/(RP.plasma.n_H2_gas*RP.plasma.T_gas_eV*ee));
+			return RRC.itp.(abs_Epara_over_pGas, mean_eErg_eV)
 		elseif RRC isa RRC_T_ud
 			return RRC.itp.(RP.plasma.Te_eV, abs.(RP.plasma.ue_para))
 		else
@@ -232,7 +232,7 @@ Automatically selects appropriate physical parameters from the RAPID model.
 - RRC (reaction rate coefficient) values at each spatial point
 """
 function get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
-	if hasfield(iRRCs, reaction)
+	if hasfield(typeof(iRRCs), reaction)
 		RRC = getfield(iRRCs, reaction)
 		if RRC isa RRC_T_ud
 			return RRC.itp.(RP.plasma.Ti_eV, abs.(RP.plasma.ui_para))
@@ -243,3 +243,9 @@ function get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol)
 		throw(ArgumentError("Invalid reaction type: $reaction"))
 	end
 end
+
+# Export types and functions for reaction rate coefficients
+export AbstractReactionRateCoefficient
+export RRC_EoverP_Erg, RRC_T_ud, RRC_T_ud_gFac
+export Electron_RRCs, H2_Ion_RRCs
+export get_electron_RRC, get_H2_ion_RRC
