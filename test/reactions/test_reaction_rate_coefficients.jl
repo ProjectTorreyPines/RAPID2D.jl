@@ -54,7 +54,7 @@ using RAPID2D
             midpoint_erg = Erg_eV[div(length(Erg_eV), 2)]
 
             # Interpolation should match the raw data at grid points
-            @test rrc.itp[midpoint_eoeverp, midpoint_erg] ≈
+            @test rrc.itp(midpoint_eoeverp, midpoint_erg) ≈
                   ionization_data[div(length(EoverP), 2), div(length(Erg_eV), 2)]
 
             # Test interpolation at point between grid points
@@ -62,7 +62,7 @@ using RAPID2D
                 interp_eoeverp = (EoverP[1] + EoverP[2]) / 2
                 interp_erg = (Erg_eV[1] + Erg_eV[2]) / 2
                 # Just test that it doesn't error
-                @test !isnan(rrc.itp[interp_eoeverp, interp_erg])
+                @test !isnan(rrc.itp(interp_eoeverp, interp_erg))
             end
 
             # Test bounds handling
@@ -91,7 +91,7 @@ using RAPID2D
             midpoint_T = T_eV[div(length(T_eV), 2)]
             midpoint_ud = ud_para[div(length(ud_para), 2)]
 
-            @test RRC.itp[midpoint_T, midpoint_ud] ≈
+            @test RRC.itp(midpoint_T, midpoint_ud) ≈
                   elastic_data[div(length(T_eV), 2), div(length(ud_para), 2)]
 
             # Test interpolation at point between grid points
@@ -99,7 +99,7 @@ using RAPID2D
                 interp_T = (T_eV[1] + T_eV[2]) / 2
                 interp_ud = (ud_para[1] + ud_para[2]) / 2
                 # Just test that it doesn't error
-                @test !isnan(RRC.itp[interp_T, interp_ud])
+                @test !isnan(RRC.itp(interp_T, interp_ud))
             end
         end
     end
