@@ -10,4 +10,5 @@ else
     # Default behavior: run all tests
     include("io/io_test.jl")
     include("utils/utils_test.jl")
+    include("reactions/test_reaction_rate_coefficients.jl")
 end

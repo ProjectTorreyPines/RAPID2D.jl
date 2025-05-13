@@ -30,6 +30,7 @@ include("physics/physics.jl")
 
 # Include the cross-section models
 include("reactions/electron_Xsec.jl")
+include("reactions/reaction_rate_coefficients.jl")
 
 # Include the IO-related functionality
 include("io/io.jl")
