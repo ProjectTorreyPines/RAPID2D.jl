@@ -99,5 +99,92 @@ function initialize_grid_geometry(
     return grid
 end
 
+"""
+    trace_zero_contour(matrix::Matrix{T}, start_position::NamedTuple{(:rid, :zid), Tuple{Int, Int}}) where T<:Real
+
+Find a connected contour of zeros in a matrix, starting from a specified position.
+Uses a depth-first search algorithm to explore all connected zeros.
+
+# Arguments
+- `matrix`: 2D matrix to search for zeros
+- `start_position`: Starting position as a named tuple with fields `rid` (radial index)
+                   and `zid` (vertical index)
+
+# Returns
+- Vector of named tuples with fields `rid` and `zid` representing the contour path
+"""
+function trace_zero_contour(matrix::Matrix{T}, start_position::NamedTuple{(:rid, :zid), Tuple{Int, Int}}) where T<:Real
+    # Get matrix dimensions
+    num_r, num_z = size(matrix)
+
+    # Extract starting position
+    rid, zid = start_position.rid, start_position.zid
+
+    # Check if starting point is valid
+    if matrix[rid, zid] != 0
+        error("Starting point (rid=$rid, zid=$zid) does not have a value of 0")
+    end
+
+    # Direction array (right, up, left, down)
+    directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+
+    # Array to store visited status
+    visited = falses(num_r, num_z)
+
+    # Result path
+    path = Vector{NamedTuple{(:rid, :zid), Tuple{Int, Int}}}()
+
+    # Depth-First Search (DFS) stack
+    stack = [start_position]
+
+    while !isempty(stack)
+        # Current position
+        current_pos = pop!(stack)
+        current_rid, current_zid = current_pos.rid, current_pos.zid
+
+        # Skip if already visited
+        if visited[current_rid, current_zid]
+            continue
+        end
+
+        # Mark current position as visited
+        visited[current_rid, current_zid] = true
+        push!(path, current_pos)
+
+        # Explore in all 4 directions
+        for (dr, dz) in directions
+            new_rid = current_rid + dr
+            new_zid = current_zid + dz
+
+            # Check if within boundaries
+            if 1 <= new_rid <= num_r && 1 <= new_zid <= num_z
+                # If value is 0 and not visited
+                if matrix[new_rid, new_zid] == 0 && !visited[new_rid, new_zid]
+                    push!(stack, (rid=new_rid, zid=new_zid))
+                end
+            end
+        end
+    end
+
+    return path
+end
+
+"""
+    trace_zero_contour(matrix::Matrix{T}, start_rid::Int, start_zid::Int) where T<:Real
+
+Convenience method that accepts separate r and z indices instead of a named tuple.
+
+# Arguments
+- `matrix`: 2D matrix to search for zeros
+- `start_rid`: Starting r-index (radial)
+- `start_zid`: Starting z-index (vertical)
+
+# Returns
+- Vector of named tuples with fields `rid` and `zid` representing the contour path
+"""
+function trace_zero_contour(matrix::Matrix{T}, start_rid::Int, start_zid::Int) where T<:Real
+    return trace_zero_contour(matrix, (rid=start_rid, zid=start_zid))
+end
+
 # Export functions
-export initialize_grid_geometry, initialize_grid_geometry!
+export initialize_grid_geometry, initialize_grid_geometry!, trace_zero_contour
