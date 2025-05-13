@@ -151,20 +151,24 @@ using RAPID2D
 		mock_RP = create_rapid_object(; config=config);
 
         # Load RRCs
-        e_rrcs = Electron_RRCs(EoverP_Erg_file, e_tud_file)
-        i_rrcs = H2_Ion_RRCs(i_tud_file)
+        eRRCs = Electron_RRCs(EoverP_Erg_file, e_tud_file)
+        iRRCs = H2_Ion_RRCs(i_tud_file)
 
 		mock_RP.plasma.Te_eV .= 10.0
 
         # Test get_electron_RRC function - make sure it runs without errors
         # and returns expected size
-        ionization_rates = get_electron_RRC(mock_RP, e_rrcs, :Ionization)
-        @test size(ionization_rates) == size(mock_RP.G.R2D)
-        @test !any(isnan.(ionization_rates))
+        ionization_RRC = get_electron_RRC(mock_RP, eRRCs, :Ionization)
+        @test size(ionization_RRC) == size(mock_RP.G.R2D)
+        @test !any(isnan.(ionization_RRC))
+
+        Halpha_RRC = get_electron_RRC(mock_RP, eRRCs, :Halpha)
+        @test size(Halpha_RRC) == size(mock_RP.G.R2D)
+        @test !any(isnan.(Halpha_RRC))
 
         # Test get_H2_ion_RRC function - make sure it runs without errors
         # and returns expected size
-        elastic_rates = get_H2_ion_RRC(mock_RP, i_rrcs, :Elastic)
+        elastic_rates = get_H2_ion_RRC(mock_RP, iRRCs, :Elastic)
         @test size(elastic_rates) == size(mock_RP.G.R2D)
         @test !any(isnan.(elastic_rates))
     end
