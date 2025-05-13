@@ -491,14 +491,8 @@ function setup_grid_nodes_state!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "initialize_density! implementation needed"
-
     # Set small initial seed density inside wall
-    RP.plasma.ne .= FT(1.0e12) * ones(FT, RP.G.NR, RP.G.NZ)
-
-    # Zero outside wall
-    RP.plasma.ne[RP.G.nodes.out_wall_nids] .= FT(0.0)
+    RP.plasma.ne[RP.G.nodes.in_wall_nids] .= FT(1.0e6)
 
     # Ion density matches electron for now
     RP.plasma.ni .= copy(RP.plasma.ne)
@@ -507,37 +501,25 @@ function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 function initialize_temperature!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "initialize_temperature! implementation needed"
-
     # Set initial electron temperature
-    RP.plasma.Te_eV .= FT(2.0) * ones(FT, RP.G.NR, RP.G.NZ)
-
-    # Zero outside wall
-    RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
-
-    # Ion temperature matches electron for now
-    RP.plasma.Ti_eV .= copy(RP.plasma.Te_eV)
-
+    RP.plasma.Te_eV .= RP.config.constants.room_T_eV * ones(FT, RP.G.NR, RP.G.NZ)
+    RP.plasma.Ti_eV .= RP.config.constants.room_T_eV * ones(FT, RP.G.NR, RP.G.NZ)
     return RP
 end
 
 function initialize_velocities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "initialize_velocities! implementation needed"
-
     # Set initial velocities to zero
-    RP.plasma.ue_para .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.ui_para .= zeros(FT, RP.G.NR, RP.G.NZ)
+    RP.plasma.ue_para = zeros(FT, RP.G.NR, RP.G.NZ)
+    RP.plasma.ui_para = zeros(FT, RP.G.NR, RP.G.NZ)
 
     # Initialize vector components
-    RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
-    RP.plasma.ueZ .= RP.plasma.ue_para .* RP.fields.bZ
-    RP.plasma.ueϕ .= RP.plasma.ue_para .* RP.fields.bϕ
+    @. RP.plasma.ueR = RP.plasma.ue_para * RP.fields.bR
+    @. RP.plasma.ueZ = RP.plasma.ue_para * RP.fields.bZ
+    @. RP.plasma.ueϕ = RP.plasma.ue_para * RP.fields.bϕ
 
-    RP.plasma.uiR .= RP.plasma.ui_para .* RP.fields.bR
-    RP.plasma.uiZ .= RP.plasma.ui_para .* RP.fields.bZ
-    RP.plasma.uiϕ .= RP.plasma.ui_para .* RP.fields.bϕ
+    @. RP.plasma.uiR = RP.plasma.ui_para * RP.fields.bR
+    @. RP.plasma.uiZ = RP.plasma.ui_para * RP.fields.bZ
+    @. RP.plasma.uiϕ = RP.plasma.ui_para * RP.fields.bϕ
 
     return RP
 end
