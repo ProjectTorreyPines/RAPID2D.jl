@@ -52,8 +52,8 @@ Contains simulation configuration parameters.
     prefilled_gas_pressure::Union{FT,Nothing} = nothing  # Prefilled gas pressure (Pa)
 
     # Limits
-    min_Te::FT = FT(0.05)              # Minimum electron temperature (eV)
-    max_Te::FT = FT(100.0)             # Maximum electron temperature (eV)
+    min_Te::FT = FT(0.001)              # Minimum electron temperature (eV)
+    max_Te::FT = FT(500.0)             # Maximum electron temperature (eV)
 
     # Transport parameters
     Dpara0::FT = FT(0.0)               # Base parallel diffusion coefficient
