@@ -69,7 +69,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.ue_para .+= accel_tot * RP.dt
 
     # Zero velocity outside wall
-    RP.plasma.ue_para[RP.out_wall_nids] .= FT(0.0)
+    RP.plasma.ue_para[RP.G.nodes.out_wall_nids] .= FT(0.0)
 
     # Update vector components
     RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
@@ -103,7 +103,7 @@ function update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.ui_para .+= accel_tot * RP.dt
 
     # Zero velocity outside wall
-    RP.plasma.ui_para[RP.out_wall_nids] .= FT(0.0)
+    RP.plasma.ui_para[RP.G.nodes.out_wall_nids] .= FT(0.0)
 
     # Update vector components
     RP.plasma.uiR .= RP.plasma.ui_para .* RP.fields.bR
@@ -145,7 +145,7 @@ function update_te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.Te_eV .= min.(RP.plasma.Te_eV, RP.config.max_Te)
 
     # Zero temperature outside wall
-    RP.plasma.Te_eV[RP.out_wall_nids] .= RP.config.min_Te
+    RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
 
     return RP
 end
@@ -187,7 +187,7 @@ function update_ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.Ti_eV .= max.(RP.plasma.Ti_eV, RP.config.min_Te) # Using same min as electrons
 
     # Zero temperature outside wall
-    RP.plasma.Ti_eV[RP.out_wall_nids] .= RP.config.min_Te
+    RP.plasma.Ti_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
 
     return RP
 end

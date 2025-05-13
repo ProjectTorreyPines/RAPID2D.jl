@@ -173,8 +173,8 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         RP.operators.A_GS = construct_A_GS(RP)
 
         # Calculate Green's function for boundaries if needed
-        Rsrc = RP.G.R2D[RP.in_wall_nids]
-        Zsrc = RP.G.Z2D[RP.in_wall_nids]
+        Rsrc = RP.G.R2D[RP.G.nodes.in_wall_nids]
+        Zsrc = RP.G.Z2D[RP.G.nodes.in_wall_nids]
         Rdest = RP.G.R2D[RP.G.BDY_idx]
         Zdest = RP.G.Z2D[RP.G.BDY_idx]
 
@@ -436,12 +436,12 @@ function setup_grid_nodes_state!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Determine wall indices using is_inside_wall with WallGeometry object
     in_Wall_state = is_inside_wall(RP.G.R2D, RP.G.Z2D, RP.wall)
 
-    # Find linear indices of points outside and inside the wall
-    RP.out_wall_nids = findall(.!in_Wall_state[:])
-    RP.in_wall_nids = findall(in_Wall_state[:])
-
     # Fill in node information using the NodeState struct
     nodes = RP.G.nodes
+
+    # Find linear indices of points outside and inside the wall
+    nodes.in_wall_nids = findall(in_Wall_state[:])
+    nodes.out_wall_nids = findall(.!in_Wall_state[:])
 
     # Fill in node indices information
     for j in 1:NZ
@@ -453,17 +453,14 @@ function setup_grid_nodes_state!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     end
 
     # Mark node state (-1 for outside, +1 for inside)
-    nodes.state[RP.out_wall_nids] .= -1
-    nodes.state[RP.in_wall_nids] .= 1
+    nodes.state[nodes.out_wall_nids] .= -1
+    nodes.state[nodes.in_wall_nids] .= 1
 
-    # Store indices in the NodeState
-    nodes.in_wall_nids = copy(RP.in_wall_nids)
-    nodes.out_wall_nids = copy(RP.out_wall_nids)
 
     # Find nodes on the wall (boundary nodes)
     nodes.on_wall_nids = Int[]
-    for k in 1:length(RP.out_wall_nids)
-        nid = RP.out_wall_nids[k]
+    for k in 1:length(nodes.out_wall_nids)
+        nid = nodes.out_wall_nids[k]
         rid = nodes.rid[nid]
         zid = nodes.zid[nid]
 
@@ -483,11 +480,11 @@ function setup_grid_nodes_state!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Initialize cell state (1 for inside wall, -1 for outside)
     RP.cell_state = fill(-1, NR, NZ)
-    RP.cell_state[RP.in_wall_nids] .= 1
+    RP.cell_state[nodes.in_wall_nids] .= 1
 
     # Calculate inVol2D - volume elements inside the wall
     RP.G.inVol2D = zeros(FT, NR, NZ)
-    RP.G.inVol2D[RP.in_wall_nids] .= RP.G.Jacob[RP.in_wall_nids] * RP.G.dR * RP.G.dZ
+    RP.G.inVol2D[nodes.in_wall_nids] .= RP.G.Jacob[nodes.in_wall_nids] * RP.G.dR * RP.G.dZ
     RP.device_inVolume = sum(RP.G.inVol2D)
 
     return RP
@@ -501,7 +498,7 @@ function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.ne .= FT(1.0e12) * ones(FT, RP.G.NR, RP.G.NZ)
 
     # Zero outside wall
-    RP.plasma.ne[RP.out_wall_nids] .= FT(0.0)
+    RP.plasma.ne[RP.G.nodes.out_wall_nids] .= FT(0.0)
 
     # Ion density matches electron for now
     RP.plasma.ni .= copy(RP.plasma.ne)
@@ -517,7 +514,7 @@ function initialize_temperature!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.Te_eV .= FT(2.0) * ones(FT, RP.G.NR, RP.G.NZ)
 
     # Zero outside wall
-    RP.plasma.Te_eV[RP.out_wall_nids] .= RP.config.min_Te
+    RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
 
     # Ion temperature matches electron for now
     RP.plasma.Ti_eV .= copy(RP.plasma.Te_eV)

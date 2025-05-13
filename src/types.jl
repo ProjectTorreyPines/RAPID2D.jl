@@ -519,8 +519,6 @@ mutable struct RAPID{FT<:AbstractFloat}
 
     # Grid masks
     cell_state::Matrix{Int}           # Cell state (1 inside wall, -1 outside)
-    in_wall_nids::Vector{Int}         # Linear indices of cells inside wall
-    out_wall_nids::Vector{Int}        # Linear indices of cells outside wall
     device_inVolume::FT               # Total volume inside wall
 
     # External field source
@@ -571,8 +569,6 @@ mutable struct RAPID{FT<:AbstractFloat}
         prev_n = zeros(FT, dims)
 
         # Initialize empty containers
-        in_wall_nids = Vector{Int}()
-        out_wall_nids = Vector{Int}()
         eRRC = load_electron_RRCs()
         iRRC = load_H2_Ion_RRCs()
         tElap = Dict{Symbol, Float64}()
@@ -581,7 +577,7 @@ mutable struct RAPID{FT<:AbstractFloat}
         # Create and return new instance
         return new{FT}(
             G, wall, damping_func,
-            cell_state, in_wall_nids, out_wall_nids, FT(0.0),
+            cell_state, FT(0.0),
             nothing,  # external_field
             eRRC, iRRC,
             config, flags, plasma, fields, transport, operators,
