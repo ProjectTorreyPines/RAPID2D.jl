@@ -28,22 +28,10 @@ function validate_config!(config::SimulationConfig{FT}) where {FT<:AbstractFloat
 
     # Check grid parameters if manual configuration
     if config.device_Name == "manual"
-        # For manual setup, we need R_min, R_max, Z_min, Z_max
-        if isnothing(config.R_min)
-            push!(missing_params, "R_min")
-        end
-
-        if isnothing(config.R_max)
-            push!(missing_params, "R_max")
-        end
-
-        if isnothing(config.Z_min)
-            push!(missing_params, "Z_min")
-        end
-
-        if isnothing(config.Z_max)
-            push!(missing_params, "Z_max")
-        end
+        # # For manual setup, we need R_min, R_max, Z_min, Z_max
+        # if isnothing(config.R_min)
+        #     push!(missing_params, "R_min")
+        # end
     end
 
     # Raise error if any required parameters are missing
@@ -238,10 +226,10 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     NZ = RP.G.NZ > 0 ? RP.G.NZ : 100 # Default if not already set
 
     # Set domain boundaries
-    R_max = FT(2.0)
-    R_min = FT(1.0)
-    Z_max = FT(1.0)
-    Z_min = FT(-1.0)
+    R_max = FT(2.2)
+    R_min = FT(0.8)
+    Z_max = FT(1.2)
+    Z_min = FT(-1.2)
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max));
 
