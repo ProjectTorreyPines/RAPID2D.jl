@@ -478,6 +478,37 @@ function setup_grid_nodes_state!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Mark on-wall nodes with state = 0
     nodes.state[nodes.on_wall_nids] .= 0
 
+    # Ensure we have on-wall nodes before proceeding
+    if !isempty(nodes.on_wall_nids)
+        # Select first on_wall node as starting point
+        ini_nid = nodes.on_wall_nids[1]
+        ini_rid = nodes.rid[ini_nid]
+        ini_zid = nodes.zid[ini_nid]
+
+        # Find path of 0-valued nodes (on-wall nodes) starting from initial point
+        # This traces the wall along grid points that lie on the actual boundary
+        path = trace_zero_contour(nodes.state, (rid=ini_rid, zid=ini_zid))
+
+        # Extract R and Z coordinates for the fitted wall
+        fitted_wall_R = Vector{FT}(undef, length(path) + 1)
+        fitted_wall_Z = Vector{FT}(undef, length(path) + 1)
+
+        # Map each path point to its actual spatial coordinates
+        for (i, node) in pairs(path)
+            fitted_wall_R[i] = RP.G.R2D[node.rid, node.zid]
+            fitted_wall_Z[i] = RP.G.Z2D[node.rid, node.zid]
+        end
+
+        # Close the path by adding the first point at the end
+        fitted_wall_R[end] = fitted_wall_R[1]
+        fitted_wall_Z[end] = fitted_wall_Z[1]
+
+        # Create the fitted wall geometry that aligns perfectly with grid points
+        RP.fitted_wall = WallGeometry{FT}(fitted_wall_R, fitted_wall_Z)
+    end
+
+
+
     # Initialize cell state (1 for inside wall, -1 for outside)
     RP.cell_state = fill(-1, NR, NZ)
     RP.cell_state[nodes.in_wall_nids] .= 1

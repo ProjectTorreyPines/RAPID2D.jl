@@ -517,6 +517,7 @@ mutable struct RAPID{FT<:AbstractFloat}
     # Grid and wall geometry
     G::GridGeometry{FT}               # Grid geometry
     wall::WallGeometry{FT}            # Wall geometry data
+    fitted_wall::WallGeometry{FT}     # Wall geometry fitted to the grid
     damping_func::Matrix{FT}          # Damping function outside wall
 
     # Grid masks
@@ -578,7 +579,7 @@ mutable struct RAPID{FT<:AbstractFloat}
 
         # Create and return new instance
         return new{FT}(
-            G, wall, damping_func,
+            G, wall, WallGeometry{FT}(), damping_func,
             cell_state, FT(0.0),
             nothing,  # external_field
             eRRC, iRRC,
