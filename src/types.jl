@@ -470,6 +470,9 @@ mutable struct GridGeometry{FT<:AbstractFloat}
     # Node information
     nodes::NodeState{FT}     # Information about grid nodes
 
+    cell_state::Matrix{Int}  # 1: inside fitted wall, -1: outside fitted wall
+    device_inVolume::FT      # Total volume inside fitted wall
+
     # Constructor with dimensions
     function GridGeometry{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
         # Pre-allocate arrays
@@ -482,6 +485,8 @@ mutable struct GridGeometry{FT<:AbstractFloat}
 		inVol2D = zeros(FT, NR, NZ)
         BDY_idx = Int[]
         nodes = NodeState{FT}(NR, NZ)
+        cell_state = zeros(Int, NR, NZ)
+        device_inVolume = FT(0.0)
 
         return new{FT}(
             NR, NZ,
@@ -489,7 +494,8 @@ mutable struct GridGeometry{FT<:AbstractFloat}
             FT(0.0), FT(0.0),
             Jacob, inv_Jacob, inVol2D,
             BDY_idx,
-            nodes
+            nodes, cell_state,
+            device_inVolume
         )
     end
 
@@ -519,10 +525,6 @@ mutable struct RAPID{FT<:AbstractFloat}
     wall::WallGeometry{FT}            # Wall geometry data
     fitted_wall::WallGeometry{FT}     # Wall geometry fitted to the grid
     damping_func::Matrix{FT}          # Damping function outside wall
-
-    # Grid masks
-    cell_state::Matrix{Int}           # Cell state (1 inside wall, -1 outside)
-    device_inVolume::FT               # Total volume inside wall
 
     # External field source
     external_field::Union{Nothing, AbstractExternalField{FT}}  # External EM field source
@@ -568,7 +570,6 @@ mutable struct RAPID{FT<:AbstractFloat}
 
         # Initialize matrices
         damping_func = zeros(FT, dims)
-        cell_state = zeros(Int, dims)
         prev_n = zeros(FT, dims)
 
         # Initialize empty containers
@@ -580,7 +581,6 @@ mutable struct RAPID{FT<:AbstractFloat}
         # Create and return new instance
         return new{FT}(
             G, wall, WallGeometry{FT}(), damping_func,
-            cell_state, FT(0.0),
             nothing,  # external_field
             eRRC, iRRC,
             config, flags, plasma, fields, transport, operators,

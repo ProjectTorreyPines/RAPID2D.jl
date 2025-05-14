@@ -215,7 +215,7 @@ Print the current status of the simulation.
 """
 function print_status(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Calculate volume-averaged quantities
-    ne_avg = sum(RP.plasma.ne .* RP.G.inVol2D) / RP.device_inVolume
+    ne_avg = sum(RP.plasma.ne .* RP.G.inVol2D) / RP.G.device_inVolume
     Te_avg = sum(RP.plasma.Te_eV .* RP.plasma.ne .* RP.G.inVol2D) / sum(RP.plasma.ne .* RP.G.inVol2D)
 
     # Get maximum values

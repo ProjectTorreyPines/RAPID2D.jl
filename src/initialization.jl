@@ -99,7 +99,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
                                                          RP.wall.R, RP.wall.Z)
 
     # Set up grid and wall information
-    setup_grid_nodes_state!(RP)
+    setup_grid_state_and_volumes_with_wall!(RP)
 
     # Initialize reaction rate coefficients
     initialize_RRCs!(RP)
@@ -428,7 +428,7 @@ function initialize_RRCs!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-function setup_grid_nodes_state!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Determine boundary indices
     NR = RP.G.NR
     NZ = RP.G.NZ
@@ -507,16 +507,44 @@ function setup_grid_nodes_state!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         RP.fitted_wall = WallGeometry{FT}(fitted_wall_R, fitted_wall_Z)
     end
 
-
+    # Calculate cell state using the fitted wall
+    cell_centers_R = RP.G.R2D .+ 0.5 * RP.G.dR
+    cell_centers_Z = RP.G.Z2D .+ 0.5 * RP.G.dZ
 
     # Initialize cell state (1 for inside wall, -1 for outside)
-    RP.cell_state = fill(-1, NR, NZ)
-    RP.cell_state[nodes.in_wall_nids] .= 1
+    RP.G.cell_state = fill(-1, NR, NZ)
+
+    # Use fitted wall coordinates to determine cell states
+    for i in 1:NR
+        for j in 1:NZ
+            if is_inside_wall(cell_centers_R[i, j], cell_centers_Z[i, j], RP.fitted_wall)
+                RP.G.cell_state[i, j] = 1
+            end
+        end
+    end
 
     # Calculate inVol2D - volume elements inside the wall
-    RP.G.inVol2D = zeros(FT, NR, NZ)
-    RP.G.inVol2D[nodes.in_wall_nids] .= RP.G.Jacob[nodes.in_wall_nids] * RP.G.dR * RP.G.dZ
-    RP.device_inVolume = sum(RP.G.inVol2D)
+    RP.G.inVol2D = 2π .* RP.G.Jacob .* RP.G.dR .* RP.G.dZ
+
+    # Set volume to zero for cells outside the wall
+    RP.G.inVol2D[nodes.out_wall_nids] .= zero(FT)
+
+    # Adjust volume for cells on the wall boundary
+    for nid in nodes.on_wall_nids
+        rid = nodes.rid[nid]
+        zid = nodes.zid[nid]
+
+        # Define 2x2 cell region around the boundary node
+        rr = max(1, rid-1):rid
+        zz = max(1, zid-1):zid
+
+        # Calculate fraction of cell inside the wall (similar to MATLAB's sum(...,'all')/4)
+        frac = sum(RP.G.cell_state[rr, zz]) / 4
+        RP.G.inVol2D[rid, zid] = frac * RP.G.inVol2D[rid, zid]
+    end
+
+    # Calculate total device volume
+    RP.G.device_inVolume = sum(RP.G.inVol2D)
 
     return RP
 end
