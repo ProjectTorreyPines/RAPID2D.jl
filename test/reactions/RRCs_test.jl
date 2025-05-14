@@ -158,9 +158,9 @@ using RAPID2D
 
         # Test get_electron_RRC function - make sure it runs without errors
         # and returns expected size
-        ionization_RRC = get_electron_RRC(mock_RP, eRRCs, :Ionization)
-        @test size(ionization_RRC) == size(mock_RP.G.R2D)
-        @test !any(isnan.(ionization_RRC))
+        RRC_iz = get_electron_RRC(mock_RP, eRRCs, :Ionization)
+        @test size(RRC_iz) == size(mock_RP.G.R2D)
+        @test !any(isnan.(RRC_iz))
 
         Halpha_RRC = get_electron_RRC(mock_RP, eRRCs, :Halpha)
         @test size(Halpha_RRC) == size(mock_RP.G.R2D)
@@ -168,8 +168,8 @@ using RAPID2D
 
         # Test get_H2_ion_RRC function - make sure it runs without errors
         # and returns expected size
-        elastic_rates = get_H2_ion_RRC(mock_RP, iRRCs, :Elastic)
-        @test size(elastic_rates) == size(mock_RP.G.R2D)
-        @test !any(isnan.(elastic_rates))
+        RRC_elastic = get_H2_ion_RRC(mock_RP, iRRCs, :Elastic)
+        @test size(RRC_elastic) == size(mock_RP.G.R2D)
+        @test !any(isnan.(RRC_elastic))
     end
 end
