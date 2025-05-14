@@ -11,4 +11,5 @@ else
     include("io/io_test.jl")
     include("utils/utils_test.jl")
     include("reactions/RRCs_test.jl")
+    include("physics/diffusion_test.jl")
 end
