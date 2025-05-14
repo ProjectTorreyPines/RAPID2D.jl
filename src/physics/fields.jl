@@ -146,23 +146,16 @@ Update external fields based on current simulation time or specified time.
 """
 function update_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
     # Use manual mode if no external field source is specified
-    if RP.external_field === nothing
-        if RP.config.device_Name == "manual"
-            # Manual settings already applied during initialization, nothing to do
-            return RP
-        else
-            error("No external field source specified")
-        end
+    if !isnothing(RP.external_field)
+        # Get external fields at specified time
+        extF = get_fields_at_time(RP.external_field, time_s, RP.G)
+
+        # Update field components
+        RP.fields.BR_ext .= extF.BR
+        RP.fields.BZ_ext .= extF.BZ
+        RP.fields.LV_ext .= extF.LV
+        RP.fields.psi_ext .= extF.psi
     end
-
-    # Get external fields at specified time
-    extF = get_fields_at_time(RP.external_field, time_s, RP.G)
-
-    # Update field components
-    RP.fields.BR_ext .= extF.BR
-    RP.fields.BZ_ext .= extF.BZ
-    RP.fields.LV_ext .= extF.LV
-    RP.fields.psi_ext .= extF.psi
 
     # Calculate toroidal electric field
     RP.fields.Eϕ_ext .= RP.fields.LV_ext ./ (2π * RP.G.R2D)
