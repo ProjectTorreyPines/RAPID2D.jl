@@ -10,7 +10,9 @@ Contains functions related to transport phenomena, including:
 # Export public functions
 export update_transport_quantities!,
        calculate_diffusion_coefficients!,
-       calculate_particle_fluxes!
+       calculate_particle_fluxes!,
+       calculate_diffusion_term!,
+       construct_diffusion_operator!
 
 """
     update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -18,8 +20,8 @@ export update_transport_quantities!,
 Update all transport-related quantities.
 """
 function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Update diffusion coefficients
-    calculate_diffusion_coefficients!(RP)
+
+    @warn "Not yet implemented: update_transport_quantities!"
 
     # Update particle fluxes
     calculate_particle_fluxes!(RP)
@@ -117,4 +119,144 @@ function calculate_particle_fluxes!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     end
 
     return RP
+end
+
+"""
+    calculate_diffusion_term!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne) where {FT<:AbstractFloat}
+
+Calculate the diffusion term for a given density field using the diffusion coefficients.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `density::AbstractMatrix{FT}=RP.plasma.ne`: The density field to calculate diffusion for (defaults to electron density)
+
+# Returns
+- `RP`: The updated RAPID object with the calculated diffusion term stored in RP.operators.neRHS_diffu
+
+# Notes
+- The calculation is performed only for interior points (2:NR-1, 2:NZ-1)
+- Boundary conditions must be handled separately
+- The result is stored in RP.operators.neRHS_diffu
+"""
+function calculate_diffusion_term!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne) where {FT<:AbstractFloat}
+    # Alias necessary fields from the RP object
+    G = RP.G
+    inv_Jacob = G.inv_Jacob
+    NR, NZ = G.NR, G.NZ
+
+    # geometric factor for Coefficient Tensors (CTRR, CTRZ, CTZZ)
+    geoFac = G.Jacob / (G.dR * G.dZ)
+
+    CTRR = @. geoFac*RP.transport.DRR
+    CTRZ = @. geoFac*RP.transport.DRZ
+    CTZZ = @. geoFac*RP.transport.DZZ
+
+    # Ensure the diffusion term array is properly initialized
+    diffu_term = RP.operators.neRHS_diffu
+    fill!(diffu_term, zero(FT))
+
+    # Note: Following the Julia convention where first index is R and second is Z
+    # We keep i as R-index and j as Z-index but switch the array indexing order
+    @inbounds for j in 2:NZ-1
+        for i in 2:NR-1
+            # Using @fastmath for potential performance improvements
+            @fastmath diffu_term[i,j] = (
+                +0.5*(CTRR[i+1,j]+CTRR[i,j])*(density[i+1,j]-density[i,j])
+                -0.5*(CTRR[i-1,j]+CTRR[i,j])*(density[i,j]-density[i-1,j])
+                +0.125*(CTRZ[i+1,j]+CTRZ[i,j])*(density[i,j+1]+density[i+1,j+1]-density[i,j-1]-density[i+1,j-1])
+                -0.125*(CTRZ[i-1,j]+CTRZ[i,j])*(density[i,j+1]+density[i-1,j+1]-density[i,j-1]-density[i-1,j-1])
+                +0.125*(CTRZ[i,j+1]+CTRZ[i,j])*(density[i+1,j]+density[i+1,j+1]-density[i-1,j]-density[i-1,j+1])
+                -0.125*(CTRZ[i,j-1]+CTRZ[i,j])*(density[i+1,j]+density[i+1,j-1]-density[i-1,j]-density[i-1,j-1])
+                +0.5*(CTZZ[i,j+1]+CTZZ[i,j])*(density[i,j+1]-density[i,j])
+                -0.5*(CTZZ[i,j-1]+CTZZ[i,j])*(density[i,j]-density[i,j-1])
+            )
+            diffu_term[i,j] = diffu_term[i,j]*inv_Jacob[i,j]
+        end
+    end
+
+    return RP
+end
+
+"""
+    construct_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Construct the sparse matrix representation of the diffusion operator for implicit time-stepping.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+
+# Returns
+- `SparseMatrixCSC{FT, Int}`: The sparse matrix representation of the diffusion operator
+"""
+function construct_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Alias necessary fields from the RP object
+    G = RP.G
+    inv_Jacob = G.inv_Jacob
+    NR, NZ = G.NR, G.NZ
+    nid = G.nodes.nid
+
+    # geometric factor for Coefficient Tensors (CTRR, CTRZ, CTZZ)
+    geoFac = G.Jacob / (G.dR * G.dZ)
+
+    CTRR = @. geoFac*RP.transport.DRR
+    CTRZ = @. geoFac*RP.transport.DRZ
+    CTZZ = @. geoFac*RP.transport.DZZ
+
+    # Pre-allocate arrays for sparse matrix construction
+    num_internal_nodes = (NR-2)*(NZ-2)
+    num_entries = num_internal_nodes * 9
+    I = zeros(Int, num_entries)  # Row indices
+    J = zeros(Int, num_entries)  # Column indices
+    V = zeros(FT, num_entries)   # Values
+
+
+    # Fill arrays for sparse matrix construction
+    k = 1
+    for j in 2:NZ-1
+        for i in 2:NR-1
+            # Linear index for current node (i,j)
+            xg = nid[i,j]
+
+            # Fill the row indices (all entries in this loop have the same row index)
+            I[k:k+8] .= xg
+
+            # Fill the column indices for the 8 neighboring nodes
+            # Note: We need to adjust the linear indexing for Julia's convention
+            J[k:k+7] = [
+                nid[i+1,j],       # East
+                nid[i-1,j],       # West
+                nid[i,j+1],       # North
+                nid[i,j-1],       # South
+                nid[i+1,j+1],     # Northeast
+                nid[i-1,j-1],     # Southwest
+                nid[i-1,j+1],     # Northwest
+                nid[i+1,j-1]      # Southeast
+            ]
+
+            # Fill the coefficient values
+            # Note: We need to transpose all indices for Julia's convention
+            V[k:k+7] = inv_Jacob[i,j]*[
+                0.5*(CTRR[i+1,j]+CTRR[i,j]) + 0.125*(CTRZ[i,j+1]-CTRZ[i,j-1]),
+                0.5*(CTRR[i-1,j]+CTRR[i,j]) - 0.125*(CTRZ[i,j+1]-CTRZ[i,j-1]),
+                0.5*(CTZZ[i,j+1]+CTZZ[i,j]) + 0.125*(CTRZ[i+1,j]-CTRZ[i-1,j]),
+                0.5*(CTZZ[i,j-1]+CTZZ[i,j]) - 0.125*(CTRZ[i+1,j]-CTRZ[i-1,j]),
+                0.125*(2*CTRZ[i,j] + CTRZ[i+1,j]+CTRZ[i,j+1]),
+                0.125*(2*CTRZ[i,j] + CTRZ[i-1,j]+CTRZ[i,j-1]),
+                -0.125*(2*CTRZ[i,j] + CTRZ[i,j+1]+CTRZ[i-1,j]),
+                -0.125*(2*CTRZ[i,j] + CTRZ[i,j-1]+CTRZ[i+1,j])
+            ]
+
+            # Fill the diagonal entry (center node)
+            J[k+8] = xg
+            V[k+8] = -sum(V[k:k+7])  # Ensure row sum is zero
+
+            k += 9
+        end
+    end
+
+    # Construct a sparse matrix of size (NR*NZ)×(NR*NZ) by prepending 1 and appending NR*NZ to the indices
+    # and padding with zeros to ensure proper dimensions for the diffusion operator
+    A_diffu = sparse([1; I; NR * NZ], [1; J; NR * NZ], [0; V; 0])
+
+    return A_diffu
 end
