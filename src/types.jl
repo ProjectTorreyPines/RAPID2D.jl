@@ -289,6 +289,10 @@ Fields include various matrices for solving different parts of the model.
     # Dimensions
     dims::Tuple{Int,Int} # (NR, NZ)
 
+    II::SparseMatrixCSC{FT, Int} = sparse(one(FT), prod(dims), prod(dims)) # Identity matrix
+
+    A_LHS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # LHS matrix for implicit methods
+
     # Operators for solving equations
     An_diffu::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Matrix for diffusion term
     An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Matrix for convection term
