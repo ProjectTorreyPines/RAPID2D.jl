@@ -479,12 +479,12 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
         θ = RP.flags.Implicit_weight
 
         # Build full RHS with explicit contribution
-        @. OP.rhs = RP.plasma.ne + dt * (one(FT) - θ) * (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
+        @. OP.RHS = RP.plasma.ne + dt * (one(FT) - θ) * (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
         # Build LHS operator
         @. OP.A_LHS = OP.II - θ*dt* (OP.An_diffu + OP.An_convec + OP.An_src)
 
         # Solve the linear system
-        @views RP.plasma.ne[:] = OP.A_LHS \ OP.rhs[:]
+        @views RP.plasma.ne[:] = OP.A_LHS \ OP.RHS[:]
     else
         # Explicit method
         @. RP.plasma.ne += dt* (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
