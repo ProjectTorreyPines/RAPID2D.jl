@@ -704,7 +704,7 @@ function initialize_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     snap2D[:E_para_tot] = zeros(FT, dims_3d)
     snap2D[:E_para_ext] = zeros(FT, dims_3d)
     snap2D[:mean_ExB_pol] = zeros(FT, dims_3d)
-    snap2D[:E_self_pol] = zeros(FT, dims_3d)
+    snap2D[:Epol_self] = zeros(FT, dims_3d)
     snap2D[:BR_self] = zeros(FT, dims_3d)
     snap2D[:BZ_self] = zeros(FT, dims_3d)
     snap2D[:Eϕ_self] = zeros(FT, dims_3d)

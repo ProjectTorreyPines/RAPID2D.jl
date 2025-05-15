@@ -37,7 +37,7 @@ function update_self_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.fields.BZ_self .= zeros(FT, RP.G.NR, RP.G.NZ)
 
     if RP.flags.E_para_self_ES
-        @. RP.fields.E_para_self_ES = sign(-RP.fields.Eϕ) * RP.fields.E_self_pol * RP.fields.Bpol / RP.fields.Btot
+        @. RP.fields.E_para_self_ES = sign(-RP.fields.Eϕ) * RP.fields.Epol_self * RP.fields.Bpol / RP.fields.Btot
     end
 
     if RP.flags.E_para_self_EM
