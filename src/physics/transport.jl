@@ -19,14 +19,133 @@ export update_transport_quantities!,
 """
     update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update all transport-related quantities.
+Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
 """
 function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Calculate momentum transfer reaction rate coefficient and collision frequency
+    RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
+    coll_freq_en_mom = RP.plasma.n_H2_gas .* RRC_mom
 
-    @warn "Not yet implemented: update_transport_quantities!"
+    # Calculate total collision frequency
+    tot_coll_freq = coll_freq_en_mom
+    if RP.flags.Coulomb_Collision
+        update_coulomb_collision_parameters!(RP)
+        tot_coll_freq .+= RP.plasma.ν_ei
+    end
 
-    # Update particle fluxes
-    calculate_particle_fluxes!(RP)
+    # Calculate parallel diffusion coefficient based on collision frequency
+    # Thermal velocity
+    vthe = @. sqrt(RP.plasma.Te_eV * RP.config.ee / RP.config.me)
+
+    # Collision-based diffusion coefficient (D = vth²/(2ν))
+    Dpara_coll_1 = @. 0.5 * vthe * vthe / tot_coll_freq
+
+    # Field line mixing length-based diffusion coefficient
+    Dpara_coll_2 = zeros(FT, size(RP.plasma.Te_eV))
+    if hasfield(typeof(RP), :L_mixing) && hasfield(typeof(RP), :idx_closed_surface)
+        Dpara_coll_2 = @. 0.5 * vthe * RP.L_mixing * RP.fields.Btot / RP.fields.Bpol
+        Dpara_coll_2[RP.idx_closed_surface] .= typemax(FT) # Effectively infinity for closed surfaces
+    end
+
+    # Use the minimum of the two diffusion coefficients
+    Dpara_coll = min.(Dpara_coll_1, Dpara_coll_2)
+    Dpara_coll[.!isfinite.(Dpara_coll)] .= zero(FT)
+    Dpara_coll[RP.G.nodes.out_wall_nids] .= zero(FT)
+
+    # Combine base and collision diffusion
+    @. RP.transport.Dpara = RP.transport.Dpara0 + Dpara_coll
+
+    # Calculate perpendicular diffusion using Bohm diffusivity
+    Dperp_bohm = @. abs((1/16) * RP.plasma.Te_eV / RP.fields.Bϕ)
+    @. RP.transport.Dperp = RP.transport.Dperp0 + Dperp_bohm
+
+    # Apply damping function outside wall if enabled
+    if RP.flags.Damp_Transp_outWall
+        @. RP.transport.Dpara *= RP.damping_func
+        @. RP.transport.Dperp *= RP.damping_func
+        @. RP.plasma.ue_para *= RP.damping_func
+
+        if hasfield(typeof(RP.plasma), :mean_ExB_R)
+            @. RP.plasma.mean_ExB_R *= RP.damping_func
+            @. RP.plasma.mean_ExB_Z *= RP.damping_func
+        end
+
+        @. RP.plasma.ui_para *= RP.damping_func
+    end
+
+    # Convert parallel velocities to R,Z components if needed
+    if RP.flags.upara_or_uRphiZ == "upara"
+        # Calculate diamagnetic drift if enabled
+        if RP.flags.diaMag_drift
+            @warn "Not implemented yet: `diaMag_drift`"
+            # Placeholder for diamagnetic drift calculation
+            # A simplified diamagnetic drift is implemented here
+            # In the full implementation, we'd calculate grad_n and grad_T accurately
+            n_min = FT(1.0e6)  # Minimum density to avoid division by zero
+            n_safe = copy(RP.plasma.ne)
+            n_safe[n_safe .< n_min] .= n_min
+
+            # Simple approximation of diamagnetic drift
+            # In the real implementation, we'd use cal_grad_of_scalar_F
+            RP.plasma.diaMag_R .= zeros(FT, size(RP.plasma.ne))
+            RP.plasma.diaMag_Z .= zeros(FT, size(RP.plasma.ne))
+        end
+
+        # Update velocity components
+        RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
+        RP.plasma.ueϕ .= RP.plasma.ue_para .* RP.fields.bϕ
+        RP.plasma.ueZ .= RP.plasma.ue_para .* RP.fields.bZ
+
+        # Add ExB and diamagnetic drifts if enabled
+        if RP.flags.mean_ExB && hasfield(typeof(RP.plasma), :mean_ExB_R)
+            RP.plasma.ueR .+= RP.plasma.mean_ExB_R
+            RP.plasma.ueZ .+= RP.plasma.mean_ExB_Z
+        end
+
+        if RP.flags.diaMag_drift
+            RP.plasma.ueR .+= RP.plasma.diaMag_R
+            RP.plasma.ueZ .+= RP.plasma.diaMag_Z
+        end
+
+        # Same for ion velocities
+        RP.plasma.uiR .= RP.plasma.ui_para .* RP.fields.bR
+        RP.plasma.uiϕ .= RP.plasma.ui_para .* RP.fields.bϕ
+        RP.plasma.uiZ .= RP.plasma.ui_para .* RP.fields.bZ
+
+        # Add ExB drift for ions too if enabled
+        if RP.flags.mean_ExB && hasfield(typeof(RP.plasma), :mean_ExB_R)
+            RP.plasma.uiR .+= RP.plasma.mean_ExB_R
+            RP.plasma.uiZ .+= RP.plasma.mean_ExB_Z
+        end
+    end
+
+    if RP.flags.Global_Force_Balance
+        @warn "Not implemented yet: `Global_Force_Balance`"
+        # obj.Global_Toroidal_Force_Balance;
+    end
+
+    # Update diffusion tensor components
+    BRoverBpol = RP.fields.BR ./ RP.fields.Bpol
+    BRoverBpol[RP.fields.Bpol .== 0] .= zero(FT)
+    BZoverBpol = RP.fields.BZ ./ RP.fields.Bpol
+    BZoverBpol[RP.fields.Bpol .== 0] .= zero(FT)
+
+    # Apply turbulent diffusion if enabled
+    if RP.flags.turb_ExB_mixing && hasfield(typeof(RP.transport), :Dturb_para)
+        @. RP.transport.DRR_turb = RP.transport.Dturb_para * (BRoverBpol)^2 + RP.transport.Dturb_perp * (BZoverBpol)^2
+        @. RP.transport.DRZ_turb = (RP.transport.Dturb_para - RP.transport.Dturb_perp) * (BRoverBpol * BZoverBpol)
+        @. RP.transport.DZZ_turb = RP.transport.Dturb_para * (BZoverBpol)^2 + RP.transport.Dturb_perp * (BRoverBpol)^2
+
+        # Add turbulent diffusion to total diffusion tensor
+        @. RP.transport.DRR = RP.transport.Dperp + (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bR^2 + RP.transport.DRR_turb
+        @. RP.transport.DRZ = (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bR * RP.fields.bZ + RP.transport.DRZ_turb
+        @. RP.transport.DZZ = RP.transport.Dperp + (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bZ^2 + RP.transport.DZZ_turb
+    else
+        # Standard diffusion tensor without turbulence
+        @. RP.transport.DRR = RP.transport.Dperp + (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bR^2
+        @. RP.transport.DRZ = (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bR * RP.fields.bZ
+        @. RP.transport.DZZ = RP.transport.Dperp + (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bZ^2
+    end
 
     return RP
 end

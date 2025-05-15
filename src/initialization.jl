@@ -156,6 +156,8 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT<:AbstractFloa
     # Update Coulomb collision parameters
     update_coulomb_collision_parameters!(RP)
 
+    update_transport_quantities!(RP)
+
     return RP
 end
 
