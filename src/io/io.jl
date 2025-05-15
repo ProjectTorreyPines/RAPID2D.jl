@@ -32,7 +32,7 @@ using Interpolations
 
 # Import from fields module
 import RAPID2D: TimeSeriesExternalField, AbstractExternalField, update_fields!
-import RAPID2D: get_fields_at_time  # Import this to avoid duplicate definition
+import RAPID2D: get_external_fields_at_time  # Import this to avoid duplicate definition
 
 # =============================================================================
 # Snapshot and diagnostic functions

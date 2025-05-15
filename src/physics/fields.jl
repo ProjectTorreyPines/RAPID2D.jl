@@ -18,7 +18,7 @@ export update_fields!,
 
 # Export external field types and functions
 export AbstractExternalField, TimeSeriesExternalField
-export get_fields_at_time, interpolate_fields
+export get_external_fields_at_time
 
 # Required imports for field calculations
 using LinearAlgebra
@@ -148,7 +148,7 @@ function update_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:Abstract
     # Use manual mode if no external field source is specified
     if !isnothing(RP.external_field)
         # Get external fields at specified time
-        extF = get_fields_at_time(RP.external_field, time_s, RP.G)
+        extF = get_external_fields_at_time(RP.external_field, time_s, RP.G)
 
         # Update field components
         RP.fields.BR_ext .= extF.BR
@@ -221,40 +221,39 @@ mutable struct TimeSeriesExternalField{FT<:AbstractFloat} <: AbstractExternalFie
 end
 
 """
-    get_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid::GridGeometry{FT}) where {FT<:AbstractFloat}
+    get_external_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid::GridGeometry{FT}) where {FT<:AbstractFloat}
 
 Interpolate field values at a specific time from time series data.
 
 # Arguments
 - `field::TimeSeriesExternalField{FT}`: The time series external field data
 - `time::FT`: The time at which to get field values
-- `grid::GridGeometry{FT}`: Grid geometry (not used for TimeSeriesExternalField but included for API consistency)
 
 # Returns
 - `NamedTuple`: Contains fields BR, BZ, LV, psi interpolated at the specified time
 """
-function get_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid=nothing) where {FT<:AbstractFloat}
+function get_external_fields_at_time(extF::TimeSeriesExternalField{FT}, time::FT) where {FT<:AbstractFloat}
     # Find the time indices for interpolation
-    if time <= field.time_s[1]
+    if time <= extF.time_s[1]
         # Before first time point - use first time point
         idx = 1
         t_weight = FT(0)
-    elseif time >= field.time_s[end]
+    elseif time >= extF.time_s[end]
         # After last time point - use last time point
-        idx = length(field.time_s) - 1
+        idx = length(extF.time_s) - 1
         t_weight = FT(1)
     else
         # Find the appropriate time interval
-        idx = searchsortedlast(field.time_s, time)
+        idx = searchsortedlast(extF.time_s, time)
         # Calculate interpolation weight
-        t_weight = (time - field.time_s[idx]) / (field.time_s[idx+1] - field.time_s[idx])
+        t_weight = (time - extF.time_s[idx]) / (extF.time_s[idx+1] - extF.time_s[idx])
     end
 
     # Linear interpolation in time
-    BR = (1 - t_weight) * field.BR[:, :, idx] + t_weight * field.BR[:, :, idx+1]
-    BZ = (1 - t_weight) * field.BZ[:, :, idx] + t_weight * field.BZ[:, :, idx+1]
-    psi = (1 - t_weight) * field.psi[:, :, idx] + t_weight * field.psi[:, :, idx+1]
-    LV = (1 - t_weight) * field.LV[:, :, idx] + t_weight * field.LV[:, :, idx+1]
+    BR = (1 - t_weight) * extF.BR[:, :, idx] + t_weight * extF.BR[:, :, idx+1]
+    BZ = (1 - t_weight) * extF.BZ[:, :, idx] + t_weight * extF.BZ[:, :, idx+1]
+    psi = (1 - t_weight) * extF.psi[:, :, idx] + t_weight * extF.psi[:, :, idx+1]
+    LV = (1 - t_weight) * extF.LV[:, :, idx] + t_weight * extF.LV[:, :, idx+1]
 
     return (
         BR = BR,
@@ -262,46 +261,5 @@ function get_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid=n
         LV = LV,
         psi = psi,
         time_s = time
-    )
-end
-
-"""
-    interpolate_fields(ef::TimeSeriesExternalField{FT}, time_s::FT) where {FT<:AbstractFloat}
-
-Linearly interpolates field values from stored data at the given time.
-
-# Returns
-- `NamedTuple`: Contains fields BR, BZ, LV, psi interpolated at the specified time
-"""
-function interpolate_fields(ef::TimeSeriesExternalField{FT}, time_s::FT) where {FT<:AbstractFloat}
-    # Check time range
-    if time_s < ef.time_s[1] || time_s > ef.time_s[end]
-        @warn "Time $(time_s)s is outside the data range [$(ef.time_s[1]), $(ef.time_s[end])]s"
-    end
-
-    # Find time index for interpolation
-    idx = searchsortedlast(ef.time_s, time_s)
-    if idx == 0
-        idx = 1
-    elseif idx == length(ef.time_s)
-        idx = length(ef.time_s) - 1
-    end
-
-    # Calculate linear interpolation weight
-    t1, t2 = ef.time_s[idx], ef.time_s[idx+1]
-    w = (time_s - t1) / (t2 - t1)
-
-    # Interpolate field values
-    BR = @. (1-w) * ef.BR[:,:,idx] + w * ef.BR[:,:,idx+1]
-    BZ = @. (1-w) * ef.BZ[:,:,idx] + w * ef.BZ[:,:,idx+1]
-    LV = @. (1-w) * ef.LV[:,:,idx] + w * ef.LV[:,:,idx+1]
-    psi = @. (1-w) * ef.psi[:,:,idx] + w * ef.psi[:,:,idx+1]
-
-    return (
-        BR = BR,
-        BZ = BZ,
-        LV = LV,
-        psi = psi,
-        time_s = time_s
     )
 end
