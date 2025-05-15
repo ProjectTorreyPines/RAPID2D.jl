@@ -105,7 +105,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     initialize_RRCs!(RP)
 
     # update E,B fields
-    update_fields!(RP)
+    update_all_fields!(RP)
 
     # Initialize plasma and transport
     initialize_plasma_and_transport!(RP)

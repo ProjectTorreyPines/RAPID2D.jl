@@ -10,7 +10,7 @@ Contains functions related to electromagnetic field calculations, including:
 """
 
 # Export public functions
-export update_fields!,
+export update_all_fields!,
        update_self_fields!,
        calculate_field_unit_vectors!,
        calculate_parallel_electric_field!,
@@ -133,7 +133,7 @@ function flf_analysis_of_field_lines_in_RZ_plane(RP::RAPID{FT}) where {FT<:Abstr
 end
 
 """
-    update_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+    update_all_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
 
 Update external fields based on current simulation time or specified time.
 
@@ -144,7 +144,7 @@ Update external fields based on current simulation time or specified time.
 # Returns
 - `RP::RAPID{FT}`: The updated RAPID instance
 """
-function update_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+function update_all_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
     # Use manual mode if no external field source is specified
     if !isnothing(RP.external_field)
         # Get external fields at specified time
