@@ -11,10 +11,13 @@ Contains functions related to plasma physics models, including:
 # Export public functions
 export update_ue_para!,
        update_ui_para!,
-       update_te!,
-       update_ti!,
+       update_Te!,
+       update_Ti!,
        update_coulomb_collision_parameters!,
-       update_power_terms!
+       update_power_terms!,
+       calculate_density_source_terms!,
+       calculate_density_diffusion_terms!,
+       calculate_density_convection_terms!
 
 """
     update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -22,61 +25,78 @@ export update_ue_para!,
 Update the parallel electron velocity.
 """
 function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "update_ue_para! not fully implemented yet"
+    # Update method depends on flag
+    if RP.flags.ud_method == "Lloyd_fit"
+        # Simple fit for drift velocity
+        @. RP.plasma.ue_para = 5719.0 * (-RP.fields.E_para_tot / RP.config.prefilled_gas_pressure)
 
-    # Get electron charge in proper units
-    qe = -RP.config.ee
+    elseif RP.flags.ud_method == "Xsec_fit"
+        # Cross section fit with simplified collisions
+        qe = -RP.config.ee
 
-    # Calculate electron velocity changes due to various forces
+        # Get momentum transfer reaction rate coefficient
+        RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
 
-    # Electric field acceleration: qE/m
-    accel_E = qe * RP.fields.E_para_tot / RP.config.me
+        # Calculate collision frequency
+        coll_freq = @. RP.plasma.n_H2_gas * RRC_mom
 
-    # Pressure gradient: -∇P/(n*m)
-    # Calculate temperature gradients (simplified)
-    dTdR = zeros(FT, RP.G.NR, RP.G.NZ)
-    dTdZ = zeros(FT, RP.G.NR, RP.G.NZ)
+        # Calculate drift velocity from balance of electric field and collisions
+        @. RP.plasma.ue_para = qe * RP.fields.E_para_tot / (RP.config.me * coll_freq)
 
-    # Simple centered differencing for the gradient
-    dTdR[:,2:end-1] .= (RP.plasma.Te_eV[:,3:end] .- RP.plasma.Te_eV[:,1:end-2]) / (2*RP.G.dR)
-    dTdZ[2:end-1,:] .= (RP.plasma.Te_eV[3:end,:] .- RP.plasma.Te_eV[1:end-2,:]) / (2*RP.G.dZ)
+    elseif RP.flags.ud_method == "Xsec"
+        # Full cross section model with collisions
 
-    # Parallel component of the gradient: b·∇T
-    dTds = RP.fields.bR .* dTdR + RP.fields.bZ .* dTdZ
+        # Get reaction rate coefficients for both ionization and momentum transfer
+        RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
+        RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
 
-    # Electron temperature in Joules
-    Te_J = RP.plasma.Te_eV * RP.config.ee
+        # Calculate collision frequency from neutrals
+        coll_freq = @. RP.plasma.n_H2_gas * (RRC_mom + RRC_iz)
 
-    # Pressure force: -∇P/(n*m) = -(n*∇T + T*∇n)/(n*m) for isothermal electrons
-    # Simplified to just the temperature gradient term
-    accel_P = -dTds * RP.config.ee / RP.config.me
+        # Add Coulomb collisions if enabled
+        if RP.flags.Coulomb_Collision
+            if RP.flags.Spitzer_Resistivity
+                mom_eff_nu_ei = @. RP.plasma.sptz_fac * RP.plasma.ν_ei
+            else
+                mom_eff_nu_ei = RP.plasma.ν_ei
+            end
+            coll_freq .+= mom_eff_nu_ei
+        end
 
-    # Apply collision damping if enabled
-    if RP.flags.Coulomb_Collision
-        # Electron momentum loss rate due to e-i collisions
-        # Simplified implementation
-        ν_ei_mom = RP.plasma.ν_ei
-        accel_drag = -ν_ei_mom .* RP.plasma.ue_para
+        # Ensure no NaN values in collision frequency
+        replace!(coll_freq, NaN => 0.0)
+
+        # Consider pressure gradient, convection, and electric field
+        accel_para_tilde = zeros(FT, size(RP.plasma.ue_para))
+
+        # Add pressure gradient acceleration if needed
+        if RP.flags.Include_ud_convec_term
+            # Calculate pressure gradient acceleration (simplified)
+            accel_para_tilde .+= calculate_pressure_acceleration(RP)
+
+            # Add convection acceleration
+            accel_para_tilde .+= calculate_convection_acceleration(RP)
+        end
+
+        # Add electric field acceleration
+        qe = -RP.config.ee
+        @. accel_para_tilde += qe * RP.fields.E_para_tot / RP.config.me
+
+        # Add Coulomb collision effects with ions
+        if RP.flags.Coulomb_Collision
+            @. accel_para_tilde += mom_eff_nu_ei * RP.plasma.ui_para
+        end
+
+        # Apply implicit time integration
+        impFac = 1.0  # Backward Euler
+        @. RP.plasma.ue_para = (RP.plasma.ue_para * (1 - (1-impFac) * coll_freq * RP.dt) +
+                               accel_para_tilde * RP.dt) / (1 + impFac * coll_freq * RP.dt)
+
+        # Zero out velocity outside wall
+        RP.plasma.ue_para[RP.G.nodes.out_wall_nids] .= 0.0
     else
-        accel_drag = zeros(FT, RP.G.NR, RP.G.NZ)
+        error("Unknown electron drift velocity method: $(RP.flags.ud_method)")
     end
-
-    # Total acceleration
-    accel_tot = accel_E + accel_P + accel_drag
-
-    # Update velocity using Forward Euler (simplified)
-    RP.plasma.ue_para .+= accel_tot * RP.dt
-
-    # Zero velocity outside wall
-    RP.plasma.ue_para[RP.G.nodes.out_wall_nids] .= FT(0.0)
-
-    # Update vector components
-    RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
-    RP.plasma.ueZ .= RP.plasma.ue_para .* RP.fields.bZ
-    RP.plasma.ueϕ .= RP.plasma.ue_para .* RP.fields.bϕ
-
-    return RP
 end
 
 """
@@ -85,42 +105,57 @@ end
 Update the parallel ion velocity.
 """
 function update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "update_ui_para! not fully implemented yet"
+    if RP.flags.ud_method == "Xsec"
+        # Use cross sections for ion velocity update
 
-    # Get ion charge in proper units
-    qi = RP.config.ee
+        # Get ion reaction rate coefficients
+        iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
+        iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
 
-    # Calculate ion velocity changes due to various forces
+        # Add ionization contribution if source terms are enabled
+        if RP.flags.src
+            eRRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
+        else
+            eRRC_iz = 0.0
+        end
 
-    # Electric field acceleration: qE/m
-    accel_E = qi * RP.fields.E_para_tot / RP.config.mi
+        # Calculate effective atomic collision frequency
+        # Note: 0.5 factor for elastic collisions because they only lose half of momentum
+        eff_atomic_coll_freq = @. RP.plasma.n_H2_gas * (
+            0.5 * iRRC_elastic + iRRC_cx + RP.plasma.Zeff * eRRC_iz
+        )
 
-    # Total acceleration (simplified)
-    accel_tot = accel_E
+        # Fix any NaN values
+        replace!(eff_atomic_coll_freq, NaN => 0.0)
 
-    # Update velocity using Forward Euler (simplified)
-    RP.plasma.ui_para .+= accel_tot * RP.dt
+        # Calculate acceleration from electric field
+        qi = RP.config.ee
 
-    # Zero velocity outside wall
-    RP.plasma.ui_para[RP.G.nodes.out_wall_nids] .= FT(0.0)
+        # Apply backward Euler time integration
+        th = 1.0  # Backward Euler
+        @. RP.plasma.ui_para = (RP.plasma.ui_para * (1 - (1-th) * RP.dt * eff_atomic_coll_freq) +
+                              RP.dt * qi * RP.fields.E_para_tot / RP.config.mi) /
+                              (1 + th * RP.dt * eff_atomic_coll_freq)
 
-    # Update vector components
-    RP.plasma.uiR .= RP.plasma.ui_para .* RP.fields.bR
-    RP.plasma.uiZ .= RP.plasma.ui_para .* RP.fields.bZ
-    RP.plasma.uiϕ .= RP.plasma.ui_para .* RP.fields.bϕ
-
-    return RP
+        # Add electron-ion momentum transfer effect
+        if RP.flags.Coulomb_Collision
+            Rui_ei = @. -(RP.config.me / RP.config.mi) * RP.plasma.Zeff * RP.plasma.ν_ei *
+                     (RP.plasma.ue_para - RP.plasma.ui_para)
+            RP.plasma.ui_para .+= RP.dt * Rui_ei
+        end
+    else
+        error("Ion velocity update only implemented for ud_method = Xsec")
+    end
 end
 
 """
-    update_te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update the electron temperature.
 """
-function update_te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Placeholder implementation - will be filled in later
-    @warn "update_te! not fully implemented yet"
+    @warn "update_Te! not fully implemented yet"
 
     # Update electron temperature based on power balance
     update_power_terms!(RP)
@@ -151,11 +186,11 @@ function update_te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 """
-    update_ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_Ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update the ion temperature.
 """
-function update_ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_Ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Placeholder implementation - will be filled in later
     if !RP.flags.Ti_evolve
         # If ion temperature evolution is disabled, just match electron temperature
@@ -163,10 +198,10 @@ function update_ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         return RP
     end
 
-    @warn "update_ti! not fully implemented yet"
+    @warn "update_Ti! not fully implemented yet"
 
     # Update ion temperature based on power balance
-    # Similar to update_te! but with ion power terms
+    # Similar to update_Te! but with ion power terms
 
     # Energy equation: 3/2 n ∂T/∂t = P_total
     # Simplified implementation: forward Euler
@@ -307,3 +342,121 @@ function get_avg_RRC_Te_ud_gFac(RP::RAPID{FT}, reaction::String, Te_eV::Matrix{F
 
     return rrc .* enhancement
 end
+
+"""
+    calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
+
+Calculate the source terms for electron density evolution, including ionization processes.
+"""
+function calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
+    # Calculate ionization rate based on the method specified in flags
+    if RP.flags.Ionz_method == "Townsend_coeff"
+        # Compute source by electron avalanche using Townsend coefficient
+        # α = 3.88 * p * exp(-95 * p / |E_para|)
+        α = @. 3.88 * RP.config.prefilled_gas_pressure *
+               exp(-95 * RP.config.prefilled_gas_pressure / abs(RP.fields.E_para_tot))
+
+        # Electron growth rate
+        eGrowth_rate = @. α * abs(RP.plasma.ue_para)
+    elseif RP.flags.Ionz_method == "Xsec"
+        # Method based on temperature, drift velocity and distribution function
+        RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
+
+        # Growth rate = density * reaction rate
+        eGrowth_rate = @. RP.plasma.n_H2_gas * RRC_iz
+    else
+        error("Unknown ionization method: $(RP.flags.Ionz_method)")
+    end
+
+    # Zero out the growth rate outside the wall
+    eGrowth_rate[RP.G.nodes.out_wall_nids] .= 0.0
+
+    # Store the right-hand side source term
+    RP.operators.neRHS_src .= RP.plasma.ne .* eGrowth_rate
+
+    # Update sparse matrix operator for implicit methods if needed
+    if RP.flags.Implicit
+        # Create diagonal matrix with electron growth rate
+        RP.operators.A_src = spdiagm(0 => eGrowth_rate[:])
+    end
+end
+
+"""
+    calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
+
+Calculate the diffusion terms for electron density evolution, including constructing
+the diffusion operator matrix for implicit time stepping or directly calculating the
+diffusion term for explicit time stepping.
+"""
+function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
+    # Calculate diffusion coefficients in R-Z coordinates using Jacobian
+    CTRR = @. RP.G.Jacob * RP.transport.DRR / (RP.G.dR * RP.G.dR)
+    CTRZ = @. RP.G.Jacob * RP.transport.DRZ / (RP.G.dR * RP.G.dZ)
+    CTZZ = @. RP.G.Jacob * RP.transport.DZZ / (RP.G.dZ * RP.G.dZ)
+
+    if RP.flags.Implicit
+        # Construct diffusion operator matrix for implicit scheme
+        RP.operators.A_diffu = construct_diffusion_operator!(RP)
+
+        # Calculate right-hand side diffusion term by applying operator to density
+        diffusion_term_vector = RP.operators.A_diffu * RP.plasma.ne[:]
+        RP.operators.neRHS_diffu = reshape(diffusion_term_vector, size(RP.plasma.ne))
+
+        # Handle limiting of too negative diffusion if enabled
+        if RP.flags.Limit_too_negative_Diffusion
+            limit_lb = RP.flags.Limit_too_negative_Diffusion_limit_lower_bound_ratio
+            negative_change_limit = @. limit_lb * abs(RP.plasma.ne) / RP.dt
+
+            # Find nodes inside wall with too negative diffusion
+            for i in RP.G.nodes.in_wall_nids
+                if RP.operators.neRHS_diffu[i] < negative_change_limit[i]
+                    # Reduce diffusion for this node
+                    reducing_factor = 0.9 * abs(negative_change_limit[i] / RP.operators.neRHS_diffu[i])
+                    row_idx = RP.G.nodes.nid[i]
+                    RP.operators.A_diffu[row_idx, :] .*= reducing_factor
+                    RP.operators.neRHS_diffu[i] *= reducing_factor
+                end
+            end
+        end
+    else
+        # For explicit method, calculate diffusion term directly
+        calculate_diffusion_term!(RP, RP.plasma.ne)
+    end
+
+    # # Zero out diffusion outside wall
+    # RP.operators.neRHS_diffu[RP.G.nodes.out_wall_nids] .= 0.0
+
+    return RP
+end
+
+"""
+    calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
+
+Calculate the convection terms for electron density evolution, including constructing
+the convection operator matrix for implicit time stepping or directly calculating the
+convection term for explicit time stepping.
+"""
+function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
+    if RP.flags.Implicit
+        # Construct convection operator matrix for implicit scheme
+        # Use the electron velocity field (ueR, ueZ) and upwind scheme by default
+        RP.operators.A_convec = construct_convection_operator!(
+            RP, RP.plasma.ueR, RP.plasma.ueZ, true
+        )
+
+        # Calculate right-hand side convection term by applying operator to density
+        convection_term_vector = RP.operators.A_convec * RP.plasma.ne[:]
+        RP.operators.neRHS_convec = reshape(convection_term_vector, size(RP.plasma.ne))
+    else
+        # For explicit method, calculate convection term directly
+        calculate_convection_term!(
+            RP, RP.plasma.ne, RP.plasma.ueR, RP.plasma.ueZ, true
+        )
+    end
+
+    # Zero out convection outside wall (optional, depending on implementation details)
+    RP.operators.neRHS_convec[RP.G.nodes.out_wall_nids] .= 0.0
+
+    return RP
+end
+
