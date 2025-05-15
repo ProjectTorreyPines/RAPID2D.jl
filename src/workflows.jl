@@ -55,33 +55,12 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
         end
     end
 
-    # Combine vacuum and self-generated fields
-    RP.fields.BR .= RP.fields.BR_ext .+ RP.fields.BR_self
-    RP.fields.BZ .= RP.fields.BZ_ext .+ RP.fields.BZ_self
-    RP.fields.Eϕ .= RP.fields.Eϕ_ext .+ RP.fields.Eϕ_self
-
-    # Update derived magnetic field quantities
-    calculate_derived_fields!(RP)
-
-    # Update parallel electric field components
-    RP.fields.E_para_ext .= RP.fields.Eϕ_ext .* RP.fields.bϕ
-    RP.fields.E_para_ext .*= RP.damping_func  # Apply damping outside wall
-
-    if RP.flags.E_para_self_EM
-        RP.fields.E_para_self_EM .= RP.fields.Eϕ_self .* RP.fields.bϕ
-    else
-        RP.fields.E_para_self_EM .= 0.0
-    end
-
     # Calculate self-consistent electrostatic field if enabled
     if RP.flags.E_para_self_ES
         estimate_electrostatic_field_effects!(RP)
     end
 
-    # Update total parallel electric field
-    RP.fields.E_para_tot .= RP.fields.E_para_ext .+
-                          (RP.flags.E_para_self_ES ? RP.fields.E_para_self_ES : 0.0) .+
-                          (RP.flags.E_para_self_EM ? RP.fields.E_para_self_EM : 0.0)
+    combine_external_and_self_fields!(RP)
 
     # Calculate RHS terms for density equation
     if RP.flags.src
@@ -135,7 +114,7 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
 
     # Update transport coefficients after all state variables are updated
     update_transport_coefficients!(RP)
-    
+
     return RP
 end
 
