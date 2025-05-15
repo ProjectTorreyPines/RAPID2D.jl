@@ -230,18 +230,37 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     NZ = RP.G.NZ > 0 ? RP.G.NZ : 100 # Default if not already set
 
     # Set domain boundaries
-    R_max = FT(2.2)
-    R_min = FT(0.8)
-    Z_max = FT(1.2)
-    Z_min = FT(-1.2)
+    R_max = isnothing(RP.config.R_max) ? FT(2.2) : RP.config.R_max
+    R_min = isnothing(RP.config.R_min) ? FT(0.8) : RP.config.R_min
+    Z_max = isnothing(RP.config.Z_max) ? FT(1.2) : RP.config.Z_max
+    Z_min = isnothing(RP.config.Z_min) ? FT(-1.2) : RP.config.Z_min
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max));
 
-    # Create rectangular wall
-    RP.wall = WallGeometry{FT}(
-        [FT(1.0), FT(2.0), FT(2.0), FT(1.0), FT(1.0)],  # Wall R coordinates
-        [FT(-1.0), FT(-1.0), FT(1.0), FT(1.0), FT(-1.0)]  # Wall Z coordinates
-    )
+
+    if isnothing(RP.config.wall_R) || isnothing(RP.config.wall_Z)
+        # Set default wall coordinates if not provided
+        # Create rectangular wall a few cells away from the numerical boundary
+        # Set wall offset (several grid cells from the boundary)
+        offset_R = 3 * RP.G.dR  # 3 cells from R boundary
+        offset_Z = 3 * RP.G.dZ  # 3 cells from Z boundary
+
+        # Create wall coordinates with the offset
+        wall_R_min = R_min + offset_R
+        wall_R_max = R_max - offset_R
+        wall_Z_min = Z_min + offset_Z
+        wall_Z_max = Z_max - offset_Z
+
+        # Create rectangular wall
+        RP.wall = WallGeometry{FT}(
+            [wall_R_min, wall_R_max, wall_R_max, wall_R_min, wall_R_min],  # Wall R coordinates
+            [wall_Z_min, wall_Z_min, wall_Z_max, wall_Z_max, wall_Z_min]   # Wall Z coordinates
+        )
+    else
+        # Use provided wall coordinates
+        RP.wall = WallGeometry{FT}(RP.config.wall_R, RP.config.wall_Z)
+    end
+
 
     # Initialize fields if not already created
     if !isdefined(RP, :fields) || isnothing(RP.fields)
@@ -322,8 +341,13 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String="") where {FT<:Ab
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max));
 
-    # Read device wall data
-    read_device_wall_data!(RP)
+    if isnothing(RP.config.wall_R) || isnothing(RP.config.wall_Z)
+        # Read device wall data
+        read_device_wall_data!(RP)
+    else
+        # Use provided wall coordinates
+        RP.wall = WallGeometry{FT}(RP.config.wall_R, RP.config.wall_Z)
+    end
 
     return RP
 end

@@ -69,6 +69,10 @@ Contains simulation configuration parameters.
     snap1D_Interval_s::FT = FT(20e-6)  # Time interval for 1D snapshots
     snap2D_Interval_s::FT = FT(100e-6)  # Time interval for 2D snapshots
     write_File_Interval_s::FT = FT(1e-3)  # Time interval for file writing
+
+    # Wall geometry
+    wall_R::Vector{FT}  = Vector{FT}()  # Radial coordinates of wall points
+    wall_Z::Vector{FT}  = Vector{FT}()  # Vertical coordinates of wall points
 end
 
 """
