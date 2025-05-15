@@ -379,7 +379,7 @@ function calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     # Update sparse matrix operator for implicit methods if needed
     if RP.flags.Implicit
         # Create diagonal matrix with electron growth rate
-        RP.operators.A_src = spdiagm(0 => eGrowth_rate[:])
+        RP.operators.An_src = spdiagm(0 => eGrowth_rate[:])
     end
 end
 
@@ -394,10 +394,10 @@ function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFlo
 
     if RP.flags.Implicit
         # Construct diffusion operator matrix for implicit scheme
-        RP.operators.A_diffu = construct_diffusion_operator!(RP)
+        RP.operators.An_diffu = construct_diffusion_operator!(RP)
 
         # Calculate right-hand side diffusion term by applying operator to density
-        diffusion_term_vector = RP.operators.A_diffu * RP.plasma.ne[:]
+        diffusion_term_vector = RP.operators.An_diffu * RP.plasma.ne[:]
         RP.operators.neRHS_diffu = reshape(diffusion_term_vector, size(RP.plasma.ne))
 
         # Handle limiting of too negative diffusion if enabled
@@ -411,7 +411,7 @@ function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFlo
                     # Reduce diffusion for this node
                     reducing_factor = 0.9 * abs(negative_change_limit[i] / RP.operators.neRHS_diffu[i])
                     row_idx = RP.G.nodes.nid[i]
-                    RP.operators.A_diffu[row_idx, :] .*= reducing_factor
+                    RP.operators.An_diffu[row_idx, :] .*= reducing_factor
                     RP.operators.neRHS_diffu[i] *= reducing_factor
                 end
             end
@@ -438,12 +438,12 @@ function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFl
     if RP.flags.Implicit
         # Construct convection operator matrix for implicit scheme
         # Use the electron velocity field (ueR, ueZ) and upwind scheme by default
-        RP.operators.A_convec = construct_convection_operator!(
+        RP.operators.An_convec = construct_convection_operator!(
             RP, RP.plasma.ueR, RP.plasma.ueZ, true
         )
 
         # Calculate right-hand side convection term by applying operator to density
-        convection_term_vector = RP.operators.A_convec * RP.plasma.ne[:]
+        convection_term_vector = RP.operators.An_convec * RP.plasma.ne[:]
         RP.operators.neRHS_convec = reshape(convection_term_vector, size(RP.plasma.ne))
     else
         # For explicit method, calculate convection term directly
@@ -479,12 +479,12 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
         θ = RP.flags.Implicit_weight
 
         # Build full RHS with explicit contribution
-        @. rhs = RP.plasma.ne + dt * (one(FT) - θ) * (OP.An_diffu + OP.An_convec + OP.An_src)
+        @. OP.rhs = RP.plasma.ne + dt * (one(FT) - θ) * (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
         # Build LHS operator
         @. OP.A_LHS = OP.II - θ*dt* (OP.An_diffu + OP.An_convec + OP.An_src)
 
         # Solve the linear system
-        RP.plasma.ne[:] = OP.A_LHS \ rhs[:]
+        @views RP.plasma.ne[:] = OP.A_LHS \ OP.rhs[:]
     else
         # Explicit method
         @. RP.plasma.ne += dt* (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)

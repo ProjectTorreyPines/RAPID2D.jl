@@ -377,9 +377,9 @@ function construct_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Construct a sparse matrix of size (NR*NZ)×(NR*NZ) by prepending 1 and appending NR*NZ to the indices
     # and padding with zeros to ensure proper dimensions for the diffusion operator
-    A_diffu = sparse([1; I; NR * NZ], [1; J; NR * NZ], [0; V; 0])
+    An_diffu = sparse([1; I; NR * NZ], [1; J; NR * NZ], [0; V; 0])
 
-    return A_diffu
+    return An_diffu
 end
 
 """
@@ -646,7 +646,7 @@ function construct_convection_operator!(RP::RAPID{FT},
 
     # Construct a sparse matrix of size (NR*NZ)×(NR*NZ) by prepending 1 and appending NR*NZ to the indices
     # and padding with zeros to ensure proper dimensions for the convection operator
-    A_convec = sparse([1; I; NR * NZ], [1; J; NR * NZ], [0; V; 0])
+    An_convec = sparse([1; I; NR * NZ], [1; J; NR * NZ], [0; V; 0])
 
-    return A_convec
+    return An_convec
 end

@@ -289,21 +289,27 @@ Fields include various matrices for solving different parts of the model.
     # Dimensions
     dims::Tuple{Int,Int} # (NR, NZ)
 
-    II::SparseMatrixCSC{FT, Int} = sparse(one(FT), prod(dims), prod(dims)) # Identity matrix
+    # Identity matrix
+    II::SparseMatrixCSC{FT, Int} = sparse(one(FT) * I, prod(dims), prod(dims))
 
+    # Matrix placeholders to avoid repetitive allocations
     A_LHS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # LHS matrix for implicit methods
 
-    # Operators for solving equations
-    An_diffu::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Matrix for diffusion term
-    An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Matrix for convection term
-    An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Matrix for source term
+    # Operators for solving continuity equations
+    An_diffu::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Diffusion operator
+    An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Convection operator
+    An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Source term operator
 
-    A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Matrix for Grad-Shafranov equation
+    # Operator for magnetic field solver
+    A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Grad-Shafranov operator
 
-    # RHS vectors for various equations
-    neRHS_diffu::Matrix{FT} = zeros(FT, dims)  # RHS for diffusion term in electron continuity
-    neRHS_convec::Matrix{FT} = zeros(FT, dims) # RHS for convection term in electron continuity
-    neRHS_src::Matrix{FT} = zeros(FT, dims)    # RHS for source term in electron continuity
+    # RHS placeholders
+    RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
+
+    # RHS vectors for electron continuity equation
+    neRHS_diffu::Matrix{FT} = zeros(FT, dims)  # Diffusion term
+    neRHS_convec::Matrix{FT} = zeros(FT, dims) # Convection term
+    neRHS_src::Matrix{FT} = zeros(FT, dims)    # Source term
 end
 
 # Constructor with separate dimensions

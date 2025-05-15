@@ -38,8 +38,8 @@ using RAPID2D
     explicit_result = copy(RP.operators.neRHS_diffu)
 
     # Implicit method
-    A_diffu = RAPID2D.construct_diffusion_operator!(RP)
-    implicit_result = reshape(A_diffu * test_density[:], NR, NZ)
+    An_diffu = RAPID2D.construct_diffusion_operator!(RP)
+    implicit_result = reshape(An_diffu * test_density[:], NR, NZ)
 
 	# Comparison
 	@test isapprox(explicit_result, implicit_result, rtol=1e-10)
@@ -47,5 +47,5 @@ using RAPID2D
 
     # Additional test: Verify that matrix multiplication operations don't error
     # This is to ensure our implementation works with typical linear algebra operations
-    @test_nowarn A_diffu * (A_diffu * test_density[:])
+    @test_nowarn An_diffu * (An_diffu * test_density[:])
 end

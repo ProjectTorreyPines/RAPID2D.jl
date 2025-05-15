@@ -59,14 +59,14 @@ using RAPID2D
             explicit_result = copy(RP.operators.neRHS_convec)
 
             # Calculate implicit convection term
-            A_convec = RAPID2D.construct_convection_operator!(RP, uR, uZ, flag_upwind)
-            implicit_result = reshape(A_convec * test_density[:], NR, NZ)
+            An_convec = RAPID2D.construct_convection_operator!(RP, uR, uZ, flag_upwind)
+            implicit_result = reshape(An_convec * test_density[:], NR, NZ)
 
             # Compare the results
             @test isapprox(explicit_result, implicit_result, rtol=1e-10)
 
             # Additional test: Verify that matrix multiplication operations don't error
-            @test_nowarn A_convec * (A_convec * test_density[:])
+            @test_nowarn An_convec * (An_convec * test_density[:])
         end
     end
 
@@ -96,8 +96,8 @@ using RAPID2D
         RAPID2D.calculate_convection_term!(RP, test_density, uR, uZ, true)
         explicit_result = copy(RP.operators.neRHS_convec)
 
-        A_convec = RAPID2D.construct_convection_operator!(RP, uR, uZ, true)
-        implicit_result = reshape(A_convec * test_density[:], NR, NZ)
+        An_convec = RAPID2D.construct_convection_operator!(RP, uR, uZ, true)
+        implicit_result = reshape(An_convec * test_density[:], NR, NZ)
 
         @test isapprox(explicit_result, implicit_result, rtol=1e-10)
     end
