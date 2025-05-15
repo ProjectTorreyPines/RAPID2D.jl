@@ -18,7 +18,7 @@ export update_all_fields!,
 
 # Export external field types and functions
 export AbstractExternalField, TimeSeriesExternalField
-export get_external_fields_at_time
+export calculate_external_fields_at_time
 
 # Required imports for field calculations
 using LinearAlgebra
@@ -148,7 +148,7 @@ function update_all_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:Abst
     # Use manual mode if no external field source is specified
     if !isnothing(RP.external_field)
         # Get external fields at specified time
-        extF = get_external_fields_at_time(RP.external_field, time_s, RP.G)
+        extF = calculate_external_fields_at_time(RP.external_field, time_s, RP.G)
 
         # Update field components
         RP.fields.BR_ext .= extF.BR
@@ -221,7 +221,7 @@ mutable struct TimeSeriesExternalField{FT<:AbstractFloat} <: AbstractExternalFie
 end
 
 """
-    get_external_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid::GridGeometry{FT}) where {FT<:AbstractFloat}
+    calculate_external_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid::GridGeometry{FT}) where {FT<:AbstractFloat}
 
 Interpolate field values at a specific time from time series data.
 
@@ -232,7 +232,7 @@ Interpolate field values at a specific time from time series data.
 # Returns
 - `NamedTuple`: Contains fields BR, BZ, LV, psi interpolated at the specified time
 """
-function get_external_fields_at_time(extF::TimeSeriesExternalField{FT}, time::FT) where {FT<:AbstractFloat}
+function calculate_external_fields_at_time(extF::TimeSeriesExternalField{FT}, time::FT) where {FT<:AbstractFloat}
     # Find the time indices for interpolation
     if time <= extF.time_s[1]
         # Before first time point - use first time point
