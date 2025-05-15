@@ -33,6 +33,9 @@ include("physics/physics.jl")
 include("reactions/electron_Xsec.jl")
 include("reactions/reaction_rate_coefficients.jl")
 
+# Include simulation workflows
+include("workflows.jl")
+
 # Include the IO-related functionality
 include("io/io.jl")
 
@@ -96,49 +99,7 @@ function create_rapid_object(;
     return RP
 end
 
-# Main simulation run function
-function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
-    # Simulation parameters
-    dt = RP.dt
-    t_end = RP.t_end_s
-
-    # Main time loop
-    while RP.time_s < t_end - 0.1*dt
-
-        # Advance simulation one time step
-        advance_timestep!(RP, dt)
-
-        # Increment time
-        RP.time_s += dt
-        RP.step += 1
-
-        # Print progress
-        if RP.step % 100 == 0
-            @printf("Time: %.6e s, Step: %d\n", RP.time_s, RP.step)
-        end
-
-        # Handle snapshots and file outputs if needed
-        if hasfield(typeof(RP), :snap2D_Interval_s) && abs(RP.time_s - round(RP.time_s/RP.snap2D_Interval_s)*RP.snap2D_Interval_s) < 0.1*dt
-            # Take snapshot of 2D data
-            save_snapshot2D(RP)
-        end
-    end
-
-    println("Simulation completed")
-    return RP
-end
-
-# Function to advance simulation by one time step
-function advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
-    # TODO: Implement physics advancement:
-    # 1. Update fields
-    # 2. Update transport coefficients
-    # 3. Solve continuity equations
-    # 4. Solve momentum equations
-    # 5. Solve temperature equations
-end
-
 # Export main functions
-export create_rapid_object, initialize_simulation, run_simulation!, advance_timestep!
+export create_rapid_object, initialize_simulation
 
 end # module RAPID2D

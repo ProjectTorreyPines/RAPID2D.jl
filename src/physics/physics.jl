@@ -17,7 +17,9 @@ export update_ue_para!,
        update_power_terms!,
        calculate_density_source_terms!,
        calculate_density_diffusion_terms!,
-       calculate_density_convection_terms!
+       calculate_density_convection_terms!,
+       solve_electron_continuity_equation!,
+       apply_electron_density_boundary_conditions!
 
 """
     update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -389,10 +391,6 @@ the diffusion operator matrix for implicit time stepping or directly calculating
 diffusion term for explicit time stepping.
 """
 function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
-    # Calculate diffusion coefficients in R-Z coordinates using Jacobian
-    CTRR = @. RP.G.Jacob * RP.transport.DRR / (RP.G.dR * RP.G.dR)
-    CTRZ = @. RP.G.Jacob * RP.transport.DRZ / (RP.G.dR * RP.G.dZ)
-    CTZZ = @. RP.G.Jacob * RP.transport.DZZ / (RP.G.dZ * RP.G.dZ)
 
     if RP.flags.Implicit
         # Construct diffusion operator matrix for implicit scheme
@@ -403,8 +401,8 @@ function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFlo
         RP.operators.neRHS_diffu = reshape(diffusion_term_vector, size(RP.plasma.ne))
 
         # Handle limiting of too negative diffusion if enabled
-        if RP.flags.Limit_too_negative_Diffusion
-            limit_lb = RP.flags.Limit_too_negative_Diffusion_limit_lower_bound_ratio
+        if RP.flags.Limit_too_negative_Diffusion[:state]
+            limit_lb = RP.flags.Limit_too_negative_Diffusion[:limit_lower_bound_ratio]
             negative_change_limit = @. limit_lb * abs(RP.plasma.ne) / RP.dt
 
             # Find nodes inside wall with too negative diffusion
@@ -456,6 +454,95 @@ function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFl
 
     # Zero out convection outside wall (optional, depending on implementation details)
     RP.operators.neRHS_convec[RP.G.nodes.out_wall_nids] .= 0.0
+
+    return RP
+end
+
+"""
+    solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFloat
+
+Solve the electron continuity equation to update electron density.
+Uses either explicit or implicit time integration based on RP.flags.Implicit.
+"""
+function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFloat
+    # Get time step from RP
+    dt = RP.dt
+
+    # Store previous density state for transport calculations
+    RP.prev_n .= RP.plasma.ne
+
+    if RP.flags.Implicit
+        # Implicit method implementation
+        # Weight for implicit method (0.0 = fully explicit, 1.0 = fully implicit)
+        θ = RP.flags.Implicit_weight
+
+        # Calculate explicit part of RHS
+        explicit_rhs = zeros(FT, size(RP.plasma.ne))
+        if RP.flags.diffu
+            explicit_rhs .+= RP.operators.neRHS_diffu
+        end
+        if RP.flags.convec
+            explicit_rhs .+= RP.operators.neRHS_convec
+        end
+        if RP.flags.src
+            explicit_rhs .+= RP.operators.neRHS_src
+        end
+
+        # Build full RHS with explicit contribution
+        rhs = RP.plasma.ne .+ dt .* (1.0 - θ) .* explicit_rhs
+
+        # Construct LHS matrix for implicit part
+        A_LHS = sparse(I, RP.G.NR * RP.G.NZ, RP.G.NR * RP.G.NZ)
+
+        # Add diffusion contribution
+        if RP.flags.diffu
+            A_LHS .-= θ * dt .* RP.operators.A_diffu
+        end
+
+        # Add convection contribution
+        if RP.flags.convec
+            A_LHS .-= θ * dt .* RP.operators.A_convec
+        end
+
+        # Add source contribution
+        if RP.flags.src
+            A_LHS .-= θ * dt .* RP.operators.A_src
+        end
+
+        # Solve the linear system
+        RP.plasma.ne[:] = A_LHS \ rhs[:]
+    else
+        # Explicit method
+        if RP.flags.diffu
+            RP.plasma.ne .+= dt .* RP.operators.neRHS_diffu
+        end
+
+        if RP.flags.convec
+            RP.plasma.ne .+= dt .* RP.operators.neRHS_convec
+        end
+
+        if RP.flags.src
+            RP.plasma.ne .+= dt .* RP.operators.neRHS_src
+        end
+    end
+
+    return RP
+end
+
+"""
+    apply_electron_density_boundary_conditions!(RP::RAPID{FT}) where FT<:AbstractFloat
+
+Apply boundary conditions to electron density, including setting density to zero outside the wall
+and handling negative densities.
+"""
+function apply_electron_density_boundary_conditions!(RP::RAPID{FT}) where FT<:AbstractFloat
+    # Set density to zero outside wall
+    RP.plasma.ne[RP.G.nodes.out_wall_nids] .= 0.0
+
+    # Correct negative densities if enabled
+    if RP.flags.neg_n_correction
+        RP.plasma.ne[RP.plasma.ne .< 0] .= 0.0
+    end
 
     return RP
 end
