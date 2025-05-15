@@ -394,7 +394,7 @@ function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFlo
 
     if RP.flags.Implicit
         # Construct diffusion operator matrix for implicit scheme
-        RP.operators.An_diffu = construct_diffusion_operator!(RP)
+        RP.operators.An_diffu = construct_diffusion_operator(RP)
 
         # Calculate right-hand side diffusion term by applying operator to density
         diffusion_term_vector = RP.operators.An_diffu * RP.plasma.ne[:]
@@ -438,7 +438,7 @@ function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFl
     if RP.flags.Implicit
         # Construct convection operator matrix for implicit scheme
         # Use the electron velocity field (ueR, ueZ) and upwind scheme by default
-        RP.operators.An_convec = construct_convection_operator!(
+        RP.operators.An_convec = construct_convection_operator(
             RP, RP.plasma.ueR, RP.plasma.ueZ, true
         )
 

@@ -355,7 +355,10 @@ Contains boolean flags that control various aspects of the simulation.
     Coulomb_Collision::Bool = true            # Include Coulomb collisions
     Spitzer_Resistivity::Bool = true          # Include Spitzer resistivity
     Update_gFac::Bool = true                  # Update g factor for generalized EDF
+
+    # Ion dynamics
     update_ni_independently::Bool = true      # Update ion density independently
+    Ti_evolve::Bool = true                   # Update ion temperature
     Secondary_Electron::Bool = true           # Include secondary electron emission
 
     # Field-related flags

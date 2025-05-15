@@ -12,9 +12,9 @@ export update_transport_quantities!,
        calculate_diffusion_coefficients!,
        calculate_particle_fluxes!,
        calculate_diffusion_term!,
-       construct_diffusion_operator!,
+       construct_diffusion_operator,
        calculate_convection_term!,
-       construct_convection_operator!
+       construct_convection_operator
 
 """
     update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -299,7 +299,7 @@ function calculate_diffusion_term!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP
 end
 
 """
-    construct_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    construct_diffusion_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Construct the sparse matrix representation of the diffusion operator for implicit time-stepping.
 
@@ -309,7 +309,7 @@ Construct the sparse matrix representation of the diffusion operator for implici
 # Returns
 - `SparseMatrixCSC{FT, Int}`: The sparse matrix representation of the diffusion operator
 """
-function construct_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function construct_diffusion_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields from the RP object
     G = RP.G
     inv_Jacob = G.inv_Jacob
@@ -500,7 +500,7 @@ function calculate_convection_term!(RP::RAPID{FT},
 end
 
 """
-    construct_convection_operator!(RP::RAPID{FT},
+    construct_convection_operator(RP::RAPID{FT},
                                  uR::AbstractMatrix{FT}=RP.plasma.ueR,
                                  uZ::AbstractMatrix{FT}=RP.plasma.ueZ,
                                  flag_upwind::Bool=true) where {FT<:AbstractFloat}
@@ -516,7 +516,7 @@ Construct the sparse matrix representation of the convection operator [-∇⋅(n
 # Returns
 - `SparseMatrixCSC{FT, Int}`: The sparse matrix representation of the convection operator
 """
-function construct_convection_operator!(RP::RAPID{FT},
+function construct_convection_operator(RP::RAPID{FT},
                                       uR::AbstractMatrix{FT}=RP.plasma.ueR,
                                       uZ::AbstractMatrix{FT}=RP.plasma.ueZ,
                                       flag_upwind::Bool=true) where {FT<:AbstractFloat}
@@ -646,7 +646,7 @@ function construct_convection_operator!(RP::RAPID{FT},
 
     # Construct a sparse matrix of size (NR*NZ)×(NR*NZ) by prepending 1 and appending NR*NZ to the indices
     # and padding with zeros to ensure proper dimensions for the convection operator
-    An_convec = sparse([1; I; NR * NZ], [1; J; NR * NZ], [0; V; 0])
+    A_convec = sparse([1; I; NR * NZ], [1; J; NR * NZ], [0; V; 0])
 
-    return An_convec
+    return A_convec
 end
