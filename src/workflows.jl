@@ -113,7 +113,7 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
     end
 
     # Update transport coefficients after all state variables are updated
-    update_transport_coefficients!(RP)
+    update_transport_quantities!(RP)
 
     return RP
 end
