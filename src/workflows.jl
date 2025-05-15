@@ -28,7 +28,7 @@ This function represents the core time-stepping algorithm of RAPID2D.
 """
 function advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
     # Update vacuum fields from external sources
-    update_vacuum_fields!(RP)
+    update_external_fields!(RP)
 
     # Current calculations
     # Calculate the current density based on electron drift velocity

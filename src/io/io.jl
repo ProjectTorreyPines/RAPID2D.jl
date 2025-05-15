@@ -31,7 +31,7 @@ using DelimitedFiles
 using Interpolations
 
 # Import from fields module
-import RAPID2D: TimeSeriesExternalField, AbstractExternalField, update_all_fields!
+import RAPID2D: TimeSeriesExternalField, AbstractExternalField
 import RAPID2D: calculate_external_fields_at_time  # Import this to avoid duplicate definition
 
 # =============================================================================

@@ -10,8 +10,9 @@ Contains functions related to electromagnetic field calculations, including:
 """
 
 # Export public functions
-export update_all_fields!,
+export update_external_fields!,
        update_self_fields!,
+       combine_external_and_self_fields!,
        calculate_field_unit_vectors!,
        calculate_parallel_electric_field!,
        flf_analysis_of_field_lines_in_RZ_plane
@@ -133,9 +134,10 @@ function flf_analysis_of_field_lines_in_RZ_plane(RP::RAPID{FT}) where {FT<:Abstr
 end
 
 """
-    update_all_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+    update_external_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
 
-Update external fields based on current simulation time or specified time.
+Update external electromagnetic fields based on the current simulation time or a specified time.
+This function handles interpolation from time series data and calculates derived external fields.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance
@@ -144,11 +146,11 @@ Update external fields based on current simulation time or specified time.
 # Returns
 - `RP::RAPID{FT}`: The updated RAPID instance
 """
-function update_all_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+function update_external_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
     # Use manual mode if no external field source is specified
     if !isnothing(RP.external_field)
         # Get external fields at specified time
-        extF = calculate_external_fields_at_time(RP.external_field, time_s, RP.G)
+        extF = calculate_external_fields_at_time(RP.external_field, time_s)
 
         # Update field components
         RP.fields.BR_ext .= extF.BR
@@ -160,6 +162,28 @@ function update_all_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:Abst
     # Calculate toroidal electric field
     RP.fields.Eϕ_ext .= RP.fields.LV_ext ./ (2π * RP.G.R2D)
 
+    return RP
+end
+
+"""
+    combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+
+Combine external and self-generated electromagnetic fields and calculate derived field quantities.
+This function does NOT update the fields themselves, but assumes they are already updated separately.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance
+- `time_s::FT`: Time parameter (used only for documentation, not actually used in calculations)
+
+# Returns
+- `RP::RAPID{FT}`: The updated RAPID instance with combined fields and derived quantities
+
+# Note
+External fields should be updated separately using `update_external_fields!` before calling this function.
+Self-generated fields should be updated using appropriate physics functions.
+"""
+function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+    # Set toroidal magnetic field
     RP.fields.Bϕ = RP.fields.R0B0 ./ (RP.G.R2D);
 
     # Combine external and self-generated fields
