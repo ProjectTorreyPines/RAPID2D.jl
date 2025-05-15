@@ -541,7 +541,7 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
         zz = max(1, zid-1):zid
 
         # Calculate fraction of cell inside the wall (similar to MATLAB's sum(...,'all')/4)
-        frac = sum(RP.G.cell_state[rr, zz]) / 4
+        frac = sum(RP.G.cell_state[rr, zz].==1) / 4
         RP.G.inVol2D[rid, zid] = frac * RP.G.inVol2D[rid, zid]
     end
 
@@ -552,8 +552,10 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
 end
 
 function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Set small initial seed density inside wall
-    RP.plasma.ne[RP.G.nodes.in_wall_nids] .= FT(1.0e6)
+    # Set small initial seed density inside and on wall
+    RP.plasma.ne .= FT(1.0e6)
+    # RP.plasma.ne[RP.G.nodes.in_wall_nids] .= FT(1.0e6)
+    RP.plasma.ne[RP.G.nodes.out_wall_nids] .= zero(FT)
 
     # Ion density matches electron for now
     RP.plasma.ni .= copy(RP.plasma.ne)
