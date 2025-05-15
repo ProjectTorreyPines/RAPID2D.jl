@@ -286,6 +286,10 @@ Fields include various matrices for solving different parts of the model.
     dims::Tuple{Int,Int} # (NR, NZ)
 
     # Operators for solving equations
+    An_diffu::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Matrix for diffusion term
+    An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Matrix for convection term
+    An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Matrix for source term
+
     A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Matrix for Grad-Shafranov equation
 
     # RHS vectors for various equations
