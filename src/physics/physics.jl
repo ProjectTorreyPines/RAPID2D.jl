@@ -465,6 +465,8 @@ Solve the electron continuity equation to update electron density.
 Uses either explicit or implicit time integration based on RP.flags.Implicit.
 """
 function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFloat
+    # Alias for readability
+    OP = RP.operators
     # Get time step from RP
     dt = RP.dt
 
@@ -476,54 +478,16 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
         # Weight for implicit method (0.0 = fully explicit, 1.0 = fully implicit)
         θ = RP.flags.Implicit_weight
 
-        # Calculate explicit part of RHS
-        explicit_rhs = zeros(FT, size(RP.plasma.ne))
-        if RP.flags.diffu
-            explicit_rhs .+= RP.operators.neRHS_diffu
-        end
-        if RP.flags.convec
-            explicit_rhs .+= RP.operators.neRHS_convec
-        end
-        if RP.flags.src
-            explicit_rhs .+= RP.operators.neRHS_src
-        end
-
         # Build full RHS with explicit contribution
-        rhs = RP.plasma.ne .+ dt .* (1.0 - θ) .* explicit_rhs
-
-        # Construct LHS matrix for implicit part
-        A_LHS = sparse(I, RP.G.NR * RP.G.NZ, RP.G.NR * RP.G.NZ)
-
-        # Add diffusion contribution
-        if RP.flags.diffu
-            A_LHS .-= θ * dt .* RP.operators.A_diffu
-        end
-
-        # Add convection contribution
-        if RP.flags.convec
-            A_LHS .-= θ * dt .* RP.operators.A_convec
-        end
-
-        # Add source contribution
-        if RP.flags.src
-            A_LHS .-= θ * dt .* RP.operators.A_src
-        end
+        @. rhs = RP.plasma.ne + dt * (one(FT) - θ) * (OP.An_diffu + OP.An_convec + OP.An_src)
+        # Build LHS operator
+        @. OP.A_LHS = OP.II - θ*dt* (OP.An_diffu + OP.An_convec + OP.An_src)
 
         # Solve the linear system
-        RP.plasma.ne[:] = A_LHS \ rhs[:]
+        RP.plasma.ne[:] = OP.A_LHS \ rhs[:]
     else
         # Explicit method
-        if RP.flags.diffu
-            RP.plasma.ne .+= dt .* RP.operators.neRHS_diffu
-        end
-
-        if RP.flags.convec
-            RP.plasma.ne .+= dt .* RP.operators.neRHS_convec
-        end
-
-        if RP.flags.src
-            RP.plasma.ne .+= dt .* RP.operators.neRHS_src
-        end
+        @. RP.plasma.ne += dt* (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
     end
 
     return RP
