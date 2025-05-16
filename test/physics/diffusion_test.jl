@@ -38,7 +38,8 @@ using RAPID2D
     explicit_result = copy(RP.operators.neRHS_diffu)
 
     # Implicit method
-    An_diffu = RAPID2D.construct_diffusion_operator(RP)
+    RAPID2D.initialize_diffusion_operator!(RP)
+    An_diffu = RP.operators.An_diffu
     implicit_result = reshape(An_diffu * test_density[:], NR, NZ)
 
 	# Comparison
