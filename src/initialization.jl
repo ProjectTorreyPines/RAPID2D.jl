@@ -120,6 +120,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Set initial time
     RP.time_s = RP.t_start_s
+    RP.step = 0
 
     return RP
 end
