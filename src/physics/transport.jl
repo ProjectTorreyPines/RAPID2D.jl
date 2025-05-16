@@ -442,9 +442,13 @@ end
 
 
 """
-    calculate_convection_term!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne,
-                              uR::AbstractMatrix{FT}=RP.plasma.ueR, uZ::AbstractMatrix{FT}=RP.plasma.ueZ,
-                              flag_upwind::Bool=true) where {FT<:AbstractFloat}
+    calculate_convection_term!(
+        RP::RAPID{FT},
+        density::AbstractMatrix{FT}=RP.plasma.ne,
+        uR::AbstractMatrix{FT}=RP.plasma.ueR,
+        uZ::AbstractMatrix{FT}=RP.plasma.ueZ
+        ;
+        flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
 Calculate the convection term [-∇⋅(nv)] for a given density field using the velocity field.
 
@@ -453,7 +457,7 @@ Calculate the convection term [-∇⋅(nv)] for a given density field using the 
 - `density::AbstractMatrix{FT}=RP.plasma.ne`: The density field to calculate convection for (defaults to electron density)
 - `uR::AbstractMatrix{FT}=RP.plasma.ueR`: The R-component of velocity field (defaults to electron fluid velocity)
 - `uZ::AbstractMatrix{FT}=RP.plasma.ueZ`: The Z-component of velocity field (defaults to electron fluid velocity)
-- `flag_upwind::Bool=true`: Flag to use upwind scheme (if false, uses central differencing)
+- `flag_upwind::Bool=RP.flags.upwind`: Flag to use upwind scheme (if false, uses central differencing)
 
 # Returns
 - `RP`: The updated RAPID object with the calculated convection term stored in RP.operators.neRHS_convec
@@ -466,11 +470,14 @@ Calculate the convection term [-∇⋅(nv)] for a given density field using the 
 - Falls back to central differencing for zero velocity even when upwind=true
 - Uses second-order central differencing when upwind=false
 """
-function calculate_convection_term!(RP::RAPID{FT},
-                                  density::AbstractMatrix{FT}=RP.plasma.ne,
-                                  uR::AbstractMatrix{FT}=RP.plasma.ueR,
-                                  uZ::AbstractMatrix{FT}=RP.plasma.ueZ,
-                                  flag_upwind::Bool=true) where {FT<:AbstractFloat}
+function calculate_convection_term!(
+    RP::RAPID{FT},
+    density::AbstractMatrix{FT}=RP.plasma.ne,
+    uR::AbstractMatrix{FT}=RP.plasma.ueR,
+    uZ::AbstractMatrix{FT}=RP.plasma.ueZ
+    ;
+    flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
     # Alias necessary fields from the RP object
     G = RP.G
     Jacob = G.Jacob
@@ -505,37 +512,37 @@ function calculate_convection_term!(RP::RAPID{FT},
                 negative_flux_Z = zero_val
 
                 # R-direction convection flux with upwind scheme
-                if uR[i,j] > zero_val
+                if uR[i, j] > zero_val
                     # Flow from left to right, use left (upwind) node
-                    negative_flux_R = -Jacob[i,j]*uR[i,j]*inv_dR*density[i,j] + Jacob[i-1,j]*uR[i-1,j]*inv_dR*density[i-1,j]
-                elseif abs(uR[i,j]) < eps_val
+                    negative_flux_R = -Jacob[i, j] * uR[i, j] * inv_dR * density[i, j] + Jacob[i-1, j] * uR[i-1, j] * inv_dR * density[i-1, j]
+                elseif abs(uR[i, j]) < eps_val
                     # Zero velocity, use central differencing
-                    negative_flux_R = -Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*density[i+1,j] +
-                             Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*density[i-1,j]
+                    negative_flux_R = -Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * density[i+1, j] +
+                                        Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * density[i-1, j]
                 else
                     # Flow from right to left, use right (upwind) node
-                    negative_flux_R = -Jacob[i+1,j]*uR[i+1,j]*inv_dR*density[i+1,j] +
-                             Jacob[i,j]*uR[i,j]*inv_dR*density[i,j]
+                    negative_flux_R = -Jacob[i+1, j] * uR[i+1, j] * inv_dR * density[i+1, j] +
+                                      Jacob[i, j] * uR[i, j] * inv_dR * density[i, j]
                 end
 
                 # Z-direction convection flux with upwind scheme
-                if uZ[i,j] > zero_val
+                if uZ[i, j] > zero_val
                     # Flow from bottom to top, use bottom (upwind) node
-                    negative_flux_Z = -Jacob[i,j]*uZ[i,j]*inv_dZ*density[i,j] +
-                             Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*density[i,j-1]
-                elseif abs(uZ[i,j]) < eps_val
+                    negative_flux_Z = -Jacob[i, j] * uZ[i, j] * inv_dZ * density[i, j] +
+                                      Jacob[i, j-1] * uZ[i, j-1] * inv_dZ * density[i, j-1]
+                elseif abs(uZ[i, j]) < eps_val
                     # Zero velocity, use central differencing
-                    negative_flux_Z = -Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*density[i,j+1] +
-                             Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*density[i,j-1]
+                    negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * density[i, j+1] +
+                                      Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * density[i, j-1]
                 else
                     # Flow from top to bottom, use top (upwind) node
-                    negative_flux_Z = -Jacob[i,j+1]*uZ[i,j+1]*inv_dZ*density[i,j+1] +
-                             Jacob[i,j]*uZ[i,j]*inv_dZ*density[i,j]
+                    negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * inv_dZ * density[i, j+1] +
+                                      Jacob[i, j] * uZ[i, j] * inv_dZ * density[i, j]
                 end
 
                 # Calculate the total convection contribution
                 # Note: The negative sign is already incorporated in the flux calculations
-                convec_term[i,j] = (negative_flux_R + negative_flux_Z)*inv_Jacob[i,j]
+                convec_term[i, j] = (negative_flux_R + negative_flux_Z) * inv_Jacob[i, j]
             end
         end
     else
@@ -543,14 +550,14 @@ function calculate_convection_term!(RP::RAPID{FT},
         @inbounds for j in 2:NZ-1
             for i in 2:NR-1
                 # Calculate fluxes with central differencing
-                negative_flux_R = -Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*density[i+1,j] +
-                         Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*density[i-1,j]
+                negative_flux_R = -Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * density[i+1, j] +
+                                  Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * density[i-1, j]
 
-                negative_flux_Z = -Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*density[i,j+1] +
-                         Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*density[i,j-1]
+                negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * density[i, j+1] +
+                                  Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * density[i, j-1]
 
                 # Calculate the total convection contribution
-                convec_term[i,j] = (negative_flux_R + negative_flux_Z)*inv_Jacob[i,j]
+                convec_term[i, j] = (negative_flux_R + negative_flux_Z) * inv_Jacob[i, j]
             end
         end
     end
@@ -559,10 +566,12 @@ function calculate_convection_term!(RP::RAPID{FT},
 end
 
 """
-    construct_convection_operator(RP::RAPID{FT},
-                                 uR::AbstractMatrix{FT}=RP.plasma.ueR,
-                                 uZ::AbstractMatrix{FT}=RP.plasma.ueZ,
-                                 flag_upwind::Bool=true) where {FT<:AbstractFloat}
+    construct_convection_operator(
+        RP::RAPID{FT},
+        uR::AbstractMatrix{FT}=RP.plasma.ueR,
+        uZ::AbstractMatrix{FT}=RP.plasma.ueZ
+        ;
+        flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
 Construct the sparse matrix representation of the convection operator [-∇⋅(nv)] for implicit time-stepping.
 
@@ -570,15 +579,19 @@ Construct the sparse matrix representation of the convection operator [-∇⋅(n
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
 - `uR::AbstractMatrix{FT}=RP.plasma.ueR`: The R-component of velocity field (defaults to electron fluid velocity)
 - `uZ::AbstractMatrix{FT}=RP.plasma.ueZ`: The Z-component of velocity field (defaults to electron fluid velocity)
-- `flag_upwind::Bool=true`: Flag to use upwind scheme (if false, uses central differencing)
+- `flag_upwind::Bool=RP.flags.upwind`: Flag to use upwind scheme (if false, uses central differencing)
 
 # Returns
 - `SparseMatrixCSC{FT, Int}`: The sparse matrix representation of the convection operator
 """
-function construct_convection_operator(RP::RAPID{FT},
-                                      uR::AbstractMatrix{FT}=RP.plasma.ueR,
-                                      uZ::AbstractMatrix{FT}=RP.plasma.ueZ,
-                                      flag_upwind::Bool=true) where {FT<:AbstractFloat}
+function construct_convection_operator(
+    RP::RAPID{FT},
+    uR::AbstractMatrix{FT}=RP.plasma.ueR,
+    uZ::AbstractMatrix{FT}=RP.plasma.ueZ
+    ;
+    flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+
     # Alias necessary fields from the RP object
     G = RP.G
     Jacob = G.Jacob        # Jacobian matrix
@@ -620,83 +633,69 @@ function construct_convection_operator(RP::RAPID{FT},
                     # Flow from left to right
                     J[k] = nid[i,j]
                     V[k] = -Jacob[i,j]*uR[i,j]*inv_dR*inv_Jacob_ij
-                    k += 1
 
-                    J[k] = nid[i-1,j]
-                    V[k] = Jacob[i-1,j]*uR[i-1,j]*inv_dR*inv_Jacob_ij
-                    k += 1
+                    J[k+1] = nid[i-1,j]
+                    V[k+1] = Jacob[i-1,j]*uR[i-1,j]*inv_dR*inv_Jacob_ij
                 elseif abs(uR[i,j]) < eps_val
                     # Zero velocity, use central differencing
                     J[k] = nid[i+1,j]
                     V[k] = -Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*inv_Jacob_ij
-                    k += 1
 
-                    J[k] = nid[i-1,j]
-                    V[k] = Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*inv_Jacob_ij
-                    k += 1
+                    J[k+1] = nid[i-1,j]
+                    V[k+1] = Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*inv_Jacob_ij
                 else
                     # Flow from right to left
                     J[k] = nid[i+1,j]
                     V[k] = -Jacob[i+1,j]*uR[i+1,j]*inv_dR*inv_Jacob_ij
-                    k += 1
 
-                    J[k] = nid[i,j]
-                    V[k] = Jacob[i,j]*uR[i,j]*inv_dR*inv_Jacob_ij
-                    k += 1
+                    J[k+1] = nid[i,j]
+                    V[k+1] = Jacob[i,j]*uR[i,j]*inv_dR*inv_Jacob_ij
                 end
 
                 # Z-direction
                 if uZ[i,j] > zero_val
                     # Flow from bottom to top
-                    J[k] = nid[i,j]
-                    V[k] = -Jacob[i,j]*uZ[i,j]*inv_dZ*inv_Jacob_ij
-                    k += 1
+                    J[k+2] = nid[i,j]
+                    V[k+2] = -Jacob[i,j]*uZ[i,j]*inv_dZ*inv_Jacob_ij
 
-                    J[k] = nid[i,j-1]
-                    V[k] = Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*inv_Jacob_ij
-                    k += 1
+                    J[k+3] = nid[i,j-1]
+                    V[k+3] = Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*inv_Jacob_ij
                 elseif abs(uZ[i,j]) < eps_val
                     # Zero velocity, use central differencing
-                    J[k] = nid[i,j+1]
-                    V[k] = -Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*inv_Jacob_ij
-                    k += 1
+                    J[k+2] = nid[i,j+1]
+                    V[k+2] = -Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*inv_Jacob_ij
 
-                    J[k] = nid[i,j-1]
-                    V[k] = Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*inv_Jacob_ij
-                    k += 1
+                    J[k+3] = nid[i,j-1]
+                    V[k+3] = Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*inv_Jacob_ij
                 else
                     # Flow from top to bottom
-                    J[k] = nid[i,j+1]
-                    V[k] = -Jacob[i,j+1]*uZ[i,j+1]*inv_dZ*inv_Jacob_ij
-                    k += 1
+                    J[k+2] = nid[i,j+1]
+                    V[k+2] = -Jacob[i,j+1]*uZ[i,j+1]*inv_dZ*inv_Jacob_ij
 
-                    J[k] = nid[i,j]
-                    V[k] = Jacob[i,j]*uZ[i,j]*inv_dZ*inv_Jacob_ij
-                    k += 1
+                    J[k+3] = nid[i,j]
+                    V[k+3] = Jacob[i,j]*uZ[i,j]*inv_dZ*inv_Jacob_ij
                 end
+
+                k += 4
             end
         end
     else
         # Central differencing for both directions (simpler logic)
         for j in 2:NZ-1
             for i in 2:NR-1
-                I[k:k+3] .= nid[i,j]
+                @. @views I[k:k+3] = nid[i,j]
                 inv_Jacob_ij = inv_Jacob[i,j]
 
-                # Note the sign of "-nabla(n*v)"
-                J[k:k+3] = [
-                    nid[i+1,j],  # East
-                    nid[i-1,j],  # West
-                    nid[i,j+1],  # North
-                    nid[i,j-1]   # South
-                ]
+                # Note the sign of [-∇⋅(nv)] operator
+                J[k]   = nid[i+1,j] # East
+                J[k+1] = nid[i-1,j] # West
+                J[k+2] = nid[i,j+1] # North
+                J[k+3] = nid[i,j-1] # South
 
-                V[k:k+3] = [
-                    -Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*inv_Jacob_ij,
-                    Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*inv_Jacob_ij,
-                    -Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*inv_Jacob_ij,
-                    Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*inv_Jacob_ij
-                ]
+                V[k]   = -Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*inv_Jacob_ij
+                V[k+1] = +Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*inv_Jacob_ij
+                V[k+2] = -Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*inv_Jacob_ij
+                V[k+3] = +Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*inv_Jacob_ij
 
                 k += 4
             end

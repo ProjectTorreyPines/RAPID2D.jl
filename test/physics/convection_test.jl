@@ -55,11 +55,11 @@ using RAPID2D
     for flag_upwind in [true, false]
         @testset "Upwind = $flag_upwind" begin
             # Calculate explicit convection term
-            RAPID2D.calculate_convection_term!(RP, test_density, uR, uZ, flag_upwind)
+            RAPID2D.calculate_convection_term!(RP, test_density, uR, uZ; flag_upwind)
             explicit_result = copy(RP.operators.neRHS_convec)
 
             # Calculate implicit convection term
-            An_convec = RAPID2D.construct_convection_operator(RP, uR, uZ, flag_upwind)
+            An_convec = RAPID2D.construct_convection_operator(RP, uR, uZ; flag_upwind)
             implicit_result = reshape(An_convec * test_density[:], NR, NZ)
 
             # Compare the results
@@ -93,10 +93,10 @@ using RAPID2D
         RP.plasma.ueZ .= uZ
 
         # Test with upwind scheme (more stable for complex flows)
-        RAPID2D.calculate_convection_term!(RP, test_density, uR, uZ, true)
+        RAPID2D.calculate_convection_term!(RP, test_density, uR, uZ; flag_upwind=true)
         explicit_result = copy(RP.operators.neRHS_convec)
 
-        An_convec = RAPID2D.construct_convection_operator(RP, uR, uZ, true)
+        An_convec = RAPID2D.construct_convection_operator(RP, uR, uZ; flag_upwind=true)
         implicit_result = reshape(An_convec * test_density[:], NR, NZ)
 
         @test isapprox(explicit_result, implicit_result, rtol=1e-10)
