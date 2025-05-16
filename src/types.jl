@@ -307,6 +307,7 @@ Fields include various matrices for solving different parts of the model.
     # Operators for solving continuity equations
     An_diffu::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Diffusion operator
     An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Convection operator
+    An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # src operator
 
     # Mapping vectors for diffusion and convection (For more efficine update of non-zero elements of CSC matrix)
     map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
