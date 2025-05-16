@@ -84,14 +84,16 @@ Fields:
 - `R`: Radial coordinates of wall points
 - `Z`: Vertical coordinates of wall points
 """
-@kwdef struct WallGeometry{FT<:AbstractFloat}
-    R::Vector{FT} = Vector{FT}()
-    Z::Vector{FT} = Vector{FT}()
-end
+struct WallGeometry{FT<:AbstractFloat}
+    R::Vector{FT}
+    Z::Vector{FT}
 
+    function WallGeometry{FT}() where {FT<:AbstractFloat}
+        return new{FT}(FT[], FT[])
+    end
 
-function WallGeometry(R::Vector{FT}, Z::Vector{FT}, check_wall::Bool) where {FT<:AbstractFloat}
-    if check_wall
+    # Custom constructor that ensures valid wall geometry
+    function WallGeometry{FT}(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat}
         @assert length(R) == length(Z) "R and Z must have the same length"
         @assert length(R) >= 3 "At least 3 points needed to define a wall unless creating an empty placeholder"
 
@@ -100,16 +102,17 @@ function WallGeometry(R::Vector{FT}, Z::Vector{FT}, check_wall::Bool) where {FT<
             push!(new_R, new_R[1])
             push!(new_Z, new_Z[1])
         end
-
-        return WallGeometry{FT}(; R=new_R, Z=new_Z)
-    else
-        return WallGeometry{FT}(; R, Z)
+        return new{FT}(new_R, new_Z)
     end
 end
 
+function WallGeometry(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat}
+    return WallGeometry{FT}(R, Z)
+end
+
+
 """
     PlasmaState{FT<:AbstractFloat}
-
 Contains the plasma state variables including density, temperature, and velocity components.
 """
 @kwdef mutable struct PlasmaState{FT<:AbstractFloat}

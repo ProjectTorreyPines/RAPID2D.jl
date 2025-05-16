@@ -237,8 +237,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max));
 
-
-    if isnothing(RP.config.wall_R) || isnothing(RP.config.wall_Z)
+    if isempty(RP.config.wall_R) || isempty(RP.config.wall_Z)
         # Set default wall coordinates if not provided
         # Create rectangular wall a few cells away from the numerical boundary
         # Set wall offset (several grid cells from the boundary)
