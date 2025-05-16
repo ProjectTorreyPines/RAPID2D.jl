@@ -267,6 +267,11 @@ Fields include diffusion coefficients in different directions.
     DRR::Matrix{FT} = zeros(FT, dims)    # R-R component of diffusion tensor
     DRZ::Matrix{FT} = zeros(FT, dims)    # R-Z component of diffusion tensor
     DZZ::Matrix{FT} = zeros(FT, dims)    # Z-Z component of diffusion tensor
+
+    # Coefficient Tensor
+    CTRR::Matrix{FT} = zeros(FT, dims)    # R-R component of coefficient tensor
+    CTRZ::Matrix{FT} = zeros(FT, dims)    # R-Z component of coefficient tensor
+    CTZZ::Matrix{FT} = zeros(FT, dims)    # Z-Z component of coefficient tensor
 end
 
 # Constructor with separate dimensions
