@@ -273,8 +273,10 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Set basic field strengths
     Bpol = FT(5e-3)  # Poloidal field strength
 
+    RP.fields.R0B0 = RP.config.R0B0
+
     # Create fields
-    RP.fields.Bϕ = RP.config.R0B0 ./ RP.G.R2D
+    RP.fields.Bϕ = RP.fields.R0B0 ./ RP.G.R2D
     RP.fields.BR = zeros(FT, NR, NZ)
     RP.fields.BZ = Bpol * ones(FT, NR, NZ)
 
@@ -303,7 +305,6 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Copy external fields to total fields initially
     RP.fields.E_para_tot = copy(RP.fields.E_para_ext)
 
-    RP.fields.R0B0 = RP.config.R0B0
 
     return RP
 end

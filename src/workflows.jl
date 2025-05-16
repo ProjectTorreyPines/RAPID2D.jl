@@ -26,7 +26,7 @@ This function represents the core time-stepping algorithm of RAPID2D.
 3. Energy transport (temperature evolution)
 4. Transport coefficient updates
 """
-function advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
+function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
     # Update vacuum fields from external sources
     update_external_fields!(RP)
 
@@ -77,9 +77,6 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
 
     # Update electron density
     solve_electron_continuity_equation!(RP)
-
-    # Apply boundary conditions and handle negative values
-    apply_electron_density_boundary_conditions!(RP)
 
     # Ion dynamics
     if RP.flags.update_ni_independently
@@ -144,6 +141,9 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
         # Increment time
         RP.time_s += dt
         RP.step += 1
+
+        # Apply boundary conditions and handle negative values
+        # apply_electron_density_boundary_conditions!(RP)
 
         # Print progress
         if RP.step % 100 == 0
