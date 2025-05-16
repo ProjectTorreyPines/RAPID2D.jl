@@ -32,17 +32,28 @@ function update_self_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Placeholder implementation - will be filled in later
     @warn "update_self_fields! not fully implemented yet"
 
+    F = RP.fields
+
     # Just a dummy operation until proper implementation
-    RP.fields.BR_self .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.fields.BZ_self .= zeros(FT, RP.G.NR, RP.G.NZ)
+    F.BR_self .= zeros(FT, RP.G.NR, RP.G.NZ)
+    F.BZ_self .= zeros(FT, RP.G.NR, RP.G.NZ)
 
-    if RP.flags.E_para_self_ES
-        @. RP.fields.E_para_self_ES = sign(-RP.fields.Eϕ) * RP.fields.Epol_self * RP.fields.Bpol / RP.fields.Btot
-    end
+    F.Eϕ_self .= zeros(FT, RP.G.NR, RP.G.NZ)
 
-    if RP.flags.E_para_self_EM
-        @. RP.fields.E_para_self_EM = RP.fields.Eϕ_self * RP.fields.bϕ
-    end
+    return RP
+end
+
+
+"""
+    calculate_derived_magnetic_field_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Calculate derived magnetic field quantities based on the current field values.
+"""
+function calculate_derived_magnetic_field_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    @. RP.fields.Bpol = sqrt(RP.fields.BR^2 + RP.fields.BZ^2)
+    @. RP.fields.Btot = sqrt(RP.fields.Bpol^2 + RP.fields.Bϕ^2)
+
+    calculate_magnetic_field_unit_vectors!(RP)
 
     return RP
 end
@@ -72,6 +83,29 @@ function calculate_magnetic_field_unit_vectors!(RP::RAPID{FT}) where {FT<:Abstra
     return RP
 end
 
+"""
+    calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Calculate the parallel electric field based on external and self-generated fields.
+"""
+function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    F = RP.fields
+    # external parallel electric field
+    @. F.E_para_ext = F.Eϕ_ext * F.bϕ
+
+    # self parallel electric field
+    if RP.flags.E_para_self_ES
+        @. F.E_para_self_ES = sign(-F.Eϕ_ext*F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+    end
+    if RP.flags.E_para_self_EM
+        @. F.E_para_self_EM = F.Eϕ_self * F.bϕ
+    end
+
+    # combine parallel electric fields
+    @. F.E_para_tot = F.E_para_ext + F.E_para_self_ES + F.E_para_self_EM
+
+    return RP
+end
 
 """
     flf_analysis_of_field_lines_in_RZ_plane(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -108,21 +142,25 @@ This function handles interpolation from time series data and calculates derived
 - `RP::RAPID{FT}`: The updated RAPID instance
 """
 function update_external_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+    F = RP.fields
+
     # Use manual mode if no external field source is specified
     if !isnothing(RP.external_field)
         # Get external fields at specified time
         extF = calculate_external_fields_at_time(RP.external_field, time_s)
 
         # Update field components
-        RP.fields.BR_ext .= extF.BR
-        RP.fields.BZ_ext .= extF.BZ
-        RP.fields.LV_ext .= extF.LV
-        RP.fields.psi_ext .= extF.psi
+        F.BR_ext .= extF.BR
+        F.BZ_ext .= extF.BZ
+        F.LV_ext .= extF.LV
+        F.psi_ext .= extF.psi
     end
 
+    # Set toroidal magnetic field
+    F.Bϕ = F.R0B0 ./ RP.G.R2D
+
     # Calculate toroidal electric field
-    RP.fields.Eϕ_ext .= RP.fields.LV_ext ./ (2π * RP.G.R2D)
-    RP.fields.E_para_ext .= RP.fields.Eϕ_ext .* RP.fields.bϕ
+    F.Eϕ_ext .= F.LV_ext ./ (2π * RP.G.R2D)
 
     return RP
 end
@@ -145,25 +183,18 @@ External fields should be updated separately using `update_external_fields!` bef
 Self-generated fields should be updated using appropriate physics functions.
 """
 function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
-    # Set toroidal magnetic field
-    RP.fields.Bϕ = RP.fields.R0B0 ./ RP.G.R2D
+
+    F = RP.fields
 
     # Combine external and self-generated fields
-    @. RP.fields.BR = RP.fields.BR_ext + RP.fields.BR_self
-    @. RP.fields.BZ = RP.fields.BZ_ext + RP.fields.BZ_self
-    @. RP.fields.Eϕ = RP.fields.Eϕ_ext + RP.fields.Eϕ_self
-    @. RP.fields.psi = RP.fields.psi_ext + RP.fields.psi_self
+    @. F.BR = F.BR_ext + F.BR_self
+    @. F.BZ = F.BZ_ext + F.BZ_self
+    @. F.Eϕ = F.Eϕ_ext + F.Eϕ_self
+    @. F.psi = F.psi_ext + F.psi_self
 
-    @. RP.fields.Bpol = sqrt(RP.fields.BR^2 + RP.fields.BZ^2)
-    @. RP.fields.Btot = sqrt(RP.fields.Bpol^2 + RP.fields.Bϕ^2)
-
-    # Set total parallel E-field
-    @. RP.fields.E_para_tot = RP.fields.E_para_ext +
-                              RP.fields.E_para_self_ES +
-                              RP.fields.E_para_self_EM
-
-    # Update field-related calculations
-    calculate_magnetic_field_unit_vectors!(RP)
+    # Update derived magnetic field quantities (Bpol, Btot, unit b vector)
+    calculate_derived_magnetic_field_quantities!(RP)
+    calculate_parallel_electric_field!(RP)
 
     return RP
 end
