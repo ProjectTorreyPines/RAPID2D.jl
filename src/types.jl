@@ -290,28 +290,39 @@ Contains the numerical operators used in the simulation.
 
 Fields include various matrices for solving different parts of the model.
 """
-mutable struct Operators{FT<:AbstractFloat}
+@kwdef mutable struct Operators{FT<:AbstractFloat}
+    # Dimensions
+    dims::Tuple{Int,Int} # (NR, NZ)
+
     # Identity matrix
-    II::SparseMatrixCSC{FT, Int}
+    II::SparseMatrixCSC{FT, Int} = sparse(one(FT) * I, prod(dims), prod(dims))
 
     # Matrix placeholders to avoid repetitive allocations
-    A_LHS::SparseMatrixCSC{FT, Int} # LHS matrix for implicit methods
+    A_LHS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # LHS matrix for implicit methods
 
     # Operators for solving continuity equations
-    An_diffu::SparseMatrixCSC{FT, Int} # Diffusion operator
-    An_convec::SparseMatrixCSC{FT, Int} # Convection operator
-    An_src::SparseMatrixCSC{FT, Int} # Source term operator
+    An_diffu::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Diffusion operator
+    An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Convection operator
+    An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Source term operator
 
     # Operator for magnetic field solver
-    A_GS::SparseMatrixCSC{FT, Int} # Grad-Shafranov operator
+    A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Grad-Shafranov operator
 
     # RHS placeholders
-    RHS::Matrix{FT} # Generic RHS placeholder
+    RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
 
     # RHS vectors for electron continuity equation
-    neRHS_diffu::Matrix{FT} # Diffusion term
-    neRHS_convec::Matrix{FT} # Convection term
-    neRHS_src::Matrix{FT} # Source term
+    neRHS_diffu::Matrix{FT} = zeros(FT, dims)  # Diffusion term
+    neRHS_convec::Matrix{FT} = zeros(FT, dims) # Convection term
+    neRHS_src::Matrix{FT} = zeros(FT, dims)    # Source term
+end
+
+# Constructor with separate dimensions
+function Operators{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
+    return Operators{FT}(dims=dimensions)
+end
+function Operators{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
+    return Operators{FT}(dims=(NR, NZ))
 end
 
 
@@ -581,7 +592,7 @@ mutable struct RAPID{FT<:AbstractFloat}
         plasma = PlasmaState{FT}(dims)
         fields = Fields{FT}(dims)
         transport = Transport{FT}(dims; Dpara0=config.Dpara0, Dperp0=config.Dperp0)
-        operators = Operators{FT}()
+        operators = Operators{FT}(dims)
         flags = SimulationFlags()
 
         # Initialize matrices
