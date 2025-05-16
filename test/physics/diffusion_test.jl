@@ -38,12 +38,20 @@ using RAPID2D
     explicit_result = copy(RP.operators.neRHS_diffu)
 
     # Implicit method
-    RAPID2D.initialize_diffusion_operator!(RP)
-    An_diffu = RP.operators.An_diffu
+    An_diffu = RAPID2D.construct_diffusion_operator(RP)
     implicit_result = reshape(An_diffu * test_density[:], NR, NZ)
+
+    # Calculate implicit diffusion using RAPID2D's internal way that can update the operator more efficiently
+    # This is useful for large simulations where we want to avoid re-creating the operator
+    RAPID2D.initialize_diffusion_operator!(RP)
+    implicit_result2 = reshape(RP.operators.An_diffu * test_density[:], NR, NZ)
+
+    # compare if two methods give the same operatoryy
+    @test An_diffu == RP.operators.An_diffu
 
 	# Comparison
 	@test isapprox(explicit_result, implicit_result, rtol=1e-10)
+	@test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 
 
     # Additional test: Verify that matrix multiplication operations don't error

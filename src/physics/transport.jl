@@ -12,7 +12,7 @@ export update_transport_quantities!,
        calculate_diffusion_coefficients!,
        calculate_particle_fluxes!,
        calculate_diffusion_term!,
-       allocate_diffusion_operator_pattern,
+       construct_diffusion_operator,
        calculate_convection_term!,
        construct_convection_operator
 
@@ -315,12 +315,12 @@ Initialize the sparse matrix representation of the diffusion operator with prope
 
 # Notes
 - This function first creates the sparsity pattern and then updates the values
-- Uses `allocate_diffusion_operator_pattern` to create the matrix structure
+- Uses `allocate_diffusion_operator_pattern!` to create the matrix structure
 - Uses `update_diffusion_operator!` to populate the non-zero values
 """
 function initialize_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # create a sparse matrix with the sparisty pattern
-    RP.operators.An_diffu  = allocate_diffusion_operator_pattern(RP)
+    allocate_diffusion_operator_pattern!(RP)
 
     # update the diffusion operator's non-zero entries with the actual values
     update_diffusion_operator!(RP)
@@ -328,23 +328,99 @@ function initialize_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
+function construct_diffusion_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Alias necessary fields from the RP object
+    G = RP.G
+    NR, NZ = G.NR, G.NZ
+    nid = G.nodes.nid
+    inv_Jacob = G.inv_Jacob
+
+    CTRR = RP.transport.CTRR
+    CTRZ = RP.transport.CTRZ
+    CTZZ = RP.transport.CTZZ
+
+    # define constants with FT for type stability
+    half = FT(0.5)
+    eighth = FT(0.125)
+
+    # Pre-allocate arrays for sparse matrix construction
+    num_entries = (NR-2) * (NZ-2) * 9
+    I = zeros(Int, num_entries)  # Row indices
+    J = zeros(Int, num_entries)  # Column indices
+    V = zeros(FT, num_entries)   # Values (all zeros initially)
+
+    # Fill arrays for sparse matrix construction
+    k = 1
+    for j in 2:NZ-1
+        for i in 2:NR-1
+            factor = inv_Jacob[i,j]
+            two_CTRZ = 2 * CTRZ[i,j]
+
+            # Set row indices (all entries in this loop have the same row index)
+            I[k:k+8] .= nid[i, j]
+
+            # Northwest [i-1,j+1]
+            J[k]   = nid[i+1, j]
+            V[k]   = factor * (half*(CTRR[i+1,j]+CTRR[i,j]) + eighth*(CTRZ[i,j+1]-CTRZ[i,j-1]))
+
+            # Northwest [i-1,j+1]
+            J[k+1] = nid[i-1, j]
+            V[k+1] = factor * (half*(CTRR[i-1,j]+CTRR[i,j]) - eighth*(CTRZ[i,j+1]-CTRZ[i,j-1]))
+
+            # Northwest [i-1,j+1]
+            J[k+2] = nid[i, j+1]
+            V[k+2] = factor * (half*(CTZZ[i,j+1]+CTZZ[i,j]) + eighth*(CTRZ[i+1,j]-CTRZ[i-1,j]))
+
+            # Northwest [i-1,j+1]
+            J[k+3] = nid[i, j-1]
+            V[k+3] = factor * (half*(CTZZ[i,j-1]+CTZZ[i,j]) - eighth*(CTRZ[i+1,j]-CTRZ[i-1,j]))
+
+            # Northwest [i-1,j+1]
+            J[k+4] = nid[i+1, j+1]
+            V[k+4] = factor * (eighth*( two_CTRZ + CTRZ[i+1,j]+CTRZ[i,j+1]))
+
+            # Northwest [i-1,j+1]
+            J[k+5] = nid[i-1, j-1]
+            V[k+5] = factor * (eighth*( two_CTRZ + CTRZ[i-1,j]+CTRZ[i,j-1]))
+
+            # Northwest [i-1,j+1]
+            J[k+6] = nid[i-1, j+1]
+            V[k+6] = factor * (-eighth*( two_CTRZ + CTRZ[i,j+1]+CTRZ[i-1,j]))
+
+            # Southeast [i+1,j-1]
+            J[k+7] = nid[i+1, j-1]
+            V[k+7] = factor * (-eighth*( two_CTRZ + CTRZ[i,j-1]+CTRZ[i+1,j]))
+
+            # Center [i,j]
+            J[k+8] = nid[i, j]
+            V[k+8] = zero(FT)
+            @inbounds for t in 0:7
+                V[k+8] -= V[k+t]
+            end
+
+            k += 9
+        end
+    end
+
+    # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
+    return sparse(I, J, V, NR*NZ, NR*NZ)
+
+end
+
 """
-    allocate_diffusion_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    allocate_diffusion_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Create a sparse matrix with the sparsity pattern for the diffusion operator without computing coefficient values.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
 
-# Returns
-- `SparseMatrixCSC{FT, Int}`: A sparse matrix with the correct structure but zero values
-
 # Notes
 - This function only creates the sparsity pattern (non-zero locations) without computing the actual coefficients
 - The function is called by `initialize_diffusion_operator!` to set up the structure before filling in values
 - Creates a 9-point stencil pattern for each interior grid point
 """
-function allocate_diffusion_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function allocate_diffusion_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields from the RP object
     G = RP.G
     NR, NZ = G.NR, G.NZ
@@ -378,8 +454,25 @@ function allocate_diffusion_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractF
         end
     end
 
+    # to compute k2csc later
+    @. V = 1:num_entries
+
     # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
-    return sparse(I, J, V, NR*NZ, NR*NZ)
+    RP.operators.An_diffu = sparse(I, J, V, NR*NZ, NR*NZ)
+
+    # Get a mapping from k to the non-zero indices
+    V2 = RP.operators.An_diffu.nzval
+    k2csc = zeros(Int, length(V2))
+    for csc_idx in eachindex(V2)
+        orig_k = round(Int, V2[csc_idx])
+        k2csc[orig_k] = csc_idx
+    end
+    RP.operators.map_diffu_k2csc = k2csc
+
+    # Reset the values to zero
+    @. RP.operators.An_diffu.nzval = zero(FT)
+
+    return RP
 end
 
 """
@@ -397,6 +490,8 @@ Update the non-zero entries of the diffusion operator matrix based on the curren
 - The function updates the non-zero entries of the matrix based on the current state of the RAPID object.
 """
 function update_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    @assert !isempty(RP.operators.An_diffu.nzval) "Diffusion operator not initialized"
+
     # Alias necessary fields from the RP object
     inv_Jacob = RP.G.inv_Jacob
     NR, NZ = RP.G.NR, RP.G.NZ
@@ -411,26 +506,29 @@ function update_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Alias the existing sparse matrix for readability
     nzV = RP.operators.An_diffu.nzval
+
+    k2csc = RP.operators.map_diffu_k2csc
+
     k = 1
 
     @inbounds for j in 2:NZ-1
         for i in 2:NR-1
             factor = inv_Jacob[i,j]
 
-            nzV[k]   = factor * (half*(CTRR[i+1,j]+CTRR[i,j]) + eighth*(CTRZ[i,j+1]-CTRZ[i,j-1])) # East [i+1,j]
-            nzV[k+1] = factor * (half*(CTRR[i-1,j]+CTRR[i,j]) - eighth*(CTRZ[i,j+1]-CTRZ[i,j-1])) # West [i-1,j]
-            nzV[k+2] = factor * (half*(CTZZ[i,j+1]+CTZZ[i,j]) + eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # North [i,j+1]
-            nzV[k+3] = factor * (half*(CTZZ[i,j-1]+CTZZ[i,j]) - eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # South [i,j-1]
+            nzV[k2csc[k]]   = factor * (half*(CTRR[i+1,j]+CTRR[i,j]) + eighth*(CTRZ[i,j+1]-CTRZ[i,j-1])) # East [i+1,j]
+            nzV[k2csc[k+1]] = factor * (half*(CTRR[i-1,j]+CTRR[i,j]) - eighth*(CTRZ[i,j+1]-CTRZ[i,j-1])) # West [i-1,j]
+            nzV[k2csc[k+2]] = factor * (half*(CTZZ[i,j+1]+CTZZ[i,j]) + eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # North [i,j+1]
+            nzV[k2csc[k+3]] = factor * (half*(CTZZ[i,j-1]+CTZZ[i,j]) - eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # South [i,j-1]
 
             two_CTRZ = 2 * CTRZ[i,j]
-            nzV[k+4] = factor * (eighth*( two_CTRZ + CTRZ[i+1,j]+CTRZ[i,j+1]))  # Northeast [i+1,j+1]
-            nzV[k+5] = factor * (eighth*( two_CTRZ + CTRZ[i-1,j]+CTRZ[i,j-1]))  # Southwest [i-1,j-1]
-            nzV[k+6] = factor * (-eighth*( two_CTRZ + CTRZ[i,j+1]+CTRZ[i-1,j])) # Northwest [i-1,j+1]
-            nzV[k+7] = factor * (-eighth*( two_CTRZ + CTRZ[i,j-1]+CTRZ[i+1,j])) # Southeast [i+1,j-1]
+            nzV[k2csc[k+4]] = factor * (eighth*( two_CTRZ + CTRZ[i+1,j]+CTRZ[i,j+1]))  # Northeast [i+1,j+1]
+            nzV[k2csc[k+5]] = factor * (eighth*( two_CTRZ + CTRZ[i-1,j]+CTRZ[i,j-1]))  # Southwest [i-1,j-1]
+            nzV[k2csc[k+6]] = factor * (-eighth*( two_CTRZ + CTRZ[i,j+1]+CTRZ[i-1,j])) # Northwest [i-1,j+1]
+            nzV[k2csc[k+7]] = factor * (-eighth*( two_CTRZ + CTRZ[i,j-1]+CTRZ[i+1,j])) # Southeast [i+1,j-1]
 
-            nzV[k+8] = zero(FT)
+            nzV[k2csc[k+8]] = zero(FT)
             @inbounds for t in 0:7
-                nzV[k+8] -= nzV[k+t]
+                nzV[k2csc[k+8]] -= nzV[k2csc[k+t]]
             end
 
             k += 9
@@ -703,7 +801,162 @@ function construct_convection_operator(
     end
 
     # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
-    An_convec = sparse(I, J, V, NR*NZ, NR*NZ)
-
-    return An_convec
+    return sparse(I, J, V, NR*NZ, NR*NZ)
 end
+
+function initialize_convection_operator!(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+    # create a sparse matrix with the sparisty pattern
+    allocate_convection_operator_pattern!(RP)
+
+    # update the convection operator's non-zero entries with the actual values
+    update_convection_operator!(RP; flag_upwind)
+
+    return RP
+end
+
+function allocate_convection_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Alias necessary fields
+    G = RP.G
+    NR, NZ = G.NR, G.NZ
+    nid = G.nodes.nid
+
+    # Each interior node has 5 connections (center + E,W,N,S)
+    num_internal_nodes = (NR-2)*(NZ-2)
+    num_entries = num_internal_nodes * 5
+
+    I = zeros(Int, num_entries)  # Row indices
+    J = zeros(Int, num_entries)  # Column indices
+    V = zeros(FT, num_entries)   # Values (initially zero)
+
+    k = 1
+    for j in 2:NZ-1
+        for i in 2:NR-1
+            # All entries have the same row index (current node)
+            @. @views I[k:k+4] = nid[i,j]
+
+            # Column indices are the 5 nodes (center + E,W,N,S)
+            J[k]   = nid[i,j]     # Center
+            J[k+1] = nid[i+1,j]    # East
+            J[k+2] = nid[i-1,j]    # West
+            J[k+3] = nid[i,j+1]    # North
+            J[k+4] = nid[i,j-1]    # South
+
+            k += 5
+        end
+    end
+
+    # to compute k2csc later
+    @. V = 1:num_entries
+
+    # Create sparse matrix
+    RP.operators.An_convec = sparse(I, J, V, NR*NZ, NR*NZ)
+
+    # Get a mapping from k to the non-zero indices
+    V2 = RP.operators.An_convec.nzval
+    k2csc = zeros(Int, length(V2))
+    for csc_idx in eachindex(V2)
+        orig_k = round(Int, V2[csc_idx])
+        k2csc[orig_k] = csc_idx
+    end
+    RP.operators.map_convec_k2csc = k2csc
+
+    # Reset the values to zero
+    @. RP.operators.An_convec.nzval = zero(FT)
+
+    return RP
+end
+
+
+function update_convection_operator!(RP::RAPID{FT},
+                                   uR::AbstractMatrix{FT}=RP.plasma.ueR,
+                                   uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
+                                   flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+    @assert !isempty(RP.operators.An_convec.nzval) "Convection operator not initialized"
+
+    # Alias necessary fields
+    G = RP.G
+    Jacob = G.Jacob
+    inv_Jacob = G.inv_Jacob
+    NR, NZ = G.NR, G.NZ
+
+    # Precompute for efficiency
+    inv_dR = one(FT) / G.dR
+    inv_dZ = one(FT) / G.dZ
+
+    # Constants for type stability
+    zero_val = zero(FT)
+    eps_val = eps(FT)
+    half = FT(0.5)
+
+    # Access the sparse matrix values directly
+    nzval = RP.operators.An_convec.nzval
+
+    k2csc = RP.operators.map_convec_k2csc
+
+    # Reset values to zero before updating
+    fill!(nzval, zero(FT))
+
+    # Follow the established pattern and update values
+    k = 1
+    if flag_upwind
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                # Jacobian factor at current position
+                ij_factor = inv_Jacob[i,j]
+
+                # Pattern indices: center(k), east(k+1), west(k+2), north(k+3), south(k+4)
+
+                # R-direction velocity-dependent coefficients
+                if uR[i,j] > zero_val
+                    # Positive velocity: flow from west
+                    nzval[k2csc[k]] -= Jacob[i,j]*uR[i,j]*inv_dR*ij_factor          # Center (divergence)
+                    nzval[k2csc[k+2]] += Jacob[i-1,j]*uR[i-1,j]*inv_dR*ij_factor   # West (inflow)
+                elseif abs(uR[i,j]) < eps_val
+                    # Zero velocity: use central differencing
+                    nzval[k2csc[k+1]] -= Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*ij_factor  # East
+                    nzval[k2csc[k+2]] += Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*ij_factor  # West
+                else
+                    # Negative velocity: flow from east
+                    nzval[k2csc[k+1]] -= Jacob[i+1,j]*uR[i+1,j]*inv_dR*ij_factor   # East (inflow)
+                    nzval[k2csc[k]] += Jacob[i,j]*uR[i,j]*inv_dR*ij_factor         # Center (divergence)
+                end
+
+                # Z-direction velocity-dependent coefficients
+                if uZ[i,j] > zero_val
+                    # Positive velocity: flow from south
+                    nzval[k2csc[k]] -= Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor          # Center (divergence)
+                    nzval[k2csc[k+4]] += Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*ij_factor   # South (inflow)
+                elseif abs(uZ[i,j]) < eps_val
+                    # Zero velocity: use central differencing
+                    nzval[k2csc[k+3]] -= Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*ij_factor  # North
+                    nzval[k2csc[k+4]] += Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*ij_factor  # South
+                else
+                    # Negative velocity: flow from north
+                    nzval[k2csc[k+3]] -= Jacob[i,j+1]*uZ[i,j+1]*inv_dZ*ij_factor   # North (inflow)
+                    nzval[k2csc[k]] += Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor         # Center (divergence)
+                end
+
+                k += 5
+            end
+        end
+    else
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                # Jacobian factor at current position
+                ij_factor = inv_Jacob[i,j]
+
+                # Always use central differencing
+                nzval[k2csc[k+1]] -= Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*ij_factor  # East
+                nzval[k2csc[k+2]] += Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*ij_factor  # West
+                nzval[k2csc[k+3]] -= Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*ij_factor  # North
+                nzval[k2csc[k+4]] += Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*ij_factor  # South
+
+                k += 5
+            end
+        end
+    end
+
+    return RP
+end
+

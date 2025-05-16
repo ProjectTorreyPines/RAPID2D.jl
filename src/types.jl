@@ -302,17 +302,18 @@ Fields include various matrices for solving different parts of the model.
 
     # Matrix placeholders to avoid repetitive allocations
     A_LHS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # LHS matrix for implicit methods
+    RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
 
     # Operators for solving continuity equations
     An_diffu::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Diffusion operator
     An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Convection operator
-    An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Source term operator
+
+    # Mapping vectors for diffusion and convection (For more efficine update of non-zero elements of CSC matrix)
+    map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
+    map_convec_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
 
     # Operator for magnetic field solver
     A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Grad-Shafranov operator
-
-    # RHS placeholders
-    RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
 
     # RHS vectors for electron continuity equation
     neRHS_diffu::Matrix{FT} = zeros(FT, dims)  # Diffusion term

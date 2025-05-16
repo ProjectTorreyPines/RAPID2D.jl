@@ -391,39 +391,13 @@ the diffusion operator matrix for implicit time stepping or directly calculating
 diffusion term for explicit time stepping.
 """
 function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
-
     if RP.flags.Implicit
-        # Construct diffusion operator matrix for implicit scheme
-        RP.operators.An_diffu = construct_diffusion_operator(RP)
-
-        # Calculate right-hand side diffusion term by applying operator to density
-        diffusion_term_vector = RP.operators.An_diffu * RP.plasma.ne[:]
-        RP.operators.neRHS_diffu = reshape(diffusion_term_vector, size(RP.plasma.ne))
-
-        # Handle limiting of too negative diffusion if enabled
-        if RP.flags.Limit_too_negative_Diffusion[:state]
-            limit_lb = RP.flags.Limit_too_negative_Diffusion[:limit_lower_bound_ratio]
-            negative_change_limit = @. limit_lb * abs(RP.plasma.ne) / RP.dt
-
-            # Find nodes inside wall with too negative diffusion
-            for i in RP.G.nodes.in_wall_nids
-                if RP.operators.neRHS_diffu[i] < negative_change_limit[i]
-                    # Reduce diffusion for this node
-                    reducing_factor = 0.9 * abs(negative_change_limit[i] / RP.operators.neRHS_diffu[i])
-                    row_idx = RP.G.nodes.nid[i]
-                    RP.operators.An_diffu[row_idx, :] .*= reducing_factor
-                    RP.operators.neRHS_diffu[i] *= reducing_factor
-                end
-            end
-        end
+        update_diffusion_operator!(RP)
+        RP.operators.neRHS_diffu[:] = RP.operators.An_diffu * RP.plasma.ne[:]
     else
         # For explicit method, calculate diffusion term directly
-        calculate_diffusion_term!(RP, RP.plasma.ne)
+        calculate_diffusion_term!(RP)
     end
-
-    # # Zero out diffusion outside wall
-    # RP.operators.neRHS_diffu[RP.G.nodes.out_wall_nids] .= 0.0
-
     return RP
 end
 
@@ -436,25 +410,12 @@ convection term for explicit time stepping.
 """
 function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.Implicit
-        # Construct convection operator matrix for implicit scheme
-        # Use the electron velocity field (ueR, ueZ) and upwind scheme by default
-        RP.operators.An_convec = construct_convection_operator(
-            RP, RP.plasma.ueR, RP.plasma.ueZ, true
-        )
-
-        # Calculate right-hand side convection term by applying operator to density
-        convection_term_vector = RP.operators.An_convec * RP.plasma.ne[:]
-        RP.operators.neRHS_convec = reshape(convection_term_vector, size(RP.plasma.ne))
+        update_convection_operator!(RP)
+        RP.operators.neRHS_convec[:] = RP.operators.An_convec * RP.plasma.ne[:]
     else
         # For explicit method, calculate convection term directly
-        calculate_convection_term!(
-            RP, RP.plasma.ne, RP.plasma.ueR, RP.plasma.ueZ, true
-        )
+        calculate_convection_term!(RP)
     end
-
-    # Zero out convection outside wall (optional, depending on implementation details)
-    RP.operators.neRHS_convec[RP.G.nodes.out_wall_nids] .= 0.0
-
     return RP
 end
 
