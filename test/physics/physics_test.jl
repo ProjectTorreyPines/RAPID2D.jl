@@ -165,41 +165,37 @@ end
     FT = Float64
     # Create simulation configuration
     config = SimulationConfig{FT}(
-        NR = 50,
-        NZ = 70,
-        R_min = 0.1,    # meters
-        R_max = 0.5,    # meters
-        Z_min = -0.4,   # meters
-        Z_max = 0.4,    # meters
-        dt = 1e-6,      # 1 μs
-        t_end_s = 100e-6,  # 100 μs (short test)
-        R0B0 = 1.0,     # Toroidal field strength
-        Dpara0 = 10.0,  # Parallel diffusion coefficient
-        Dperp0 = 0.1,   # Perpendicular diffusion coefficient
-        prefilled_gas_pressure = 5e-3, # 5 mPa
-        wall_R = [0.15, 0.45, 0.45, 0.15],
-        wall_Z = [-0.35, -0.35, 0.35, 0.35]
+        NR=50, NZ=70,
+        R_min=0.1, R_max=0.5,
+        Z_min=-0.4, Z_max=0.4,
+        dt=1e-6, t_end_s=100e-6,
+        R0B0=1.0,
+        Dpara0=10.0, Dperp0=0.1,
+        prefilled_gas_pressure=5e-3,
+        wall_R=[0.15, 0.45, 0.45, 0.15],
+        wall_Z=[-0.35, -0.35, 0.35, 0.35]
     )
 
     # Create RAPID object
     RP = RAPID{FT}(config)
 
     RP.flags = SimulationFlags(
-        convec = true,           # Enable convection (simplify initial test)
+        convec=true,           # Enable convection (simplify initial test)
         # Disable unnecessary flags for this test
-        src = false,
-        diffu = false,
-        ud_evolve = false,
-        ud_method = "Xsec",
-        Te_evolve = false,
-        Ti_evolve = false,
-        Ampere = false,
-        E_para_self_ES = false,
-        E_para_self_EM = false,
-        Gas_evolve = false,
-        update_ni_independently = false,
-        Include_ud_convec_term = false,
-        Coulomb_Collision = false
+        src=false,
+        diffu=false,
+        ud_evolve=false,
+        ud_method="Xsec",
+        Te_evolve=false,
+        Ti_evolve=false,
+        Ampere=false,
+        E_para_self_ES=false,
+        E_para_self_EM=false,
+        Gas_evolve=false,
+        update_ni_independently=false,
+        Include_ud_convec_term=false,
+        Coulomb_Collision=false,
+        negative_n_correction=false
     )
 
     # Initial conditions: Gaussian electron density distribution centered in domain
@@ -302,3 +298,115 @@ end
     @test isapprox(RP_explicit.plasma.ne, RP_implicit_1.plasma.ne, rtol=5e-2) # similar (within 5% error)
     @test !isapprox(RP_explicit.plasma.ne, RP_implicit_1.plasma.ne, rtol=1e-12) # not the same
 end
+
+@testset "Diffusion only test" begin
+    FT = Float64
+    # Create simulation configuration
+    config = SimulationConfig{FT}(
+        NR=50, NZ=70,
+        R_min=0.8, R_max=2.2,
+        Z_min=-1.2, Z_max=1.2,
+        dt=1e-6, t_end_s=100e-6,
+        R0B0=1.0,
+        Dpara0=0.0, Dperp0=100.0,
+        prefilled_gas_pressure=5e-3,
+        wall_R=[1.0, 2.0, 2.0, 1.0],
+        wall_Z=[-1.0, -1.0, 1.0, 1.0]
+    )
+
+    # Create RAPID object
+    RP = RAPID{FT}(config)
+
+    RP.flags = SimulationFlags(
+        diffu=true,           # Enable convection (simplify initial test)
+        # Disable unnecessary flags for this test
+        src=false,
+        convec=false,
+        ud_evolve=false,
+        ud_method="Xsec",
+        Te_evolve=false,
+        Ti_evolve=false,
+        Ampere=false,
+        E_para_self_ES=false,
+        E_para_self_EM=false,
+        Gas_evolve=false,
+        update_ni_independently=false,
+        Include_ud_convec_term=false,
+        Coulomb_Collision=false,
+        negative_n_correction=false
+    )
+
+    # Initial conditions: Gaussian electron density distribution centered in domain
+    R0 = (config.R_min + config.R_max) / 2
+    Z0 = (config.Z_min + config.Z_max) / 2
+    sigma_R = 0.1
+    sigma_Z = 0.1
+    peak_density = 1.0e6  # Peak density [m^-3]
+
+    initialize!(RP)
+    # Initialize electron density
+    ini_ne = zeros(FT, RP.G.NR, RP.G.NZ)
+    for i in 1:RP.G.NR, j in 1:RP.G.NZ
+        R = RP.G.R2D[i, j]
+        Z = RP.G.Z2D[i, j]
+        # Gaussian density profile
+        ini_ne[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
+    end
+
+    function _set_initial_conditions!(RP, ini_ne, ini_BR_ext, ini_BZ_ext)
+        RP.plasma.ne = copy(ini_ne)
+        RP.fields.BR_ext .= copy(ini_BR_ext)
+        RP.fields.BZ_ext .= copy(ini_BZ_ext)
+        RAPID2D.combine_external_and_self_fields!(RP)
+    end
+
+    function _measure_σR_and_σZ_of_ne(ne)
+        return (σR = sqrt(sum(ne.*(RP.G.R2D.-R0).^2)/sum(ne)),
+                σZ = sqrt(sum(ne.*(RP.G.Z2D.-Z0).^2)/sum(ne)))
+    end
+
+    # pure Dperp0
+    for RP.flags.Implicit in [false, true]
+        RP.config.Dpara0 = 0
+        RP.config.Dperp0 = 100
+
+        initialize!(RP)
+        _set_initial_conditions!(RP, ini_ne, 0.0, 0.0)
+        RAPID2D.run_simulation!(RP);
+
+        σR0, σZ0 =_measure_σR_and_σZ_of_ne(ini_ne)
+        σR_end, σZ_end =_measure_σR_and_σZ_of_ne(RP.plasma.ne)
+
+        mean_σ0 = (σR0 + σZ0) / 2
+        mean_σ_end = (σR_end + σZ_end) / 2
+
+        estimated_Dperp0 = (mean_σ_end^2 - mean_σ0^2)/(2.0*RP.time_s)
+        @test isapprox(estimated_Dperp0, RP.transport.Dperp0; rtol=0.05) # 5% error
+    end
+
+    # pure Dpara0
+    for RP.flags.Implicit in [false, true]
+        RP.config.Dpara0 = 1e6
+        RP.config.Dperp0 = 0
+
+        initialize!(RP)
+        _set_initial_conditions!(RP, ini_ne, 50e-4, 100e-4)
+        RAPID2D.run_simulation!(RP);
+
+        σR0, σZ0 =_measure_σR_and_σZ_of_ne(ini_ne)
+        σR_end, σZ_end =_measure_σR_and_σZ_of_ne(RP.plasma.ne)
+
+        avg_DRR = sum(RP.transport.DRR.*ini_ne)/sum(ini_ne)
+        avg_DZZ = sum(RP.transport.DZZ.*ini_ne)/sum(ini_ne)
+
+        estimated_DRR = (σR_end^2 - σR0^2)/(2.0*RP.time_s)
+        estimated_DZZ = (σZ_end^2 - σZ0^2)/(2.0*RP.time_s)
+
+        @test isapprox(avg_DRR, estimated_DRR; rtol=0.02) # 2% error
+        @test isapprox(avg_DZZ, estimated_DZZ; rtol=0.02) # 2% error
+    end
+end
+
+
+end
+
