@@ -472,3 +472,79 @@ function apply_electron_density_boundary_conditions!(RP::RAPID{FT}) where FT<:Ab
     return RP
 end
 
+"""
+    calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}) where {FT<:AbstractFloat}
+
+Calculate the parallel gradient of a scalar field F in the direction of the magnetic field.
+Uses either upwind scheme (based on flow velocity) or central differences.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `F::Matrix{FT}`: The scalar field whose parallel gradient is to be calculated
+
+# Returns
+- `Matrix{FT}`: The calculated parallel gradient field
+
+# Notes
+- When upwind=true, uses flow direction to choose appropriate differencing
+- When upwind=false, uses central differencing for interior points
+- Provides better numerical stability for advection-dominated problems when upwind=true
+- Matrix indexing is F[i,j] where i is R-index and j is Z-index
+"""
+function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}) where {FT<:AbstractFloat}
+    # Define constants for type stability
+    zero_FT = zero(FT)
+    half = FT(0.5)
+    eps_val = eps(FT)
+
+    # Get grid dimensions and spacing
+    dR = RP.G.dR
+    dZ = RP.G.dZ
+    NR, NZ = size(F)
+
+    # Pre-compute inverse values for faster calculation
+    inv_dR = one(FT) / dR
+    inv_dZ = one(FT) / dZ
+
+    # Initialize output array
+    para_grad_F = zeros(FT, NR, NZ)
+
+    if RP.flags.upwind
+        # Upwind scheme based on flow velocity direction
+        @inbounds for j in 2:NZ-1, i in 2:NR-1
+
+            # R-direction contribution
+            if abs(RP.plasma.ueR[i,j]) < eps_val
+                # Zero velocity: use central differencing for stability
+                para_grad_F[i,j] += RP.fields.bR[i,j] * (F[i+1,j] - F[i-1,j]) * (inv_dR * half)
+            elseif RP.plasma.ueR[i,j] > zero_FT
+                # Positive flow: backward difference (upwind)
+                para_grad_F[i,j] += RP.fields.bR[i,j] * (F[i,j] - F[i-1,j]) * inv_dR
+            else
+                # Negative flow: forward difference (upwind)
+                para_grad_F[i,j] += RP.fields.bR[i,j] * (F[i+1,j] - F[i,j]) * inv_dR
+            end
+
+            # Z-direction contribution
+            if abs(RP.plasma.ueZ[i,j]) < eps_val
+                # Zero velocity: use central differencing for stability
+                para_grad_F[i,j] += RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
+            elseif RP.plasma.ueZ[i,j] > zero_FT
+                # Positive flow: backward difference (upwind)
+                para_grad_F[i,j] += RP.fields.bZ[i,j] * (F[i,j] - F[i,j-1]) * inv_dZ
+            else
+                # Negative flow: forward difference (upwind)
+                para_grad_F[i,j] += RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j]) * inv_dZ
+            end
+        end
+    else
+        # Central difference scheme for interior points
+        # This is more accurate for smooth solutions but may have stability issues for advection-dominated flows
+        @inbounds for j in 2:NZ-1, i in 2:NR-1
+            para_grad_F[i,j] = RP.fields.bR[i,j] * (F[i+1,j] - F[i-1,j]) * (inv_dR * half) +
+                             RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
+        end
+    end
+
+    return para_grad_F
+end
