@@ -27,6 +27,10 @@ export update_ue_para!,
 Update the parallel electron velocity.
 """
 function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Define constants at function start for type stability
+    one_FT = one(FT)
+    zero_FT = zero(FT)
+
     # Update method depends on flag
     if RP.flags.ud_method == "Lloyd_fit"
         # Simple fit for drift velocity
@@ -40,65 +44,119 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
 
         # Calculate collision frequency
-        coll_freq = @. RP.plasma.n_H2_gas * RRC_mom
-
-        # Calculate drift velocity from balance of electric field and collisions
-        @. RP.plasma.ue_para = qe * RP.fields.E_para_tot / (RP.config.me * coll_freq)
-
-    elseif RP.flags.ud_method == "Xsec"
-        # Full cross section model with collisions
-
-        # Get reaction rate coefficients for both ionization and momentum transfer
-        RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-        RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
-
-        # Calculate collision frequency from neutrals
-        coll_freq = @. RP.plasma.n_H2_gas * (RRC_mom + RRC_iz)
+        tot_coll_freq = @. RP.plasma.n_H2_gas * RRC_mom
 
         # Add Coulomb collisions if enabled
         if RP.flags.Coulomb_Collision
             if RP.flags.Spitzer_Resistivity
-                mom_eff_nu_ei = @. RP.plasma.sptz_fac * RP.plasma.ν_ei
+                @. tot_coll_freq += RP.plasma.sptz_fac * RP.plasma.ν_ei
             else
-                mom_eff_nu_ei = RP.plasma.ν_ei
+                @. tot_coll_freq += RP.plasma.ν_ei
             end
-            coll_freq .+= mom_eff_nu_ei
+        end
+
+        # Calculate drift velocity from balance of electric field and collisions
+        @. RP.plasma.ue_para = qe * RP.fields.E_para_tot / (RP.config.me * tot_coll_freq)
+
+    elseif RP.flags.ud_method == "Xsec"
+        # Full cross section model with collisions
+        qe = -RP.config.constants.ee
+        me = RP.config.constants.me
+        dt = RP.dt
+
+        pla = RP.plasma
+        F = RP.fields
+
+        # allocate arrays
+        accel_by_pressure = zeros(FT, size(pla.ue_para)) # [- ∇∥(p)/(me*n)]
+        accel_by_grad_ud = zeros(FT, size(pla.ue_para)) # [-(ud⋅∇)ud]
+        tot_coll_freq = zeros(FT, size(pla.ue_para))
+        mom_eff_nu_ei = zeros(FT, size(pla.ue_para))
+
+        if RP.flags.Atomic_Collision
+            # Get reaction rate coefficients for both ionization and momentum transfer
+            RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
+            RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
+
+            # Calculate collision frequency from neutrals
+            @. tot_coll_freq += pla.n_H2_gas * (RRC_mom + RRC_iz)
+        end
+
+        # Add Coulomb collisions if enabled
+        if RP.flags.Coulomb_Collision
+            if RP.flags.Spitzer_Resistivity
+                @. mom_eff_nu_ei = pla.sptz_fac * pla.ν_ei
+            else
+                @. mom_eff_nu_ei = pla.ν_ei
+            end
+            @. tot_coll_freq += mom_eff_nu_ei
         end
 
         # Ensure no NaN values in collision frequency
-        replace!(coll_freq, NaN => 0.0)
+        replace!(tot_coll_freq, NaN => zero_FT)
 
-        # Consider pressure gradient, convection, and electric field
-        accel_para_tilde = zeros(FT, size(RP.plasma.ue_para))
 
-        # Add pressure gradient acceleration if needed
+        # Add pressure gradient and convection acceleration if needed
         if RP.flags.Include_ud_convec_term
-            # Calculate pressure gradient acceleration (simplified)
-            accel_para_tilde .+= calculate_pressure_acceleration(RP)
-
-            # Add convection acceleration
-            accel_para_tilde .+= calculate_convection_acceleration(RP)
+            accel_by_pressure .= calculate_pressure_acceleration(RP)
+            accel_by_grad_ud .= calculate_convection_acceleration(RP)
         end
 
-        # Add electric field acceleration
-        qe = -RP.config.ee
-        @. accel_para_tilde += qe * RP.fields.E_para_tot / RP.config.me
+        # Always use backward Euler for collision term (θ_imp=1.0) for better saturation
+        # but keep the formula structure compatible with variable θ_imp
+        θ_imp = one_FT
 
-        # Add Coulomb collision effects with ions
+        # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
         if RP.flags.Coulomb_Collision
-            @. accel_para_tilde += mom_eff_nu_ei * RP.plasma.ui_para
+            @. pla.Rue_ei = -mom_eff_nu_ei * ((one_FT - θ_imp) * pla.ue_para - pla.ui_para)
         end
 
-        # Apply implicit time integration
-        impFac = 1.0  # Backward Euler
-        @. RP.plasma.ue_para = (RP.plasma.ue_para * (1 - (1-impFac) * coll_freq * RP.dt) +
-                               accel_para_tilde * RP.dt) / (1 + impFac * coll_freq * RP.dt)
 
-        # Zero out velocity outside wall
-        RP.plasma.ue_para[RP.G.nodes.out_wall_nids] .= 0.0
+        # Advance ue_para using implicit or explicit method
+        if RP.flags.Implicit
+            # Implicit scheme implementation
+            impFac = RP.flags.Implicit_weight
+
+
+            accel_para_tilde = zeros(FT, size(pla.ue_para))
+            # Add electric field acceleration
+            @. accel_para_tilde += qe * F.E_para_tot / me
+            # Add ion drag contribution
+            @. accel_para_tilde += mom_eff_nu_ei * pla.ui_para
+
+            if RP.flags.Include_ud_convec_term && impFac > zero_FT
+                # Full implicit implementation with convection would need matrix solution
+                # For now, we use a simplified approach
+                @warn "Full matrix implicit scheme with convection not implemented, using simplified approach" maxlog=1
+            end
+
+            # Apply implicit time integration matching MATLAB implementation
+            @. pla.ue_para = (pla.ue_para * (one_FT - (one_FT-θ_imp) * tot_coll_freq * dt) +
+                                   accel_para_tilde * dt) /
+                                   (one_FT + θ_imp * tot_coll_freq * dt)
+        else
+
+            inv_factor = @. one_FT / (one_FT + θ_imp * tot_coll_freq * dt)
+            @. pla.ue_para = inv_factor*(
+                                    pla.ue_para * (one_FT-(one_FT-θ_imp)*dt*tot_coll_freq)
+                                    + dt * (qe * F.E_para_tot / me + mom_eff_nu_ei * pla.ui_para)
+                                )
+
+            # Add pressure and convection terms in the same way as MATLAB
+            if RP.flags.Include_ud_convec_term
+                @. pla.ue_para +=  inv_factor * dt * (accel_by_pressure + accel_grad_ud)
+            end
+        end
+
+        # Complete the Rue_ei calculation with second part (n+1 step contribution)
+        if RP.flags.Coulomb_Collision
+            @. pla.Rue_ei -= mom_eff_nu_ei * (θ_imp * pla.ue_para)
+        end
     else
         error("Unknown electron drift velocity method: $(RP.flags.ud_method)")
     end
+
+    return RP
 end
 
 """
