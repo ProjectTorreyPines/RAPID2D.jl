@@ -804,7 +804,8 @@ It uses a smoothed parallel electron velocity field to improve numerical stabili
 
 # Arguments
 - `RP::RAPID{FT}`: RAPID simulation object containing plasma and grid data
-- `num_SM::Int=2`: Number of smoothing iterations to apply to the velocity field
+- `num_SM::Int=0`: Number of smoothing iterations to apply to the velocity field
+- `flag_upwind::Bool=RP.flags.upwind`: Whether to use upwind differencing for gradient calculation
 
 # Returns
 - Electron acceleration due to convection term
@@ -814,7 +815,7 @@ It uses a smoothed parallel electron velocity field to improve numerical stabili
 2. Calculates the gradient of the smoothed velocity field
 3. Computes the convection term as -(ueR*∇ud_R + ueZ*∇ud_Z)
 """
-function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
+function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=0, flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
     # alias
     cnst = RP.config.constants
 
@@ -823,7 +824,7 @@ function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::In
 
     # Calculate ln(n) gradients along B to avoid division by zero issues with low density
     # Calculate temperature gradients along B
-    ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, ue_para_SM)
+    ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, ue_para_SM; upwind=flag_upwind)
     accel_by_convection = @. -(RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
 
     return accel_by_convection

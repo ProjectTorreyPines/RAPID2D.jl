@@ -910,7 +910,7 @@ end
                                    uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
                                    flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
-Update the non-zero entries of the convection operator matrix based on the current state of the RAPID object.
+Update the non-zero entries of the convection operator matrix [-∇⋅(nv)] based on the current state of the RAPID object.
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
 
@@ -1163,5 +1163,216 @@ function construct_𝐮∇_operator(
 
     # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
     return sparse(I, J, V, NR*NZ, NR*NZ)
+end
+
+"""
+    initialize_𝐮∇_operator!(RP::RAPID{FT};
+                           flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+Initialize the sparse matrix representation of the advection operator (u·∇) with appropriate
+sparsity pattern and initial values.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `flag_upwind::Bool=RP.flags.upwind`: Flag to use upwind scheme (if false, uses central differencing)
+
+# Returns
+- The updated RAPID object with initialized advection operator
+
+# Notes
+- This function first creates the sparsity pattern and then updates the values
+- Uses `allocate_𝐮∇_operator_pattern!` to create the matrix structure
+- Uses `update_𝐮∇_operator!` to populate the non-zero values
+"""
+function initialize_𝐮∇_operator!(RP::RAPID{FT};
+                                flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+    # Create the sparsity patter
+    allocate_𝐮∇_operator_pattern!(RP)
+
+    # Update the values based on current velocity field
+    update_𝐮∇_operator!(RP; flag_upwind)
+
+    return RP
+end
+
+"""
+    allocate_𝐮∇_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Create a sparse matrix with the sparsity pattern for the advection operator (u·∇)
+without computing coefficient values.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+
+# Returns
+- The updated RAPID object with allocated sparsity pattern
+
+# Notes
+- This function only creates the sparsity pattern (non-zero locations) without computing the actual coefficients
+- The created pattern supports both upwind and central differencing schemes
+- Stores a mapping in RP.operators.map_𝐮∇_k2csc for efficient updates
+"""
+function allocate_𝐮∇_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Alias necessary fields from the RP object
+    G = RP.G
+    NR, NZ = G.NR, G.NZ
+    nid = G.nodes.nid
+
+    # Pre-allocate arrays for sparse matrix construction
+    # Each interior node has 4 connections (East,West,North,South) for both upwind and central differencing
+    num_entries =  (NR-2) * (NZ-2) * 5
+    I = zeros(Int, num_entries)  # Row indices
+    J = zeros(Int, num_entries)  # Column indices
+    V = zeros(FT, num_entries)   # Values (will be used for mapping)
+
+    k = 1
+    for j in 2:NZ-1
+        for i in 2:NR-1
+            # All entries for this node have same row index
+            I[k:k+4] .= nid[i,j]
+
+            # Column indices for the 5 nodes (center + neighbors)
+            J[k]   = nid[i,j]    # Center
+            J[k+1] = nid[i+1,j]  # East
+            J[k+2] = nid[i-1,j]  # West
+            J[k+3] = nid[i,j+1]  # North
+            J[k+4] = nid[i,j-1]  # South
+
+            k += 5
+        end
+    end
+
+    # to compute k2csc later
+    @. V = 1:num_entries
+
+    # Construct sparse matrix with padding for correct dimensions
+    RP.operators.A_𝐮∇ = sparse(I, J, V, NR*NZ, NR*NZ)
+
+    # Create mapping from original indices to CSC format
+    V2 = RP.operators.A_𝐮∇.nzval
+    k2csc = zeros(Int, length(V2))
+    for csc_idx in eachindex(V2)
+        orig_k = round(Int, V2[csc_idx])
+        k2csc[orig_k] = csc_idx
+    end
+    RP.operators.map_𝐮∇_k2csc = k2csc
+
+    # Reset values to zero
+    @. RP.operators.A_𝐮∇ = zero(FT)
+
+    return RP
+end
+
+"""
+    update_𝐮∇_operator!(RP::RAPID{FT},
+                        uR::AbstractMatrix{FT}=RP.plasma.ueR,
+                        uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
+                        flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+Update the non-zero entries of the advection operator matrix (u·∇)f based on the current velocity field.
+This function updates an existing sparse matrix without changing its structure.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `uR::AbstractMatrix{FT}=RP.plasma.ueR`: The R-component of velocity field
+- `uZ::AbstractMatrix{FT}=RP.plasma.ueZ`: The Z-component of velocity field
+- `flag_upwind::Bool=RP.flags.upwind`: Flag to use upwind scheme
+
+# Returns
+- `RP`: The updated RAPID object with advection operator values updated
+
+# Notes
+- This function assumes the sparse matrix has already been allocated with the proper sparsity pattern
+- For maximum performance, updates values directly without reconstructing the matrix
+- Uses the mapping in RP.operators.map_𝐮∇_k2csc to locate entries in the CSC format
+"""
+function update_𝐮∇_operator!(RP::RAPID{FT},
+                            uR::AbstractMatrix{FT}=RP.plasma.ueR,
+                            uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
+                            flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+    # Alias necessary fields from the RP object
+    G = RP.G
+    NR, NZ = G.NR, G.NZ
+
+    # Precompute inverse values for faster calculation
+    inv_dR = one(FT) / G.dR
+    inv_dZ = one(FT) / G.dZ
+
+    # Cache common constants for type stability
+    zero_FT = zero(FT)
+    eps_val = eps(FT)
+    half = FT(0.5)
+
+    # Get direct access to sparse matrix values
+    nzval = RP.operators.A_𝐮∇.nzval
+    k2csc = RP.operators.map_𝐮∇_k2csc
+
+    # Reset values to zero
+    fill!(nzval, zero_FT)
+
+    # Update values based on current velocity and chosen scheme
+    # Start index for the main loop entries
+    k = 1
+
+    # Number of entries for the center nodes (added after the main loop)
+    num_internal_nodes = (NR-2) * (NZ-2)
+
+    if flag_upwind
+        # Upwind scheme with special handling for zero velocity
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                # R-direction contribution
+                if abs(uR[i,j]) < eps_val
+                    # Zero velocity: central difference
+                    nzval[k2csc[k+1]] += uR[i,j] * half * inv_dR   # East
+                    nzval[k2csc[k+2]] -= uR[i,j] * half * inv_dR   # West
+                elseif uR[i,j] > zero_FT
+                    # Positive flow: backward difference
+                    nzval[k2csc[k]] += uR[i,j] * inv_dR            # Center
+                    nzval[k2csc[k+2]] -= uR[i,j] * inv_dR          # West
+                else
+                    # Negative flow: forward difference
+                    nzval[k2csc[k+1]] += uR[i,j] * inv_dR          # East
+                    nzval[k2csc[k]] -= uR[i,j] * inv_dR            # Center
+                end
+
+                # Z-direction contribution
+                if abs(uZ[i,j]) < eps_val
+                    # Zero velocity: central difference
+                    nzval[k2csc[k+3]] += uZ[i,j] * half * inv_dZ   # North
+                    nzval[k2csc[k+4]] -= uZ[i,j] * half * inv_dZ   # South
+                elseif uZ[i,j] > zero_FT
+                    # Positive flow: backward difference
+                    nzval[k2csc[k]] += uZ[i,j] * inv_dZ           # Center
+                    nzval[k2csc[k+4]] -= uZ[i,j] * inv_dZ         # South
+                else
+                    # Negative flow: forward difference
+                    nzval[k2csc[k+3]] += uZ[i,j] * inv_dZ        # North
+                    nzval[k2csc[k]] -= uZ[i,j] * inv_dZ          # Center
+                end
+
+                # Move to next node's entries
+                k += 5
+            end
+        end
+    else
+        # Central differencing for all points (simpler logic)
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                # R-direction central difference
+                nzval[k2csc[k+1]] = uR[i,j] * half * inv_dR      # East
+                nzval[k2csc[k+2]] = -uR[i,j] * half * inv_dR     # West
+
+                # Z-direction central difference
+                nzval[k2csc[k+3]] = uZ[i,j] * half * inv_dZ      # North
+                nzval[k2csc[k+4]] = -uZ[i,j] * half * inv_dZ     # South
+
+                k += 5
+            end
+        end
+    end
+
+    return RP
 end
 
