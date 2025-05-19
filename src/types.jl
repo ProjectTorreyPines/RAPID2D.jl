@@ -147,6 +147,7 @@ Contains the plasma state variables including density, temperature, and velocity
     lnΛ::Matrix{FT} = zeros(FT, dims)   # Coulomb logarithm
     ν_ei::Matrix{FT} = zeros(FT, dims) # Electron-ion collision frequency [1/s]
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
+    Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
     Zeff::Matrix{FT} = ones(FT, dims) # Effective ion charge
 
