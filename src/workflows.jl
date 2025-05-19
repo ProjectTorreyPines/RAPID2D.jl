@@ -55,11 +55,6 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
         end
     end
 
-    # Calculate self-consistent electrostatic field if enabled
-    if RP.flags.E_para_self_ES
-        estimate_electrostatic_field_effects!(RP)
-    end
-
     combine_external_and_self_fields!(RP)
 
     # Calculate RHS terms for density equation
@@ -109,9 +104,6 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
         update_neutral_H2_gas_density!(RP)
     end
 
-    # Update transport coefficients after all state variables are updated
-    update_transport_quantities!(RP)
-
     return RP
 end
 
@@ -143,7 +135,16 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
         RP.step += 1
 
         # Apply boundary conditions and handle negative values
-        # apply_electron_density_boundary_conditions!(RP)
+        apply_electron_density_boundary_conditions!(RP)
+
+
+        # Calculate self-consistent electrostatic field if enabled
+        if RP.flags.E_para_self_ES
+            estimate_electrostatic_field_effects!(RP)
+        end
+        # Update transport coefficients after all state variables are updated
+        update_transport_quantities!(RP)
+
 
         # Print progress
         if RP.step % 100 == 0
@@ -155,8 +156,23 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
             # Take snapshot of 2D data
             save_snapshot2D(RP)
         end
+
+        # if(obj.Flag.Adapt_dt)
+        #     obj.Check_adaptive_dt();
+        # end
+
+        # obj.tElap.Main = toc(tMainLoopStart);
+        # obj.print_output()
+
+        # obj.write_output_file()
     end
 
+    # if(obj.Flag.vis1D)
+    #     obj.vis_snap1D(obj.snap1D);
+    # end
+    # if(obj.Flag.vis2D)
+    #     obj.vis_snap2D(obj.snap2D);
+    # end
     println("Simulation completed")
     return RP
 end
