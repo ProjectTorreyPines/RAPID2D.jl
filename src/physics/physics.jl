@@ -746,3 +746,39 @@ function calculate_electron_acceleration_by_pressure(RP::RAPID{FT}; num_SM::Int=
 
     return accel_by_pressure
 end
+
+
+"""
+    calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
+
+Calculate the electron acceleration due to convection along the magnetic field.
+
+This function computes the convection term [-(ud⋅∇)ud] in the electron momentum equation.
+It uses a smoothed parallel electron velocity field to improve numerical stability.
+
+# Arguments
+- `RP::RAPID{FT}`: RAPID simulation object containing plasma and grid data
+- `num_SM::Int=2`: Number of smoothing iterations to apply to the velocity field
+
+# Returns
+- Electron acceleration due to convection term
+
+# Implementation Details
+1. Smooths the parallel electron velocity field using the Jacobian-weighted smoothing
+2. Calculates the gradient of the smoothed velocity field
+3. Computes the convection term as -(ueR*∇ud_R + ueZ*∇ud_Z)
+"""
+function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
+    # alias
+    cnst = RP.config.constants
+
+    # Smooth the density field to reduce numerical noise (skip if num_SM is 0)
+    ue_para_SM = smooth_data_2D(RP.plasma.ue_para; num_SM, weighting=RP.G.Jacob)
+
+    # Calculate ln(n) gradients along B to avoid division by zero issues with low density
+    # Calculate temperature gradients along B
+    ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, ue_para_SM)
+    accel_by_convection = @. -(RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
+
+    return accel_by_convection
+end
