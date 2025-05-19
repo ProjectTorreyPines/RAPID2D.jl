@@ -461,11 +461,11 @@ end
 
     # Free acceleration
     for RP.flags.Implicit in [false, true]
-        RP.flags.Implicit =true
+        RP.flags.Implicit =false
         RP.flags.Atomic_Collision = false
-        RP.flags.Damp_Transp_outWall = false
         initialize!(RP)
-        _set_initial_conditions!(RP, ini_ne, 10.0e-4, 10.0e-4)
+        _set_initial_conditions!(RP, ini_ne, 1e-4, 1e-4)
+        # _set_initial_conditions!(RP, ini_ne, 0.0, 0.0)
 
         RAPID2D.run_simulation!(RP);
 
@@ -480,7 +480,6 @@ end
 
         # Check the actual ue_para
         actual_avg_ue_para = sum(RP.plasma.ne.*RP.plasma.ue_para)/sum(RP.plasma.ne)
-
         @test isapprox(actual_avg_ue_para, expected_avg_ue_para; rtol=0.01) # 1% error
     end
 

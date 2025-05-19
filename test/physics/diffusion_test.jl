@@ -34,7 +34,7 @@ using RAPID2D
     end
 
 	# Explicit method
-    RAPID2D.calculate_diffusion_term!(RP, test_density)
+    RAPID2D.calculate_ne_diffusion_explicit_RHS!(RP, test_density)
     explicit_result = copy(RP.operators.neRHS_diffu)
 
     # Implicit method

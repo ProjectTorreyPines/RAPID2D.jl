@@ -11,10 +11,12 @@ Contains functions related to transport phenomena, including:
 export update_transport_quantities!,
        calculate_diffusion_coefficients!,
        calculate_particle_fluxes!,
-       calculate_diffusion_term!,
+       calculate_ne_diffusion_explicit_RHS!,
        construct_diffusion_operator,
-       calculate_convection_term!,
-       construct_convection_operator
+       calculate_ne_convection_explicit_RHS,
+       construct_Ane_convection_operator,
+       construct_advection_operator,
+       construct_u_dot_grad_f_operator
 
 """
     update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -22,15 +24,18 @@ export update_transport_quantities!,
 Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
 """
 function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    tot_coll_freq = zeros(FT, size(RP.G.R2D))
+
     # Calculate momentum transfer reaction rate coefficient and collision frequency
-    RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
-    coll_freq_en_mom = RP.plasma.n_H2_gas .* RRC_mom
+    if RP.flags.Atomic_Collision
+        RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
+        @. tot_coll_freq += RP.plasma.n_H2_gas * RRC_mom
+    end
 
     # Calculate total collision frequency
-    tot_coll_freq = coll_freq_en_mom
     if RP.flags.Coulomb_Collision
         update_coulomb_collision_parameters!(RP)
-        tot_coll_freq .+= RP.plasma.ν_ei
+        @. tot_coll_freq += RP.plasma.ν_ei
     end
 
     # Calculate parallel diffusion coefficient based on collision frequency
@@ -250,7 +255,7 @@ function calculate_particle_fluxes!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 """
-    calculate_diffusion_term!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne) where {FT<:AbstractFloat}
+    calculate_ne_diffusion_explicit_RHS!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne) where {FT<:AbstractFloat}
 
 Calculate the diffusion term for a given density field using the diffusion coefficients.
 
@@ -266,7 +271,7 @@ Calculate the diffusion term for a given density field using the diffusion coeff
 - Boundary conditions must be handled separately
 - The result is stored in RP.operators.neRHS_diffu
 """
-function calculate_diffusion_term!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne) where {FT<:AbstractFloat}
+function calculate_ne_diffusion_explicit_RHS!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne) where {FT<:AbstractFloat}
     # Alias necessary fields from the RP object
     G = RP.G
     inv_Jacob = G.inv_Jacob
@@ -540,7 +545,7 @@ end
 
 
 """
-    calculate_convection_term!(
+    calculate_ne_convection_explicit_RHS(
         RP::RAPID{FT},
         density::AbstractMatrix{FT}=RP.plasma.ne,
         uR::AbstractMatrix{FT}=RP.plasma.ueR,
@@ -568,7 +573,7 @@ Calculate the convection term [-∇⋅(nv)] for a given density field using the 
 - Falls back to central differencing for zero velocity even when upwind=true
 - Uses second-order central differencing when upwind=false
 """
-function calculate_convection_term!(
+function calculate_ne_convection_explicit_RHS(
     RP::RAPID{FT},
     density::AbstractMatrix{FT}=RP.plasma.ne,
     uR::AbstractMatrix{FT}=RP.plasma.ueR,
@@ -664,7 +669,7 @@ function calculate_convection_term!(
 end
 
 """
-    construct_convection_operator(
+    construct_Ane_convection_operator(
         RP::RAPID{FT},
         uR::AbstractMatrix{FT}=RP.plasma.ueR,
         uZ::AbstractMatrix{FT}=RP.plasma.ueZ
@@ -682,7 +687,7 @@ Construct the sparse matrix representation of the convection operator [-∇⋅(n
 # Returns
 - `SparseMatrixCSC{FT, Int}`: The sparse matrix representation of the convection operator
 """
-function construct_convection_operator(
+function construct_Ane_convection_operator(
     RP::RAPID{FT},
     uR::AbstractMatrix{FT}=RP.plasma.ueR,
     uZ::AbstractMatrix{FT}=RP.plasma.ueZ
@@ -735,7 +740,7 @@ function construct_convection_operator(
                     J[k+1] = nid[i-1,j]
                     V[k+1] = Jacob[i-1,j]*uR[i-1,j]*inv_dR*inv_Jacob_ij
                 elseif abs(uR[i,j]) < eps_val
-                    # Zero velocity, use central differencing
+                    # Zero velocity: use central differencing
                     J[k] = nid[i+1,j]
                     V[k] = -Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*inv_Jacob_ij
 
@@ -759,7 +764,7 @@ function construct_convection_operator(
                     J[k+3] = nid[i,j-1]
                     V[k+3] = Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*inv_Jacob_ij
                 elseif abs(uZ[i,j]) < eps_val
-                    # Zero velocity, use central differencing
+                    # Zero velocity: use central differencing
                     J[k+2] = nid[i,j+1]
                     V[k+2] = -Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*inv_Jacob_ij
 
@@ -804,17 +809,17 @@ function construct_convection_operator(
     return sparse(I, J, V, NR*NZ, NR*NZ)
 end
 
-function initialize_convection_operator!(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+function initialize_Ane_convection_operator(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
     # create a sparse matrix with the sparisty pattern
-    allocate_convection_operator_pattern!(RP)
+    allocate_An_convection_operator_pattern(RP)
 
     # update the convection operator's non-zero entries with the actual values
-    update_convection_operator!(RP; flag_upwind)
+    update_An_convection_operator!(RP; flag_upwind)
 
     return RP
 end
 
-function allocate_convection_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function allocate_An_convection_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields
     G = RP.G
     NR, NZ = G.NR, G.NZ
@@ -867,7 +872,7 @@ function allocate_convection_operator_pattern!(RP::RAPID{FT}) where {FT<:Abstrac
 end
 
 
-function update_convection_operator!(RP::RAPID{FT},
+function update_An_convection_operator!(RP::RAPID{FT},
                                    uR::AbstractMatrix{FT}=RP.plasma.ueR,
                                    uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
                                    flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}

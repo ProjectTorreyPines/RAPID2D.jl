@@ -72,8 +72,6 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         F = RP.fields
 
         # allocate arrays
-        accel_by_pressure = zeros(FT, size(pla.ue_para)) # [- ∇∥(p)/(me*n)]
-        accel_by_grad_ud = zeros(FT, size(pla.ue_para)) # [-(ud⋅∇)ud]
         tot_coll_freq = zeros(FT, size(pla.ue_para))
         mom_eff_nu_ei = zeros(FT, size(pla.ue_para))
 
@@ -100,11 +98,6 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         replace!(tot_coll_freq, NaN => zero_FT)
 
 
-        # Add pressure gradient and convection acceleration if needed
-        if RP.flags.Include_ud_convec_term
-            accel_by_pressure .= calculate_electron_acceleration_by_pressure(RP)
-            accel_by_grad_ud .= calculate_electron_acceleration_by_convection(RP)
-        end
 
         # Always use backward Euler for collision term (θ_imp=1.0) for better saturation
         # but keep the formula structure compatible with variable θ_imp
@@ -115,11 +108,12 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             @. pla.Rue_ei = -mom_eff_nu_ei * ((one_FT - θ_imp) * pla.ue_para - pla.ui_para)
         end
 
-
         # Advance ue_para using implicit or explicit method
         if RP.flags.Implicit
             # Implicit scheme implementation
             impFac = RP.flags.Implicit_weight
+
+            accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
 
 
             accel_para_tilde = zeros(FT, size(pla.ue_para))
@@ -148,7 +142,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
             # Add pressure and convection terms in the same way as MATLAB
             if RP.flags.Include_ud_convec_term
-                @. pla.ue_para +=  inv_factor * dt * (accel_by_pressure + accel_grad_ud)
+                accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
+                accel_by_grad_ud = calculate_electron_acceleration_by_convection(RP)
+                @. pla.ue_para +=  inv_factor * dt * (accel_by_pressure + accel_by_grad_ud)
             end
         end
 
@@ -243,8 +239,8 @@ function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.plasma.Te_eV .= max.(RP.plasma.Te_eV, RP.config.min_Te)
     RP.plasma.Te_eV .= min.(RP.plasma.Te_eV, RP.config.max_Te)
 
-    # Zero temperature outside wall
-    RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
+    # # Zero temperature outside wall
+    # RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
 
     return RP
 end
@@ -285,8 +281,8 @@ function update_Ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Apply temperature limits
     RP.plasma.Ti_eV .= max.(RP.plasma.Ti_eV, RP.config.min_Te) # Using same min as electrons
 
-    # Zero temperature outside wall
-    RP.plasma.Ti_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
+    # # Zero temperature outside wall
+    # RP.plasma.Ti_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
 
     return RP
 end
@@ -432,8 +428,8 @@ function calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
         error("Unknown ionization method: $(RP.flags.Ionz_method)")
     end
 
-    # Zero out the growth rate outside the wall
-    eGrowth_rate[RP.G.nodes.out_wall_nids] .= 0.0
+    # # Zero out the growth rate outside the wall
+    # eGrowth_rate[RP.G.nodes.out_wall_nids] .= 0.0
 
     # Store the right-hand side source term
     RP.operators.neRHS_src .= RP.plasma.ne .* eGrowth_rate
@@ -458,7 +454,7 @@ function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFlo
         RP.operators.neRHS_diffu[:] = RP.operators.An_diffu * RP.plasma.ne[:]
     else
         # For explicit method, calculate diffusion term directly
-        calculate_diffusion_term!(RP)
+        calculate_ne_diffusion_explicit_RHS!(RP)
     end
     return RP
 end
@@ -472,11 +468,11 @@ convection term for explicit time stepping.
 """
 function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.Implicit
-        update_convection_operator!(RP)
+        update_An_convection_operator!(RP)
         RP.operators.neRHS_convec[:] = RP.operators.An_convec * RP.plasma.ne[:]
     else
         # For explicit method, calculate convection term directly
-        calculate_convection_term!(RP)
+        calculate_ne_convection_explicit_RHS(RP)
     end
     return RP
 end
