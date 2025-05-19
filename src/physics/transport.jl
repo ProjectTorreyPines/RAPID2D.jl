@@ -614,13 +614,13 @@ function calculate_ne_convection_explicit_RHS(
                 negative_flux_Z = zero_val
 
                 # R-direction convection flux with upwind scheme
-                if uR[i, j] > zero_val
-                    # Flow from left to right, use left (upwind) node
-                    negative_flux_R = -Jacob[i, j] * uR[i, j] * inv_dR * density[i, j] + Jacob[i-1, j] * uR[i-1, j] * inv_dR * density[i-1, j]
-                elseif abs(uR[i, j]) < eps_val
+                if abs(uR[i, j]) < eps_val
                     # Zero velocity, use central differencing
                     negative_flux_R = -Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * density[i+1, j] +
                                         Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * density[i-1, j]
+                elseif uR[i, j] > zero_val
+                    # Flow from left to right, use left (upwind) node
+                    negative_flux_R = -Jacob[i, j] * uR[i, j] * inv_dR * density[i, j] + Jacob[i-1, j] * uR[i-1, j] * inv_dR * density[i-1, j]
                 else
                     # Flow from right to left, use right (upwind) node
                     negative_flux_R = -Jacob[i+1, j] * uR[i+1, j] * inv_dR * density[i+1, j] +
@@ -628,14 +628,14 @@ function calculate_ne_convection_explicit_RHS(
                 end
 
                 # Z-direction convection flux with upwind scheme
-                if uZ[i, j] > zero_val
+                if abs(uZ[i, j]) < eps_val
+                    # Zero velocity, use central differencing
+                    negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * density[i, j+1] +
+                                    Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * density[i, j-1]
+                elseif uZ[i, j] > zero_val
                     # Flow from bottom to top, use bottom (upwind) node
                     negative_flux_Z = -Jacob[i, j] * uZ[i, j] * inv_dZ * density[i, j] +
                                       Jacob[i, j-1] * uZ[i, j-1] * inv_dZ * density[i, j-1]
-                elseif abs(uZ[i, j]) < eps_val
-                    # Zero velocity, use central differencing
-                    negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * density[i, j+1] +
-                                      Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * density[i, j-1]
                 else
                     # Flow from top to bottom, use top (upwind) node
                     negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * inv_dZ * density[i, j+1] +
@@ -731,20 +731,20 @@ function construct_Ane_convection_operator(
                 inv_Jacob_ij = inv_Jacob[i,j]
 
                 # R-direction
-                if uR[i,j] > zero_val
-                    # Flow from left to right
-                    J[k] = nid[i,j]
-                    V[k] = -Jacob[i,j]*uR[i,j]*inv_dR*inv_Jacob_ij
-
-                    J[k+1] = nid[i-1,j]
-                    V[k+1] = Jacob[i-1,j]*uR[i-1,j]*inv_dR*inv_Jacob_ij
-                elseif abs(uR[i,j]) < eps_val
+                if abs(uR[i,j]) < eps_val
                     # Zero velocity: use central differencing
                     J[k] = nid[i+1,j]
                     V[k] = -Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*inv_Jacob_ij
 
                     J[k+1] = nid[i-1,j]
                     V[k+1] = Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*inv_Jacob_ij
+                elseif uR[i,j] > zero_val
+                    # Flow from left to right
+                    J[k] = nid[i,j]
+                    V[k] = -Jacob[i,j]*uR[i,j]*inv_dR*inv_Jacob_ij
+
+                    J[k+1] = nid[i-1,j]
+                    V[k+1] = Jacob[i-1,j]*uR[i-1,j]*inv_dR*inv_Jacob_ij
                 else
                     # Flow from right to left
                     J[k] = nid[i+1,j]
@@ -755,20 +755,20 @@ function construct_Ane_convection_operator(
                 end
 
                 # Z-direction
-                if uZ[i,j] > zero_val
-                    # Flow from bottom to top
-                    J[k+2] = nid[i,j]
-                    V[k+2] = -Jacob[i,j]*uZ[i,j]*inv_dZ*inv_Jacob_ij
-
-                    J[k+3] = nid[i,j-1]
-                    V[k+3] = Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*inv_Jacob_ij
-                elseif abs(uZ[i,j]) < eps_val
+                if abs(uZ[i,j]) < eps_val
                     # Zero velocity: use central differencing
                     J[k+2] = nid[i,j+1]
                     V[k+2] = -Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*inv_Jacob_ij
 
                     J[k+3] = nid[i,j-1]
                     V[k+3] = Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*inv_Jacob_ij
+                elseif uZ[i,j] > zero_val
+                    # Flow from bottom to top
+                    J[k+2] = nid[i,j]
+                    V[k+2] = -Jacob[i,j]*uZ[i,j]*inv_dZ*inv_Jacob_ij
+
+                    J[k+3] = nid[i,j-1]
+                    V[k+3] = Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*inv_Jacob_ij
                 else
                     # Flow from top to bottom
                     J[k+2] = nid[i,j+1]
@@ -859,8 +859,7 @@ function allocate_Ane_convection_operator_pattern(RP::RAPID{FT}) where {FT<:Abst
     nid = G.nodes.nid
 
     # Each interior node has 5 connections (center + E,W,N,S) for upwind scheme
-    num_internal_nodes = (NR-2)*(NZ-2)
-    num_entries = num_internal_nodes * 5
+    num_entries = (NR-2)*(NZ-2) * 5
 
     I = zeros(Int, num_entries)  # Row indices
     J = zeros(Int, num_entries)  # Column indices
@@ -963,14 +962,14 @@ function update_Ane_convection_operator!(RP::RAPID{FT},
                 # Pattern indices: center(k), east(k+1), west(k+2), north(k+3), south(k+4)
 
                 # R-direction velocity-dependent coefficients
-                if uR[i,j] > zero_FT
-                    # Positive velocity: flow from west
-                    nzval[k2csc[k]] -= Jacob[i,j]*uR[i,j]*inv_dR*ij_factor          # Center (divergence)
-                    nzval[k2csc[k+2]] += Jacob[i-1,j]*uR[i-1,j]*inv_dR*ij_factor   # West (inflow)
-                elseif abs(uR[i,j]) < eps_FT
+                if abs(uR[i,j]) < eps_FT
                     # Zero velocity: use central differencing
                     nzval[k2csc[k+1]] -= Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*ij_factor  # East
                     nzval[k2csc[k+2]] += Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*ij_factor  # West
+                elseif uR[i,j] > zero_FT
+                    # Positive velocity: flow from west
+                    nzval[k2csc[k]] -= Jacob[i,j]*uR[i,j]*inv_dR*ij_factor          # Center (divergence)
+                    nzval[k2csc[k+2]] += Jacob[i-1,j]*uR[i-1,j]*inv_dR*ij_factor   # West (inflow)
                 else
                     # Negative velocity: flow from east
                     nzval[k2csc[k+1]] -= Jacob[i+1,j]*uR[i+1,j]*inv_dR*ij_factor   # East (inflow)
@@ -978,14 +977,14 @@ function update_Ane_convection_operator!(RP::RAPID{FT},
                 end
 
                 # Z-direction velocity-dependent coefficients
-                if uZ[i,j] > zero_FT
-                    # Positive velocity: flow from south
-                    nzval[k2csc[k]] -= Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor          # Center (divergence)
-                    nzval[k2csc[k+4]] += Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*ij_factor   # South (inflow)
-                elseif abs(uZ[i,j]) < eps_FT
+                if abs(uZ[i,j]) < eps_FT
                     # Zero velocity: use central differencing
                     nzval[k2csc[k+3]] -= Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*ij_factor  # North
                     nzval[k2csc[k+4]] += Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*ij_factor  # South
+                elseif uZ[i,j] > zero_FT
+                    # Positive velocity: flow from south
+                    nzval[k2csc[k]] -= Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor          # Center (divergence)
+                    nzval[k2csc[k+4]] += Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*ij_factor   # South (inflow)
                 else
                     # Negative velocity: flow from north
                     nzval[k2csc[k+3]] -= Jacob[i,j+1]*uZ[i,j+1]*inv_dZ*ij_factor   # North (inflow)
