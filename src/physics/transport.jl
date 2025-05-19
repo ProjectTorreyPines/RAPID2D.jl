@@ -788,7 +788,7 @@ function construct_Ane_convection_operator(
                 @. @views I[k:k+3] = nid[i,j]
                 inv_Jacob_ij = inv_Jacob[i,j]
 
-                # Note the sign of [-∇⋅(nv)] operator
+                # Note the sign of [-∇·(nv)] operator
                 J[k]   = nid[i+1,j] # East
                 J[k+1] = nid[i-1,j] # West
                 J[k+2] = nid[i,j+1] # North
@@ -808,23 +808,57 @@ function construct_Ane_convection_operator(
     return sparse(I, J, V, NR*NZ, NR*NZ)
 end
 
+"""
+    initialize_Ane_convection_operator(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+Initialize the sparse matrix representation of the convection operator [-∇⋅(nv)] with proper structure and values.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `flag_upwind::Bool=RP.flags.upwind`: Flag to use upwind scheme (if false, uses central differencing)
+
+# Returns
+- `RP`: The updated RAPID object with initialized convection operator
+
+# Notes
+- This function first creates the sparsity pattern and then updates the values
+- Uses `allocate_Ane_convection_operator_pattern` to create the matrix structure
+- Uses `update_Ane_convection_operator` to populate the non-zero values
+"""
 function initialize_Ane_convection_operator(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
     # create a sparse matrix with the sparisty pattern
-    allocate_An_convection_operator_pattern(RP)
+    allocate_Ane_convection_operator_pattern(RP)
 
     # update the convection operator's non-zero entries with the actual values
-    update_An_convection_operator!(RP; flag_upwind)
+    update_Ane_convection_operator!(RP; flag_upwind=flag_upwind)
 
     return RP
 end
 
-function allocate_An_convection_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
+"""
+    allocate_Ane_convection_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Create a sparse matrix with the sparsity pattern for the convection operator [-∇⋅(nv)]
+without computing coefficient values.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+
+# Returns
+- The updated RAPID object with allocated sparsity pattern
+
+# Notes
+- This function only creates the sparsity pattern (non-zero locations) without computing the actual coefficients
+- The function is called by `initialize_Ane_convection_operator` to set up the structure before filling in values
+- Supports both upwind and central differencing schemes
+"""
+function allocate_Ane_convection_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields
     G = RP.G
     NR, NZ = G.NR, G.NZ
     nid = G.nodes.nid
 
-    # Each interior node has 5 connections (center + E,W,N,S)
+    # Each interior node has 5 connections (center + E,W,N,S) for upwind scheme
     num_internal_nodes = (NR-2)*(NZ-2)
     num_entries = num_internal_nodes * 5
 
@@ -835,10 +869,10 @@ function allocate_An_convection_operator_pattern(RP::RAPID{FT}) where {FT<:Abstr
     k = 1
     for j in 2:NZ-1
         for i in 2:NR-1
-            # All entries have the same row index (current node)
-            @. @views I[k:k+4] = nid[i,j]
+            # Set row indices (all entries in this loop have the same row index)
+            I[k:k+4] .= nid[i, j]
 
-            # Column indices are the 5 nodes (center + E,W,N,S)
+            # Column indices for the 5 nodes (center + neighbors)
             J[k]   = nid[i,j]     # Center
             J[k+1] = nid[i+1,j]    # East
             J[k+2] = nid[i-1,j]    # West
@@ -871,7 +905,24 @@ function allocate_An_convection_operator_pattern(RP::RAPID{FT}) where {FT<:Abstr
 end
 
 
-function update_An_convection_operator!(RP::RAPID{FT},
+"""
+    update_Ane_convection_operator!(RP::RAPID{FT},
+                                   uR::AbstractMatrix{FT}=RP.plasma.ueR,
+                                   uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
+                                   flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+Update the non-zero entries of the convection operator matrix based on the current state of the RAPID object.
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+
+# Returns
+- `RP`: The updated RAPID object with the convection operator matrix updated
+
+# Notes
+- The function assumes that the convection operator matrix has already been initialized with the correct sparsity pattern.
+- The function updates the non-zero entries of the matrix based on the current state of the RAPID object.
+"""
+function update_Ane_convection_operator!(RP::RAPID{FT},
                                    uR::AbstractMatrix{FT}=RP.plasma.ueR,
                                    uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
                                    flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
@@ -889,8 +940,8 @@ function update_An_convection_operator!(RP::RAPID{FT},
     inv_dZ = one(FT) / G.dZ
 
     # Constants for type stability
-    zero_val = zero(FT)
-    eps_val = eps(FT)
+    zero_FT = zero(FT)
+    eps_FT = eps(FT)
     half = FT(0.5)
 
     # Access the sparse matrix values directly
@@ -912,11 +963,11 @@ function update_An_convection_operator!(RP::RAPID{FT},
                 # Pattern indices: center(k), east(k+1), west(k+2), north(k+3), south(k+4)
 
                 # R-direction velocity-dependent coefficients
-                if uR[i,j] > zero_val
+                if uR[i,j] > zero_FT
                     # Positive velocity: flow from west
                     nzval[k2csc[k]] -= Jacob[i,j]*uR[i,j]*inv_dR*ij_factor          # Center (divergence)
                     nzval[k2csc[k+2]] += Jacob[i-1,j]*uR[i-1,j]*inv_dR*ij_factor   # West (inflow)
-                elseif abs(uR[i,j]) < eps_val
+                elseif abs(uR[i,j]) < eps_FT
                     # Zero velocity: use central differencing
                     nzval[k2csc[k+1]] -= Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*ij_factor  # East
                     nzval[k2csc[k+2]] += Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*ij_factor  # West
@@ -927,11 +978,11 @@ function update_An_convection_operator!(RP::RAPID{FT},
                 end
 
                 # Z-direction velocity-dependent coefficients
-                if uZ[i,j] > zero_val
+                if uZ[i,j] > zero_FT
                     # Positive velocity: flow from south
                     nzval[k2csc[k]] -= Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor          # Center (divergence)
                     nzval[k2csc[k+4]] += Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*ij_factor   # South (inflow)
-                elseif abs(uZ[i,j]) < eps_val
+                elseif abs(uZ[i,j]) < eps_FT
                     # Zero velocity: use central differencing
                     nzval[k2csc[k+3]] -= Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*ij_factor  # North
                     nzval[k2csc[k+4]] += Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*ij_factor  # South
