@@ -541,6 +541,7 @@ Uses either upwind scheme (based on flow velocity) or central differences.
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
 - `F::Matrix{FT}`: The scalar field whose parallel gradient is to be calculated
+- `flag_upwind::Bool=RP.flags.upwind`: whether to use flow direction to choose appropriate differencing
 
 # Returns
 - `Matrix{FT}`: The calculated parallel gradient field
@@ -551,7 +552,7 @@ Uses either upwind scheme (based on flow velocity) or central differences.
 - Provides better numerical stability for advection-dominated problems when upwind=true
 - Matrix indexing is F[i,j] where i is R-index and j is Z-index
 """
-function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}) where {FT<:AbstractFloat}
+function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
     # Define constants for type stability
     zero_FT = zero(FT)
     half = FT(0.5)
@@ -569,7 +570,7 @@ function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}) where {FT
     # Initialize output array
     para_grad_F = zeros(FT, NR, NZ)
 
-    if RP.flags.upwind
+    if flag_upwind
         # Upwind scheme based on flow velocity direction
         @inbounds for j in 2:NZ-1, i in 2:NR-1
 
