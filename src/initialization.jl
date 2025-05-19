@@ -174,7 +174,7 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
 
     initialize_diffusion_operator!(RP)
-    initialize_convection_operator!(RP)
+    initialize_Ane_convection_operator(RP)
 
     # Initialize specific operators based on flags
     if RP.flags.Ampere

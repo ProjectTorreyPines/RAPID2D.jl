@@ -12,11 +12,10 @@ export update_transport_quantities!,
        calculate_diffusion_coefficients!,
        calculate_particle_fluxes!,
        calculate_ne_diffusion_explicit_RHS!,
-       construct_diffusion_operator,
+       construct_∇𝐃∇_operator,
        calculate_ne_convection_explicit_RHS,
        construct_Ane_convection_operator,
-       construct_advection_operator,
-       construct_u_dot_grad_f_operator
+       construct_u∇_operator
 
 """
     update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -310,7 +309,7 @@ end
 """
     initialize_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Initialize the sparse matrix representation of the diffusion operator with proper structure and values.
+Initialize the sparse matrix representation of the diffusion operator [∇𝐃∇] with proper structure and values.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
@@ -320,20 +319,20 @@ Initialize the sparse matrix representation of the diffusion operator with prope
 
 # Notes
 - This function first creates the sparsity pattern and then updates the values
-- Uses `allocate_diffusion_operator_pattern!` to create the matrix structure
-- Uses `update_diffusion_operator!` to populate the non-zero values
+- Uses `allocate_∇𝐃∇_operator_pattern` to create the matrix structure
+- Uses `update_∇𝐃∇_operator` to populate the non-zero values
 """
 function initialize_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # create a sparse matrix with the sparisty pattern
-    allocate_diffusion_operator_pattern!(RP)
+    allocate_∇𝐃∇_operator_pattern(RP)
 
     # update the diffusion operator's non-zero entries with the actual values
-    update_diffusion_operator!(RP)
+    update_∇𝐃∇_operator(RP)
 
     return RP
 end
 
-function construct_diffusion_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function construct_∇𝐃∇_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields from the RP object
     G = RP.G
     NR, NZ = G.NR, G.NZ
@@ -413,9 +412,9 @@ function construct_diffusion_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 """
-    allocate_diffusion_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    allocate_∇𝐃∇_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Create a sparse matrix with the sparsity pattern for the diffusion operator without computing coefficient values.
+Create a sparse matrix with the sparsity pattern for the diffusion operator [∇𝐃∇] without computing coefficient values.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
@@ -425,7 +424,7 @@ Create a sparse matrix with the sparsity pattern for the diffusion operator with
 - The function is called by `initialize_diffusion_operator!` to set up the structure before filling in values
 - Creates a 9-point stencil pattern for each interior grid point
 """
-function allocate_diffusion_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function allocate_∇𝐃∇_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields from the RP object
     G = RP.G
     NR, NZ = G.NR, G.NZ
@@ -481,7 +480,7 @@ function allocate_diffusion_operator_pattern!(RP::RAPID{FT}) where {FT<:Abstract
 end
 
 """
-    update_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_∇𝐃∇_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update the non-zero entries of the diffusion operator matrix based on the current state of the RAPID object.
 # Arguments
@@ -494,7 +493,7 @@ Update the non-zero entries of the diffusion operator matrix based on the curren
 - The function assumes that the diffusion operator matrix has already been initialized with the correct sparsity pattern.
 - The function updates the non-zero entries of the matrix based on the current state of the RAPID object.
 """
-function update_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_∇𝐃∇_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @assert !isempty(RP.operators.An_diffu.nzval) "Diffusion operator not initialized"
 
     # Alias necessary fields from the RP object

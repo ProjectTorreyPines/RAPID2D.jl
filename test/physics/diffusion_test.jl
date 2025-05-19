@@ -38,7 +38,7 @@ using RAPID2D
     explicit_result = copy(RP.operators.neRHS_diffu)
 
     # Implicit method
-    An_diffu = RAPID2D.construct_diffusion_operator(RP)
+    An_diffu = RAPID2D.construct_∇𝐃∇_operator(RP)
     implicit_result = reshape(An_diffu * test_density[:], NR, NZ)
 
     # Calculate implicit diffusion using RAPID2D's internal way that can update the operator more efficiently
