@@ -15,7 +15,7 @@ export update_transport_quantities!,
        construct_∇𝐃∇_operator,
        calculate_ne_convection_explicit_RHS,
        construct_Ane_convection_operator,
-       construct_u∇_operator
+       construct_𝐮∇_operator
 
 """
     update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -962,5 +962,156 @@ function update_An_convection_operator!(RP::RAPID{FT},
     end
 
     return RP
+end
+
+"""
+    construct_𝐮∇_operator(
+        RP::RAPID{FT},
+        uR::AbstractMatrix{FT}=RP.plasma.ueR,
+        uZ::AbstractMatrix{FT}=RP.plasma.ueZ
+        ;
+        flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+Construct a sparse matrix operator for the advection term (u·∇)f.
+This operator calculates the directional derivative of a scalar field f along the velocity field (u).
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `uR::AbstractMatrix{FT}=RP.plasma.ueR`: The R-component of velocity field (defaults to electron fluid velocity)
+- `uZ::AbstractMatrix{FT}=RP.plasma.ueZ`: The Z-component of velocity field (defaults to electron fluid velocity)
+- `flag_upwind::Bool=RP.flags.upwind`: Flag to use upwind scheme (if false, uses central differencing)
+
+# Returns
+- `SparseMatrixCSC{FT, Int}`: The sparse matrix representation of the advection operator (u·∇)f
+
+# Notes
+- This differs from the convection operator which calculates -∇·(nv)
+- The advection operator represents the directional derivative (u·∇)f = uR*(df/dR) + uZ*(df/dZ)
+- When flag_upwind=true, uses flow direction to choose appropriate differencing scheme
+- When flag_upwind=false, uses standard central differencing for all points
+"""
+function construct_𝐮∇_operator(
+    RP::RAPID{FT},
+    uR::AbstractMatrix{FT}=RP.plasma.ueR,
+    uZ::AbstractMatrix{FT}=RP.plasma.ueZ
+    ;
+    flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+    # Alias necessary fields from the RP object
+    G = RP.G
+    NR, NZ = G.NR, G.NZ
+    nid = G.nodes.nid
+
+    # Precompute inverse values for faster calculation
+    inv_dR = one(FT) / G.dR
+    inv_dZ = one(FT) / G.dZ
+
+    # Cache common constants for type stability
+    zero_FT = zero(FT)
+    eps_val = eps(FT)
+    half = FT(0.5)
+
+    # Pre-allocate arrays for sparse matrix construction
+    # Each interior node connects to at most 5 points (itself + 4 neighbors)
+    num_internal_nodes = (NR-2) * (NZ-2)
+    num_entries = num_internal_nodes * 4
+    I = zeros(Int, num_entries)  # Row indices
+    J = zeros(Int, num_entries)  # Column indices
+    V = zeros(FT, num_entries)   # Values
+
+    k = 1
+    if flag_upwind
+        # Upwind scheme based on velocity direction
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                # All entries for this node have same row index
+                I[k:k+3] .= nid[i,j]
+
+                # R-direction contribution (uR*df/dR)
+                if abs(uR[i,j]) < eps_val
+                    # Zero velocity: central difference
+                    J[k] = nid[i+1,j]
+                    J[k+1] = nid[i-1,j]
+                    V[k] = uR[i,j] * half * inv_dR
+                    V[k+1] = -uR[i,j] * half * inv_dR
+                elseif uR[i,j] > zero_FT
+                    # Positive flow: backward difference (upwind)
+                    J[k] = nid[i,j]
+                    J[k+1] = nid[i-1,j]
+                    V[k] = uR[i,j] * inv_dR
+                    V[k+1] = -uR[i,j] * inv_dR
+                else
+                    # Negative flow: forward difference (upwind)
+                    J[k] = nid[i+1,j]
+                    J[k+1] = nid[i,j]
+                    V[k] = uR[i,j] * inv_dR
+                    V[k+1] = -uR[i,j] * inv_dR
+                end
+
+                # Z-direction contribution (uZ*df/dZ)
+                if abs(uZ[i,j]) < eps_val
+                    # Zero velocity: central difference
+                    J[k+2] = nid[i,j+1]
+                    J[k+3] = nid[i,j-1]
+                    V[k+2] = uZ[i,j] * half * inv_dZ
+                    V[k+3] = -uZ[i,j] * half * inv_dZ
+                elseif uZ[i,j] > zero_FT
+                    # Positive flow: backward difference (upwind)
+                    J[k+2] = nid[i,j]
+                    J[k+3] = nid[i,j-1]
+                    V[k+2] = uZ[i,j] * inv_dZ
+                    V[k+3] = -uZ[i,j] * inv_dZ
+                else
+                    # Negative flow: forward difference (upwind)
+                    J[k+2] = nid[i,j+1]
+                    J[k+3] = nid[i,j]
+                    V[k+2] = uZ[i,j] * inv_dZ
+                    V[k+3] = -uZ[i,j] * inv_dZ
+                end
+
+                k += 4
+            end
+        end
+    else
+        # Central differencing for all points
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                # All entries for this node have same row index
+                I[k:k+3] .= nid[i,j]
+
+
+                # R-direction central difference
+                J[k] = nid[i+1,j]  # East
+                J[k+1] = nid[i-1,j]  # West
+                V[k] = uR[i,j] * half * inv_dR
+                V[k+1] = -uR[i,j] * half * inv_dR
+
+                # Z-direction central difference
+                J[k+2] = nid[i,j+1]  # North
+                J[k+3] = nid[i,j-1]  # South
+                V[k+2] = uZ[i,j] * half * inv_dZ
+                V[k+3] = -uZ[i,j] * half * inv_dZ
+
+                k += 4
+            end
+        end
+    end
+
+    # Resize arrays to actual number of entries used
+    resize!(I, k-1)
+    resize!(J, k-1)
+    resize!(V, k-1)
+
+    # Add padding for the first and last nodes like in MATLAB
+    # This ensures the matrix has the correct dimensions (NR*NZ)×(NR*NZ)
+    push!(I, 1)
+    push!(J, 1)
+    push!(V, zero_FT)
+    push!(I, NR*NZ)
+    push!(J, NR*NZ)
+    push!(V, zero_FT)
+
+    # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
+    return sparse(I, J, V, NR*NZ, NR*NZ)
 end
 
