@@ -19,7 +19,9 @@ export update_ue_para!,
        calculate_density_diffusion_terms!,
        calculate_density_convection_terms!,
        solve_electron_continuity_equation!,
-       apply_electron_density_boundary_conditions!
+       apply_electron_density_boundary_conditions!,
+       calculate_para_grad_of_scalar_F,
+       calculate_electron_acceleration_by_pressure
 
 """
     update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -98,8 +100,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
         # Add pressure gradient and convection acceleration if needed
         if RP.flags.Include_ud_convec_term
-            accel_by_pressure .= calculate_pressure_acceleration(RP)
-            accel_by_grad_ud .= calculate_convection_acceleration(RP)
+            accel_by_pressure .= calculate_electron_acceleration_by_pressure(RP)
+            accel_by_grad_ud .= calculate_electron_acceleration_by_convection(RP)
         end
 
         # Always use backward Euler for collision term (θ_imp=1.0) for better saturation
@@ -523,7 +525,7 @@ function apply_electron_density_boundary_conditions!(RP::RAPID{FT}) where FT<:Ab
     RP.plasma.ne[RP.G.nodes.out_wall_nids] .= 0.0
 
     # Correct negative densities if enabled
-    if RP.flags.neg_n_correction
+    if RP.flags.negative_n_correction
         RP.plasma.ne[RP.plasma.ne .< 0] .= 0.0
     end
 
@@ -609,7 +611,7 @@ end
 
 
 """
-    calculate_pressure_acceleration(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
+    calculate_electron_acceleration_by_pressure(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
 
 Calculate the electron pressure gradient force acceleration along the magnetic field.
 This uses a smoothed density field to improve numerical stability.
@@ -627,7 +629,7 @@ This uses a smoothed density field to improve numerical stability.
 - Limits the maximum acceleration to maintain numerical stability
 - Setting `num_SM=0` bypasses smoothing, which may be desirable for specific use cases
 """
-function calculate_pressure_acceleration(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
+function calculate_electron_acceleration_by_pressure(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
     # alias
     cnst = RP.config.constants
 

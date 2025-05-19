@@ -358,10 +358,11 @@ Contains boolean flags that control various aspects of the simulation.
     turb_ExB_mixing::Bool = true              # Include turbulent ExB mixing
     E_para_self_ES::Bool = true               # Include self-electrostatic parallel E-field
     E_para_self_EM::Bool = true               # Include self-electromagnetic parallel E-field
-    neg_n_correction::Bool = true             # Correct negative densities
+    negative_n_correction::Bool = true             # Correct negative densities
     Te_evolve::Bool = true                    # Evolve electron temperature
     ud_evolve::Bool = true                    # Evolve drift velocity
     Gas_evolve::Bool = true                   # Evolve neutral gas density
+    Atomic_Collision::Bool = true             # Include Atomic collisions
     Coulomb_Collision::Bool = true            # Include Coulomb collisions
     Spitzer_Resistivity::Bool = true          # Include Spitzer resistivity
     Update_gFac::Bool = true                  # Update g factor for generalized EDF
