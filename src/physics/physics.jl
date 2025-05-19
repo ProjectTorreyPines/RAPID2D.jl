@@ -21,6 +21,7 @@ export update_ue_para!,
        solve_electron_continuity_equation!,
        apply_electron_density_boundary_conditions!,
        calculate_para_grad_of_scalar_F,
+       calculate_grad_of_scalar_F,
        calculate_electron_acceleration_by_pressure
 
 """
@@ -533,7 +534,7 @@ function apply_electron_density_boundary_conditions!(RP::RAPID{FT}) where FT<:Ab
 end
 
 """
-    calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}) where {FT<:AbstractFloat}
+    calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
 Calculate the parallel gradient of a scalar field F in the direction of the magnetic field.
 Uses either upwind scheme (based on flow velocity) or central differences.
@@ -541,7 +542,7 @@ Uses either upwind scheme (based on flow velocity) or central differences.
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
 - `F::Matrix{FT}`: The scalar field whose parallel gradient is to be calculated
-- `flag_upwind::Bool=RP.flags.upwind`: whether to use flow direction to choose appropriate differencing
+- `upwind::Bool=RP.flags.upwind`: whether to use flow direction to choose appropriate differencing
 
 # Returns
 - `Matrix{FT}`: The calculated parallel gradient field
@@ -552,25 +553,23 @@ Uses either upwind scheme (based on flow velocity) or central differences.
 - Provides better numerical stability for advection-dominated problems when upwind=true
 - Matrix indexing is F[i,j] where i is R-index and j is Z-index
 """
-function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+    NR, NZ = size(F)
+    @assert NR > 1 && NZ > 1 "Grid size must be at least 2x2"
+
     # Define constants for type stability
     zero_FT = zero(FT)
     half = FT(0.5)
     eps_val = eps(FT)
 
-    # Get grid dimensions and spacing
-    dR = RP.G.dR
-    dZ = RP.G.dZ
-    NR, NZ = size(F)
-
     # Pre-compute inverse values for faster calculation
-    inv_dR = one(FT) / dR
-    inv_dZ = one(FT) / dZ
+    inv_dR = one(FT) / RP.G.dR
+    inv_dZ = one(FT) / RP.G.dZ
 
     # Initialize output array
     para_grad_F = zeros(FT, NR, NZ)
 
-    if flag_upwind
+    if upwind
         # Upwind scheme based on flow velocity direction
         @inbounds for j in 2:NZ-1, i in 2:NR-1
 
@@ -608,6 +607,101 @@ function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; flag_upwi
     end
 
     return para_grad_F
+end
+
+
+"""
+    calculate_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+Calculate the gradient components of a scalar field F in R and Z directions.
+Returns gradF_R and gradF_Z as separate matrices.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `F::Matrix{FT}`: The scalar field whose gradient is to be calculated
+- `upwind::Bool=RP.flags.upwind`: Whether to use upwind differencing based on velocity field
+
+# Returns
+- Tuple of two matrices (gradF_R, gradF_Z): Components of the gradient in R and Z directions
+
+# Notes
+- When upwind=true, uses flow velocity direction to choose appropriate differencing scheme
+- When upwind=false, uses standard central differencing for interior points with one-sided differences at boundaries
+- Provides better numerical stability for advection-dominated problems when upwind=true
+- Matrix indexing is F[i,j] where i is R-index and j is Z-index (Julia convention)
+  which differs from MATLAB's (j,i) convention
+"""
+function calculate_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+    NR, NZ = size(F)
+    @assert NR > 1 && NZ > 1 "Grid size must be at least 2x2"
+
+    # Define constants for type stability
+    zero_FT = zero(FT)
+    half = FT(0.5)
+    eps_val = eps(FT)
+
+    # Pre-compute inverse values for faster calculation
+    inv_dR = one(FT) /  RP.G.dR
+    inv_dZ = one(FT) / RP.G.dZ
+
+    # Initialize output arrays
+    ∇F_R = zeros(FT, NR, NZ)
+    ∇F_Z = zeros(FT, NR, NZ)
+
+
+    # Calculate gradients for interior points
+    if upwind
+        # Upwind differencing scheme based on flow velocity
+        @inbounds for j in 2:NZ-1, i in 2:NR-1
+            # R-direction gradient
+            if abs(RP.plasma.ueR[i,j]) < eps_val
+                # Zero velocity: use central differencing for stability
+                ∇F_R[i,j] = (F[i+1,j] - F[i-1,j]) * (inv_dR * half)
+            elseif RP.plasma.ueR[i,j] > zero_FT
+                # Positive velocity: backward difference (upwind)
+                ∇F_R[i,j] = (F[i,j] - F[i-1,j]) * inv_dR
+            else
+                # Negative velocity: forward difference (upwind)
+                ∇F_R[i,j] = (F[i+1,j] - F[i,j]) * inv_dR
+            end
+
+            # Z-direction gradient
+            if abs(RP.plasma.ueZ[i,j]) < eps_val
+                # Zero velocity: use central differencing for stability
+                ∇F_Z[i,j] = (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
+            elseif RP.plasma.ueZ[i,j] > zero_FT
+                # Positive velocity: backward difference (upwind)
+                ∇F_Z[i,j] = (F[i,j] - F[i,j-1]) * inv_dZ
+            else
+                # Negative velocity: forward difference (upwind)
+                ∇F_Z[i,j] = (F[i,j+1] - F[i,j]) * inv_dZ
+            end
+        end
+    else
+        # Standard central differencing scheme
+        @inbounds for j in 2:NZ-1, i in 2:NR-1
+            # R-direction gradient
+            ∇F_R[i,j] = (F[i+1,j] - F[i-1,j]) * (inv_dR * half)
+            # Z-direction gradient
+            ∇F_Z[i,j] = (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
+        end
+    end
+
+    # Handle boundaries with one-sided differences
+    @inbounds for j in 1:NZ
+        # Left boundary: forward difference
+        ∇F_R[1,j] = (F[2,j] - F[1,j]) * inv_dR
+        # Right boundary: backward difference
+        ∇F_R[NR,j] = (F[NR,j] - F[NR-1,j]) * inv_dR
+    end
+    @inbounds for i in 1:NR
+        # Bottom boundary: forward difference
+        ∇F_Z[i,1] = (F[i,2] - F[i,1]) * inv_dZ
+        # Top boundary: backward difference
+        ∇F_Z[i,NZ] = (F[i,NZ] - F[i,NZ-1]) * inv_dZ
+    end
+
+    return ∇F_R, ∇F_Z
 end
 
 
