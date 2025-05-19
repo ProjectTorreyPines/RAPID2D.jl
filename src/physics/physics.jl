@@ -22,7 +22,8 @@ export update_ue_para!,
        apply_electron_density_boundary_conditions!,
        calculate_para_grad_of_scalar_F,
        calculate_grad_of_scalar_F,
-       calculate_electron_acceleration_by_pressure
+       calculate_electron_acceleration_by_pressure,
+       calculate_electron_acceleration_by_convection
 
 """
     update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
