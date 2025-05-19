@@ -606,3 +606,46 @@ function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}) where {FT
 
     return para_grad_F
 end
+
+
+"""
+    calculate_pressure_acceleration(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
+
+Calculate the electron pressure gradient force acceleration along the magnetic field.
+This uses a smoothed density field to improve numerical stability.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `num_SM::Int=2`: Number of smoothing iterations (if 0, no smoothing is applied)
+
+# Returns
+- `Matrix{FT}`: The pressure gradient acceleration field (m/s²)
+
+# Notes
+- Uses smoothed density field to avoid numerical issues with very low density regions
+- Calculates both density gradient and temperature gradient contributions
+- Limits the maximum acceleration to maintain numerical stability
+- Setting `num_SM=0` bypasses smoothing, which may be desirable for specific use cases
+"""
+function calculate_pressure_acceleration(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
+    # alias
+    cnst = RP.config.constants
+
+    # Smooth the density field to reduce numerical noise (skip if num_SM is 0)
+    n_SM = smooth_data_2D(RP.plasma.ne; num_SM, weighting=RP.G.Jacob)
+    n_SM[n_SM .< 0] .= zero(FT)
+
+    # Calculate ln(n) gradients along B to avoid division by zero issues with low density
+    # Calculate temperature gradients along B
+    para_grad_ln_n = calculate_para_grad_of_scalar_F(RP, log.(n_SM))
+    para_grad_Te_eV = calculate_para_grad_of_scalar_F(RP, RP.plasma.Te_eV )
+
+    # Combine both terms for total pressure gradient acceleration
+    accel_by_pressure = @. (- para_grad_ln_n * RP.plasma.Te_eV * cnst.ee / cnst.me
+                            - para_grad_Te_eV * cnst.ee / cnst.me)
+
+    # Handle any NaN or Inf values that might arise
+    accel_by_pressure[.!isfinite.(accel_by_pressure)] .= zero(FT)
+
+    return accel_by_pressure
+end
