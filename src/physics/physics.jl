@@ -537,7 +537,7 @@ end
 """
     calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
-Calculate the parallel gradient of a scalar field F in the direction of the magnetic field.
+Calculate the parallel gradient [∇∥ ≡ b⋅∇] of a scalar field F in the direction of the magnetic field.
 Uses either upwind scheme (based on flow velocity) or central differences.
 
 # Arguments
@@ -568,8 +568,9 @@ function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::B
     inv_dZ = one(FT) / RP.G.dZ
 
     # Initialize output array
-    para_grad_F = zeros(FT, NR, NZ)
+    para_∇F = zeros(FT, NR, NZ)
 
+    # Calculate parallel gradient for interior points
     if upwind
         # Upwind scheme based on flow velocity direction
         @inbounds for j in 2:NZ-1, i in 2:NR-1
@@ -577,37 +578,70 @@ function calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::B
             # R-direction contribution
             if abs(RP.plasma.ueR[i,j]) < eps_val
                 # Zero velocity: use central differencing for stability
-                para_grad_F[i,j] += RP.fields.bR[i,j] * (F[i+1,j] - F[i-1,j]) * (inv_dR * half)
+                para_∇F[i,j] += RP.fields.bR[i,j] * (F[i+1,j] - F[i-1,j]) * (inv_dR * half)
             elseif RP.plasma.ueR[i,j] > zero_FT
                 # Positive flow: backward difference (upwind)
-                para_grad_F[i,j] += RP.fields.bR[i,j] * (F[i,j] - F[i-1,j]) * inv_dR
+                para_∇F[i,j] += RP.fields.bR[i,j] * (F[i,j] - F[i-1,j]) * inv_dR
             else
                 # Negative flow: forward difference (upwind)
-                para_grad_F[i,j] += RP.fields.bR[i,j] * (F[i+1,j] - F[i,j]) * inv_dR
+                para_∇F[i,j] += RP.fields.bR[i,j] * (F[i+1,j] - F[i,j]) * inv_dR
             end
 
             # Z-direction contribution
             if abs(RP.plasma.ueZ[i,j]) < eps_val
                 # Zero velocity: use central differencing for stability
-                para_grad_F[i,j] += RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
+                para_∇F[i,j] += RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
             elseif RP.plasma.ueZ[i,j] > zero_FT
                 # Positive flow: backward difference (upwind)
-                para_grad_F[i,j] += RP.fields.bZ[i,j] * (F[i,j] - F[i,j-1]) * inv_dZ
+                para_∇F[i,j] += RP.fields.bZ[i,j] * (F[i,j] - F[i,j-1]) * inv_dZ
             else
                 # Negative flow: forward difference (upwind)
-                para_grad_F[i,j] += RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j]) * inv_dZ
+                para_∇F[i,j] += RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j]) * inv_dZ
             end
         end
     else
         # Central difference scheme for interior points
         # This is more accurate for smooth solutions but may have stability issues for advection-dominated flows
         @inbounds for j in 2:NZ-1, i in 2:NR-1
-            para_grad_F[i,j] = RP.fields.bR[i,j] * (F[i+1,j] - F[i-1,j]) * (inv_dR * half) +
+            para_∇F[i,j] = RP.fields.bR[i,j] * (F[i+1,j] - F[i-1,j]) * (inv_dR * half) +
                              RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
         end
     end
 
-    return para_grad_F
+    # Handle boundaries with one-sided differences
+    # Calculate R derivative contributions
+    @inbounds for j in 1:NZ
+        # Left boundary: forward difference
+        i = 1
+        para_∇F[i,j] += RP.fields.bR[i,j] * (F[i+1,j] - F[1,j]) * inv_dR
+        i = NR
+        # Right boundary: backward difference
+        para_∇F[i,j] += RP.fields.bR[i,j] * (F[i,j] - F[i-1,j]) * inv_dR
+    end
+    # Bottom and Top boundary: central difference
+    @inbounds for j in [1, NZ]
+        for i in 2:NR-1
+            para_∇F[i,j] += RP.fields.bR[i,j] * (F[i+1,j] - F[i-1,j]) * (inv_dR * half)
+        end
+    end
+
+    # Calculate Z derivative contributions
+    @inbounds for i in 1:NR
+        # Bottom boundary: forward difference
+        j = 1
+        para_∇F[i,j] += RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j]) * inv_dZ
+        # Top boundary: backward difference
+        j = NZ
+        para_∇F[i,j] += RP.fields.bZ[i,j] * (F[i,j] - F[i,j-1]) * inv_dZ
+    end
+    # Left and Right boundary: central difference
+    @inbounds for i in [1, NR]
+        for j in 2:NZ-1
+            para_∇F[i,j] += RP.fields.bZ[i,j] * (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
+        end
+    end
+
+    return para_∇F
 end
 
 
@@ -689,17 +723,32 @@ function calculate_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::Bool=R
     end
 
     # Handle boundaries with one-sided differences
+    # Calculate R derivative contributions
     @inbounds for j in 1:NZ
         # Left boundary: forward difference
         ∇F_R[1,j] = (F[2,j] - F[1,j]) * inv_dR
         # Right boundary: backward difference
         ∇F_R[NR,j] = (F[NR,j] - F[NR-1,j]) * inv_dR
     end
+    # Bottom and Top boundary: central difference
+    @inbounds for j in [1, NZ]
+        for i in 2:NR-1
+            ∇F_R[i,j] = (F[i+1,j] - F[i-1,j]) * (inv_dR * half)
+        end
+    end
+
+    # Calculate Z derivative contributions
     @inbounds for i in 1:NR
         # Bottom boundary: forward difference
         ∇F_Z[i,1] = (F[i,2] - F[i,1]) * inv_dZ
         # Top boundary: backward difference
         ∇F_Z[i,NZ] = (F[i,NZ] - F[i,NZ-1]) * inv_dZ
+    end
+    # Left and Right boundary: central difference
+    @inbounds for i in [1, NR]
+        for j in 2:NZ-1
+            ∇F_Z[i,j] = (F[i,j+1] - F[i,j-1]) * (inv_dZ * half)
+        end
     end
 
     return ∇F_R, ∇F_Z

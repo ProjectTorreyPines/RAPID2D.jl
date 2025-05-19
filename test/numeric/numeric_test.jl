@@ -50,16 +50,15 @@ using RAPID2D
     ∇F_R, ∇F_Z = RAPID2D.calculate_grad_of_scalar_F(RP, F_test; upwind=false)
     tmp_para_∇F = @. ∇F_R*RP.fields.bR + ∇F_Z*RP.fields.bZ;
     para_∇F = RAPID2D.calculate_para_grad_of_scalar_F(RP, F_test; upwind=false)
-    @test isapprox(∇F_R[2:end-1, 2:end-1], expected_∇F_R[2:end-1, 2:end-1], rtol=1e-3)
-    @test isapprox(∇F_Z[2:end-1, 2:end-1], expected_∇F_Z[2:end-1, 2:end-1], rtol=1e-3)
-    @test isapprox(tmp_para_∇F[2:end-1, 2:end-1], para_∇F[2:end-1,2:end-1], rtol=1e-10)
+    @test isapprox(∇F_R, expected_∇F_R, rtol=1e-2)
+    @test isapprox(∇F_Z, expected_∇F_Z, rtol=1e-2)
+    @test isapprox(tmp_para_∇F, para_∇F, rtol=1e-10)
 
     # Calculate gradients using our function (with upwind)
     ∇F_R, ∇F_Z = RAPID2D.calculate_grad_of_scalar_F(RP, F_test; upwind=true)
     tmp_para_∇F = @. ∇F_R*RP.fields.bR + ∇F_Z*RP.fields.bZ;
     para_∇F = RAPID2D.calculate_para_grad_of_scalar_F(RP, F_test; upwind=true)
-    @test isapprox(∇F_R[2:end-1, 2:end-1], expected_∇F_R[2:end-1, 2:end-1], rtol=1e-2)
-    @test isapprox(∇F_Z[2:end-1, 2:end-1], expected_∇F_Z[2:end-1, 2:end-1], rtol=1e-2)
-    @test isapprox(tmp_para_∇F[2:end-1, 2:end-1], para_∇F[2:end-1,2:end-1], rtol=1e-10)
-
+    @test isapprox(∇F_R, expected_∇F_R, rtol=1e-2)
+    @test isapprox(∇F_Z, expected_∇F_Z, rtol=1e-2)
+    @test isapprox(tmp_para_∇F, para_∇F, rtol=1e-10)
 end
