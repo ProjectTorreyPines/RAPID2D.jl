@@ -12,6 +12,8 @@ else
     include("utils/utils_test.jl")
     include("numeric/numeric_test.jl")
     include("reactions/RRCs_test.jl")
-    include("physics/diffusion_test.jl")
+
     include("physics/convection_test.jl")
+    include("physics/diffusion_test.jl")
+    include("physics/physics_test.jl")
 end

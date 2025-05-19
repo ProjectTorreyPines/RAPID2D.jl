@@ -161,7 +161,7 @@ end
     @test !all(RP.operators.neRHS_convec[inside_idx] .== 0.0)
 end
 
-@testset "Convection only test" begin
+@testset "Pure Convection Test: with constant ue_para" begin
     FT = Float64
     # Create simulation configuration
     config = SimulationConfig{FT}(
@@ -299,7 +299,7 @@ end
     @test !isapprox(RP_explicit.plasma.ne, RP_implicit_1.plasma.ne, rtol=1e-12) # not the same
 end
 
-@testset "Diffusion only test" begin
+@testset "Pure Diffusion Test" begin
     FT = Float64
     # Create simulation configuration
     config = SimulationConfig{FT}(
@@ -407,6 +407,82 @@ end
     end
 end
 
+@testset "Free Accel & Heating Test: no collision" begin
+    FT = Float64
+    # Create simulation configuration
+    config = SimulationConfig{FT}(
+        NR=50, NZ=70,
+        R_min=0.8, R_max=2.2,
+        Z_min=-1.2, Z_max=1.2,
+        dt=1e-6, t_end_s=100e-6,
+        R0B0=1.0,
+        Dpara0=0.0, Dperp0=0.0,
+        prefilled_gas_pressure=5e-3,
+        wall_R=[1.0, 2.0, 2.0, 1.0],
+        wall_Z=[-1.0, -1.0, 1.0, 1.0]
+    )
+
+    # Create RAPID object
+    RP = RAPID{FT}(config)
+
+    RP.flags = SimulationFlags(
+        ud_evolve=true,
+        ud_method="Xsec",
+        Te_evolve=false,
+        Ti_evolve=false,
+        # Disable unnecessary flags for this test
+        src=false, diffu=false, convec=false, Ampere=false,
+        E_para_self_ES=false, E_para_self_EM=false, Gas_evolve=false,
+        update_ni_independently=false, Include_ud_convec_term=false,
+        Coulomb_Collision=false, negative_n_correction=false
+    )
+
+    # Initial conditions: Gaussian electron density distribution centered in domain
+    R0 = (config.R_min + config.R_max) / 2
+    Z0 = (config.Z_min + config.Z_max) / 2
+    sigma_R = 0.1
+    sigma_Z = 0.1
+    peak_density = 1.0e6  # Peak density [m^-3]
+
+    initialize!(RP)
+    # Initialize electron density
+    ini_ne = zeros(FT, RP.G.NR, RP.G.NZ)
+    for i in 1:RP.G.NR, j in 1:RP.G.NZ
+        R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
+        ini_ne[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
+    end
+
+    function _set_initial_conditions!(RP, ini_ne, ini_BR_ext, ini_BZ_ext)
+        RP.plasma.ne = copy(ini_ne)
+        RP.fields.BR_ext .= copy(ini_BR_ext)
+        RP.fields.BZ_ext .= copy(ini_BZ_ext)
+        RAPID2D.combine_external_and_self_fields!(RP)
+    end
+
+    # Free acceleration
+    for RP.flags.Implicit in [false, true]
+        RP.flags.Implicit =true
+        RP.flags.Atomic_Collision = false
+        RP.flags.Damp_Transp_outWall = false
+        initialize!(RP)
+        _set_initial_conditions!(RP, ini_ne, 10.0e-4, 10.0e-4)
+
+        RAPID2D.run_simulation!(RP);
+
+        # Expected ue_para by free acceleration
+        cnst = RP.config.constants
+        ee = cnst.ee
+        me = cnst.me
+        mi = cnst.mi
+        accel = @. -ee*RP.fields.E_para_ext/me
+        avg_accel = sum(@. ini_ne*accel)/sum(ini_ne)
+        expected_avg_ue_para =avg_accel*RP.config.t_end_s
+
+        # Check the actual ue_para
+        actual_avg_ue_para = sum(RP.plasma.ne.*RP.plasma.ue_para)/sum(RP.plasma.ne)
+
+        @test isapprox(actual_avg_ue_para, expected_avg_ue_para; rtol=0.01) # 1% error
+    end
+
 
 end
-
