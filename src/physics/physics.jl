@@ -468,7 +468,7 @@ convection term for explicit time stepping.
 """
 function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.Implicit
-        update_An_convection_operator!(RP)
+        update_Ane_convection_operator!(RP)
         RP.operators.neRHS_convec[:] = RP.operators.An_convec * RP.plasma.ne[:]
     else
         # For explicit method, calculate convection term directly
