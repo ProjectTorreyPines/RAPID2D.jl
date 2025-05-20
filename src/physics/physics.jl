@@ -110,7 +110,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
         if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei = -mom_eff_nu_ei * ((one_FT - θu) * pla.ue_para - pla.ui_para)
+            @. pla.Rue_ei = mom_eff_nu_ei * (pla.ui_para - (one_FT - θu) * pla.ue_para)
         end
 
         # Advance ue_para using implicit or explicit method
@@ -171,7 +171,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
         # Complete the Rue_ei calculation with second part (n+1 step contribution)
         if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei -= mom_eff_nu_ei * (θu * pla.ue_para)
+            @. pla.Rue_ei += mom_eff_nu_ei * (-θu * pla.ue_para)
         end
     else
         error("Unknown electron drift velocity method: $(RP.flags.ud_method)")
@@ -188,41 +188,54 @@ Update the parallel ion velocity.
 function update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     if RP.flags.ud_method == "Xsec"
         # Use cross sections for ion velocity update
+        # Alias
+        cnst = RP.config.constants
+        pla = RP.plasma
 
-        # Get ion reaction rate coefficients
-        iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
-        iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
+        eff_atomic_coll_freq = zeros(FT, size(pla.ui_para))
+        if RP.flags.Atomic_Collision
+            # Get ion reaction rate coefficients
+            iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
+            iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
 
-        # Add ionization contribution if source terms are enabled
-        if RP.flags.src
-            eRRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-        else
-            eRRC_iz = 0.0
+            # Add ionization contribution if source terms are enabled
+            if RP.flags.src
+                eRRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
+            else
+                eRRC_iz = 0.0
+            end
+
+            # Calculate effective atomic collision frequency
+            # Note: 0.5 factor for elastic collisions because they only lose half of momentum
+            eff_atomic_coll_freq = @. pla.n_H2_gas * (
+                FT(0.5) * iRRC_elastic + iRRC_cx + pla.Zeff * eRRC_iz
+            )
+
+            # NOTE: convection and pressure contribution are ignored for ions
+            # TODO: Add pressure and convection terms for ions if needed, check Zeff effects
+
+            # Fix any NaN values
+            replace!(eff_atomic_coll_freq, NaN => 0.0)
         end
 
-        # Calculate effective atomic collision frequency
-        # Note: 0.5 factor for elastic collisions because they only lose half of momentum
-        eff_atomic_coll_freq = @. RP.plasma.n_H2_gas * (
-            0.5 * iRRC_elastic + iRRC_cx + RP.plasma.Zeff * eRRC_iz
-        )
-
-        # Fix any NaN values
-        replace!(eff_atomic_coll_freq, NaN => 0.0)
-
         # Calculate acceleration from electric field
-        qi = RP.config.ee
+        qi = cnst.ee
 
         # Apply backward Euler time integration
-        th = 1.0  # Backward Euler
-        @. RP.plasma.ui_para = (RP.plasma.ui_para * (1 - (1-th) * RP.dt * eff_atomic_coll_freq) +
-                              RP.dt * qi * RP.fields.E_para_tot / RP.config.mi) /
-                              (1 + th * RP.dt * eff_atomic_coll_freq)
+        one_FT = one(FT)
+        θ = one_FT  # Backward Euler
+        @. pla.ui_para = (pla.ui_para * (one_FT - (one_FT-θ) * RP.dt * eff_atomic_coll_freq) +
+                              RP.dt * qi * RP.fields.E_para_tot / cnst.mi) /
+                              (one_FT + θ * RP.dt * eff_atomic_coll_freq)
 
         # Add electron-ion momentum transfer effect
         if RP.flags.Coulomb_Collision
-            Rui_ei = @. -(RP.config.me / RP.config.mi) * RP.plasma.Zeff * RP.plasma.ν_ei *
-                     (RP.plasma.ue_para - RP.plasma.ui_para)
-            RP.plasma.ui_para .+= RP.dt * Rui_ei
+            if RP.flags.Spitzer_Resistivity
+                @. Rui_ei = pla.sptz_fac*(cnst.me/cnst.mi)* pla.ν_ei * (pla.ue_para - pla.ui_para)
+            else
+                @. Rui_ei = (cnst.me/cnst.mi)*pla.ν_ei * (pla.ue_para - pla.ui_para)
+            end
+            pla.ui_para .+= RP.dt * Rui_ei
         end
     else
         error("Ion velocity update only implemented for ud_method = Xsec")
