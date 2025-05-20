@@ -2,7 +2,6 @@ using RAPID2D
 using LinearAlgebra
 using SparseArrays
 using Test
-using BenchmarkTools
 
 @testset "Diffusion operator [∇𝐃∇] - Explicit vs Implicit" begin
     # Define test parameters

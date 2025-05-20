@@ -1,7 +1,8 @@
 using Test
 using RAPID2D
 
-if !isempty(ARGS)
+if !isempty(ARGS) && !(length(ARGS) == 1 && ARGS[1] == "")
+    println(ARGS)
     for testfile in ARGS
         @info "Running test file: $testfile"
         include(testfile)
@@ -11,9 +12,8 @@ else
     include("io/io_test.jl")
     include("utils/utils_test.jl")
     include("numeric/numeric_test.jl")
+    include("operators/operators_test.jl")
     include("reactions/RRCs_test.jl")
 
-    include("physics/convection_test.jl")
-    include("physics/diffusion_test.jl")
     include("physics/physics_test.jl")
 end
