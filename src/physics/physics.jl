@@ -95,48 +95,69 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         end
 
         # Ensure no NaN values in collision frequency
-        replace!(tot_coll_freq, NaN => zero_FT)
+        if(any(isnan.(tot_coll_freq)))
+            @warn "NaN values in collision frequency detected. Replacing with zero."
+            # Replace NaN values with zero
+            tot_coll_freq[isnan.(tot_coll_freq)] .= zero_FT
+            # replace!(tot_coll_freq, NaN => zero_FT)
+        end
 
 
-
-        # Always use backward Euler for collision term (θ_imp=1.0) for better saturation
+        # Always use backward Euler for ue_para (θu=1.0) for better saturation
         # but keep the formula structure compatible with variable θ_imp
-        θ_imp = one_FT
+        # θu = RP.flags.Implicit_weight
+        θu = one_FT
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
         if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei = -mom_eff_nu_ei * ((one_FT - θ_imp) * pla.ue_para - pla.ui_para)
+            @. pla.Rue_ei = -mom_eff_nu_ei * ((one_FT - θu) * pla.ue_para - pla.ui_para)
         end
 
         # Advance ue_para using implicit or explicit method
         if RP.flags.Implicit
             # Implicit scheme implementation
-            impFac = RP.flags.Implicit_weight
+            OP = RP.operators
+            @. OP.A_LHS = OP.II
 
-            accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
+            # #1: Electric acceleartion term [qe*E_para_tot/me]
+            accel_para_tilde = qe * F.E_para_tot / me
 
-
-            accel_para_tilde = zeros(FT, size(pla.ue_para))
-            # Add electric field acceleration
-            @. accel_para_tilde += qe * F.E_para_tot / me
-            # Add ion drag contribution
-            @. accel_para_tilde += mom_eff_nu_ei * pla.ui_para
-
-            if RP.flags.Include_ud_convec_term && impFac > zero_FT
-                # Full implicit implementation with convection would need matrix solution
-                # For now, we use a simplified approach
-                @warn "Full matrix implicit scheme with convection not implemented, using simplified approach" maxlog=1
+            # #2: Advection term (1-θ)*[-(𝐮⋅∇)*ue_para]
+            if RP.flags.Include_ud_convec_term
+                update_𝐮∇_operator!(RP)
+                @views accel_para_tilde[:] .+= (one_FT - θu) * (-OP.A_𝐮∇ * pla.ue_para[:])
+                @. OP.A_LHS += θu * dt * OP.A_𝐮∇
             end
 
-            # Apply implicit time integration matching MATLAB implementation
-            @. pla.ue_para = (pla.ue_para * (one_FT - (one_FT-θ_imp) * tot_coll_freq * dt) +
-                                   accel_para_tilde * dt) /
-                                   (one_FT + θ_imp * tot_coll_freq * dt)
+            # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
+            accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
+
+            # #4: collision drag force  (1-θ)*[-(ν_tot)*ue_para]
+            @. accel_para_tilde += (one_FT - θu) * (-tot_coll_freq * pla.ue_para)
+
+            diag_indices = diagind(OP.A_LHS)
+            @. @views OP.A_LHS[diag_indices] += θu * dt * tot_coll_freq[:]
+
+            # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
+            @. accel_para_tilde += (mom_eff_nu_ei * pla.ui_para)
+
+            # #6: turbulent Diffusive term by ExB mixing
+            if RP.flags.Include_ud_diffu_term
+                @warn "Turbulent diffusion term not implemented yet" maxlog=1
+                @. accel_para_tilde += (one_FT - θu) * (OP.A_𝐮_diffu * pla.ue_para[:])
+                @. OP.A_LHS += θu * dt * OP.A_𝐮_diffu
+            end
+
+            # Set-up the RHS
+            @. OP.RHS = pla.ue_para + dt * accel_para_tilde
+
+            # Solve the momentum equation
+            @views pla.ue_para[:] .= OP.A_LHS \ OP.RHS[:]
         else
 
-            inv_factor = @. one_FT / (one_FT + θ_imp * tot_coll_freq * dt)
+            inv_factor = @. one_FT / (one_FT + θu * tot_coll_freq * dt)
             @. pla.ue_para = inv_factor*(
-                                    pla.ue_para * (one_FT-(one_FT-θ_imp)*dt*tot_coll_freq)
+                                    pla.ue_para * (one_FT-(one_FT-θu)*dt*tot_coll_freq)
                                     + dt * (qe * F.E_para_tot / me + mom_eff_nu_ei * pla.ui_para)
                                 )
 
@@ -150,7 +171,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
         # Complete the Rue_ei calculation with second part (n+1 step contribution)
         if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei -= mom_eff_nu_ei * (θ_imp * pla.ue_para)
+            @. pla.Rue_ei -= mom_eff_nu_ei * (θu * pla.ue_para)
         end
     else
         error("Unknown electron drift velocity method: $(RP.flags.ud_method)")
