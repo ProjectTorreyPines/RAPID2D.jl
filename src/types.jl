@@ -154,6 +154,8 @@ Contains the plasma state variables including density, temperature, and velocity
     # Current densities
     Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
 
+    eGrowth_rate::Matrix{FT} = zeros(FT, dims) # Electron growth rate [1/s]
+
     # Power sources/sinks
     ePowers::Dict{Symbol, Matrix{FT}} = Dict{Symbol, Matrix{FT}}(
         :tot => zeros(FT, dims),

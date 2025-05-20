@@ -214,6 +214,7 @@ end
         # Gaussian density profile
         ini_ne[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
+    ini_ne[RP.G.nodes.out_wall_nids] .= 0.0
 
     ini_ue_para = 1e6 # Initial drift velocity [m/s]
     ini_BR_ext = 10e-4
@@ -352,6 +353,7 @@ end
         # Gaussian density profile
         ini_ne[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
+    ini_ne[RP.G.nodes.out_wall_nids] .= 0.0
 
     function _set_initial_conditions!(RP, ini_ne, ini_BR_ext, ini_BZ_ext)
         RP.plasma.ne = copy(ini_ne)
@@ -451,6 +453,7 @@ end
         R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
         ini_n[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
+    ini_n[RP.G.nodes.out_wall_nids] .= 0.0
 
     function _set_initial_conditions!(RP, ini_n, ini_BR_ext, ini_BZ_ext)
         RP.plasma.ne = copy(ini_n)
@@ -491,4 +494,107 @@ end
         @test isapprox(actual_avg_ui_para, expected_avg_ui_para; rtol=0.01) # 1% error
     end
 
+end
+
+@testset "Ionization Test without any transport" begin
+    FT = Float64
+    # Create simulation configuration
+    config = SimulationConfig{FT}(
+        NR=50, NZ=70,
+        R_min=0.8, R_max=2.2,
+        Z_min=-1.2, Z_max=1.2,
+        dt=1e-6, t_end_s=100e-6,
+        R0B0=1.0,
+        Dpara0=0.0, Dperp0=0.0,
+        prefilled_gas_pressure=5e-3,
+        wall_R=[1.0, 2.0, 2.0, 1.0],
+        wall_Z=[-1.0, -1.0, 1.0, 1.0]
+    )
+
+    # Create RAPID object
+    RP = RAPID{FT}(config)
+
+    RP.flags = SimulationFlags(
+        src = true,
+        # Disable other flags for this test
+        ud_evolve=false,
+        ud_method="Xsec",
+        Te_evolve=false,
+        Ti_evolve=false,
+        # Disable unnecessary flags for this test
+        diffu=false, convec=false, Ampere=false,
+        E_para_self_ES=false, E_para_self_EM=false, Gas_evolve=false,
+        update_ni_independently=false, Include_ud_convec_term=false,
+        Coulomb_Collision=false, negative_n_correction=false
+    )
+
+    # Initial conditions: Gaussian electron density distribution centered in domain
+    R0 = (config.R_min + config.R_max) / 2
+    Z0 = (config.Z_min + config.Z_max) / 2
+    sigma_R = 0.1
+    sigma_Z = 0.1
+    peak_density = 1.0e6  # Peak density [m^-3]
+
+    initialize!(RP)
+    # Initialize electron density
+    ini_n = zeros(FT, RP.G.NR, RP.G.NZ)
+    for i in 1:RP.G.NR, j in 1:RP.G.NZ
+        R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
+        ini_n[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
+    end
+    ini_n[RP.G.nodes.out_wall_nids] .= 0.0
+
+    function _set_initial_conditions!(RP, ini_n, ini_BR_ext, ini_BZ_ext)
+        RP.plasma.ne = copy(ini_n)
+        RP.plasma.ni = copy(ini_n)
+        RP.fields.BR_ext .= copy(ini_BR_ext)
+        RP.fields.BZ_ext .= copy(ini_BZ_ext)
+        RAPID2D.combine_external_and_self_fields!(RP)
+    end
+
+
+    RP.flags.Atomic_Collision = true
+    RP.flags.Include_ud_diffu_term = false
+    RP.flags.Ionz_method = "Xsec"
+
+    # Very low Te (0.1eV) => No ionization
+    for RP.flags.Implicit in [false, true]
+        initialize!(RP)
+        _set_initial_conditions!(RP, ini_n, 1e-4, 1e-4)
+        RP.plasma.Te_eV .= 0.1
+        RAPID2D.run_simulation!(RP);
+        @test all(RP.plasma.eGrowth_rate .== 0.0)
+        @test all(RP.operators.neRHS_src .== 0.0)
+        @test ini_n == RP.plasma.ne
+    end
+
+    # Sufficient Te (10 eV) => Ionization => density growth
+    # Explicit method
+    RP.flags.Implicit = false
+    initialize!(RP)
+    _set_initial_conditions!(RP, ini_n, 1e-4, 1e-4)
+    RP.plasma.Te_eV .= 10.0
+    RAPID2D.run_simulation!(RP);
+    explicit_plasma = deepcopy(RP.plasma)
+
+    # Implicit method (θ=0)
+    RP.flags.Implicit = true
+    RP.flags.Implicit_weight = 0.0
+    initialize!(RP)
+    _set_initial_conditions!(RP, ini_n, 1e-4, 1e-4)
+    RP.plasma.Te_eV .= 10.0
+    RAPID2D.run_simulation!(RP);
+    implicit_plasma_zeroθ = deepcopy(RP.plasma)
+
+    # Implicit method (θ=1)
+    RP.flags.Implicit = true
+    RP.flags.Implicit_weight = 1.0
+    initialize!(RP)
+    _set_initial_conditions!(RP, ini_n, 1e-4, 1e-4)
+    RP.plasma.Te_eV .= 10.0
+    RAPID2D.run_simulation!(RP);
+    implicit_plasma_oneθ = deepcopy(RP.plasma)
+
+    @test isequal(explicit_plasma.ne, implicit_plasma_zeroθ.ne) # exactly the same
+    @test isapprox(explicit_plasma.ne, implicit_plasma_oneθ.ne, rtol=1e-3)
 end

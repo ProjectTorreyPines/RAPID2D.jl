@@ -451,27 +451,27 @@ function calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
                exp(-95 * RP.config.prefilled_gas_pressure / abs(RP.fields.E_para_tot))
 
         # Electron growth rate
-        eGrowth_rate = @. α * abs(RP.plasma.ue_para)
+        RP.plasma.eGrowth_rate = @. α * abs(RP.plasma.ue_para)
     elseif RP.flags.Ionz_method == "Xsec"
         # Method based on temperature, drift velocity and distribution function
         RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
 
         # Growth rate = density * reaction rate
-        eGrowth_rate = @. RP.plasma.n_H2_gas * RRC_iz
+        RP.plasma.eGrowth_rate = @. RP.plasma.n_H2_gas * RRC_iz
     else
         error("Unknown ionization method: $(RP.flags.Ionz_method)")
     end
 
     # # Zero out the growth rate outside the wall
     # eGrowth_rate[RP.G.nodes.out_wall_nids] .= 0.0
-
     # Store the right-hand side source term
-    RP.operators.neRHS_src .= RP.plasma.ne .* eGrowth_rate
+    RP.operators.neRHS_src .= RP.plasma.ne .* RP.plasma.eGrowth_rate
 
     # Update sparse matrix operator for implicit methods if needed
     if RP.flags.Implicit
         # Create diagonal matrix with electron growth rate
-        RP.operators.An_src = spdiagm(0 => eGrowth_rate[:])
+        diagnoal_indices = diagind(RP.operators.An_src)
+        @. @views RP.operators.An_src[diagnoal_indices] = RP.plasma.eGrowth_rate[:]
     end
 end
 
