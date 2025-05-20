@@ -450,7 +450,7 @@ diffusion term for explicit time stepping.
 """
 function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.Implicit
-        update_∇𝐃∇_operator(RP)
+        update_∇𝐃∇_operator!(RP)
         RP.operators.neRHS_diffu[:] = RP.operators.An_diffu * RP.plasma.ne[:]
     else
         # For explicit method, calculate diffusion term directly

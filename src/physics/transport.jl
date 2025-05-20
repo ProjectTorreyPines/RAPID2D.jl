@@ -320,14 +320,14 @@ Initialize the sparse matrix representation of the diffusion operator [∇𝐃�
 # Notes
 - This function first creates the sparsity pattern and then updates the values
 - Uses `allocate_∇𝐃∇_operator_pattern` to create the matrix structure
-- Uses `update_∇𝐃∇_operator` to populate the non-zero values
+- Uses `update_∇𝐃∇_operator!` to populate the non-zero values
 """
 function initialize_diffusion_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # create a sparse matrix with the sparisty pattern
     allocate_∇𝐃∇_operator_pattern(RP)
 
     # update the diffusion operator's non-zero entries with the actual values
-    update_∇𝐃∇_operator(RP)
+    update_∇𝐃∇_operator!(RP)
 
     return RP
 end
@@ -480,7 +480,7 @@ function allocate_∇𝐃∇_operator_pattern(RP::RAPID{FT}) where {FT<:Abstract
 end
 
 """
-    update_∇𝐃∇_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_∇𝐃∇_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update the non-zero entries of the diffusion operator matrix based on the current state of the RAPID object.
 # Arguments
@@ -493,7 +493,7 @@ Update the non-zero entries of the diffusion operator matrix based on the curren
 - The function assumes that the diffusion operator matrix has already been initialized with the correct sparsity pattern.
 - The function updates the non-zero entries of the matrix based on the current state of the RAPID object.
 """
-function update_∇𝐃∇_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_∇𝐃∇_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @assert !isempty(RP.operators.An_diffu.nzval) "Diffusion operator not initialized"
 
     # Alias necessary fields from the RP object
@@ -809,7 +809,7 @@ function construct_Ane_convection_operator(
 end
 
 """
-    initialize_Ane_convection_operator(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+    initialize_Ane_convection_operator!(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
 Initialize the sparse matrix representation of the convection operator [-∇⋅(nv)] with proper structure and values.
 
@@ -822,12 +822,12 @@ Initialize the sparse matrix representation of the convection operator [-∇⋅(
 
 # Notes
 - This function first creates the sparsity pattern and then updates the values
-- Uses `allocate_Ane_convection_operator_pattern` to create the matrix structure
+- Uses `allocate_Ane_convection_operator_pattern!` to create the matrix structure
 - Uses `update_Ane_convection_operator` to populate the non-zero values
 """
-function initialize_Ane_convection_operator(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+function initialize_Ane_convection_operator!(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
     # create a sparse matrix with the sparisty pattern
-    allocate_Ane_convection_operator_pattern(RP)
+    allocate_Ane_convection_operator_pattern!(RP)
 
     # update the convection operator's non-zero entries with the actual values
     update_Ane_convection_operator!(RP; flag_upwind=flag_upwind)
@@ -836,7 +836,7 @@ function initialize_Ane_convection_operator(RP::RAPID{FT}; flag_upwind::Bool=RP.
 end
 
 """
-    allocate_Ane_convection_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    allocate_Ane_convection_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Create a sparse matrix with the sparsity pattern for the convection operator [-∇⋅(nv)]
 without computing coefficient values.
@@ -849,10 +849,10 @@ without computing coefficient values.
 
 # Notes
 - This function only creates the sparsity pattern (non-zero locations) without computing the actual coefficients
-- The function is called by `initialize_Ane_convection_operator` to set up the structure before filling in values
+- The function is called by `initialize_Ane_convection_operator!` to set up the structure before filling in values
 - Supports both upwind and central differencing schemes
 """
-function allocate_Ane_convection_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function allocate_Ane_convection_operator_pattern!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields
     G = RP.G
     NR, NZ = G.NR, G.NZ

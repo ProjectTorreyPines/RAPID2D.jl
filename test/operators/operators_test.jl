@@ -121,7 +121,7 @@ end
 
             # Calculate implicit convection using RAPID2D's internal way that can update the operator more efficiently
             # This is useful for large simulations where we want to avoid re-creating the operator
-            RAPID2D.initialize_Ane_convection_operator(RP; flag_upwind)
+            RAPID2D.initialize_Ane_convection_operator!(RP; flag_upwind)
             implicit_result2 = reshape(RP.operators.An_convec * test_density[:], NR, NZ)
 
             # compare if two methods give the same operatoryy
@@ -165,7 +165,7 @@ end
         An_convec = RAPID2D.construct_Ane_convection_operator(RP, uR, uZ; flag_upwind=true)
         implicit_result = reshape(An_convec * test_density[:], NR, NZ)
 
-        RAPID2D.initialize_Ane_convection_operator(RP; flag_upwind=true)
+        RAPID2D.initialize_Ane_convection_operator!(RP; flag_upwind=true)
         implicit_result2 = reshape(RP.operators.An_convec * test_density[:], NR, NZ)
 
         @test isapprox(explicit_result, implicit_result, rtol=1e-10)
