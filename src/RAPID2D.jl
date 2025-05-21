@@ -22,6 +22,7 @@ include("constants.jl")
 include("types.jl")
 include("initialization.jl")
 include("numerics/numerics.jl")
+include("numerics/operators.jl")
 
 # Include the field-related functionality
 include("physics/fields.jl")

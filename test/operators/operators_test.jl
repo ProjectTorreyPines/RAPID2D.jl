@@ -43,7 +43,7 @@ using Test
 
     # Calculate implicit diffusion using RAPID2D's internal way that can update the operator more efficiently
     # This is useful for large simulations where we want to avoid re-creating the operator
-    RAPID2D.initialize_diffusion_operator!(RP)
+    RAPID2D.initialize_∇𝐃∇_operator!(RP)
     implicit_result2 = reshape(RP.operators.An_diffu * test_density[:], NR, NZ)
 
     # compare if two methods give the same operatoryy
@@ -111,7 +111,7 @@ end
     for flag_upwind in [true, false]
         @testset "Upwind = $flag_upwind" begin
             # Calculate explicit convection term
-            RAPID2D.calculate_ne_convection_explicit_RHS(RP, test_density, uR, uZ; flag_upwind)
+            RAPID2D.calculate_ne_convection_explicit_RHS!(RP, test_density, uR, uZ; flag_upwind)
             explicit_result = copy(RP.operators.neRHS_convec)
 
             # Calculate implicit convection term
@@ -158,7 +158,7 @@ end
         RP.plasma.ueZ .= uZ
 
         # Test with upwind scheme (more stable for complex flows)
-        RAPID2D.calculate_ne_convection_explicit_RHS(RP, test_density, uR, uZ; flag_upwind=true)
+        RAPID2D.calculate_ne_convection_explicit_RHS!(RP, test_density, uR, uZ; flag_upwind=true)
         explicit_result = copy(RP.operators.neRHS_convec)
 
         An_convec = RAPID2D.construct_Ane_convection_operator(RP, uR, uZ; flag_upwind=true)
