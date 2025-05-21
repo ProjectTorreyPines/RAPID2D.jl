@@ -33,7 +33,9 @@ for stability and accuracy.
 
 
 # Export public functions
-export calculate_diffusion_coefficients!,
+export construct_∂R_operator, construct_∂Z_operator,
+       calculate_divergence, construct_𝐽⁻¹∂R_𝐽_operator,
+       calculate_diffusion_coefficients!,
        calculate_ne_diffusion_explicit_RHS!,
        construct_∇𝐃∇_operator,
        calculate_ne_convection_explicit_RHS!,
@@ -92,6 +94,184 @@ function calculate_ne_diffusion_explicit_RHS!(RP::RAPID{FT}, density::AbstractMa
     end
 
     return RP
+end
+
+function construct_∂R_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
+    # Alias necessary fields from the RP object
+    NR, NZ = G.NR, G.NZ
+    nid = G.nodes.nid
+    inv_dR = one(FT) / G.dR
+
+    # define constants with FT for type stability
+    half = FT(0.5)
+
+    # Pre-allocate arrays for sparse matrix construction
+    num_entries = (NR-2) * (NZ-2) * 2
+    I = zeros(Int, num_entries)  # Row indices
+    J = zeros(Int, num_entries)  # Column indices
+    V = zeros(FT, num_entries)   # Values (all zeros initially)
+
+    # Fill arrays for sparse matrix construction
+    k = 1
+    for j in 2:NZ-1
+        for i in 2:NR-1
+            # Set row indices
+            I[k:k+1] .= nid[i, j]
+            # East [i+1,j]
+            J[k] = nid[i+1, j]
+            V[k] = half * inv_dR
+            # West [i-1,j]
+            J[k+1] = nid[i-1, j]
+            V[k+1] = -half * inv_dR
+            k += 2
+        end
+    end
+
+    # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
+    return sparse(I, J, V, NR*NZ, NR*NZ)
+end
+
+function construct_𝐽⁻¹∂R_𝐽_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
+    # [(1/R)(∂/∂R)*(R f)] operator
+    NR, NZ = G.NR, G.NZ
+    nid = G.nodes.nid
+    Jacob = G.Jacob
+    inv_Jacob = G.inv_Jacob
+    inv_dR = one(FT) / G.dR
+
+    # define constants with FT for type stability
+    half = FT(0.5)
+
+    # Pre-allocate arrays for sparse matrix construction
+    num_entries = (NR-2) * (NZ-2) * 2
+    I = zeros(Int, num_entries)  # Row indices
+    J = zeros(Int, num_entries)  # Column indices
+    V = zeros(FT, num_entries)   # Values (all zeros initially)
+
+    # Fill arrays for sparse matrix construction
+    k = 1
+    for j in 2:NZ-1
+        for i in 2:NR-1
+            # Set row indices
+            I[k:k+1] .= nid[i, j]
+            # East [i+1,j]
+            J[k] = nid[i+1, j]
+            V[k] = (inv_Jacob[i,j]* half * inv_dR) * Jacob[i+1,j]
+            # West [i-1,j]
+            J[k+1] = nid[i-1, j]
+            V[k+1] = -(inv_Jacob[i,j]* half * inv_dR) * Jacob[i-1,j]
+            k += 2
+        end
+    end
+
+    # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
+    return sparse(I, J, V, NR*NZ, NR*NZ)
+end
+
+function construct_∂Z_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
+    # Alias necessary fields from the RP object
+    NR, NZ = G.NR, G.NZ
+    nid = G.nodes.nid
+    inv_dZ = one(FT) / G.dZ
+
+    # define constants with FT for type stability
+    half = FT(0.5)
+
+    # Pre-allocate arrays for sparse matrix construction
+    num_entries = (NR-2) * (NZ-2) * 2
+    I = zeros(Int, num_entries)  # Row indices
+    J = zeros(Int, num_entries)  # Column indices
+    V = zeros(FT, num_entries)   # Values (all zeros initially)
+
+    # Fill arrays for sparse matrix construction
+    k = 1
+    for j in 2:NZ-1
+        for i in 2:NR-1
+            # Set row indices
+            I[k:k+1] .= nid[i, j]
+            # North [i,j+1]
+            J[k] = nid[i, j+1]
+            V[k] = half * inv_dZ
+            # South [i,j-1]
+            J[k+1] = nid[i, j-1]
+            V[k+1] = -half * inv_dZ
+            k += 2
+        end
+    end
+
+    # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
+    return sparse(I, J, V, NR*NZ, NR*NZ)
+end
+
+@inline function calculate_divergence(OP::Operators{FT},
+                    vecR::AbstractVector{FT}, vecZ::AbstractVector{FT}) where {FT<:AbstractFloat}
+    @assert size(vecR) == size(vecZ) "Vector sizes do not match"
+    @assert prod(OP.dims) == length(vecR) "Operator and vector sizes do not match"
+
+    return OP.A_𝐽⁻¹∂R_𝐽*vecR .+ OP.A_∂Z*vecZ
+end
+
+@inline function calculate_divergence(OP::Operators{FT},
+    vecR::AbstractMatrix{FT}, vecZ::AbstractMatrix{FT}) where {FT<:AbstractFloat}
+    @assert size(vecR) == size(vecZ) "Matrix sizes do not match"
+    @assert OP.dims == size(vecR) "Operator and vector sizes do not match"
+
+    return reshape(OP.A_𝐽⁻¹∂R_𝐽*@view(vecR[:]) .+ OP.A_∂Z*@view(vecZ[:]), OP.dims)
+end
+
+
+"""
+    calculate_divergence(
+        G::GridGeometry{FT},
+        𝐯R::AbstractMatrix{FT},
+        𝐯Z::AbstractMatrix{FT}
+        ) where {FT<:AbstractFloat}
+
+Calculate the divergence of a vector field F = [𝐯R, 𝐯Z] in cylindrical coordinates.
+div(F) = (1/𝐽)∂(𝐽 𝐯R)/∂R + ∂(𝐯Z)/∂Z, where 𝐽 is the Jacobian.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+- `𝐯R::AbstractMatrix{FT}`: The radial component of the vector field
+- `𝐯Z::AbstractMatrix{FT}`: The vertical component of the vector field
+
+# Returns
+- `result`: divergence of the vector field F at each grid point
+
+# Notes
+- Uses 2nd order central differencing
+- Accounts for the Jacobian in the divergence calculation: ∇·F = (1/J)∂(JFᵢ)/∂xᵢ
+"""
+function calculate_divergence(
+        G::GridGeometry{FT},
+        𝐯R::AbstractMatrix{FT},
+        𝐯Z::AbstractMatrix{FT}
+    ) where {FT<:AbstractFloat}
+
+    # Alias necessary fields 𝐯Rom the RP object
+    Jacob = G.Jacob
+    inv_Jacob = G.inv_Jacob
+    NR, NZ = G.NR, G.NZ
+
+    # Precompute inverse values for faster calculation
+    half_inv_dR = FT(0.5) / G.dR
+    half_inv_dZ = FT(0.5) / G.dZ
+
+    # Ensure the result array is properly initialized
+    result = zeros(FT, NR, NZ)
+
+    # 2nd order central differencing
+    @inbounds for j in 2:NZ-1
+        for i in 2:NR-1
+            # Apply central difference formula with Jacobian
+            result[i, j] = inv_Jacob[i, j] * (
+                    (Jacob[i+1, j] * 𝐯R[i+1, j] - Jacob[i-1, j] * 𝐯R[i-1, j]) * half_inv_dR +
+                    (Jacob[i, j+1] * 𝐯Z[i, j+1] - Jacob[i, j-1] * 𝐯Z[i, j-1]) * half_inv_dZ
+                )
+        end
+    end
+
+    return result
 end
 
 """

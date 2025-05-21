@@ -173,6 +173,11 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Create properly sized operators object
     RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
 
+    # Construct basic differntial operators
+    RP.operators.A_∂R = construct_∂R_operator(RP.G)
+    RP.operators.A_𝐽⁻¹∂R_𝐽 = construct_𝐽⁻¹∂R_𝐽_operator(RP.G)
+    RP.operators.A_∂Z = construct_∂Z_operator(RP.G)
+
     if RP.flags.diffu
         initialize_∇𝐃∇_operator!(RP)
     end
