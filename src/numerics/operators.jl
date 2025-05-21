@@ -6,6 +6,11 @@ primarily focusing on discretizations of diffusion, convection, and advection te
 for plasma transport equations.
 
 Key functionalities include:
+- Basic differential operators for cylindrical coordinates:
+    - `construct_∂R_operator`: Builds the radial derivative operator (∂/∂R).
+    - `construct_∂Z_operator`: Builds the vertical derivative operator (∂/∂Z).
+    - `construct_𝐽⁻¹∂R_𝐽_operator`: Constructs the divergence-preserving radial derivative.
+    - `calculate_divergence`: Computes vector field divergence in cylindrical coordinates.
 - Calculation of the Right-Hand Side (RHS) for explicit time-stepping schemes:
     - `calculate_ne_diffusion_explicit_RHS!`: Computes the diffusion term [ ∇𝐃∇n ].
     - `calculate_ne_convection_explicit_RHS!`: Computes the convection term [ -∇⋅(nv) ].
@@ -96,6 +101,19 @@ function calculate_ne_diffusion_explicit_RHS!(RP::RAPID{FT}, density::AbstractMa
     return RP
 end
 
+"""
+    construct_∂R_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
+
+Constructs a sparse matrix operator that computes the first-order partial derivative
+with respect to the radial coordinate (∂/∂R) using a central difference scheme.
+
+# Arguments
+- `G::GridGeometry{FT}`: Grid geometry containing dimensions, node indices, and spacing information
+
+# Returns
+- `SparseMatrixCSC`: A sparse matrix of size (NR*NZ)×(NR*NZ) representing the first-order
+  radial derivative operator with coefficients ±0.5/dR at interior points
+"""
 function construct_∂R_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields from the RP object
     NR, NZ = G.NR, G.NZ
@@ -131,6 +149,27 @@ function construct_∂R_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
     return sparse(I, J, V, NR*NZ, NR*NZ)
 end
 
+# Convinience dispatch
+function construct_∂R_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    return construct_∂R_operator(RP.G)
+end
+
+"""
+    construct_𝐽⁻¹∂R_𝐽_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
+
+Construct a sparse matrix operator representing `(1/R)(∂/∂R)*(R f)`.
+
+This function creates a discrete approximation of the radial derivative operator
+using central differences, with appropriate Jacobian transformations for the
+curvilinear coordinate system (here, cylindrical coordinates).
+
+# Arguments
+- `G::GridGeometry{FT}`: Grid geometry containing grid dimensions, node indices,
+  and Jacobian information
+
+# Returns
+- A sparse matrix of size (NR*NZ)×(NR*NZ) representing the differential operator
+"""
 function construct_𝐽⁻¹∂R_𝐽_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
     # [(1/R)(∂/∂R)*(R f)] operator
     NR, NZ = G.NR, G.NZ
@@ -167,7 +206,26 @@ function construct_𝐽⁻¹∂R_𝐽_operator(G::GridGeometry{FT}) where {FT<:A
     # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
     return sparse(I, J, V, NR*NZ, NR*NZ)
 end
+# Convinience dispatch
+function construct_𝐽⁻¹∂R_𝐽_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    return construct_𝐽⁻¹∂R_𝐽_operator(RP.G)
+end
 
+
+
+"""
+    construct_∂Z_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
+
+Constructs a sparse matrix operator that computes the first-order partial derivative
+with respect to the vertical coordinate (∂/∂Z) using a central difference scheme.
+
+# Arguments
+- `G::GridGeometry{FT}`: Grid geometry containing dimensions, node indices, and spacing information
+
+# Returns
+- `SparseMatrixCSC`: A sparse matrix of size (NR*NZ)×(NR*NZ) representing the first-order
+  radial derivative operator with coefficients ±0.5/dZ at interior points
+"""
 function construct_∂Z_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
     # Alias necessary fields from the RP object
     NR, NZ = G.NR, G.NZ
@@ -203,16 +261,69 @@ function construct_∂Z_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
     return sparse(I, J, V, NR*NZ, NR*NZ)
 end
 
-@inline function calculate_divergence(OP::Operators{FT},
-                    vecR::AbstractVector{FT}, vecZ::AbstractVector{FT}) where {FT<:AbstractFloat}
+# Convinience dispatch
+function construct_∂Z_operator(RP::RAPID{FT}) where{FT<:AbstractFloat}
+    return construct_∂Z_operator(RP.G)
+end
+
+"""
+    calculate_divergence(
+        OP::Operators{FT},
+        vecR::AbstractVector{FT},
+        vecZ::AbstractVector{FT}
+    ) where {FT<:AbstractFloat}
+
+Calculate the divergence of a vector field (vecR, vecZ) using pre-constructed matrix operators.
+
+# Arguments
+- `OP::Operators{FT}`: Operator struct containing differential operator matrices
+- `vecR::AbstractVector{FT}`: Flattened vector of radial components
+- `vecZ::AbstractVector{FT}`: Flattened vector of vertical components
+
+# Returns
+- `Vector{FT}`: Flattened divergence field
+
+# Notes
+- Expects flattened vectors from 2D fields
+- Uses matrix multiplication for efficient calculation
+- Automatically handles cylindrical coordinate Jacobian factors
+"""
+@inline function calculate_divergence(
+                    OP::Operators{FT},
+                    vecR::AbstractVector{FT},
+                    vecZ::AbstractVector{FT}) where {FT<:AbstractFloat}
     @assert size(vecR) == size(vecZ) "Vector sizes do not match"
     @assert prod(OP.dims) == length(vecR) "Operator and vector sizes do not match"
 
     return OP.A_𝐽⁻¹∂R_𝐽*vecR .+ OP.A_∂Z*vecZ
 end
 
-@inline function calculate_divergence(OP::Operators{FT},
-    vecR::AbstractMatrix{FT}, vecZ::AbstractMatrix{FT}) where {FT<:AbstractFloat}
+"""
+    calculate_divergence(
+        OP::Operators{FT},
+        vecR::AbstractMatrix{FT},
+        vecZ::AbstractMatrix{FT}
+    ) where {FT<:AbstractFloat}
+
+Calculate the divergence of a 2D vector field (vecR, vecZ) using pre-constructed matrix operators.
+
+# Arguments
+- `OP::Operators{FT}`: Operator struct containing differential operator matrices
+- `vecR::AbstractMatrix{FT}`: 2D matrix of radial components
+- `vecZ::AbstractMatrix{FT}`: 2D matrix of vertical components
+
+# Returns
+- `Matrix{FT}`: 2D divergence field
+
+# Notes
+- Preserves 2D structure of input fields
+- Internally flattens matrices for matrix-vector multiplication
+- Automatically handles cylindrical coordinate Jacobian factors
+"""
+@inline function calculate_divergence(
+                    OP::Operators{FT},
+                    vecR::AbstractMatrix{FT},
+                    vecZ::AbstractMatrix{FT}) where {FT<:AbstractFloat}
     @assert size(vecR) == size(vecZ) "Matrix sizes do not match"
     @assert OP.dims == size(vecR) "Operator and vector sizes do not match"
 
