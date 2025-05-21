@@ -14,7 +14,7 @@ export update_ue_para!,
        update_Te!,
        update_Ti!,
        update_coulomb_collision_parameters!,
-       update_power_terms!,
+       update_electron_heating_powers!,
        calculate_density_source_terms!,
        calculate_density_diffusion_terms!,
        calculate_density_convection_terms!,
@@ -245,36 +245,156 @@ end
 """
     update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update the electron temperature.
+Update the electron temperature based on energy balance equation.
+
+This function evolves the electron temperature by solving the electron energy equation:
+3/2 n_e ∂T_e/∂t = P_heat - P_loss + ∇·(κ_e ∇T_e) - 3/2 n_e u_e·∇T_e
+
+where:
+- P_heat includes ohmic heating and other power sources
+- P_loss includes ionization, excitation, radiation, and equilibration losses
+- κ_e is the thermal conductivity
+- The last term represents convective transport
+
+The implementation supports both explicit and implicit time integration schemes.
 """
 function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "update_Te! not fully implemented yet"
+    # Skip temperature evolution if flag is disabled
+    if !RP.flags.Te_evolve
+        return RP
+    end
 
-    # Update electron temperature based on power balance
-    update_power_terms!(RP)
+    # Skip temperature evolution outside wall if flag is set
+    if RP.flags.evolve_Te_inWall_only
+        # Save old temperature for later restoration
+        Te_old = copy(RP.plasma.Te_eV)
+    end
 
-    # Energy equation: 3/2 n ∂T/∂t = P_total
-    # Simplified implementation: forward Euler
-    # dT/dt = (2/3) * P_total / n
+    # Update power terms for energy equation
+    update_electron_heating_powers!(RP)
 
-    # Avoid division by zero
-    n_min = FT(1.0e6)
-    n_safe = copy(RP.plasma.ne)
-    n_safe[n_safe .< n_min] .= n_min
+    # Define constants for type stability
+    one_FT = one(FT)
+    zero_FT = zero(FT)
+    dt = RP.dt
 
-    # Temperature change rate
-    dTdt = (FT(2.0)/FT(3.0)) * RP.plasma.ePowers.tot ./ n_safe
+    # Minimum density to avoid division by zero
+    n_min = FT(1.0e10)
 
-    # Update temperature
-    RP.plasma.Te_eV .+= dTdt * RP.dt
+    # Apply time integration method based on flag
+    if RP.flags.Implicit && (RP.flags.Include_Te_diffu_term || RP.flags.Include_Te_convec_term)
+        # Implicit method
+        # Initialize matrices
+        OP = RP.operators
+        @. OP.A_LHS = OP.II
+        NR, NZ = RP.G.NR, RP.G.NZ
+
+        # Add total power density to RHS
+        # Scale by (2/3)/n_e to get dT/dt
+        n_safe = copy(RP.plasma.ne)
+        n_safe[n_safe .< n_min] .= n_min
+        P_total = copy(RP.plasma.ePowers.tot)
+
+        # Apply density safety factor
+        dTdt = @. (FT(2.0)/FT(3.0)) * P_total / n_safe
+
+        # Set-up RHS vector with explicit contribution: T_e^n + dt*(1-θ)*dTe/dt
+        θ = RP.flags.Implicit_weight
+        @. OP.RHS = RP.plasma.Te_eV + dt * (one_FT - θ) * dTdt
+
+        # Add temperature diffusion term if enabled
+        if RP.flags.Include_Te_diffu_term
+            # Add diffusive operator on LHS: A_LHS = I - θ*dt*D_T
+            # For now, using a simplified diffusion operator
+            # In a complete implementation, need to construct a proper diffusion operator
+            # 1. Set diffusion coefficients based on plasma parameters
+            # Parallel thermal conductivity κ_∥ = κ_0 n_e T_e^(5/2) / (m_e^(1/2) Z)
+            # Cross-field thermal conductivity κ_⊥ is much smaller
+            # For now, using constant diffusivities scaled by temperature
+            D_para_T = RP.transport.Dpara0 * FT(100.0) # Enhanced thermal diffusivity
+            D_perp_T = RP.transport.Dperp0 * FT(10.0)  # Enhanced thermal diffusivity
+
+            # 2. Build diffusion operator - this is a simplified placeholder
+            # In a real implementation, we would build the full diffusion operator
+            # that properly accounts for magnetic geometry, similar to A_∇𝐃∇
+            # But for now, we'll assume a simplified form
+            A_T_diffu = spzeros(FT, NR*NZ, NR*NZ)
+
+            # 3. Add diagonal contribution (center node)
+            # This is just a simplified placeholder - the real implementation would
+            # need a properly constructed diffusion operator
+            diag_indices = diagind(A_T_diffu)
+            @. @views A_T_diffu[diag_indices] = -4.0 * (D_para_T * RP.plasma.Te_eV[:] / FT(RP.G.dR^2))
+
+            # 4. Add off-diagonal contributions (neighbor nodes) - placeholder
+            # Note: this is a simplified example that doesn't account for field geometry
+            # A proper implementation would need to account for the magnetic field direction
+
+            # 5. Add diffusion operator to LHS matrix with implicit weighting
+            @. OP.A_LHS += θ * dt * A_T_diffu
+
+            # 6. Add explicit diffusion contribution to RHS
+            # For complete implementation, would compute: (1-θ)*dt*∇·(κ_e ∇T_e)
+            # Simplified place-holder would be: (1-θ)*dt*A_T_diffu*T_e
+            @. OP.RHS += (one_FT - θ) * dt * (A_T_diffu * RP.plasma.Te_eV[:])
+        end
+
+        # Add temperature convection term if enabled
+        if RP.flags.Include_Te_convec_term
+            # Add convective operator on LHS: A_LHS = I - θ*dt*C_T
+            # For a complete implementation, need to construct a proper convection operator
+            # similar to An_convec, but for temperature
+
+            # 1. Build convection operator for temperature using upwind method
+            # This is a simplified placeholder
+            A_T_convec = spzeros(FT, NR*NZ, NR*NZ)
+
+            # 2. Add convection operator to LHS matrix with implicit weighting
+            @. OP.A_LHS += θ * dt * A_T_convec
+
+            # 3. Add explicit convection contribution to RHS
+            # For complete implementation, would compute: (1-θ)*dt*(-u_e·∇T_e)
+            # Simplified place-holder would be: (1-θ)*dt*A_T_convec*T_e
+            @. OP.RHS += (one_FT - θ) * dt * (A_T_convec * RP.plasma.Te_eV[:])
+        end
+
+        # Solve the linear system
+        @views RP.plasma.Te_eV[:] = OP.A_LHS \ OP.RHS[:]
+
+    else
+        # Explicit method (forward Euler)
+
+        # Energy equation: 3/2 n ∂T/∂t = P_total
+        # dT/dt = (2/3) * P_total / n
+        # T_new = T_old + dt * (2/3) * P_total / n
+
+        # Avoid division by zero
+        n_safe = copy(RP.plasma.ne)
+        n_safe[n_safe .< n_min] .= n_min
+
+        # Temperature change rate
+        dTdt = @. (FT(2.0)/FT(3.0)) * RP.plasma.ePowers.tot / n_safe
+
+        # Update temperature
+        @. RP.plasma.Te_eV += dTdt * dt
+
+        # Add diffusion and convection terms in explicit step if needed
+        # This would require calculating ∇·(κ_e ∇T_e) and -u_e·∇T_e
+        # Placeholder for future implementation
+    end
 
     # Apply temperature limits
-    RP.plasma.Te_eV .= max.(RP.plasma.Te_eV, RP.config.min_Te)
-    RP.plasma.Te_eV .= min.(RP.plasma.Te_eV, RP.config.max_Te)
+    @. RP.plasma.Te_eV = max(RP.plasma.Te_eV, RP.config.min_Te)
+    @. RP.plasma.Te_eV = min(RP.plasma.Te_eV, RP.config.max_Te)
 
-    # # Zero temperature outside wall
-    # RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
+    # Restore old temperature outside wall if evolving only inside wall
+    if RP.flags.evolve_Te_inWall_only
+        # Set temperature to old values at out-wall nodes
+        RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= Te_old[RP.G.nodes.out_wall_nids]
+    else
+        # Set temperature to minimum outside wall
+        RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
+    end
 
     return RP
 end
@@ -322,77 +442,149 @@ function update_Ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 """
-    update_power_terms!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update power terms for electron and ion energy equations.
+Update electron heating power components for electron energy equation.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+
+# Returns
+- `RP`: The updated RAPID object
+
+# Notes
+- Calculates all electron power sources and sinks:
+  - Diffusion and convection powers (if enabled)
+  - Collision drag power
+  - Heat generation from density gradients
+  - Ionization, excitation, and dilution powers
+  - Temperature equilibration power with ions
+- All powers stored in the RP.plasma.ePowers struct
 """
-function update_power_terms!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "update_power_terms! not fully implemented yet"
+function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Ionization energy for H2 molecule (H2->H2+ + e-) in eV
+    iz_erg_eV = FT(15.46)
 
-    # Initialize all power terms to zero
-    RP.plasma.ePowers.diffu .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.ePowers.conv .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.ePowers.heat .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.ePowers.drag .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.ePowers.equi .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.ePowers.iz .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.ePowers.exc .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.ePowers.dilution .= zeros(FT, RP.G.NR, RP.G.NZ)
+    # TODO: Replace with actual average excitation energy
+    avg_exc_erg_eV = FT(12.0)  # Average excitation energy in eV (assumption)
 
-    RP.plasma.iPowers.atomic .= zeros(FT, RP.G.NR, RP.G.NZ)
-    RP.plasma.iPowers.equi .= zeros(FT, RP.G.NR, RP.G.NZ)
+    # Extract physical constants
+    @unpack ee, qe, me, mi = RP.config.constants
 
-    # Calculate ohmic heating (simplified)
-    # P_ohmic = j·E = σ·E²
-    qe = RP.config.ee
-    ohmic_power = qe * RP.plasma.ne .* RP.plasma.ue_para .* RP.fields.E_para_tot
+    # Alias common objects for readability
+    pla = RP.plasma
+    ePowers = RP.plasma.ePowers
 
-    # Add to heating power
-    RP.plasma.ePowers.heat .= ohmic_power
+    zero_FT = zero(FT)
 
-    # Add electron-ion equilibration if Coulomb collisions are enabled
+    # Reset all power arrays to zero (precaution to avoid accumulation)
+    ePowers.diffu .= zero_FT
+    ePowers.conv .= zero_FT
+    ePowers.heat .= zero_FT
+    ePowers.drag .= zero_FT
+    ePowers.iz .= zero_FT
+    ePowers.exc .= zero_FT
+    ePowers.dilution .= zero_FT
+    ePowers.equi .= zero_FT
+
+    # If diffusion term is included in temperature equation
+    if RP.flags.Include_Te_diffu_term
+        @warn "Include_Te_diffu_term not implemented yet" maxlog=1
+        # Calculate diffusive power transfer (this would be calculated elsewhere and stored)
+        # In a full implementation, this would use the diffusion operator on Te
+    end
+
+    # If convection term is included in temperature equation
+    if RP.flags.Include_Te_convec_term
+        @warn "Include_Te_convec_term not implemented yet" maxlog=1
+        # Calculate convective power transfer (also calculated elsewhere)
+        # In a full implementation, this would use the convection operator on Te
+    end
+
+    if RP.flags.Include_heat_flux_term
+        # NOTE: Assumption: 𝐪 ≈ p*𝐮 (heat flux is about in the order of pressure*velocity)
+        # Calculate heating from density gradients
+        # Smooth density field to avoid numerical issues with gradients
+        # n_SM = smooth_data_2D(pla.ne; num_SM=2)
+        # n_SM[n_SM .< zero_FT] .= zero_FT
+
+        # Calculate gradient of log(n)
+        ∇log_n_R, ∇log_n_Z = calculate_gradient(RP, log.(pla.ne))
+
+        # Heat flux from density gradient
+        @. ePowers.heat = -ee * pla.Te_eV * (pla.ueR * ∇log_n_R + pla.ueZ * ∇log_n_Z)
+
+
+        @unpack A_∇𝐮, A_𝐮∇ = RP.operators
+
+        -ee*pla.Te_eV.*(A_𝐮∇*log.(pla.ne))
+
+        # # Handle NaN values
+        # replace!(ePowers.heat, NaN => zero_FT)
+    end
+
+
+    if RP.flags.Atomic_Collision
+        # Get reaction rate coefficients for momentum transfer
+        RRC_mom = get_electron_RRC(RP, :Momentum)
+
+        # Calculate velocity magnitudes for drag forces
+        ue_mag_sq = @. pla.ueR^2 .+ pla.ueϕ^2 .+ pla.ueZ^2
+        ue_dot_ui = @. pla.ueR * pla.uiR + pla.ueϕ * pla.uiϕ + pla.ueZ * pla.uiZ
+
+        @. ePowers.drag = me * (
+            ue_mag_sq * pla.n_H2_gas * RRC_mom
+            + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
+        )
+
+        # Get excitation rate coefficient
+        RRC_exc = get_electron_RRC(RP, :Total_Excitation)
+        # Excitation power (energy lost to excite particles)
+        @. ePowers.exc = ee * avg_exc_erg_eV * pla.n_H2_gas * RRC_exc
+
+        # For ionization
+        if RP.flags.src
+            # Get ionization rate coefficient
+            RRC_iz = get_electron_RRC(RP, :Ionization)
+            freq_iz = @. pla.n_H2_gas * RRC_iz
+
+            # Ionization power (energy lost to ionize particles)
+            @. ePowers.iz = freq_iz * iz_erg_eV * ee
+
+            # Dilution power (energy change due to density increase)
+            @. ePowers.dilution = freq_iz * (
+                FT(1.5) * pla.Te_eV * ee
+                - FT(0.5) * me * ue_mag_sq
+            )
+        end
+    end
+
+
+    # Equilibration power with ions (energy exchange from temperature differences)
     if RP.flags.Coulomb_Collision
-        # Electron-ion energy equilibration rate (simplified)
-        # P_ei = 3 m_e/m_i · n_e · ν_ei · (T_i - T_e)
-        mass_ratio = RP.config.me / RP.config.mi
-        equi_power = 3.0 * mass_ratio * RP.plasma.ne .* RP.plasma.ν_ei .*
-                    (RP.plasma.Ti_eV .- RP.plasma.Te_eV) * RP.config.ee
-
-        RP.plasma.ePowers.equi .= equi_power
-        RP.plasma.iPowers.equi .= -equi_power
+        # Factor for energy transfer rate between electrons and ions
+        @. ePowers.equi = (FT(2.0)*(mi*me/(mi+me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
     end
 
-    # Calculate energy loss due to excitation and ionization
-    if RP.flags.src
-        # In real implementation, would use reaction rate data
-        # Simplified placeholder
-        iz_cost = FT(15.0) # Ionization cost in eV
-        exc_cost = FT(5.0) # Excitation cost in eV
+    # Calculate total power (sum of all components)
+    @. ePowers.tot = (
+            ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu
+            - ePowers.dilution - ePowers.iz - ePowers.exc - ePowers.equi
+        )
 
-        # Estimate ionization and excitation rates
-        # Simplified implementation
-        iz_rate = RP.plasma.eGrowth_rate
-        exc_rate = iz_rate * FT(3.0) # Assume excitation rate is 3x ionization rate
-
-        # Calculate power loss
-        RP.plasma.ePowers.iz .= -iz_cost * iz_rate * RP.config.ee
-        RP.plasma.ePowers.exc .= -exc_cost * exc_rate * RP.config.ee
-    end
-
-    # Calculate total power
-    RP.plasma.ePowers.tot .= (
-        RP.plasma.ePowers.diffu .+
-        RP.plasma.ePowers.conv .+
-        RP.plasma.ePowers.heat .+
-        RP.plasma.ePowers.drag .+
-        RP.plasma.ePowers.equi .+
-        RP.plasma.ePowers.iz .+
-        RP.plasma.ePowers.exc .+
-        RP.plasma.ePowers.dilution
-    )
-
-    RP.plasma.iPowers.tot .= RP.plasma.iPowers.atomic .+ RP.plasma.iPowers.equi
+    # # Zero out power values outside the wall
+    # out_wall_nids = RP.G.nodes.out_wall_nids
+    # if !isempty(out_wall_nids)
+    #     @views ePowers.tot[out_wall_nids] .= zero_FT
+    #     @views ePowers.diffu[out_wall_nids] .= zero_FT
+    #     @views ePowers.conv[out_wall_nids] .= zero_FT
+    #     @views ePowers.drag[out_wall_nids] .= zero_FT
+    #     @views ePowers.dilution[out_wall_nids] .= zero_FT
+    #     @views ePowers.iz[out_wall_nids] .= zero_FT
+    #     @views ePowers.exc[out_wall_nids] .= zero_FT
+    #     @views ePowers.equi[out_wall_nids] .= zero_FT
+    #     @views ePowers.heat[out_wall_nids] .= zero_FT
+    # end
 
     return RP
 end
