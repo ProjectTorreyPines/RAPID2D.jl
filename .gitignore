@@ -1,2 +1,4 @@
 Manifset.toml
 *COPILOT*
+coverage/
+*.cov
