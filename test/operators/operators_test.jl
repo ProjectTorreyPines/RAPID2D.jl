@@ -211,13 +211,20 @@ end
             An_convec = RAPID2D.construct_Ane_convection_operator(RP, uR, uZ; flag_upwind)
             implicit_result = reshape(An_convec * test_density[:], NR, NZ)
 
+            A_∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
+            @test isapprox(implicit_result, reshape(-A_∇𝐮 * test_density[:], NR, NZ))
+
             # Calculate implicit convection using RAPID2D's internal way that can update the operator more efficiently
             # This is useful for large simulations where we want to avoid re-creating the operator
             RAPID2D.initialize_Ane_convection_operator!(RP; flag_upwind)
             implicit_result2 = reshape(RP.operators.An_convec * test_density[:], NR, NZ)
 
+            RAPID2D.initialize_∇𝐮_operator!(RP; flag_upwind)
+            @test isapprox(implicit_result2, reshape(-RP.operators.A_∇𝐮 * test_density[:], NR, NZ))
+
             # compare if two methods give the same operatoryy
             @test An_convec == RP.operators.An_convec
+            @test A_∇𝐮 == RP.operators.A_∇𝐮
 
             # Compare the results
             @test isapprox(explicit_result, implicit_result, rtol=1e-10)

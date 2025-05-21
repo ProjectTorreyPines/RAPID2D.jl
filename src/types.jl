@@ -317,12 +317,14 @@ Fields include various matrices for solving different parts of the model.
     An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Convection operator
     An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # src operator
 
-    A_𝐮∇::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # advection operator (u·∇)f
+    A_𝐮∇::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # advection operator (𝐮·∇)f
+    A_∇𝐮::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
 
     # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
     map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
     map_convec_k2csc::Vector{Int} = zeros(Int, prod(dims))
     map_𝐮∇_k2csc::Vector{Int} = zeros(Int, prod(dims))
+    map_∇𝐮_k2csc::Vector{Int} = zeros(Int, prod(dims))
 
     # Operator for magnetic field solver
     A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Grad-Shafranov operator
