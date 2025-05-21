@@ -207,7 +207,7 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
                              (RP.fields.bZ).^2
 
         # Construct diffusion operator
-        # RP.operators.An_diffu = construct_An_diffu(RP, ...)
+        # RP.operators.A_∇𝐃∇ = construct_A_∇𝐃∇(RP, ...)
     end
 
     return RP

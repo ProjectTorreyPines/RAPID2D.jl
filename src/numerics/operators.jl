@@ -250,10 +250,10 @@ function allocate_∇𝐃∇_operator_pattern(RP::RAPID{FT}) where {FT<:Abstract
     @. V = 1:num_entries
 
     # Construct a sparse matrix with the explicit size (NR*NZ)×(NR*NZ)
-    RP.operators.An_diffu = sparse(I, J, V, NR*NZ, NR*NZ)
+    RP.operators.A_∇𝐃∇ = sparse(I, J, V, NR*NZ, NR*NZ)
 
     # Get a mapping from k to the non-zero indices
-    V2 = RP.operators.An_diffu.nzval
+    V2 = RP.operators.A_∇𝐃∇.nzval
     k2csc = zeros(Int, length(V2))
     for csc_idx in eachindex(V2)
         orig_k = round(Int, V2[csc_idx])
@@ -262,7 +262,7 @@ function allocate_∇𝐃∇_operator_pattern(RP::RAPID{FT}) where {FT<:Abstract
     RP.operators.map_diffu_k2csc = k2csc
 
     # Reset the values to zero
-    @. RP.operators.An_diffu.nzval = zero(FT)
+    @. RP.operators.A_∇𝐃∇.nzval = zero(FT)
 
     return RP
 end
@@ -282,7 +282,7 @@ Update the non-zero entries of the diffusion operator matrix based on the curren
 - The function updates the non-zero entries of the matrix based on the current state of the RAPID object.
 """
 function update_∇𝐃∇_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    @assert !isempty(RP.operators.An_diffu.nzval) "Diffusion operator not initialized"
+    @assert !isempty(RP.operators.A_∇𝐃∇.nzval) "Diffusion operator not initialized"
 
     # Alias necessary fields from the RP object
     inv_Jacob = RP.G.inv_Jacob
@@ -297,7 +297,7 @@ function update_∇𝐃∇_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     eighth = FT(0.125)
 
     # Alias the existing sparse matrix for readability
-    nzV = RP.operators.An_diffu.nzval
+    nzV = RP.operators.A_∇𝐃∇.nzval
 
     k2csc = RP.operators.map_diffu_k2csc
 

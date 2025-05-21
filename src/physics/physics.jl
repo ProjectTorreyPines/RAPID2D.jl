@@ -485,7 +485,7 @@ diffusion term for explicit time stepping.
 function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.Implicit
         update_∇𝐃∇_operator!(RP)
-        RP.operators.neRHS_diffu[:] = RP.operators.An_diffu * RP.plasma.ne[:]
+        RP.operators.neRHS_diffu[:] = RP.operators.A_∇𝐃∇ * RP.plasma.ne[:]
     else
         # For explicit method, calculate diffusion term directly
         calculate_ne_diffusion_explicit_RHS!(RP)
@@ -534,7 +534,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
         # Build full RHS with explicit contribution
         @. OP.RHS = RP.plasma.ne + dt * (one(FT) - θ) * (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
         # Build LHS operator
-        @. OP.A_LHS = OP.II - θ*dt* (OP.An_diffu + OP.An_convec + OP.An_src)
+        @. OP.A_LHS = OP.II - θ*dt* (OP.A_∇𝐃∇ + OP.An_convec + OP.An_src)
 
         # Solve the linear system
         @views RP.plasma.ne[:] = OP.A_LHS \ OP.RHS[:]

@@ -38,16 +38,16 @@ using Test
     explicit_result = copy(RP.operators.neRHS_diffu)
 
     # Implicit method
-    An_diffu = RAPID2D.construct_∇𝐃∇_operator(RP)
-    implicit_result = reshape(An_diffu * test_density[:], NR, NZ)
+    A_∇𝐃∇ = RAPID2D.construct_∇𝐃∇_operator(RP)
+    implicit_result = reshape(A_∇𝐃∇ * test_density[:], NR, NZ)
 
     # Calculate implicit diffusion using RAPID2D's internal way that can update the operator more efficiently
     # This is useful for large simulations where we want to avoid re-creating the operator
     RAPID2D.initialize_∇𝐃∇_operator!(RP)
-    implicit_result2 = reshape(RP.operators.An_diffu * test_density[:], NR, NZ)
+    implicit_result2 = reshape(RP.operators.A_∇𝐃∇ * test_density[:], NR, NZ)
 
     # compare if two methods give the same operatoryy
-    @test An_diffu == RP.operators.An_diffu
+    @test A_∇𝐃∇ == RP.operators.A_∇𝐃∇
 
 	# Comparison
 	@test isapprox(explicit_result, implicit_result, rtol=1e-10)
@@ -56,7 +56,7 @@ using Test
 
     # Additional test: Verify that matrix multiplication operations don't error
     # This is to ensure our implementation works with typical linear algebra operations
-    @test_nowarn An_diffu * (An_diffu * test_density[:])
+    @test_nowarn A_∇𝐃∇ * (A_∇𝐃∇ * test_density[:])
 end
 
 @testset "Convection operator [-∇⋅(nu)]  - Explicit vs Implicit" begin

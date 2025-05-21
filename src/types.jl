@@ -308,7 +308,7 @@ Fields include various matrices for solving different parts of the model.
     RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
 
     # Operators for solving continuity equations
-    An_diffu::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Diffusion operator
+    A_∇𝐃∇::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Diffusion operator
     An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Convection operator
     An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # src operator
 
