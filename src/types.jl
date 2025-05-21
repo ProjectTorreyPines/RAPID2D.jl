@@ -389,6 +389,7 @@ Contains boolean flags that control various aspects of the simulation.
     Ampere::Bool = false                      # Enable Ampere's law (magnetic field update)
 
     # Transport flags
+    Include_heat_flux_term::Bool = false       # Include heat flux term in energy equation
     Include_ud_convec_term::Bool = true       # Include convection term in drift velocity equation
     Include_ud_diffu_term::Bool = true        # Include diffusion term in drift velocity equation
     Include_Te_convec_term::Bool = true       # Include convection term in Te equation

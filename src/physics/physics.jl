@@ -506,7 +506,7 @@ function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFl
         RP.operators.neRHS_convec[:] = RP.operators.An_convec * RP.plasma.ne[:]
     else
         # For explicit method, calculate convection term directly
-        calculate_ne_convection_explicit_RHS(RP)
+        calculate_ne_convection_explicit_RHS!(RP)
     end
     return RP
 end
@@ -831,7 +831,7 @@ end
 """
     calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
 
-Calculate the electron acceleration due to convection along the magnetic field.
+Calculate the electron acceleration due to convection
 
 This function computes the convection term [-(ud⋅∇)ud] in the electron momentum equation.
 It uses a smoothed parallel electron velocity field to improve numerical stability.
@@ -856,8 +856,6 @@ function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::In
     # Smooth the density field to reduce numerical noise (skip if num_SM is 0)
     ue_para_SM = smooth_data_2D(RP.plasma.ue_para; num_SM, weighting=RP.G.Jacob)
 
-    # Calculate ln(n) gradients along B to avoid division by zero issues with low density
-    # Calculate temperature gradients along B
     ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, ue_para_SM; upwind=flag_upwind)
     accel_by_convection = @. -(RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
 
