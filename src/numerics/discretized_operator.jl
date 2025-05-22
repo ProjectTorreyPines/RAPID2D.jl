@@ -1,16 +1,31 @@
+export DiscretizedOperator
+
 """
     DiscretizedOperator{FT<:AbstractFloat}
 
-A structure representing a discretized operator for numerical simulations.
-This structure contains a sparse matrix representation of the operator,
-along with its dimensions and a mapping from the original indices to the
-corresponding indices in the sparse matrix.
-# Fields:
-- `matrix::SparseMatrixCSC{FT}`: Sparse matrix representation of the operator
-- `dims::Tuple{Int,Int}`: Dimensions of the operator (number of rows and columns)
-- `k2csc::Vector{Int}`: Mapping from original indices to sparse matrix indices
+Represents a discretized operator in a two-dimensional domain.
+
+# Fields
+- `dims::Tuple{Int,Int}`: The dimensions (NR, NZ) of the discretized domain
+- `matrix::SparseMatrixCSC{FT,Int}`: Sparse matrix representation of the discretized operator
+- `k2csc::Vector{Int}`: Mapping from k-indices to CSC indices for efficient sparse matrix updates
 """
-function DiscretizedOperator{FT}(dims::Tuple{Int,Int}, I::Vector{Int}, J::Vector{Int}, V::Vector{FT}) where {FT<:AbstractFloat}
+@kwdef mutable struct DiscretizedOperator{FT<:AbstractFloat}
+    dims::Tuple{Int,Int} # (NR, NZ)
+
+    # sparse matrix for the discretized operator
+    matrix::SparseMatrixCSC{FT,Int} = spzeros(FT, prod(dims), prod(dims))
+
+    # Mapping from k-index to CSC index (not always used)
+    # (for more efficient update of non-zero elements of CSC matrix)
+    k2csc::Vector{Int} = Int[]
+end
+
+function DiscretizedOperator{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
+    return DiscretizedOperator{FT}(dims=dimensions)
+end
+
+function DiscretizedOperator(dims::Tuple{Int,Int}, I::Vector{Int}, J::Vector{Int}, V::Vector{FT}) where {FT<:AbstractFloat}
     dop = DiscretizedOperator{FT}(dims)
 
     oriV = copy(V)
@@ -31,7 +46,7 @@ function DiscretizedOperator{FT}(dims::Tuple{Int,Int}, I::Vector{Int}, J::Vector
     return dop
 end
 
-import Base: *
+import Base: +, -, *, /, ^, inv, ==
 
 function Base.:(==)(dop1::DiscretizedOperator{FT1},
                     dop2::DiscretizedOperator{FT2}) where {FT1<:AbstractFloat, FT2<:AbstractFloat}
@@ -40,10 +55,75 @@ function Base.:(==)(dop1::DiscretizedOperator{FT1},
             && dop1.k2csc == dop2.k2csc)
 end
 
-function *(dop::DiscretizedOperator{FT}, B::AbstractMatrix{FT}) where {FT<:AbstractFloat}
-    return reshape(dop.matrix * @view(B[:]), dop.dims)
+function *(dop::DiscretizedOperator{FT}, mat::AbstractMatrix{FT}) where {FT<:AbstractFloat}
+    return reshape(dop.matrix * @view(mat[:]), dop.dims)
 end
 
-function *(dop::DiscretizedOperator{FT}, B::AbstractVector{FT}) where {FT<:AbstractFloat}
-    return dop.matrix * B
+function *(dop::DiscretizedOperator{FT}, vec::AbstractVector{FT}) where {FT<:AbstractFloat}
+    return dop.matrix * vec
+end
+
+# Unary negation & inverse —
+-(A::DiscretizedOperator) = DiscretizedOperator(dims = A.dims, matrix = -A.matrix)
+inv(A::DiscretizedOperator)  = DiscretizedOperator(dims = A.dims, matrix = inv(A.matrix))
+
+# — Binary combination (same dims only) —
+function +(A::DiscretizedOperator, B::DiscretizedOperator)
+    DiscretizedOperator(dims = A.dims, matrix = A.matrix + B.matrix)
+end
+
+function -(A::DiscretizedOperator, B::DiscretizedOperator)
+    DiscretizedOperator(dims = A.dims, matrix = A.matrix - B.matrix)
+end
+
+function *(A::DiscretizedOperator, B::DiscretizedOperator)
+    DiscretizedOperator(dims = A.dims, matrix = A.matrix * B.matrix)
+end
+
+# — Scalar * operator and operator * scalar —
+*(α::Number, A::DiscretizedOperator) = DiscretizedOperator(dims = A.dims, matrix = α * A.matrix)
+*(A::DiscretizedOperator, α::Number) = α * A
+
+# — Division by scalar and exponentiation —
+function /(A::DiscretizedOperator, α::Number)
+    DiscretizedOperator(dims = A.dims, matrix = A.matrix / α)
+end
+^(A::DiscretizedOperator, n::Integer) = DiscretizedOperator(dims = A.dims, matrix = A.matrix^n)
+
+import Base: materialize, BroadcastStyle, broadcastable, broadcasted
+import Base.Broadcast: Broadcasted
+
+# 1. Make DiscretizedOperator treated as a scalar in broadcasts
+# This means A .* B will treat A and B as scalar entities in the broadcast
+broadcastable(A::DiscretizedOperator) = A
+
+# 2. Define a custom broadcast style for DiscretizedOperator
+struct DOStyle <: BroadcastStyle end
+BroadcastStyle(::Type{<:DiscretizedOperator}) = DOStyle()
+
+# # 3. Define how to combine DiscretizedOperator with other broadcast styles
+# # (only needed if mixing with other types)
+Base.Broadcast.BroadcastStyle(::DOStyle, ::BroadcastStyle) = DOStyle()
+Base.Broadcast.BroadcastStyle(::BroadcastStyle, ::DOStyle) = DOStyle()
+
+function broadcasted(::DOStyle, f, ops::DiscretizedOperator...)
+    mats = map(o->o.matrix, ops)
+    bc   = broadcasted(f, mats...)
+    M    = materialize(bc)
+    return DiscretizedOperator(dims = first(ops).dims, matrix = M)
+end
+
+function broadcasted(::DOStyle, f, args...)
+    # 1) Identify all operator args
+    dops = filter(x -> x isa DiscretizedOperator, args)
+    # 2) Extract matrices, leave other args alone
+    mats_and_scalars = map(args) do x
+        x isa DiscretizedOperator ? x.matrix : x
+    end
+    # 3) Perform fused broadcast on mixed arguments
+    bc = broadcasted(f, mats_and_scalars...)
+    # 4) Materialize result to SparseMatrixCSC
+    M = materialize(bc)
+    # 5) Wrap back into DiscretizedOperator using first operator's dims
+    return DiscretizedOperator(dims = first(dops).dims, matrix = M)
 end

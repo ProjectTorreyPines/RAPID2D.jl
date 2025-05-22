@@ -339,30 +339,6 @@ function Transport{FT}(NR::Int, NZ::Int; Dpara0::FT=FT(1.0), Dperp0::FT=FT(0.1))
     return Transport{FT}(dims=(NR, NZ), Dpara0=Dpara0, Dperp0=Dperp0)
 end
 
-"""
-    DiscretizedOperator{FT<:AbstractFloat}
-
-Represents a discretized operator in a two-dimensional domain.
-
-# Fields
-- `dims::Tuple{Int,Int}`: The dimensions (NR, NZ) of the discretized domain
-- `matrix::SparseMatrixCSC{FT,Int}`: Sparse matrix representation of the discretized operator
-- `k2csc::Vector{Int}`: Mapping from k-indices to CSC indices for efficient sparse matrix updates
-"""
-@kwdef mutable struct DiscretizedOperator{FT<:AbstractFloat}
-    dims::Tuple{Int,Int} # (NR, NZ)
-
-    # sparse matrix for the discretized operator
-    matrix::SparseMatrixCSC{FT,Int} = spzeros(FT, prod(dims), prod(dims))
-
-    # Mapping from k-index to CSC index (not always used)
-    # (for more efficient update of non-zero elements of CSC matrix)
-    k2csc::Vector{Int} = Int[]
-end
-
-function DiscretizedOperator{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
-    return DiscretizedOperator{FT}(dims=dimensions)
-end
 
 """
     Operators{FT<:AbstractFloat}

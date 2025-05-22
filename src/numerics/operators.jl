@@ -142,7 +142,7 @@ function construct_∂R_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
         end
     end
 
-    return DiscretizedOperator{FT}((NR,NZ), I, J, V)
+    return DiscretizedOperator((NR,NZ), I, J, V)
 end
 
 # Convinience dispatch
@@ -199,7 +199,7 @@ function construct_𝐽⁻¹∂R_𝐽_operator(G::GridGeometry{FT}) where {FT<:A
         end
     end
 
-    return DiscretizedOperator{FT}((NR,NZ), I, J, V)
+    return DiscretizedOperator((NR,NZ), I, J, V)
 end
 # Convinience dispatch
 function construct_𝐽⁻¹∂R_𝐽_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -252,7 +252,7 @@ function construct_∂Z_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
         end
     end
 
-    return DiscretizedOperator{FT}((NR,NZ), I, J, V)
+    return DiscretizedOperator((NR,NZ), I, J, V)
 end
 
 # Convinience dispatch
@@ -449,7 +449,7 @@ function allocate_∇𝐃∇_operator_pattern(RP::RAPID{FT}) where {FT<:Abstract
         end
     end
 
-    return DiscretizedOperator{FT}((NR,NZ), I, J, V)
+    return DiscretizedOperator((NR,NZ), I, J, V)
 end
 
 """
@@ -987,8 +987,10 @@ function update_Ane_convection_operator!(RP::RAPID{FT},
 end
 
 """
-    construct_𝐮∇_operator(RP::RAPID{FT};
-                           flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+    construct_𝐮∇_operator(RP::RAPID{FT},
+                        uR::AbstractMatrix{FT}=RP.plasma.ueR,
+                        uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
+                        flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
 Construct the sparse matrix representation of the advection operator (u·∇) with appropriate
 sparsity pattern and initial values.
@@ -1005,15 +1007,17 @@ sparsity pattern and initial values.
 - Uses `allocate_𝐮∇_operator_pattern` to create the matrix structure
 - Uses `update_𝐮∇_operator!` to populate the non-zero values
 """
-function construct_𝐮∇_operator(RP::RAPID{FT};
-                                flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+function construct_𝐮∇_operator(RP::RAPID{FT},
+                            uR::AbstractMatrix{FT}=RP.plasma.ueR,
+                            uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
+                            flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
     # Create the sparsity patter
     𝐮∇ = allocate_𝐮∇_operator_pattern(RP)
 
     # Update the values based on current velocity field
-    update_𝐮∇_operator!(RP; 𝐮∇, flag_upwind)
+    update_𝐮∇_operator!(RP, uR, uZ; 𝐮∇, flag_upwind)
 
-    return RP
+    return 𝐮∇
 end
 
 """
@@ -1063,7 +1067,7 @@ function allocate_𝐮∇_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFlo
         end
     end
 
-    return DiscretizedOperator{FT}((NR,NZ), I, J, V)
+    return DiscretizedOperator((NR,NZ), I, J, V)
 end
 
 """
@@ -1096,6 +1100,8 @@ function update_𝐮∇_operator!(RP::RAPID{FT},
                             𝐮∇::DiscretizedOperator{FT}=RP.operators.𝐮∇,
                             flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
+    @assert !isempty(𝐮∇.matrix.nzval) "Divergence operator not initialized"
+
     # Alias necessary fields from the RP object
     G = RP.G
     NR, NZ = G.NR, G.NZ
@@ -1110,7 +1116,7 @@ function update_𝐮∇_operator!(RP::RAPID{FT},
     half = FT(0.5)
 
     # Get direct access to sparse matrix values
-    nzval = 𝐮∇.nzval
+    nzval = 𝐮∇.matrix.nzval
     k2csc = 𝐮∇.k2csc
 
     # Reset values to zero
@@ -1178,7 +1184,10 @@ function update_𝐮∇_operator!(RP::RAPID{FT},
 end
 
 """
-    construct_∇𝐮_operator(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+    construct_∇𝐮_operator(RP::RAPID{FT},
+                        uR::AbstractMatrix{FT}=RP.plasma.ueR,
+                        uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
+                        flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
 Initialize the sparse matrix representation of the convective-flux divergence [∇⋅(𝐮 f)],
 where 𝐮 is the given velocity vector, and f is the scalar field to apply ∇𝐮 operator
@@ -1195,11 +1204,14 @@ where 𝐮 is the given velocity vector, and f is the scalar field to apply ∇�
 - Uses `allocate_∇𝐮_operator_pattern` to create the matrix structure
 - Uses `update_∇𝐮_operator!` to populate the non-zero values
 """
-function construct_∇𝐮_operator(RP::RAPID{FT}; flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+function construct_∇𝐮_operator(RP::RAPID{FT},
+                            uR::AbstractMatrix{FT}=RP.plasma.ueR,
+                            uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
+                            flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
     # create a sparse matrix with the sparisty pattern
     ∇𝐮 = allocate_∇𝐮_operator_pattern(RP)
     # update the divergence operator's non-zero entries with the actual values
-    update_∇𝐮_operator!(RP; ∇𝐮, flag_upwind)
+    update_∇𝐮_operator!(RP, uR, uZ; ∇𝐮, flag_upwind)
 
     return ∇𝐮
 end
@@ -1251,7 +1263,7 @@ function allocate_∇𝐮_operator_pattern(RP::RAPID{FT}) where {FT<:AbstractFlo
         end
     end
 
-    return DiscretizedOperator{FT}((NR,NZ), I, J, V)
+    return DiscretizedOperator((NR,NZ), I, J, V)
 end
 
 """
