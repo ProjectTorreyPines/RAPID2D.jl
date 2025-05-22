@@ -46,7 +46,19 @@ function DiscretizedOperator(dims::Tuple{Int,Int}, I::Vector{Int}, J::Vector{Int
     return dop
 end
 
+import Base: size, axes, IndexStyle
+size(op::DiscretizedOperator) = size(op.matrix)
+axes(op::DiscretizedOperator) = axes(op.matrix)
+IndexStyle(::Type{<:DiscretizedOperator}) = IndexStyle(op.matrix)
+
 import Base: +, -, *, /, ^, inv, ==
+import Base: materialize, BroadcastStyle, broadcastable, broadcasted
+import Base.Broadcast: Broadcasted, combine_styles
+import Base: broadcast
+# 2. Define a custom broadcast style for DiscretizedOperator
+struct DOStyle <: BroadcastStyle end
+BroadcastStyle(::Type{<:DiscretizedOperator}) = DOStyle()
+
 
 function Base.:(==)(dop1::DiscretizedOperator{FT1},
                     dop2::DiscretizedOperator{FT2}) where {FT1<:AbstractFloat, FT2<:AbstractFloat}
@@ -88,23 +100,64 @@ end
 function /(A::DiscretizedOperator, α::Number)
     DiscretizedOperator(dims = A.dims, matrix = A.matrix / α)
 end
+function /(α::Number, A::DiscretizedOperator)
+    DiscretizedOperator(dims = A.dims, matrix = α / A.matrix )
+end
 ^(A::DiscretizedOperator, n::Integer) = DiscretizedOperator(dims = A.dims, matrix = A.matrix^n)
 
-import Base: materialize, BroadcastStyle, broadcastable, broadcasted
-import Base.Broadcast: Broadcasted
+## === Copy operator ===
+import Base: copyto!
+function copyto!(dest::DiscretizedOperator{FT}, src::DiscretizedOperator{FT}) where {FT<:AbstractFloat}
+	@assert dest.dims == src.dims "Dimensions of dest=$(dest.dims) and src=$(src.dims) do not match"
+    copyto!(dest.matrix, src.matrix)
+	dest.k2csc = src.k2csc
+	return dest
+end
+
+# when .= is used
+function copyto!(dest::DiscretizedOperator{FT}, bc::Broadcasted{DOStyle}) where {FT}
+	src_dops = filter(x -> x isa DiscretizedOperator, bc.args)
+    @assert !isempty(src_dops) "No DiscretizedOperator found in broadcast args"
+    src = first(src_dops)
+    @assert src.dims == dest.dims "Dimensions of dest=$(dest.dims) and src=$(src.dims) do not match"
+
+    vals = map(bc.args) do x
+        x isa DiscretizedOperator ? x.matrix : x
+    end
+    bc_mat = broadcasted(bc.f, vals...)
+    M = materialize(bc_mat)
+
+    copyto!(dest.matrix, M)
+	dest.k2csc = src.k2csc
+    return dest
+end
+
+
+## === Backlash operator for solving linear systems ===
+import Base: \
+function \(A::DiscretizedOperator{T}, b::AbstractVector{T}) where {T<:AbstractFloat}
+    return A.matrix \ b
+end
+function \(A::DiscretizedOperator{T}, b::AbstractMatrix{T}) where {T<:AbstractFloat}
+	@assert size(b) == A.dims "Matrix size=$(size(b)) differs from DiscretizedOperator's dims=$(A.dims)"
+    return reshape(A.matrix \ @view(b[:]), A.dims)
+end
+
+## === Broadcasting support for DiscretizedOperator ===
+
 
 # 1. Make DiscretizedOperator treated as a scalar in broadcasts
 # This means A .* B will treat A and B as scalar entities in the broadcast
 broadcastable(A::DiscretizedOperator) = A
 
-# 2. Define a custom broadcast style for DiscretizedOperator
-struct DOStyle <: BroadcastStyle end
-BroadcastStyle(::Type{<:DiscretizedOperator}) = DOStyle()
 
 # # 3. Define how to combine DiscretizedOperator with other broadcast styles
-# # (only needed if mixing with other types)
 Base.Broadcast.BroadcastStyle(::DOStyle, ::BroadcastStyle) = DOStyle()
 Base.Broadcast.BroadcastStyle(::BroadcastStyle, ::DOStyle) = DOStyle()
+
+# Ensure DOStyle wins when mixed with default array style:
+combine_styles(::DOStyle, ::BroadcastStyle) = DOStyle()
+combine_styles(::BroadcastStyle, ::DOStyle) = DOStyle()
 
 function broadcasted(::DOStyle, f, ops::DiscretizedOperator...)
     mats = map(o->o.matrix, ops)
