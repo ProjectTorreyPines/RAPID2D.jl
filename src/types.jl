@@ -355,9 +355,9 @@ Represents a discretized operator in a two-dimensional domain.
     # sparse matrix for the discretized operator
     matrix::SparseMatrixCSC{FT,Int} = spzeros(FT, prod(dims), prod(dims))
 
-    # Mapping from k-index to CSC index
+    # Mapping from k-index to CSC index (not always used)
     # (for more efficient update of non-zero elements of CSC matrix)
-    k2csc::Vector{Int} = zeros(Int, prod(dims))
+    k2csc::Vector{Int} = Int[]
 end
 
 function DiscretizedOperator{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
@@ -383,23 +383,23 @@ Fields include various matrices for solving different parts of the model.
     RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
 
     # Basic differential operators (2nd-order central difference)
-    A_∂R::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Radial derivative operator ∂R
-    A_𝐽⁻¹∂R_𝐽::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
-    A_∂Z::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Vertical derivative operator ∂Z
+    ∂R::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Radial derivative operator ∂R
+    𝐽⁻¹∂R_𝐽::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
+    ∂Z::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Vertical derivative operator ∂Z
 
     # Operators for solving continuity equations
-    A_∇𝐃∇::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Diffusion operator
+    ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
     An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Convection operator
     An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # src operator
 
-    A_𝐮∇::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # advection operator (𝐮·∇)f
-    A_∇𝐮::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
+    𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
+    ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
 
     # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
-    map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
+    # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
     map_convec_k2csc::Vector{Int} = zeros(Int, prod(dims))
-    map_𝐮∇_k2csc::Vector{Int} = zeros(Int, prod(dims))
-    map_∇𝐮_k2csc::Vector{Int} = zeros(Int, prod(dims))
+    # map_𝐮∇_k2csc::Vector{Int} = zeros(Int, prod(dims))
+    # map_∇𝐮_k2csc::Vector{Int} = zeros(Int, prod(dims))
 
     # Operator for magnetic field solver
     A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Grad-Shafranov operator

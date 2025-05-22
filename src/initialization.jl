@@ -174,12 +174,12 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
 
     # Construct basic differntial operators
-    RP.operators.A_∂R = construct_∂R_operator(RP.G)
-    RP.operators.A_𝐽⁻¹∂R_𝐽 = construct_𝐽⁻¹∂R_𝐽_operator(RP.G)
-    RP.operators.A_∂Z = construct_∂Z_operator(RP.G)
+    RP.operators.∂R = construct_∂R_operator(RP.G)
+    RP.operators.𝐽⁻¹∂R_𝐽 = construct_𝐽⁻¹∂R_𝐽_operator(RP.G)
+    RP.operators.∂Z = construct_∂Z_operator(RP.G)
 
     if RP.flags.diffu
-        initialize_∇𝐃∇_operator!(RP)
+        RP.operators.∇𝐃∇ = construct_∇𝐃∇_operator(RP)
     end
     if RP.flags.convec
         initialize_Ane_convection_operator!(RP)
@@ -212,7 +212,7 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
                              (RP.fields.bZ).^2
 
         # Construct diffusion operator
-        # RP.operators.A_∇𝐃∇ = construct_A_∇𝐃∇(RP, ...)
+        # RP.operators.∇𝐃∇ = construct_∇𝐃∇(RP, ...)
     end
 
     return RP

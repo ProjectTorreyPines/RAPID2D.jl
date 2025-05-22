@@ -125,8 +125,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             # #2: Advection term (1-θ)*[-(𝐮⋅∇)*ue_para]
             if RP.flags.Include_ud_convec_term
                 update_𝐮∇_operator!(RP)
-                @views accel_para_tilde[:] .+= (one_FT - θu) * (-OP.A_𝐮∇ * pla.ue_para[:])
-                @. OP.A_LHS += θu * dt * OP.A_𝐮∇
+                @views accel_para_tilde[:] .+= (one_FT - θu) * (-OP.𝐮∇ * pla.ue_para[:])
+                @. OP.A_LHS += θu * dt * OP.𝐮∇
             end
 
             # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
@@ -316,7 +316,7 @@ function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
             # 2. Build diffusion operator - this is a simplified placeholder
             # In a real implementation, we would build the full diffusion operator
-            # that properly accounts for magnetic geometry, similar to A_∇𝐃∇
+            # that properly accounts for magnetic geometry, similar to ∇𝐃∇
             # But for now, we'll assume a simplified form
             A_T_diffu = spzeros(FT, NR*NZ, NR*NZ)
 
@@ -515,9 +515,9 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
         @. ePowers.heat = -ee * pla.Te_eV * (pla.ueR * ∇log_n_R + pla.ueZ * ∇log_n_Z)
 
 
-        @unpack A_∇𝐮, A_𝐮∇ = RP.operators
+        @unpack ∇𝐮, 𝐮∇ = RP.operators
 
-        -ee*pla.Te_eV.*(A_𝐮∇*log.(pla.ne))
+        -ee*pla.Te_eV.*(𝐮∇*log.(pla.ne))
 
         # # Handle NaN values
         # replace!(ePowers.heat, NaN => zero_FT)
@@ -677,7 +677,7 @@ diffusion term for explicit time stepping.
 function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.Implicit
         update_∇𝐃∇_operator!(RP)
-        RP.operators.neRHS_diffu[:] = RP.operators.A_∇𝐃∇ * RP.plasma.ne[:]
+        RP.operators.neRHS_diffu[:] = RP.operators.∇𝐃∇ * RP.plasma.ne[:]
     else
         # For explicit method, calculate diffusion term directly
         calculate_ne_diffusion_explicit_RHS!(RP)
@@ -726,7 +726,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
         # Build full RHS with explicit contribution
         @. OP.RHS = RP.plasma.ne + dt * (one(FT) - θ) * (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
         # Build LHS operator
-        @. OP.A_LHS = OP.II - θ*dt* (OP.A_∇𝐃∇ + OP.An_convec + OP.An_src)
+        @. OP.A_LHS = OP.II - θ*dt* (OP.∇𝐃∇ + OP.An_convec + OP.An_src)
 
         # Solve the linear system
         @views RP.plasma.ne[:] = OP.A_LHS \ OP.RHS[:]
