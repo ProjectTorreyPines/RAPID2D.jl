@@ -45,7 +45,7 @@ using Test
     div_numerical_1 = calculate_divergence(RP.G, FR, FZ) # Using central differencing
 
     # using operators matrix-vector multiplication
-    div_numerical_2 = @views reshape(OP.A_𝐽⁻¹∂R_𝐽 * FR[:] + OP.A_∂Z * FZ[:], NR, NZ)
+    div_numerical_2 = OP.𝐽⁻¹∂R_𝐽 * FR .+ OP.∂Z * FZ
 
     @test isapprox(div_numerical_1, div_numerical_2, rtol=1e-14)
 
@@ -131,16 +131,18 @@ end
     explicit_result = copy(RP.operators.neRHS_diffu)
 
     # Implicit method
-    A_∇𝐃∇ = RAPID2D.construct_∇𝐃∇_operator(RP)
-    implicit_result = reshape(A_∇𝐃∇ * test_density[:], NR, NZ)
+    ∇𝐃∇ = RAPID2D.construct_∇𝐃∇_operator(RP)
+    implicit_result = ∇𝐃∇ * test_density
 
     # Calculate implicit diffusion using RAPID2D's internal way that can update the operator more efficiently
     # This is useful for large simulations where we want to avoid re-creating the operator
-    RAPID2D.initialize_∇𝐃∇_operator!(RP)
-    implicit_result2 = reshape(RP.operators.A_∇𝐃∇ * test_density[:], NR, NZ)
+    RP.operators.∇𝐃∇ = RAPID2D.construct_∇𝐃∇_operator(RP)
+    RAPID2D.update_∇𝐃∇_operator!(RP)
+    implicit_result2 = RP.operators.∇𝐃∇ * test_density
 
     # compare if two methods give the same operatoryy
-    @test A_∇𝐃∇ == RP.operators.A_∇𝐃∇
+    @test ∇𝐃∇ == RP.operators.∇𝐃∇
+    @test !(∇𝐃∇ === RP.operators.∇𝐃∇)
 
 	# Comparison
 	@test isapprox(explicit_result, implicit_result, rtol=1e-10)
@@ -149,7 +151,7 @@ end
 
     # Additional test: Verify that matrix multiplication operations don't error
     # This is to ensure our implementation works with typical linear algebra operations
-    @test_nowarn A_∇𝐃∇ * (A_∇𝐃∇ * test_density[:])
+    @test_nowarn ∇𝐃∇ * (∇𝐃∇ * test_density)
 end
 
 @testset "Convection operator [-∇⋅(nu)]  - Explicit vs Implicit" begin
@@ -211,20 +213,20 @@ end
             An_convec = RAPID2D.construct_Ane_convection_operator(RP, uR, uZ; flag_upwind)
             implicit_result = reshape(An_convec * test_density[:], NR, NZ)
 
-            A_∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
-            @test isapprox(implicit_result, reshape(-A_∇𝐮 * test_density[:], NR, NZ))
+            ∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
+            @test isapprox(implicit_result, reshape(-∇𝐮 * test_density[:], NR, NZ))
 
             # Calculate implicit convection using RAPID2D's internal way that can update the operator more efficiently
             # This is useful for large simulations where we want to avoid re-creating the operator
             RAPID2D.initialize_Ane_convection_operator!(RP; flag_upwind)
             implicit_result2 = reshape(RP.operators.An_convec * test_density[:], NR, NZ)
 
-            RAPID2D.initialize_∇𝐮_operator!(RP; flag_upwind)
-            @test isapprox(implicit_result2, reshape(-RP.operators.A_∇𝐮 * test_density[:], NR, NZ))
+            RAPID2D.construct_∇𝐮_operator(RP; flag_upwind)
+            @test isapprox(implicit_result2, reshape(-RP.operators.∇𝐮 * test_density[:], NR, NZ))
 
             # compare if two methods give the same operatoryy
             @test An_convec == RP.operators.An_convec
-            @test A_∇𝐮 == RP.operators.A_∇𝐮
+            @test ∇𝐮 == RP.operators.∇𝐮
 
             # Compare the results
             @test isapprox(explicit_result, implicit_result, rtol=1e-10)
@@ -318,23 +320,23 @@ end
 			explicit_result = @. (RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
 
             # Calculate implicit convection term
-            A_𝐮∇ = RAPID2D.construct_𝐮∇_operator(RP; flag_upwind)
-            implicit_result = reshape(A_𝐮∇ * RP.plasma.ue_para[:], NR, NZ)
+            𝐮∇ = RAPID2D.construct_𝐮∇_operator(RP; flag_upwind)
+            implicit_result = reshape(𝐮∇ * RP.plasma.ue_para[:], NR, NZ)
 
             # Calculate implicit convection using RAPID2D's internal way that can update the operator more efficiently
             # This is useful for large simulations where we want to avoid re-creating the operator
-            RAPID2D.initialize_𝐮∇_operator!(RP; flag_upwind)
-            implicit_result2 = reshape(RP.operators.A_𝐮∇ * RP.plasma.ue_para[:], NR, NZ)
+            RAPID2D.construct_𝐮∇_operator!(RP; flag_upwind)
+            implicit_result2 = reshape(RP.operators.𝐮∇ * RP.plasma.ue_para[:], NR, NZ)
 
             # compare if two methods give the same operatoryy
-            @test A_𝐮∇ == RP.operators.A_𝐮∇
+            @test 𝐮∇ == RP.operators.𝐮∇
 
             # Compare the results
             @test isapprox(explicit_result, implicit_result, rtol=1e-10)
             @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 
             # Additional test: Verify that matrix multiplication operations don't error
-            @test_nowarn A_𝐮∇ * (A_𝐮∇ * RP.plasma.ue_para[:])
+            @test_nowarn 𝐮∇ * (𝐮∇ * RP.plasma.ue_para[:])
         end
     end
 end
