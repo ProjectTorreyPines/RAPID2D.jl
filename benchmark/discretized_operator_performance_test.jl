@@ -22,7 +22,7 @@ function generate_test_sparse_matrix(n, sparsity_level, rng=Random.default_rng()
     V = randn(rng, nnz)
 
     # Create sparse matrix
-    return sparse(I, J, V, n, n)
+    return sparse(one(Float64)*I, J, V, n, n)
 end
 
 """
@@ -122,9 +122,9 @@ function run_benchmarks(sizes, sparsity_level)
         B_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
         C_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
 
-        A_sparse .+= sparse(I, size^2, size^2)
-        B_sparse .+= sparse(I, size^2, size^2)
-        C_sparse .+= sparse(I, size^2, size^2)
+        A_sparse .+= sparse(one(Float64)*I, size^2, size^2)
+        B_sparse .+= sparse(one(Float64)*I, size^2, size^2)
+        C_sparse .+= sparse(one(Float64)*I, size^2, size^2)
 
         # Generate random vector for solving linear systems (A\b)
         b_vector = randn(rng, size^2)
@@ -270,8 +270,8 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level)
             B_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
 
             # Make sure matrices are well-conditioned for inversion
-            A_sparse .+= sparse(I, size^2, size^2)
-            B_sparse .+= sparse(I, size^2, size^2)
+            A_sparse .+= sparse(one(Float64)*I, size^2, size^2)
+            B_sparse .+= sparse(one(Float64)*I, size^2, size^2)
 
             # Generate random vector for solving linear systems
             b_vector = randn(rng, size^2)

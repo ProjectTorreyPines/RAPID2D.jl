@@ -53,7 +53,7 @@ end
 import Base: size, axes, IndexStyle
 size(op::DiscretizedOperator) = size(op.matrix)
 axes(op::DiscretizedOperator) = axes(op.matrix)
-IndexStyle(::Type{<:DiscretizedOperator}) = IndexStyle(op.matrix)
+IndexStyle(op::DiscretizedOperator) = IndexStyle(op.matrix)
 
 import Base: +, -, *, /, ^, inv, ==
 import Base: materialize, BroadcastStyle, broadcastable, broadcasted
