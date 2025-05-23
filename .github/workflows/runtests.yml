@@ -1,5 +1,5 @@
 ---
-name: CI
+name: runtests
 
 on:
   push:
@@ -63,7 +63,9 @@ jobs:
 
       - uses: codecov/codecov-action@v5
         with:
-          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info,
+          verbose: true
 
   benchmark:
     name: Run Benchmarks
