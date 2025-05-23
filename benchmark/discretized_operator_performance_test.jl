@@ -40,7 +40,7 @@ function create_discretized_operator(matrix::SparseMatrixCSC{Float64, Int})
 end
 
 """
-    run_benchmarks(sizes, sparsity_level)
+    run_benchmarks(sizes, sparsity_level, bench_seconds)
 
 Run performance benchmarks comparing sparse matrix operations with DiscretizedOperator operations.
 The benchmark tests various operations including basic arithmetic, element-wise operations and broadcasting.
@@ -48,8 +48,9 @@ The benchmark tests various operations including basic arithmetic, element-wise 
 Parameters:
 - sizes: Array of matrix sizes to test (n where matrix is n×n)
 - sparsity_level: Fraction of non-zero elements in the matrix
+- bench_seconds: Maximum seconds per benchmark
 """
-function run_benchmarks(sizes, sparsity_level)
+function run_benchmarks(sizes, sparsity_level, bench_seconds)
     println("Running performance benchmarks...")
     println("==================================")
 
@@ -147,7 +148,7 @@ function run_benchmarks(sizes, sparsity_level)
 
             if op_name == "Matrix broadcast (@. A.matrix = B.matrix + B.matrix^2)"
                 # Special case for direct matrix operation
-                dop_result = @benchmark (@. $A_dop.matrix = $B_dop.matrix + $B_dop.matrix^2)
+                dop_result = @benchmark (@. $A_dop.matrix = $B_dop.matrix + $B_dop.matrix^2) seconds=bench_seconds
                 dop_time = median(dop_result).time / 1000  # Convert ns to μs
                 sparse_time = NaN
                 relative = NaN
@@ -157,11 +158,11 @@ function run_benchmarks(sizes, sparsity_level)
 
             if occursin("Chained operations", op_name) || occursin("Mixed operations", op_name)
                 # Benchmark operations with three arguments
-                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse, $C_sparse)
+                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse, $C_sparse) seconds=bench_seconds
                 sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
 
                 if dop_op !== nothing
-                    dop_result = @benchmark $dop_op($A_dop, $B_dop, $C_dop)
+                    dop_result = @benchmark $dop_op($A_dop, $B_dop, $C_dop) seconds=bench_seconds
                     dop_time = median(dop_result).time / 1000  # Convert ns to μs
                     relative = dop_time / sparse_time
                 else
@@ -172,11 +173,11 @@ function run_benchmarks(sizes, sparsity_level)
                 # Benchmark operations with one or two arguments
                 if applicable(sparse_op, A_sparse)
                     # Single argument operation
-                    sparse_result = @benchmark $sparse_op($A_sparse)
+                    sparse_result = @benchmark $sparse_op($A_sparse) seconds=bench_seconds
                     sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
 
                     if dop_op !== nothing
-                        dop_result = @benchmark $dop_op($A_dop)
+                        dop_result = @benchmark $dop_op($A_dop) seconds=bench_seconds
                         dop_time = median(dop_result).time / 1000  # Convert ns to μs
                         relative = dop_time / sparse_time
                     else
@@ -185,11 +186,11 @@ function run_benchmarks(sizes, sparsity_level)
                     end
                 elseif op_name == "Linear system solution (A\\b)"
                     # Special case for linear system solution
-                    sparse_result = @benchmark $sparse_op($A_sparse, $b_vector)
+                    sparse_result = @benchmark $sparse_op($A_sparse, $b_vector) seconds=bench_seconds
                     sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
 
                     if dop_op !== nothing
-                        dop_result = @benchmark $dop_op($A_dop, $b_vector)
+                        dop_result = @benchmark $dop_op($A_dop, $b_vector) seconds=bench_seconds
                         dop_time = median(dop_result).time / 1000  # Convert ns to μs
                         relative = dop_time / sparse_time
                     else
@@ -198,11 +199,11 @@ function run_benchmarks(sizes, sparsity_level)
                     end
                 else
                     # Two argument operation
-                    sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse)
+                    sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse) seconds=bench_seconds
                     sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
 
                     if dop_op !== nothing
-                        dop_result = @benchmark $dop_op($A_dop, $B_dop)
+                        dop_result = @benchmark $dop_op($A_dop, $B_dop) seconds=bench_seconds
                         dop_time = median(dop_result).time / 1000  # Convert ns to μs
                         relative = dop_time / sparse_time
                     else
@@ -219,11 +220,11 @@ function run_benchmarks(sizes, sparsity_level)
 end
 
 """
-    run_scaling_test(min_size, max_size, sparsity_level)
+    run_scaling_test(min_size, max_size, num_points, sparsity_level, bench_seconds)
 
 Run scaling tests to see how performance scales with matrix size.
 """
-function run_scaling_test(min_size, max_size, num_points, sparsity_level)
+function run_scaling_test(min_size, max_size, num_points, sparsity_level, bench_seconds)
     println("\nScaling Test")
     println("=============")
 
@@ -241,12 +242,8 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level)
             (A, B) -> A .* B),
 
         ("Complex broadcast (@. 2.0 * A + 0.5 * B)",
-            (A, B) -> @. 2.0 * A + 0.5 * B,
-            (A, B) -> @. 2.0 * A + 0.5 * B),
-
-        ("Matrix inversion (inv(A))",
-            A -> inv(A),
-            A -> inv(A)),
+            (A, B) -> (@. 2.0 * A + 0.5 * B),
+            (A, B) -> (@. 2.0 * A + 0.5 * B)),
 
         ("Linear system solution (A\\b)",
             (A, b) -> A \ b,
@@ -282,14 +279,11 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level)
 
             # Benchmark
             if op_name == "Linear system solution (A\\b)"
-                sparse_result = @benchmark $sparse_op($A_sparse, $b_vector)
-                dop_result = @benchmark $dop_op($A_dop, $b_vector)
-            elseif op_name == "Matrix inversion (inv(A))"
-                sparse_result = @benchmark $sparse_op($A_sparse)
-                dop_result = @benchmark $dop_op($A_dop)
+                sparse_result = @benchmark $sparse_op($A_sparse, $b_vector) seconds=bench_seconds
+                dop_result = @benchmark $dop_op($A_dop, $b_vector) seconds=bench_seconds
             else
-                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse)
-                dop_result = @benchmark $dop_op($A_dop, $B_dop)
+                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse) seconds=bench_seconds
+                dop_result = @benchmark $dop_op($A_dop, $B_dop) seconds=bench_seconds
             end
 
             # Calculate times
@@ -303,23 +297,66 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level)
 end
 
 # Main benchmark function
-function main()
-    println("# Performance Comparison: SparseMatrixCSC vs DiscretizedOperator")
-    println("================================================================")
-
-    # Run detailed benchmarks for specific sizes
-    sizes = [20, 50, 100]  # These give 400x400, 2500x2500, 10000x10000 matrices
-    sparsity = 0.01        # 1% non-zero elements
-    run_benchmarks(sizes, sparsity)
-
-    # Run scaling test
-    min_size = 10          # 100x100 matrix
-    max_size = 200         # 40000x40000 matrix
-    num_points = 5
-    run_scaling_test(min_size, max_size, num_points, sparsity)
+function main(;
+    sizes = [10, 20],                # Matrix sizes to test
+    sparsity = 0.01,                # Sparsity level (fraction of non-zero elements)
+    min_size = 5,                   # Minimum matrix size for scaling test
+    max_size = 40,                  # Maximum matrix size for scaling test
+    num_points = 6,                 # Number of points in scaling test
+    bench_seconds = 5,              # Maximum seconds per benchmark
+    output_file = nothing           # Optional output file path
+)
+    # Redirect output to file if specified
+    if output_file !== nothing
+        mkpath(dirname(output_file))
+        open(output_file, "w") do io
+            redirect_stdout(io) do
+                run_benchmarks_internal(sizes, sparsity, min_size, max_size, num_points, bench_seconds)
+            end
+        end
+        println("Benchmark results saved to: $output_file")
+    else
+        run_benchmarks_internal(sizes, sparsity, min_size, max_size, num_points, bench_seconds)
+    end
 end
 
-# Run the benchmark if this script is executed directly
+function run_benchmarks_internal(sizes, sparsity, min_size, max_size, num_points, bench_seconds)
+    println("# Performance Comparison: SparseMatrixCSC vs DiscretizedOperator")
+    println("================================================================")
+    println("Benchmark configuration:")
+    println("- Detailed benchmark matrix sizes: $sizes")
+    println("- Scaling test range: $min_size to $max_size with $num_points points")
+    println("- Benchmark time limit: $bench_seconds seconds")
+    println("- Matrix sparsity: $(sparsity*100)%")
+    println()
+
+    # Run detailed benchmarks for specific sizes
+    run_benchmarks(sizes, sparsity, bench_seconds)
+
+    # Run scaling test
+    run_scaling_test(min_size, max_size, num_points, sparsity, bench_seconds)
+end
+
+# Simple execution when run as script
 if abspath(PROGRAM_FILE) == @__FILE__
-    main()
+    # Create results directory if it doesn't exist
+    results_dir = "benchmark/results"
+    mkpath(results_dir)
+
+    # Simple output file name
+    output_file = joinpath(results_dir, "benchmark_results.txt")
+
+    # Run with basic default settings for CI, saving results to file
+    main(
+        sizes = [5, 10],        # Small sizes for quick CI testing
+        sparsity = 0.01,
+        min_size = 5,
+        max_size = 15,
+        num_points = 3,
+        bench_seconds = 0.5,    # Quick benchmarks for CI
+        output_file = output_file
+    )
+else
+    # When included as a module, just print a message
+    println("Benchmark module loaded. Call main() function to run benchmarks.")
 end
