@@ -355,7 +355,7 @@ Fields include various matrices for solving different parts of the model.
     II::SparseMatrixCSC{FT, Int} = sparse(one(FT) * I, prod(dims), prod(dims))
 
     # Matrix placeholders to avoid repetitive allocations
-    A_LHS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # LHS matrix for implicit methods
+    A_LHS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # LHS for implicit methods
     RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
 
     # Basic differential operators (2nd-order central difference)

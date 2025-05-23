@@ -107,10 +107,24 @@ end
 
 ## === Copy operator ===
 import Base: copyto!
+
+function Base.copy(src::DiscretizedOperator{FT}) where {FT<:AbstractFloat}
+    new_op = DiscretizedOperator{FT}(dims = src.dims) # Assigns the tuple
+    new_op.matrix = copy(src.matrix) # Deep copy the matrix
+    new_op.k2csc = copy(src.k2csc)   # Deep copy the vector
+    return new_op
+end
+
 function copyto!(dest::DiscretizedOperator{FT}, src::DiscretizedOperator{FT}) where {FT<:AbstractFloat}
 	@assert dest.dims == src.dims "Dimensions of dest=$(dest.dims) and src=$(src.dims) do not match"
     copyto!(dest.matrix, src.matrix)
-	dest.k2csc = src.k2csc
+	dest.k2csc = copy(src.k2csc)
+	return dest
+end
+
+function copyto!(dest::DiscretizedOperator{FT}, src::AbstractMatrix{FT}) where {FT<:AbstractFloat}
+    copyto!(dest.matrix, src)
+	empty!(dest.k2csc) # reset k2csc
 	return dest
 end
 
@@ -128,7 +142,7 @@ function copyto!(dest::DiscretizedOperator{FT}, bc::Broadcasted{DOStyle}) where 
     M = materialize(bc_mat)
 
     copyto!(dest.matrix, M)
-	dest.k2csc = src.k2csc
+	dest.k2csc = copy(src.k2csc)
     return dest
 end
 
@@ -149,7 +163,6 @@ end
 # 1. Make DiscretizedOperator treated as a scalar in broadcasts
 # This means A .* B will treat A and B as scalar entities in the broadcast
 broadcastable(A::DiscretizedOperator) = A
-
 
 # # 3. Define how to combine DiscretizedOperator with other broadcast styles
 Base.Broadcast.BroadcastStyle(::DOStyle, ::BroadcastStyle) = DOStyle()
