@@ -34,9 +34,9 @@ function create_discretized_operator(matrix::SparseMatrixCSC{Float64, Int})
     # Calculate 2D dimensions from matrix size
     n = size(matrix, 1)
     # Assume square dimensions for simplicity
-    dim_size = Int(sqrt(n))
+    each_size = Int(sqrt(n))
     # Create DiscretizedOperator with the sparse matrix
-    return DiscretizedOperator(dims=(dim_size, dim_size), matrix=matrix)
+    return DiscretizedOperator(dims_rz=(each_size, each_size), matrix=matrix)
 end
 
 """
@@ -58,6 +58,10 @@ function run_benchmarks(sizes, sparsity_level)
 
     # Define operations to benchmark
     operations = [
+        ("Linear system solution (A\\b)",
+            (A, b) -> A \ b,
+            (A, b) -> A \ b),
+
         ("Addition (A + B)",
             (A, B) -> A + B,
             (A, B) -> A + B),
@@ -118,6 +122,13 @@ function run_benchmarks(sizes, sparsity_level)
         B_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
         C_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
 
+        A_sparse .+= sparse(I, size^2, size^2)
+        B_sparse .+= sparse(I, size^2, size^2)
+        C_sparse .+= sparse(I, size^2, size^2)
+
+        # Generate random vector for solving linear systems (A\b)
+        b_vector = randn(rng, size^2)
+
         # Create DiscretizedOperator objects
         A_dop = create_discretized_operator(copy(A_sparse))
         B_dop = create_discretized_operator(copy(B_sparse))
@@ -172,6 +183,19 @@ function run_benchmarks(sizes, sparsity_level)
                         dop_time = NaN
                         relative = NaN
                     end
+                elseif op_name == "Linear system solution (A\\b)"
+                    # Special case for linear system solution
+                    sparse_result = @benchmark $sparse_op($A_sparse, $b_vector)
+                    sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
+
+                    if dop_op !== nothing
+                        dop_result = @benchmark $dop_op($A_dop, $b_vector)
+                        dop_time = median(dop_result).time / 1000  # Convert ns to μs
+                        relative = dop_time / sparse_time
+                    else
+                        dop_time = NaN
+                        relative = NaN
+                    end
                 else
                     # Two argument operation
                     sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse)
@@ -218,7 +242,15 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level)
 
         ("Complex broadcast (@. 2.0 * A + 0.5 * B)",
             (A, B) -> @. 2.0 * A + 0.5 * B,
-            (A, B) -> @. 2.0 * A + 0.5 * B)
+            (A, B) -> @. 2.0 * A + 0.5 * B),
+
+        ("Matrix inversion (inv(A))",
+            A -> inv(A),
+            A -> inv(A)),
+
+        ("Linear system solution (A\\b)",
+            (A, b) -> A \ b,
+            (A, b) -> A \ b)
     ]
 
     # Set random seed for reproducibility
@@ -237,13 +269,28 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level)
             A_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
             B_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
 
+            # Make sure matrices are well-conditioned for inversion
+            A_sparse .+= sparse(I, size^2, size^2)
+            B_sparse .+= sparse(I, size^2, size^2)
+
+            # Generate random vector for solving linear systems
+            b_vector = randn(rng, size^2)
+
             # Create DiscretizedOperator objects
             A_dop = create_discretized_operator(copy(A_sparse))
             B_dop = create_discretized_operator(copy(B_sparse))
 
             # Benchmark
-            sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse)
-            dop_result = @benchmark $dop_op($A_dop, $B_dop)
+            if op_name == "Linear system solution (A\\b)"
+                sparse_result = @benchmark $sparse_op($A_sparse, $b_vector)
+                dop_result = @benchmark $dop_op($A_dop, $b_vector)
+            elseif op_name == "Matrix inversion (inv(A))"
+                sparse_result = @benchmark $sparse_op($A_sparse)
+                dop_result = @benchmark $dop_op($A_dop)
+            else
+                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse)
+                dop_result = @benchmark $dop_op($A_dop, $B_dop)
+            end
 
             # Calculate times
             sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
