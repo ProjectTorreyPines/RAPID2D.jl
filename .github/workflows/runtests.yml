@@ -29,28 +29,27 @@ jobs:
           - '1.x'  # Latest version
         flavor:
           - {os: ubuntu-latest, arch: x64}  # Linux x64
-          - {os: macos-latest, arch: x64}  # macOS Intel
           - {os: macos-latest, arch: arm64}  # macOS ARM
           - {os: windows-latest, arch: x64}  # Windows x64
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get number of CPU cores
-        uses: SimenB/github-actions-cpu-cores@v2
-        id: cpu-cores
+      # - name: Get number of CPU cores
+      #   uses: SimenB/github-actions-cpu-cores@v2
+      #   id: cpu-cores
 
-      - name: Set JULIA_NUM_THREADS
-        shell: bash
-        run: >-
-          echo "JULIA_NUM_THREADS=${{ steps.cpu-cores.outputs.count }}" >> $GITHUB_ENV
+      # - name: Set JULIA_NUM_THREADS
+      #   shell: bash
+      #   run: >-
+      #     echo "JULIA_NUM_THREADS=${{ steps.cpu-cores.outputs.count }}" >> $GITHUB_ENV
 
-      - uses: julia-actions/setup-julia@v1
+      - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.flavor.arch }}
 
-      - uses: julia-actions/cache@v1
+      - uses: julia-actions/cache@v2
         with:
           cache-registries: "true"
 
@@ -62,9 +61,9 @@ jobs:
 
       - uses: julia-actions/julia-processcoverage@v1
 
-      - uses: codecov/codecov-action@v3
+      - uses: codecov/codecov-action@v5
         with:
-          file: lcov.info
+          files: lcov.info
 
   benchmark:
     name: Run Benchmarks
@@ -74,11 +73,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: julia-actions/setup-julia@v1
+      - uses: julia-actions/setup-julia@v2
         with:
           version: '1.9'
 
-      - uses: julia-actions/cache@v1
+      - uses: julia-actions/cache@v2
 
       - uses: julia-actions/julia-buildpkg@v1
 
@@ -91,7 +90,7 @@ jobs:
             include("benchmark/discretized_operator_performance_test.jl")'
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
           path: benchmark/results  # Assumes benchmark results are stored in this path
