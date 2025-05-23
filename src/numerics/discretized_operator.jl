@@ -154,7 +154,6 @@ end
 
 # Special Broadcasted type handler for .= operations
 function copyto!(dest::DiscretizedOperator{FT}, bc::Broadcasted{DOStyle}) where {FT}
-    println("copyto!(dest::DiscretizedOperator, bc::Broadcasted{DOStyle})")
 	src_dops = filter(x -> x isa DiscretizedOperator, bc.args)
     @assert !isempty(src_dops) "No DiscretizedOperator found in broadcast args"
     src = first(src_dops)
@@ -173,7 +172,6 @@ end
 
 # General Broadcasted type handler for .= operations
 function copyto!(dest::DiscretizedOperator{FT}, bc::Base.Broadcast.Broadcasted) where {FT}
-    println("copyto!(dest::DiscretizedOperator, bc::Base.Broadcast.Broadcasted)")
     # Materialize the broadcasted operation to get the actual result
     result = Base.materialize(bc)
 
