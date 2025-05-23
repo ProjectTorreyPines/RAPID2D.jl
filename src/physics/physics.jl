@@ -125,7 +125,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             # #2: Advection term (1-θ)*[-(𝐮⋅∇)*ue_para]
             if RP.flags.Include_ud_convec_term
                 update_𝐮∇_operator!(RP)
-                @views accel_para_tilde[:] .+= (one_FT - θu) * (-OP.𝐮∇ * pla.ue_para[:])
+                accel_para_tilde .+= (one_FT - θu) * (-OP.𝐮∇ * pla.ue_para)
                 @. OP.A_LHS += θu * dt * OP.𝐮∇
             end
 
@@ -135,8 +135,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             # #4: collision drag force  (1-θ)*[-(ν_tot)*ue_para]
             @. accel_para_tilde += (one_FT - θu) * (-tot_coll_freq * pla.ue_para)
 
-            diag_indices = diagind(OP.A_LHS)
-            @. @views OP.A_LHS[diag_indices] += θu * dt * tot_coll_freq[:]
+            # Add collision frequency to diagonal elements using spdiagm
+            OP.A_LHS += @views spdiagm(θu * dt * tot_coll_freq[:])
 
             # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
             @. accel_para_tilde += (mom_eff_nu_ei * pla.ui_para)
@@ -152,7 +152,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             @. OP.RHS = pla.ue_para + dt * accel_para_tilde
 
             # Solve the momentum equation
-            @views pla.ue_para[:] .= OP.A_LHS \ OP.RHS[:]
+            pla.ue_para .= OP.A_LHS \ OP.RHS
         else
 
             inv_factor = @. one_FT / (one_FT + θu * tot_coll_freq * dt)
