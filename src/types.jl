@@ -356,7 +356,6 @@ Fields include various matrices for solving different parts of the model.
 
     # Matrix placeholders to avoid repetitive allocations
     A_LHS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # LHS for implicit methods
-    RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
 
     # Basic differential operators (2nd-order central difference)
     ∂R::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Radial derivative operator ∂R
@@ -377,6 +376,7 @@ Fields include various matrices for solving different parts of the model.
     A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Grad-Shafranov operator
 
     # RHS vectors for electron continuity equation
+    RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
     neRHS_diffu::Matrix{FT} = zeros(FT, dims)  # Diffusion term
     neRHS_convec::Matrix{FT} = zeros(FT, dims) # Convection term
     neRHS_src::Matrix{FT} = zeros(FT, dims)    # Source term
