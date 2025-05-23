@@ -182,8 +182,6 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         RP.operators.∇𝐃∇ = construct_∇𝐃∇_operator(RP)
     end
     if RP.flags.convec
-        initialize_Ane_convection_operator!(RP)
-
         RP.operators.∇𝐮 = construct_∇𝐮_operator(RP)
         RP.operators.𝐮∇ = construct_𝐮∇_operator(RP)
     end

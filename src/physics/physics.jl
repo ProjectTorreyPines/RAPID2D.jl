@@ -694,8 +694,8 @@ convection term for explicit time stepping.
 """
 function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.Implicit
-        update_Ane_convection_operator!(RP)
-        RP.operators.neRHS_convec[:] = RP.operators.An_convec * RP.plasma.ne[:]
+        update_∇𝐮_operator!(RP)
+        RP.operators.neRHS_convec = -RP.operators.∇𝐮 * RP.plasma.ne
     else
         # For explicit method, calculate convection term directly
         calculate_ne_convection_explicit_RHS!(RP)
@@ -726,7 +726,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
         # Build full RHS with explicit contribution
         @. OP.RHS = RP.plasma.ne + dt * (one(FT) - θ) * (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
         # Build LHS operator
-        @. OP.A_LHS = OP.II - θ*dt* (OP.∇𝐃∇ + OP.An_convec + OP.An_src)
+        @. OP.A_LHS = OP.II - θ*dt* (OP.∇𝐃∇ - OP.∇𝐮 + OP.An_src)
 
         # Solve the linear system
         @views RP.plasma.ne[:] = OP.A_LHS \ OP.RHS[:]

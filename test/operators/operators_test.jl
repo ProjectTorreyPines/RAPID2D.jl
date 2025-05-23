@@ -154,7 +154,7 @@ end
     @test_nowarn ∇𝐃∇ * (∇𝐃∇ * test_density)
 end
 
-@testset "Convection operator [-∇⋅(nu)]  - Explicit vs Implicit" begin
+@testset "Convection operator [-∇⋅(n 𝐮)]  - Explicit vs Implicit" begin
     # Define test parameters
     NR, NZ = 15, 30  # Small grid for testing
     FT = Float64     # Floating point type
@@ -210,22 +210,15 @@ end
             explicit_result = copy(RP.operators.neRHS_convec)
 
             # Calculate implicit convection term
-            An_convec = RAPID2D.construct_Ane_convection_operator(RP, uR, uZ; flag_upwind)
-            implicit_result = reshape(An_convec * test_density[:], NR, NZ)
-
             ∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
-            @test isapprox(implicit_result, reshape(-∇𝐮 * test_density[:], NR, NZ))
+            implicit_result = -∇𝐮 * test_density
 
             # Calculate implicit convection using RAPID2D's internal way that can update the operator more efficiently
             # This is useful for large simulations where we want to avoid re-creating the operator
-            RAPID2D.initialize_Ane_convection_operator!(RP; flag_upwind)
-            implicit_result2 = reshape(RP.operators.An_convec * test_density[:], NR, NZ)
-
             RP.operators.∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP; flag_upwind)
-            @test isapprox(implicit_result2, reshape(-RP.operators.∇𝐮 * test_density[:], NR, NZ))
+            implicit_result2 = -RP.operators.∇𝐮 * test_density
 
             # compare if two methods give the same operatoryy
-            @test An_convec == RP.operators.An_convec
             @test ∇𝐮 == RP.operators.∇𝐮
 
             # Compare the results
@@ -233,7 +226,12 @@ end
             @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 
             # Additional test: Verify that matrix multiplication operations don't error
-            @test_nowarn An_convec * (An_convec * test_density[:])
+            result1 = ∇𝐮 * (∇𝐮 * test_density)
+            result2 = (∇𝐮 * ∇𝐮) * test_density
+            result3 = (∇𝐮^2) * test_density
+
+            @test isapprox(result1, result2, rtol=1e-10)
+            @test isapprox(result1, result3, rtol=1e-10)
         end
     end
 
@@ -259,18 +257,19 @@ end
         RP.plasma.ueR .= uR
         RP.plasma.ueZ .= uZ
 
-        # Test with upwind scheme (more stable for complex flows)
-        RAPID2D.calculate_ne_convection_explicit_RHS!(RP, test_density, uR, uZ; flag_upwind=true)
-        explicit_result = copy(RP.operators.neRHS_convec)
+        for flag_upwind in [true, false]
+            RAPID2D.calculate_ne_convection_explicit_RHS!(RP, test_density, uR, uZ; flag_upwind)
+            explicit_result = copy(RP.operators.neRHS_convec)
 
-        An_convec = RAPID2D.construct_Ane_convection_operator(RP, uR, uZ; flag_upwind=true)
-        implicit_result = reshape(An_convec * test_density[:], NR, NZ)
+            ∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
+            implicit_result = -∇𝐮 * test_density
 
-        RAPID2D.initialize_Ane_convection_operator!(RP; flag_upwind=true)
-        implicit_result2 = reshape(RP.operators.An_convec * test_density[:], NR, NZ)
+            RP.operators.∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP; flag_upwind)
+            implicit_result2 = -RP.operators.∇𝐮 * test_density
 
-        @test isapprox(explicit_result, implicit_result, rtol=1e-10)
-        @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
+            @test isapprox(explicit_result, implicit_result, rtol=1e-10)
+            @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
+        end
     end
 end
 
