@@ -365,7 +365,7 @@ Fields include various matrices for solving different parts of the model.
 
     # Operators for solving continuity equations
     ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
-    An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # src operator
+    𝐑_iz ::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction rate of ionization [#/m³]
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]

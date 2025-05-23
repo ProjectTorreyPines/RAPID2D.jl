@@ -661,10 +661,10 @@ function calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
 
     # Update sparse matrix operator for implicit methods if needed
     if RP.flags.Implicit
-        # Create diagonal matrix with electron growth rate
-        diagnoal_indices = diagind(RP.operators.An_src)
-        @. @views RP.operators.An_src[diagnoal_indices] = RP.plasma.eGrowth_rate[:]
+        RP.operators.𝐑_iz .= @views spdiagm(RP.plasma.eGrowth_rate[:])
     end
+
+    return RP
 end
 
 """
@@ -726,7 +726,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
         # Build full RHS with explicit contribution
         @. OP.RHS = RP.plasma.ne + dt * (one(FT) - θ) * (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
         # Build LHS operator
-        @. OP.A_LHS = OP.II - θ*dt* (OP.∇𝐃∇ - OP.∇𝐮 + OP.An_src)
+        @. OP.A_LHS = OP.II - θ*dt* (OP.∇𝐃∇ - OP.∇𝐮 + OP.𝐑_iz)
 
         # Solve the linear system
         @views RP.plasma.ne[:] = OP.A_LHS \ OP.RHS[:]
