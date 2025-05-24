@@ -130,7 +130,7 @@ end
     RAPID2D.calculate_ne_diffusion_explicit_RHS!(RP, test_density)
     explicit_result = copy(RP.operators.neRHS_diffu)
 
-    explicit_result2 = compute_∇𝐃∇_f_directly(RP, test_density)
+    explicit_result2 = compute_∇𝐃∇f_directly(RP, test_density)
 
     # Implicit method
     ∇𝐃∇ = RAPID2D.construct_∇𝐃∇_operator(RP)
@@ -212,6 +212,8 @@ end
             RAPID2D.calculate_ne_convection_explicit_RHS!(RP, test_density, uR, uZ; flag_upwind)
             explicit_result = copy(RP.operators.neRHS_convec)
 
+            explicit_result2 = -compute_∇f𝐮_directly(RP, test_density, uR, uZ; flag_upwind)
+
             # Calculate implicit convection term
             ∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
             implicit_result = -∇𝐮 * test_density
@@ -225,6 +227,7 @@ end
             @test ∇𝐮 == RP.operators.∇𝐮
 
             # Compare the results
+            @test isapprox(explicit_result, explicit_result2, rtol=1e-10)
             @test isapprox(explicit_result, implicit_result, rtol=1e-10)
             @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 
