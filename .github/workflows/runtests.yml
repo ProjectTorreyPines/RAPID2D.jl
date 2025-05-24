@@ -64,8 +64,7 @@ jobs:
       - uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: lcov.info,
-          verbose: true
+          files: lcov.info
 
   benchmark:
     name: Run Benchmarks
@@ -85,7 +84,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          julia --project=. -e '
+          julia --project=benchmark -e '
             include("benchmark/discretized_operator_performance_test.jl");
             main()' | tee benchmark/results.txt
 

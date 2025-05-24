@@ -2,11 +2,11 @@
 
 [![codecov](https://codecov.io/gh/mgyoo86/RAPID2D.jl/graph/badge.svg?token=E1OSX1CNOU)](https://codecov.io/gh/mgyoo86/RAPID2D.jl)
 
-<br />
 <div align="center">
     <h1 align="center">RAPID-2D</h1>
-    (<b>R</b>apid <b>A</b>nalysis of <b>P</b>lasma <b>I</b>nitiation and <b>D</b>ynamics in <b>2D</b>)
+    <h4>(<b>R</b>apid <b>A</b>nalysis of <b>P</b>lasma <b>I</b>nitiation and <b>D</b>ynamics in <b>2D</b>)</h4>
 </div>
+
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
