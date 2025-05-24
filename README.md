@@ -1,7 +1,6 @@
 <a id="readme-top"></a>
 [![CI](https://github.com/mgyoo86/RAPID2D.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/mgyoo86/RAPID2D.jl/actions/workflows/CI.yml)
 [![codecov](https://codecov.io/gh/mgyoo86/RAPID2D.jl/graph/badge.svg?token=E1OSX1CNOU)](https://codecov.io/gh/mgyoo86/RAPID2D.jl)
-d
 
 
 # RAPID2D.jl
