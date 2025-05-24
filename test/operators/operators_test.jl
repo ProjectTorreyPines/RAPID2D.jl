@@ -130,6 +130,8 @@ end
     RAPID2D.calculate_ne_diffusion_explicit_RHS!(RP, test_density)
     explicit_result = copy(RP.operators.neRHS_diffu)
 
+    explicit_result2 = compute_∇𝐃∇_f_directly(RP, test_density)
+
     # Implicit method
     ∇𝐃∇ = RAPID2D.construct_∇𝐃∇_operator(RP)
     implicit_result = ∇𝐃∇ * test_density
@@ -145,6 +147,7 @@ end
     @test !(∇𝐃∇ === RP.operators.∇𝐃∇)
 
 	# Comparison
+	@test isapprox(explicit_result, explicit_result2, rtol=1e-10)
 	@test isapprox(explicit_result, implicit_result, rtol=1e-10)
 	@test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 

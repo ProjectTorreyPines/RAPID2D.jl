@@ -37,6 +37,7 @@ export construct_∂R_operator, construct_∂Z_operator,
         calculate_divergence, construct_𝐽⁻¹∂R_𝐽_operator,
         calculate_diffusion_coefficients!,
         calculate_ne_diffusion_explicit_RHS!,
+        compute_∇𝐃∇_f_directly,
         construct_∇𝐃∇_operator,
         calculate_ne_convection_explicit_RHS!,
         construct_𝐮∇_operator,
@@ -95,6 +96,70 @@ function calculate_ne_diffusion_explicit_RHS!(RP::RAPID{FT}, density::AbstractMa
     end
 
     return RP
+end
+"""
+    compute_∇𝐃∇_f_directly(RP::RAPID{FT}, f::AbstractMatrix{FT}) where {FT<:AbstractFloat}
+
+Directly compute ∇⋅𝐃⋅∇f using explicit finite difference.
+
+This function applies the anisotropic diffusion operator 𝐃 to the scalar field f using
+the diffusion tensor components CTRR, CTRZ, and CTZZ stored in the transport object.
+The computation uses second-order central differences with proper handling of
+cross-derivative terms.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation object containing grid geometry and transport coefficients
+- `f::AbstractMatrix{FT}`: The input scalar field to which the diffusion operator is applied
+
+# Returns
+- `∇𝐃∇_f::AbstractMatrix{FT}`: The result of applying the diffusion operator to f
+
+# Mathematical Description
+The diffusion operator in cylindrical coordinates (R,Z) with Jacobian is:
+```
+∇⋅(𝐃∇f) = (1/J) * [∂/∂R(J*D_RR*∂f/∂R + J*D_RZ*∂f/∂Z) + ∂/∂Z(J*D_RZ*∂f/∂R + J*D_ZZ*∂f/∂Z)]
+```
+
+where:
+- J is the Jacobian of the coordinate transformation
+- D_RR, D_RZ, D_ZZ are the diffusion tensor components
+- CTRR = J*D_RR/(ΔR)², CTRZ = J*D_RZ/(ΔR*ΔZ), CTZZ = J*D_ZZ/(ΔZ)²
+
+# Notes
+- Only interior points (2:NR-1, 2:NZ-1) are computed; boundary values remain unchanged
+- Uses explicit finite difference stencils with proper averaging of coefficients
+- Cross-derivative terms (CTRZ) use 4-point stencils for second-order accuracy
+- Performance is enhanced with @fastmath macro for interior calculations
+"""
+function compute_∇𝐃∇_f_directly(RP::RAPID{FT}, f::AbstractMatrix{FT}) where {FT<:AbstractFloat}
+    # Alias necessary fields from the RP object
+    G = RP.G
+    inv_Jacob = G.inv_Jacob
+    NR, NZ = G.NR, G.NZ
+
+    CTRR = RP.transport.CTRR
+    CTRZ = RP.transport.CTRZ
+    CTZZ = RP.transport.CTZZ
+
+    ∇𝐃∇_f = zeros(FT, size(f))
+
+    @inbounds for j in 2:NZ-1
+        for i in 2:NR-1
+            # Using @fastmath for potential performance improvements
+            @fastmath ∇𝐃∇_f[i,j] = inv_Jacob[i,j]*(
+                +0.5*(CTRR[i+1,j]+CTRR[i,j])*(f[i+1,j]-f[i,j])
+                -0.5*(CTRR[i-1,j]+CTRR[i,j])*(f[i,j]-f[i-1,j])
+                +0.125*(CTRZ[i+1,j]+CTRZ[i,j])*(f[i,j+1]+f[i+1,j+1]-f[i,j-1]-f[i+1,j-1])
+                -0.125*(CTRZ[i-1,j]+CTRZ[i,j])*(f[i,j+1]+f[i-1,j+1]-f[i,j-1]-f[i-1,j-1])
+                +0.125*(CTRZ[i,j+1]+CTRZ[i,j])*(f[i+1,j]+f[i+1,j+1]-f[i-1,j]-f[i-1,j+1])
+                -0.125*(CTRZ[i,j-1]+CTRZ[i,j])*(f[i+1,j]+f[i+1,j-1]-f[i-1,j]-f[i-1,j-1])
+                +0.5*(CTZZ[i,j+1]+CTZZ[i,j])*(f[i,j+1]-f[i,j])
+                -0.5*(CTZZ[i,j-1]+CTZZ[i,j])*(f[i,j]-f[i,j-1])
+            )
+        end
+    end
+
+    return ∇𝐃∇_f
 end
 
 """
