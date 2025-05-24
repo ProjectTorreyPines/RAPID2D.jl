@@ -1,5 +1,5 @@
 ---
-name: runtests
+name: CI
 
 on:
   push:
