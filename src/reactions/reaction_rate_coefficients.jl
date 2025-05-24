@@ -217,6 +217,11 @@ function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Sym
 	end
 end
 
+# Convenience dispatch
+function get_electron_RRC(RP::RAPID{FT}, reaction::Symbol) where FT<:AbstractFloat
+	return get_electron_RRC(RP, RP.eRRCs, reaction)
+end
+
 """
     get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
 
@@ -242,6 +247,11 @@ function get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol)
 	else
 		throw(ArgumentError("Invalid reaction type: $reaction"))
 	end
+end
+
+# Convenience dispatch
+function get_H2_ion_RRC(RP::RAPID{FT}, reaction::Symbol) where FT<:AbstractFloat
+	return get_H2_ion_RRC(RP, RP.iRRCs, reaction)
 end
 
 # Export types and functions for reaction rate coefficients

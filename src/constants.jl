@@ -36,6 +36,8 @@ Fields:
     c_light::FT = FT(299792458.0)   # Speed of light in vacuum [m/s]
     room_T_eV::FT = FT(0.026)       # Room temperature [eV]
 
+    qe::FT = -ee                       # Electron charge [C]
+
     # Derived constants
     eV_to_J::FT = ee                             # 1 eV in J
     eV_to_K::FT = ee / kB                        # 1 eV in K

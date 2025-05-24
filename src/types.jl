@@ -112,6 +112,72 @@ end
 
 
 """
+    ElectronHeatingPowers{FT<:AbstractFloat}
+
+Contains the power terms for electron energy equation.
+
+# Fields
+- `tot`: Total power density [W/m³]
+- `drag`: Power from drag forces [W/m³]
+- `conv`: Power from convective transport [W/m³]
+- `diffu`: Power from diffusive transport [W/m³]
+- `heat`: Power from heating sources (e.g., ohmic) [W/m³]
+- `iz`: Power from ionization [W/m³]
+- `exc`: Power from excitation [W/m³]
+- `dilution`: Power from density dilution [W/m³]
+- `equi`: Power from temperature equilibration [W/m³]
+"""
+@kwdef mutable struct ElectronHeatingPowers{FT<:AbstractFloat}
+    dims::Tuple{Int,Int}  # Grid dimensions (NR, NZ)
+
+    # Power terms - all in W/m³
+    tot::Matrix{FT} = zeros(FT, dims)        # Total power density
+    drag::Matrix{FT} = zeros(FT, dims)       # Power from drag forces
+    conv::Matrix{FT} = zeros(FT, dims)       # Power from convective transport
+    diffu::Matrix{FT} = zeros(FT, dims)      # Power from diffusive transport
+    heat::Matrix{FT} = zeros(FT, dims)       # Power from heating (q)
+    iz::Matrix{FT} = zeros(FT, dims)         # Power from ionization
+    exc::Matrix{FT} = zeros(FT, dims)        # Power from excitation
+    dilution::Matrix{FT} = zeros(FT, dims)   # Power from density dilution
+    equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
+end
+
+# Constructor with dimensions
+function ElectronHeatingPowers{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
+    return ElectronHeatingPowers{FT}(dims=dimensions)
+end
+function ElectronHeatingPowers{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
+    return ElectronHeatingPowers{FT}(dims=(NR, NZ))
+end
+
+"""
+    IonHeatingPowers{FT<:AbstractFloat}
+
+Contains the power terms for ion energy equation.
+
+# Fields
+- `tot`: Total power density [W/m³]
+- `atomic`: Power from atomic processes [W/m³]
+- `equi`: Power from temperature equilibration [W/m³]
+"""
+@kwdef mutable struct IonHeatingPowers{FT<:AbstractFloat}
+    dims::Tuple{Int,Int}  # Grid dimensions (NR, NZ)
+
+    # Power terms - all in W/m³
+    tot::Matrix{FT} = zeros(FT, dims)        # Total power density
+    atomic::Matrix{FT} = zeros(FT, dims)     # Power from atomic processes
+    equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
+end
+
+# Constructor with dimensions
+function IonHeatingPowers{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
+    return IonHeatingPowers{FT}(dims=dimensions)
+end
+function IonHeatingPowers{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
+    return IonHeatingPowers{FT}(dims=(NR, NZ))
+end
+
+"""
     PlasmaState{FT<:AbstractFloat}
 Contains the plasma state variables including density, temperature, and velocity components.
 """
@@ -156,24 +222,9 @@ Contains the plasma state variables including density, temperature, and velocity
 
     eGrowth_rate::Matrix{FT} = zeros(FT, dims) # Electron growth rate [1/s]
 
-    # Power sources/sinks
-    ePowers::Dict{Symbol, Matrix{FT}} = Dict{Symbol, Matrix{FT}}(
-        :tot => zeros(FT, dims),
-        :diffu => zeros(FT, dims),
-        :conv => zeros(FT, dims),
-        :heat => zeros(FT, dims),
-        :drag => zeros(FT, dims),
-        :equi => zeros(FT, dims),
-        :iz => zeros(FT, dims),
-        :exc => zeros(FT, dims),
-        :dilution => zeros(FT, dims)
-    )
-
-    iPowers::Dict{Symbol, Matrix{FT}} = Dict{Symbol, Matrix{FT}}(
-        :tot => zeros(FT, dims),
-        :atomic => zeros(FT, dims),
-        :equi => zeros(FT, dims)
-    )
+    # Power sources/sinks - using new struct-based approach
+    ePowers::ElectronHeatingPowers{FT} = ElectronHeatingPowers{FT}(dims)
+    iPowers::IonHeatingPowers{FT} = IonHeatingPowers{FT}(dims)
 end
 
 function PlasmaState{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
@@ -304,32 +355,28 @@ Fields include various matrices for solving different parts of the model.
     II::SparseMatrixCSC{FT, Int} = sparse(one(FT) * I, prod(dims), prod(dims))
 
     # Matrix placeholders to avoid repetitive allocations
-    A_LHS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # LHS matrix for implicit methods
-    RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
+    A_LHS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # LHS for implicit methods
 
     # Basic differential operators (2nd-order central difference)
-    A_∂R::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Radial derivative operator ∂R
-    A_𝐽⁻¹∂R_𝐽::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
-    A_∂Z::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Vertical derivative operator ∂Z
+    ∂R::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Radial derivative operator ∂R
+    𝐽⁻¹∂R_𝐽::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
+    ∂Z::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Vertical derivative operator ∂Z
 
     # Operators for solving continuity equations
-    A_∇𝐃∇::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Diffusion operator
-    An_convec::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # Convection operator
-    An_src::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # src operator
+    ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
+    𝐑_iz ::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction rate of ionization [#/m³]
 
-    A_𝐮∇::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # advection operator (𝐮·∇)f
-    A_∇𝐮::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims)) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
+    𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
+    ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
 
     # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
-    map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
-    map_convec_k2csc::Vector{Int} = zeros(Int, prod(dims))
-    map_𝐮∇_k2csc::Vector{Int} = zeros(Int, prod(dims))
-    map_∇𝐮_k2csc::Vector{Int} = zeros(Int, prod(dims))
+    # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
 
     # Operator for magnetic field solver
     A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Grad-Shafranov operator
 
     # RHS vectors for electron continuity equation
+    RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
     neRHS_diffu::Matrix{FT} = zeros(FT, dims)  # Diffusion term
     neRHS_convec::Matrix{FT} = zeros(FT, dims) # Convection term
     neRHS_src::Matrix{FT} = zeros(FT, dims)    # Source term
@@ -389,6 +436,7 @@ Contains boolean flags that control various aspects of the simulation.
     Ampere::Bool = false                      # Enable Ampere's law (magnetic field update)
 
     # Transport flags
+    Include_heat_flux_term::Bool = false       # Include heat flux term in energy equation
     Include_ud_convec_term::Bool = true       # Include convection term in drift velocity equation
     Include_ud_diffu_term::Bool = true        # Include diffusion term in drift velocity equation
     Include_Te_convec_term::Bool = true       # Include convection term in Te equation

@@ -1,2 +1,4 @@
-Manifset.toml
+Manifest.toml
 *COPILOT*
+coverage/
+*.cov
