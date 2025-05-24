@@ -1,16 +1,14 @@
 <a id="readme-top"></a>
-
+[![CI](https://github.com/mgyoo86/RAPID2D.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/mgyoo86/RAPID2D.jl/actions/workflows/CI.yml)
 [![codecov](https://codecov.io/gh/mgyoo86/RAPID2D.jl/graph/badge.svg?token=E1OSX1CNOU)](https://codecov.io/gh/mgyoo86/RAPID2D.jl)
+d
 
-<div align="center">
-    <h1 align="center">RAPID-2D</h1>
-    <h4>(<b>R</b>apid <b>A</b>nalysis of <b>P</b>lasma <b>I</b>nitiation and <b>D</b>ynamics in <b>2D</b>)</h4>
-</div>
 
+# RAPID2D.jl
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
-
+RAPID2D (Rapid Analysis of Plasma Initiation with Dynamics in 2D)
 
 
 <!-- CONTACT -->

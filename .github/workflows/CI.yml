@@ -85,7 +85,7 @@ jobs:
       - name: Setup benchmark environment
         run: |
           cd benchmark
-          julia --project=. -e 'import Pkg; Pkg.instantiate()'
+          julia --project=. -e 'import Pkg; Pkg.develop(path=".."); Pkg.instantiate()'
 
       - name: Run benchmarks
         working-directory: benchmark
