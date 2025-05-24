@@ -82,11 +82,17 @@ jobs:
 
       - uses: julia-actions/julia-buildpkg@v1
 
-      - name: Run benchmarks
+      - name: Setup benchmark environment
         run: |
-          julia --project=benchmark -e '
-            include("benchmark/discretized_operator_performance_test.jl");
-            main()' | tee benchmark/results.txt
+          cd benchmark
+          julia --project=. -e 'import Pkg; Pkg.instantiate()'
+
+      - name: Run benchmarks
+        working-directory: benchmark
+        run: |
+          julia --project=. -e '
+            include("discretized_operator_performance_test.jl");
+            main()' | tee results.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
