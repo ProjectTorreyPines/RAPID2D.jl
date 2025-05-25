@@ -40,6 +40,7 @@ export construct_∂R_operator, construct_∂Z_operator,
         compute_∇𝐃∇f_directly,
         construct_∇𝐃∇_operator,
         calculate_ne_convection_explicit_RHS!,
+        compute_𝐮∇f_directly,
         construct_𝐮∇_operator,
         compute_∇f𝐮_directly,
         construct_∇𝐮_operator,
@@ -633,11 +634,6 @@ function calculate_ne_convection_explicit_RHS!(
     eps_val = eps(FT)
     half = FT(0.5)  # Define half once with correct type
 
-    # Ensure the convection term array is properly initialized
-    if !isdefined(RP.operators, :neRHS_convec) || size(RP.operators.neRHS_convec) != (NR, NZ)
-        RP.operators.neRHS_convec = zeros(FT, NR, NZ)
-    end
-
     convec_term = RP.operators.neRHS_convec
     fill!(convec_term, zero_val)
 
@@ -706,7 +702,7 @@ end
 
 
 """
-    compute_∇f𝐮_directly(
+    compute_𝐮∇f_directly(
         RP::RAPID{FT},
         f::AbstractMatrix{FT},
         uR::AbstractMatrix{FT}=RP.plasma.ueR,
@@ -714,10 +710,10 @@ end
         ;
         flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
-Directly compute ∇⋅(f𝐮) using explicit finite difference.
+Directly compute 𝐮⋅∇f using explicit finite difference.
 
-This function computes the convective-flux divergence ∇⋅(f𝐮) where f is a scalar field
-and 𝐮 = (uR, uZ) is the velocity field. The computation uses finite differences with
+This function computes the parallel gradient of f along 𝐮 [𝐮⋅∇f] where f is a scalar field
+and 𝐮 = (uR, uZ) is the (velocity or other) vector field. The computation uses finite differences with
 support for both upwind and central differencing schemes.
 
 # Arguments
@@ -728,12 +724,12 @@ support for both upwind and central differencing schemes.
 - `flag_upwind::Bool`: If true, use upwind differencing; otherwise central (default: RP.flags.upwind)
 
 # Returns
-- `∇f𝐮::AbstractMatrix{FT}`: The convective-flux divergence ∇⋅(f𝐮)
+- `𝐮∇f::AbstractMatrix{FT}`: parallel gradient of f along 𝐮
 
 # Mathematical Description
 The convective-flux divergence in cylindrical coordinates with Jacobian is:
 ```
-∇⋅(f𝐮) = (1/J) * [∂(J*f*uR)/∂R + ∂(J*f*uZ)/∂Z]
+𝐮⋅∇f = [uR*∂f/∂R + uZ*∂f/∂Z]
 ```
 
 # Notes
@@ -741,7 +737,7 @@ The convective-flux divergence in cylindrical coordinates with Jacobian is:
 - Upwind scheme uses one-sided differences in the direction opposite to velocity
 - Central scheme uses symmetric differences for second-order accuracy
 """
-function compute_∇f𝐮_directly(
+function compute_𝐮∇f_directly(
     RP::RAPID{FT},
     f::AbstractMatrix{FT},
     uR::AbstractMatrix{FT}=RP.plasma.ueR,
@@ -751,8 +747,6 @@ function compute_∇f𝐮_directly(
 
     # Alias necessary fields from the RP object
     G = RP.G
-    Jacob = G.Jacob
-    inv_Jacob = G.inv_Jacob
     NR, NZ = G.NR, G.NZ
     dR, dZ = G.dR, G.dZ
 
@@ -766,7 +760,7 @@ function compute_∇f𝐮_directly(
     half = FT(0.5)  # Define half once with correct type
 
 
-    ∇f𝐮 = zeros(size(f))
+    𝐮∇f = zeros(size(f))
 
     # Apply appropriate differencing scheme based on upwind flag and velocity
     # Move the upwind flag check outside the loop for better performance
@@ -774,58 +768,48 @@ function compute_∇f𝐮_directly(
         # Upwind scheme with check for zero velocity
         @inbounds for j in 2:NZ-1
             for i in 2:NR-1
-                flux_R = zero_val
-                flux_Z = zero_val
-
                 # R-direction convection flux with upwind scheme
                 if abs(uR[i, j]) < eps_val
                     # Zero velocity, use central differencing
-                    flux_R = ( +Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * f[i+1, j]
-                                -Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * f[i-1, j])
+                    uR_∇f = uR[i, j] * half * inv_dR * (f[i+1, j] - f[i-1, j])
                 elseif uR[i, j] > zero_val
                     # Flow from left to right, use left (upwind) node
-                    flux_R = ( +Jacob[i, j] * uR[i, j] * inv_dR * f[i, j]
-                                - Jacob[i-1, j] * uR[i-1, j] * inv_dR * f[i-1, j])
+                    uR_∇f = uR[i, j] * inv_dR * (f[i, j] - f[i-1, j])
                 else
                     # Flow from right to left, use right (upwind) node
-                    flux_R = ( +Jacob[i+1, j] * uR[i+1, j] * inv_dR * f[i+1, j]
-                                - Jacob[i, j] * uR[i, j] * inv_dR * f[i, j])
+                    uR_∇f = uR[i, j] * inv_dR * (f[i+1, j] - f[i, j])
                 end
 
                 # Z-direction convection flux with upwind scheme
                 if abs(uZ[i, j]) < eps_val
                     # Zero velocity, use central differencing
-                    flux_Z = ( +Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * f[i, j+1]
-                                - Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * f[i, j-1])
+                    uZ_∇f = uZ[i, j] * half * inv_dZ * (f[i, j+1] - f[i, j-1])
                 elseif uZ[i, j] > zero_val
                     # Flow from bottom to top, use bottom (upwind) node
-                    flux_Z = ( +Jacob[i, j] * uZ[i, j] * inv_dZ * f[i, j]
-                                - Jacob[i, j-1] * uZ[i, j-1] * inv_dZ * f[i, j-1])
+                    uZ_∇f = uZ[i, j] * inv_dZ * (f[i, j] - f[i, j-1])
                 else
                     # Flow from top to bottom, use top (upwind) node
-                    flux_Z = ( +Jacob[i, j+1] * uZ[i, j+1] * inv_dZ * f[i, j+1]
-                                - Jacob[i, j] * uZ[i, j] * inv_dZ * f[i, j])
+                    uZ_∇f = uZ[i, j] * inv_dZ * (f[i, j+1] - f[i, j])
                 end
 
                 # Calculate the convective-flux divergance [∇f𝐮]
-                ∇f𝐮[i, j] = (flux_R + flux_Z) * inv_Jacob[i, j]
+                𝐮∇f[i, j] = uR_∇f + uZ_∇f
             end
         end
     else
         # Central differencing for both directions (simpler logic)
         @inbounds for j in 2:NZ-1
             for i in 2:NR-1
-                ∇f𝐮[i, j] = inv_Jacob[i, j]*(
-                    +Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * f[i+1, j]
-                    -Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * f[i-1, j]
-                    +Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * f[i, j+1]
-                    -Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * f[i, j-1]
+                𝐮∇f[i, j] = (
+                    +uR[i, j] * half * inv_dR * (f[i+1, j] - f[i-1, j])
+                    +
+                    uZ[i, j] * half * inv_dZ * (f[i, j+1] - f[i, j-1])
                 )
             end
         end
     end
 
-    return ∇f𝐮
+    return 𝐮∇f
 end
 
 
@@ -1025,6 +1009,130 @@ function update_𝐮∇_operator!(RP::RAPID{FT},
 
     return RP
 end
+
+"""
+    compute_∇f𝐮_directly(
+        RP::RAPID{FT},
+        f::AbstractMatrix{FT},
+        uR::AbstractMatrix{FT}=RP.plasma.ueR,
+        uZ::AbstractMatrix{FT}=RP.plasma.ueZ
+        ;
+        flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+Directly compute ∇⋅(f𝐮) using explicit finite difference.
+
+This function computes the convective-flux divergence ∇⋅(f𝐮) where f is a scalar field
+and 𝐮 = (uR, uZ) is the velocity field. The computation uses finite differences with
+support for both upwind and central differencing schemes.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation object containing grid geometry
+- `f::AbstractMatrix{FT}`: The scalar field to be advected
+- `uR::AbstractMatrix{FT}`: Radial velocity component (default: RP.plasma.ueR)
+- `uZ::AbstractMatrix{FT}`: Vertical velocity component (default: RP.plasma.ueZ)
+- `flag_upwind::Bool`: If true, use upwind differencing; otherwise central (default: RP.flags.upwind)
+
+# Returns
+- `∇f𝐮::AbstractMatrix{FT}`: The convective-flux divergence ∇⋅(f𝐮)
+
+# Mathematical Description
+The convective-flux divergence in cylindrical coordinates with Jacobian is:
+```
+∇⋅(f𝐮) = (1/J) * [∂(J*f*uR)/∂R + ∂(J*f*uZ)/∂Z]
+```
+
+# Notes
+- Only interior points (2:NR-1, 2:NZ-1) are computed; boundary values remain unchanged
+- Upwind scheme uses one-sided differences in the direction opposite to velocity
+- Central scheme uses symmetric differences for second-order accuracy
+"""
+function compute_∇f𝐮_directly(
+    RP::RAPID{FT},
+    f::AbstractMatrix{FT},
+    uR::AbstractMatrix{FT}=RP.plasma.ueR,
+    uZ::AbstractMatrix{FT}=RP.plasma.ueZ
+    ;
+    flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+
+    # Alias necessary fields from the RP object
+    G = RP.G
+    Jacob = G.Jacob
+    inv_Jacob = G.inv_Jacob
+    NR, NZ = G.NR, G.NZ
+    dR, dZ = G.dR, G.dZ
+
+    # Precompute inverse values for faster calculation (multiplication instead of division)
+    inv_dR = one(FT) / dR
+    inv_dZ = one(FT) / dZ
+
+    # Cache common constants with proper type once
+    zero_val = zero(FT)
+    eps_val = eps(FT)
+    half = FT(0.5)  # Define half once with correct type
+
+
+    ∇f𝐮 = zeros(size(f))
+
+    # Apply appropriate differencing scheme based on upwind flag and velocity
+    # Move the upwind flag check outside the loop for better performance
+    if flag_upwind
+        # Upwind scheme with check for zero velocity
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                flux_R = zero_val
+                flux_Z = zero_val
+
+                # R-direction convection flux with upwind scheme
+                if abs(uR[i, j]) < eps_val
+                    # Zero velocity, use central differencing
+                    flux_R = ( +Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * f[i+1, j]
+                                -Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * f[i-1, j])
+                elseif uR[i, j] > zero_val
+                    # Flow from left to right, use left (upwind) node
+                    flux_R = ( +Jacob[i, j] * uR[i, j] * inv_dR * f[i, j]
+                                - Jacob[i-1, j] * uR[i-1, j] * inv_dR * f[i-1, j])
+                else
+                    # Flow from right to left, use right (upwind) node
+                    flux_R = ( +Jacob[i+1, j] * uR[i+1, j] * inv_dR * f[i+1, j]
+                                - Jacob[i, j] * uR[i, j] * inv_dR * f[i, j])
+                end
+
+                # Z-direction convection flux with upwind scheme
+                if abs(uZ[i, j]) < eps_val
+                    # Zero velocity, use central differencing
+                    flux_Z = ( +Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * f[i, j+1]
+                                - Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * f[i, j-1])
+                elseif uZ[i, j] > zero_val
+                    # Flow from bottom to top, use bottom (upwind) node
+                    flux_Z = ( +Jacob[i, j] * uZ[i, j] * inv_dZ * f[i, j]
+                                - Jacob[i, j-1] * uZ[i, j-1] * inv_dZ * f[i, j-1])
+                else
+                    # Flow from top to bottom, use top (upwind) node
+                    flux_Z = ( +Jacob[i, j+1] * uZ[i, j+1] * inv_dZ * f[i, j+1]
+                                - Jacob[i, j] * uZ[i, j] * inv_dZ * f[i, j])
+                end
+
+                # Calculate the convective-flux divergance [∇f𝐮]
+                ∇f𝐮[i, j] = (flux_R + flux_Z) * inv_Jacob[i, j]
+            end
+        end
+    else
+        # Central differencing for both directions (simpler logic)
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                ∇f𝐮[i, j] = inv_Jacob[i, j]*(
+                    +Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * f[i+1, j]
+                    -Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * f[i-1, j]
+                    +Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * f[i, j+1]
+                    -Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * f[i, j-1]
+                )
+            end
+        end
+    end
+
+    return ∇f𝐮
+end
+
 
 """
     construct_∇𝐮_operator(RP::RAPID{FT},

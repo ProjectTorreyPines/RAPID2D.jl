@@ -53,6 +53,16 @@ using Test
     @test div_numerical_2 == reshape(calculate_divergence(OP, FR[:], FZ[:]), NR, NZ)
     @test div_numerical_2 == calculate_divergence(OP, FR, FZ)
 
+    @testset "Convenient dispatches" begin
+        ∂R = RAPID2D.construct_∂R_operator(RP)
+        𝐽⁻¹∂R_𝐽 = construct_𝐽⁻¹∂R_𝐽_operator(RP)
+        ∂Z = construct_∂Z_operator(RP)
+
+        @test ∂R == OP.∂R
+        @test 𝐽⁻¹∂R_𝐽 == OP.𝐽⁻¹∂R_𝐽
+        @test ∂Z == OP.∂Z
+    end
+
     # Analytical test cases
     @testset "Analytical divergence tests" begin
         # Get grid coordinates
@@ -324,6 +334,8 @@ end
 			∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, RP.plasma.ue_para; upwind=flag_upwind)
 			explicit_result = @. (RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
 
+            explicit_result2 = compute_𝐮∇f_directly(RP, RP.plasma.ue_para; flag_upwind)
+
             # Calculate implicit convection term
             𝐮∇ = RAPID2D.construct_𝐮∇_operator(RP; flag_upwind)
             implicit_result = reshape(𝐮∇ * RP.plasma.ue_para[:], NR, NZ)
@@ -337,6 +349,7 @@ end
             @test 𝐮∇ == RP.operators.𝐮∇
 
             # Compare the results
+            @test isapprox(explicit_result, explicit_result2, rtol=1e-10)
             @test isapprox(explicit_result, implicit_result, rtol=1e-10)
             @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 
