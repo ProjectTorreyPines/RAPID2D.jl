@@ -470,6 +470,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
 
     # Extract physical constants
     @unpack ee, qe, me, mi = RP.config.constants
+    OP = RP.operators
 
     # Alias common objects for readability
     pla = RP.plasma
@@ -489,38 +490,37 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
 
     # If diffusion term is included in temperature equation
     if RP.flags.Include_Te_diffu_term
-        @warn "Include_Te_diffu_term not implemented yet" maxlog=1
-        # Calculate diffusive power transfer (this would be calculated elsewhere and stored)
-        # In a full implementation, this would use the diffusion operator on Te
+        # P_diffu = 1.5*∇𝐃∇*Te
+        if RP.flags.evolve_Te_inWall_only
+            @warn "Include_Te_diffu_term not implemented for evolve_Te_inWall_only" maxlog=1
+            # TODO:Need to implement A_Dturb_diffu_reflective instead of using ∇𝐃∇
+            # obj.ePowers.diffu(obj.in_Wall_idx) =  obj.ee*(1.5*obj.A_Dturb_diffu_reflective)*obj.Te_eV(obj.in_Wall_idx);
+        else
+            ePowers.diffu .= ee*FT(1.5)*compute_∇𝐃∇f_directly(RP, RP.plasma.Te_eV)
+        end
     end
 
     # If convection term is included in temperature equation
     if RP.flags.Include_Te_convec_term
-        @warn "Include_Te_convec_term not implemented yet" maxlog=1
-        # Calculate convective power transfer (also calculated elsewhere)
-        # In a full implementation, this would use the convection operator on Te
+        if RP.flags.evolve_Te_inWall_only
+            @warn "Include_Te_convec_term not implemented for evolve_Te_inWall_only" maxlog=1
+            # obj.A_Te_conv = obj.Construct_A_Te_convec_only_IN_nodes(obj.Jacob,obj.ueR,obj.ueZ,obj.Flag);
+            # obj.ePowers.conv(obj.in_Wall_idx) = obj.ee*obj.A_Te_conv*obj.Te_eV(obj.in_Wall_idx);
+        else
+            ePowers.conv .= ee*(
+                    -FT(1.5)*compute_∇f𝐮_directly(RP, pla.Te_eV)
+                    .+FT(0.5)* pla.Te_eV .* calculate_divergence(RP.G, pla.ueR, pla.ueZ)
+            )
+        end
     end
 
     if RP.flags.Include_heat_flux_term
         # NOTE: Assumption: 𝐪 ≈ p*𝐮 (heat flux is about in the order of pressure*velocity)
-        # Calculate heating from density gradients
-        # Smooth density field to avoid numerical issues with gradients
-        # n_SM = smooth_data_2D(pla.ne; num_SM=2)
-        # n_SM[n_SM .< zero_FT] .= zero_FT
-
-        # Calculate gradient of log(n)
-        ∇log_n_R, ∇log_n_Z = calculate_gradient(RP, log.(pla.ne))
-
-        # Heat flux from density gradient
-        @. ePowers.heat = -ee * pla.Te_eV * (pla.ueR * ∇log_n_R + pla.ueZ * ∇log_n_Z)
-
-
-        @unpack ∇𝐮, 𝐮∇ = RP.operators
-
-        -ee*pla.Te_eV.*(𝐮∇*log.(pla.ne))
-
-        # # Handle NaN values
-        # replace!(ePowers.heat, NaN => zero_FT)
+        # Pcond = Pheat = -∇⋅(Te * 𝐮) - Te*𝐮⋅∇(ln_n)
+        ePowers.heat .= ee*(
+            - compute_∇f𝐮_directly(RP, pla.Te_eV)
+            - pla.Te_eV * compute_𝐮∇f_directly(RP, log.(pla.ne))
+        )
     end
 
 
@@ -529,7 +529,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
         RRC_mom = get_electron_RRC(RP, :Momentum)
 
         # Calculate velocity magnitudes for drag forces
-        ue_mag_sq = @. pla.ueR^2 .+ pla.ueϕ^2 .+ pla.ueZ^2
+        ue_mag_sq = @. pla.ueR^FT(2.0) .+ pla.ueϕ^FT(2.0) .+ pla.ueZ^FT(2.0)
         ue_dot_ui = @. pla.ueR * pla.uiR + pla.ueϕ * pla.uiϕ + pla.ueZ * pla.uiZ
 
         @. ePowers.drag = me * (
