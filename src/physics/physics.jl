@@ -259,142 +259,40 @@ where:
 The implementation supports both explicit and implicit time integration schemes.
 """
 function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Skip temperature evolution if flag is disabled
-    if !RP.flags.Te_evolve
-        return RP
-    end
-
-    # Skip temperature evolution outside wall if flag is set
-    if RP.flags.evolve_Te_inWall_only
-        # Save old temperature for later restoration
-        Te_old = copy(RP.plasma.Te_eV)
-    end
-
     # Update power terms for energy equation
     update_electron_heating_powers!(RP)
 
-    # Define constants for type stability
-    one_FT = one(FT)
-    zero_FT = zero(FT)
+    ee = RP.config.constants.ee
     dt = RP.dt
-
-    # Minimum density to avoid division by zero
-    n_min = FT(1.0e10)
+    pla = RP.plasma
+    OP = RP.operators
+    θimp = RP.flags.Implicit_weight
 
     # Apply time integration method based on flag
-    if RP.flags.Implicit && (RP.flags.Include_Te_diffu_term || RP.flags.Include_Te_convec_term)
-        # Implicit method
-        # Initialize matrices
-        OP = RP.operators
-        @. OP.A_LHS = OP.II
-        NR, NZ = RP.G.NR, RP.G.NZ
+    if RP.flags.Implicit
+        if RP.flags.evolve_Te_inWall_only
+            @warn "Implicit method for Te_evolve_inWall_only not implemented yet" maxlog=1
+        else
+            # Calculate RHS
+            # ePowers_tilde = ePowers already known at crruent time t
+            ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
+            OP.RHS .= pla.Te_eV + (FT(2.0)/FT(3.0)*dt*ePowers_tilde / ee)
 
-        # Add total power density to RHS
-        # Scale by (2/3)/n_e to get dT/dt
-        n_safe = copy(RP.plasma.ne)
-        n_safe[n_safe .< n_min] .= n_min
-        P_total = copy(RP.plasma.ePowers.tot)
+            # Calculate LHS
+            div_u = calculate_divergence(RP.G, pla.ueR, pla.ueZ)
+            OP.A_LHS = OP.II - dt*θimp*(OP.∇𝐃∇ - OP.𝐮∇ + spdiagm(div_u[:]/FT(3.0)))
 
-        # Apply density safety factor
-        dTdt = @. (FT(2.0)/FT(3.0)) * P_total / n_safe
-
-        # Set-up RHS vector with explicit contribution: T_e^n + dt*(1-θ)*dTe/dt
-        θ = RP.flags.Implicit_weight
-        @. OP.RHS = RP.plasma.Te_eV + dt * (one_FT - θ) * dTdt
-
-        # Add temperature diffusion term if enabled
-        if RP.flags.Include_Te_diffu_term
-            # Add diffusive operator on LHS: A_LHS = I - θ*dt*D_T
-            # For now, using a simplified diffusion operator
-            # In a complete implementation, need to construct a proper diffusion operator
-            # 1. Set diffusion coefficients based on plasma parameters
-            # Parallel thermal conductivity κ_∥ = κ_0 n_e T_e^(5/2) / (m_e^(1/2) Z)
-            # Cross-field thermal conductivity κ_⊥ is much smaller
-            # For now, using constant diffusivities scaled by temperature
-            D_para_T = RP.transport.Dpara0 * FT(100.0) # Enhanced thermal diffusivity
-            D_perp_T = RP.transport.Dperp0 * FT(10.0)  # Enhanced thermal diffusivity
-
-            # 2. Build diffusion operator - this is a simplified placeholder
-            # In a real implementation, we would build the full diffusion operator
-            # that properly accounts for magnetic geometry, similar to ∇𝐃∇
-            # But for now, we'll assume a simplified form
-            A_T_diffu = spzeros(FT, NR*NZ, NR*NZ)
-
-            # 3. Add diagonal contribution (center node)
-            # This is just a simplified placeholder - the real implementation would
-            # need a properly constructed diffusion operator
-            diag_indices = diagind(A_T_diffu)
-            @. @views A_T_diffu[diag_indices] = -4.0 * (D_para_T * RP.plasma.Te_eV[:] / FT(RP.G.dR^2))
-
-            # 4. Add off-diagonal contributions (neighbor nodes) - placeholder
-            # Note: this is a simplified example that doesn't account for field geometry
-            # A proper implementation would need to account for the magnetic field direction
-
-            # 5. Add diffusion operator to LHS matrix with implicit weighting
-            @. OP.A_LHS += θ * dt * A_T_diffu
-
-            # 6. Add explicit diffusion contribution to RHS
-            # For complete implementation, would compute: (1-θ)*dt*∇·(κ_e ∇T_e)
-            # Simplified place-holder would be: (1-θ)*dt*A_T_diffu*T_e
-            @. OP.RHS += (one_FT - θ) * dt * (A_T_diffu * RP.plasma.Te_eV[:])
+            # Solve the linear system
+            pla.Te_eV .= OP.A_LHS \ OP.RHS
         end
-
-        # Add temperature convection term if enabled
-        if RP.flags.Include_Te_convec_term
-            # Add convective operator on LHS: A_LHS = I - θ*dt*C_T
-            # For a complete implementation, need to construct a proper convection operator
-            # similar to An_convec, but for temperature
-
-            # 1. Build convection operator for temperature using upwind method
-            # This is a simplified placeholder
-            A_T_convec = spzeros(FT, NR*NZ, NR*NZ)
-
-            # 2. Add convection operator to LHS matrix with implicit weighting
-            @. OP.A_LHS += θ * dt * A_T_convec
-
-            # 3. Add explicit convection contribution to RHS
-            # For complete implementation, would compute: (1-θ)*dt*(-u_e·∇T_e)
-            # Simplified place-holder would be: (1-θ)*dt*A_T_convec*T_e
-            @. OP.RHS += (one_FT - θ) * dt * (A_T_convec * RP.plasma.Te_eV[:])
-        end
-
-        # Solve the linear system
-        @views RP.plasma.Te_eV[:] = OP.A_LHS \ OP.RHS[:]
-
     else
         # Explicit method (forward Euler)
-
-        # Energy equation: 3/2 n ∂T/∂t = P_total
-        # dT/dt = (2/3) * P_total / n
-        # T_new = T_old + dt * (2/3) * P_total / n
-
-        # Avoid division by zero
-        n_safe = copy(RP.plasma.ne)
-        n_safe[n_safe .< n_min] .= n_min
-
-        # Temperature change rate
-        dTdt = @. (FT(2.0)/FT(3.0)) * RP.plasma.ePowers.tot / n_safe
-
-        # Update temperature
-        @. RP.plasma.Te_eV += dTdt * dt
-
-        # Add diffusion and convection terms in explicit step if needed
-        # This would require calculating ∇·(κ_e ∇T_e) and -u_e·∇T_e
-        # Placeholder for future implementation
+        @. pla.Te_eV += (FT(2.0)/FT(3.0)) * pla.ePowers.tot * dt / ee;
     end
 
     # Apply temperature limits
-    @. RP.plasma.Te_eV = max(RP.plasma.Te_eV, RP.config.min_Te)
-    @. RP.plasma.Te_eV = min(RP.plasma.Te_eV, RP.config.max_Te)
-
-    # Restore old temperature outside wall if evolving only inside wall
-    if RP.flags.evolve_Te_inWall_only
-        # Set temperature to old values at out-wall nodes
-        RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= Te_old[RP.G.nodes.out_wall_nids]
-    else
-        # Set temperature to minimum outside wall
-        RP.plasma.Te_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
-    end
+    @. pla.Te_eV = max(pla.Te_eV, RP.config.min_Te)
+    @. pla.Te_eV = min(pla.Te_eV, RP.config.max_Te)
 
     return RP
 end
