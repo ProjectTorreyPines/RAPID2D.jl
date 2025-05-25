@@ -15,6 +15,7 @@ export update_ue_para!,
        update_Ti!,
        update_coulomb_collision_parameters!,
        update_electron_heating_powers!,
+       update_ion_heating_powers!,
        calculate_density_source_terms!,
        calculate_density_diffusion_terms!,
        calculate_density_convection_terms!,
@@ -300,41 +301,39 @@ end
 """
     update_Ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update the ion temperature.
+Update the ion temperature based on energy balance equation.
+
+This function evolves the ion temperature by solving the ion energy equation:
+(3/2)*∂Ti/∂t = P_ion_heating
+
+where P_ion_heating includes atomic collision heating and equilibration with electrons.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+
+# Returns
+- `RP`: The updated RAPID object
+
+# Notes
+- Uses forward Euler time integration
+- Calls update_ion_heating_powers! to compute heating terms
+- Applies temperature limits after update
+- Sets ion temperature equal to electron temperature if Ti_evolve is disabled
 """
 function update_Ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    if !RP.flags.Ti_evolve
-        # If ion temperature evolution is disabled, just match electron temperature
-        RP.plasma.Ti_eV .= copy(RP.plasma.Te_eV)
-        return RP
-    end
+    # Update ion heating power terms
+    update_ion_heating_powers!(RP)
 
-    @warn "update_Ti! not fully implemented yet"
+    ee = RP.config.constants.ee
+    dt = RP.dt
+    pla = RP.plasma
 
-    # Update ion temperature based on power balance
-    # Similar to update_Te! but with ion power terms
+    # Update ion temperature using forward Euler
+    @. pla.Ti_eV += (FT(2.0)/FT(3.0)) * pla.iPowers.tot * dt / (ee)
 
-    # Energy equation: 3/2 n ∂T/∂t = P_total
-    # Simplified implementation: forward Euler
-    # dT/dt = (2/3) * P_total / n
-
-    # Avoid division by zero
-    n_min = FT(1.0e6)
-    n_safe = copy(RP.plasma.ni)
-    n_safe[n_safe .< n_min] .= n_min
-
-    # Temperature change rate
-    dTdt = (FT(2.0)/FT(3.0)) * RP.plasma.iPowers.tot ./ n_safe
-
-    # Update temperature
-    RP.plasma.Ti_eV .+= dTdt * RP.dt
-
-    # Apply temperature limits
-    RP.plasma.Ti_eV .= max.(RP.plasma.Ti_eV, RP.config.min_Te) # Using same min as electrons
-
-    # # Zero temperature outside wall
-    # RP.plasma.Ti_eV[RP.G.nodes.out_wall_nids] .= RP.config.min_Te
+    # Apply temperature limits (same as electrons for simplicity)
+    @. pla.Ti_eV = max(pla.Ti_eV, RP.config.min_Te)
+    @. pla.Ti_eV = min(pla.Ti_eV, RP.config.max_Te)
 
     return RP
 end
@@ -488,6 +487,100 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
 end
 
 """
+    update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Update ion heating power components for ion energy equation.
+
+This function calculates the ion power sources and sinks based on the MATLAB
+`Cal_Ion_Heating_Powers` function, including:
+- Atomic collision power (from elastic, charge exchange, and ionization)
+- Equilibration power with electrons (if Coulomb collisions enabled)
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID object containing simulation state
+
+# Returns
+- `RP`: The updated RAPID object
+
+# Notes
+The power calculation includes:
+- Energy change from atomic collisions: 0.5*mi*ui_mag_sq - 1.5*(Ti-T_gas)*ee
+- Effective collision frequency: n_H2_gas*(0.5*elastic + charge_exchange + Zeff*ionization)
+- Atomic power: collision_frequency * energy_change
+- Equilibration power: matches electron equilibration power if Coulomb collisions enabled
+- Total power: atomic + equilibration
+- Sets power to zero outside wall boundaries
+"""
+function update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Define type-stable constants
+    zero_FT = zero(FT)
+
+    # TODO: add convection and diffusion terms for ions if needed
+
+    # Extract physical constants
+    @unpack ee, mi = RP.config.constants
+
+    # Alias common objects for readability
+    pla = RP.plasma
+    iPowers = RP.plasma.iPowers
+
+    # Reset ion power arrays to zero (precaution against accumulation)
+    iPowers.atomic .= zero_FT
+    iPowers.equi .= zero_FT
+
+    if RP.flags.Atomic_Collision
+        # Get reaction rate coefficients for ion reactions
+        if RP.flags.src
+            # Get electron ionization RRC (note: electron RRC is used for ionization)
+            eRRC_iz = get_electron_RRC(RP, :Ionization)
+        else
+            eRRC_iz = zero_FT
+        end
+
+        # Get ion reaction rate coefficients
+        iRRC_cx = get_H2_ion_RRC(RP, :Charge_Exchange)
+        iRRC_elastic = get_H2_ion_RRC(RP, :Elastic)
+
+        # Calculate ion velocity magnitude squared
+        ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
+
+        # Calculate average energy change from atomic collisions
+        # Energy balance: kinetic energy loss minus thermal energy change
+        avg_erg_change_by_atomic_collision = @. (
+            FT(0.5) * mi * ui_mag_sq - FT(1.5) * (pla.Ti_eV - pla.T_gas_eV) * ee
+        )
+
+        # Calculate effective atomic collision frequency
+        # Note: 0.5 factor for elastic collisions (momentum transfer efficiency)
+        eff_atomic_coll_freq = @. pla.n_H2_gas * (
+            FT(0.5) * iRRC_elastic + iRRC_cx + pla.Zeff * eRRC_iz
+        )
+
+        # Calculate atomic power: collision frequency times energy change
+        @. iPowers.atomic = eff_atomic_coll_freq * avg_erg_change_by_atomic_collision
+    end
+
+    # Handle equilibration power with electrons
+    if RP.flags.Coulomb_Collision
+        # Use the same equilibration power as electrons (but opposite sign)
+        @. iPowers.equi = pla.ePowers.equi
+    end
+
+    # Calculate total ion heating power
+    @. iPowers.tot = iPowers.atomic + iPowers.equi
+
+    # # Set power to zero outside wall boundaries
+    # out_wall_nids = RP.G.nodes.out_wall_nids
+    # if !isempty(out_wall_nids)
+    #     @views iPowers.tot[out_wall_nids] .= zero_FT
+    #     @views iPowers.atomic[out_wall_nids] .= zero_FT
+    #     @views iPowers.equi[out_wall_nids] .= zero_FT
+    # end
+
+    return RP
+end
+
+"""
     get_avg_RRC_Te_ud_gFac(RP::RAPID{FT}, reaction::String, Te_eV::Matrix{FT}, ue_para::Matrix{FT}, gFac::Matrix{FT}) where {FT<:AbstractFloat}
 
 Calculate the average reaction rate coefficient for a specified reaction, accounting for electron temperature, drift velocity, and distribution function deformation (g-factor).
@@ -575,7 +668,7 @@ diffusion term for explicit time stepping.
 function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.Implicit
         update_∇𝐃∇_operator!(RP)
-        RP.operators.neRHS_diffu[:] = RP.operators.∇𝐃∇ * RP.plasma.ne[:]
+        RP.operators.neRHS_diffu .= RP.operators.∇𝐃∇ * RP.plasma.ne
     else
         # For explicit method, calculate diffusion term directly
         calculate_ne_diffusion_explicit_RHS!(RP)
