@@ -65,6 +65,7 @@ const XT_mom = Xsec_Table{100}(
 
 
 function Xsec_Electron_Momentum_Transfer!(in_Energy_eV::AbstractVector{Float64}, out_Xsec::AbstractVector{Float64}; XT=XT_mom::Xsec_Table)
+    @assert length(in_Energy_eV) == length(out_Xsec) "Length of input and output arrays should be same"
     # recommended Momentum transfer Xsec for (0.001~100) eV range (by Elford)
     # for higher range (>100 eV) use Wingerden data of elastic Xsec.. and will be used with screened coulomb model
 
@@ -72,7 +73,9 @@ function Xsec_Electron_Momentum_Transfer!(in_Energy_eV::AbstractVector{Float64},
     inv_dlog10E = 1.0 ./ XT.dlog10E
 
     for (k, E_eV) in pairs(in_Energy_eV)
-        if E_eV <= 0.001
+        if E_eV <= 0.0
+            out_Xsec[k] = 0.0
+        elseif E_eV <= 0.001
             out_Xsec[k] = XT.Xsec[1]
         elseif E_eV > 0.001 && E_eV < 100.0
             Eid = floor(Int, (log10(E_eV) - log10_E0) * inv_dlog10E) + 1
@@ -81,8 +84,6 @@ function Xsec_Electron_Momentum_Transfer!(in_Energy_eV::AbstractVector{Float64},
         elseif E_eV >= 100.0
             out_Xsec[k] = (1.2402E-18) * E_eV^(-1.10575) # Note
         #   out_Xsec[k] = 0.2 * out_Xsec[k] # to match Xsec at 100 eV
-        else
-            out_Xsec[k] = 0.0
         end
     end
 end
@@ -96,7 +97,9 @@ function Xsec_Electron_Momentum_Transfer(in_Energy_eV::AbstractVector{Float64}; 
     inv_dlog10E = 1.0 ./ XT.dlog10E
 
     for (k, E_eV) in pairs(in_Energy_eV)
-        if E_eV <= 0.001
+        if E_eV <= 0.0
+            out_Xsec[k] = 0.0
+        elseif E_eV <= 0.001
             out_Xsec[k] = XT.Xsec[1]
         elseif E_eV > 0.001 && E_eV < 100.0
             Eid = floor(Int, (log10(E_eV) - log10_E0) * inv_dlog10E) + 1
@@ -105,8 +108,6 @@ function Xsec_Electron_Momentum_Transfer(in_Energy_eV::AbstractVector{Float64}; 
         elseif E_eV >= 100.0
             out_Xsec[k] = (1.2402E-18) * E_eV^(-1.10575) # Note
         #  out_Xsec[k] = 0.2 * out_Xsec[k] # to match Xsec at 100 eV
-        else
-            out_Xsec[k] = 0.0
         end
     end
     return out_Xsec
@@ -124,8 +125,6 @@ function Xsec_Electron_Momentum_Transfer(in_E_eV::Float64; XT=XT_mom::Xsec_Table
     elseif in_E_eV >= 100.0
         out_Xsec = (1.2402E-18) * in_E_eV^(-1.10575) # Note
     #   out_Xsec = 0.2 * out_Xsec # to match Xsec at 100 eV
-    else
-        out_Xsec = 0.0
     end
 
     return out_Xsec
@@ -133,8 +132,9 @@ end
 
 
 function Xsec_Electron_Momentum_Transfer_vectorized!(E_eV::Vector{Float64}, out_Xsec::Vector{Float64}; XT=XT_mom::Xsec_Table)
+    @assert length(E_eV) == length(out_Xsec) "Length of input and output arrays should be same"
 
-    itp1 = LinearInterpolation(XT.E_eV, XT.Xsec)
+    itp1 = interpolate((XT.E_eV,), XT.Xsec, Gridded(Linear()))
 
     idx = (E_eV .<= 0.001)
     out_Xsec[idx] .= XT.Xsec[1]
@@ -147,7 +147,7 @@ end
 
 function Xsec_Electron_Momentum_Transfer_vectorized(E_eV::Vector{Float64}; XT=XT_mom::Xsec_Table)
 
-    itp1 = LinearInterpolation(XT.E_eV, XT.Xsec)
+    itp1 = interpolate((XT.E_eV,), XT.Xsec, Gridded(Linear()))
 
     out_Xsec = zeros(Float64, size(E_eV))
     idx = (E_eV .<= 0.001)
@@ -255,8 +255,6 @@ function Xsec_Electron_Excitation!(in_Energy_eV::AbstractVector{Float64}, reacti
             elseif (E_eV > 21.0)
                 out_Xsec[k] = 1e-20 * ((1.2634 / (((E_eV / 12.286) .^ 0.97791))) * ((((E_eV / 12.286) - 1) / ((E_eV / 12.286) + 1)) .^ 0.84579) *
                                        (0.53604 + 1.7887 * (1 - 1 / 2 / (E_eV / 12.286)) * log(0.9135 + (((E_eV / 12.286) - 1) .^ 0.5))))
-            else
-                out_Xsec[k] = 0.0
             end
         end
 
@@ -421,6 +419,8 @@ function Xsec_Electron_tot_Excitation(in_Energy_eV::Vector{Float64})
 end
 
 function Xsec_Electron_tot_Excitation!(in_Energy_eV::Vector{Float64}, out_Xsec::Vector{Float64})
+    @assert length(in_Energy_eV) == length(out_Xsec) "Length of input and output arrays should be same"
+
     @. out_Xsec = 0.0
     tmp_Xsec = similar(out_Xsec)
 
@@ -480,7 +480,9 @@ end
 Single energy version of elastic scattering cross-section calculation.
 """
 function Xsec_Electron_Elastic_Scattering(in_E_eV::Float64; XT=XT_elastic::Xsec_Table)
-    if in_E_eV <= 0.02
+    if in_E_eV <= 0.0
+        out_Xsec = 0.0
+    elseif in_E_eV <= 0.02
         out_Xsec = XT.Xsec[1]
     elseif in_E_eV > 0.02 && in_E_eV < 100.0
         Eid = floor(Int, (log10(in_E_eV) - log10(XT.E_eV[1])) / XT.dlog10E) + 1
@@ -489,8 +491,6 @@ function Xsec_Electron_Elastic_Scattering(in_E_eV::Float64; XT=XT_elastic::Xsec_
         out_Xsec = (1.0 - w) * XT.Xsec[Eid] + w * XT.Xsec[Eid+1]
     elseif in_E_eV >= 100.0
         out_Xsec = (1.2402E-18) * in_E_eV^(-1.10575)
-    else
-        out_Xsec = 0.0
     end
 
     return out_Xsec
@@ -570,9 +570,13 @@ function Xsec_Electron_Recombination_with_H2_Ion!(in_Energy_eV::AbstractVector{F
     @assert length(in_Energy_eV) == length(out_Xsec) "Length of input and output arrays should be same"
 
     for (k, E_eV) in pairs(in_Energy_eV)
-        term1 = 1.0 / (E_eV^0.665 * (1.0 + 1.1 * E_eV^0.512 + 0.011 * E_eV^3.10))
-        term2 = 0.133 * exp(-0.35 * (E_eV - 6.05)^2)
-        out_Xsec[k] = 17.3E-20 * (term1 + term2)
+        if E_eV <= 0.0
+            out_Xsec[k] = 0.0
+        else
+            term1 = 1.0 / (E_eV^0.665 * (1.0 + 1.1 * E_eV^0.512 + 0.011 * E_eV^3.10))
+            term2 = 0.133 * exp(-0.35 * (E_eV - 6.05)^2)
+            out_Xsec[k] = 17.3E-20 * (term1 + term2)
+        end
     end
 end
 
@@ -596,14 +600,18 @@ function Xsec_Electron_Recombination_with_H3_Ion!(in_Energy_eV::AbstractVector{F
     @assert length(in_Energy_eV) == length(out_Xsec) "Length of input and output arrays should be same"
 
     for (k, E_eV) in pairs(in_Energy_eV)
-        Xsec_Low = 3.0E-20 / (E_eV^0.725 * (1.0 + 4.45 * E_eV^1.2))
+        if E_eV <= 0.0
+            out_Xsec[k] = 0.0
+        else
+            Xsec_Low = 3.0E-20 / (E_eV^0.725 * (1.0 + 4.45 * E_eV^1.2))
 
-        Xsec_HL = 0.0646 * E_eV^1.478 * 1E-20
-        Xsec_HR = 634.22 / E_eV^2.605 * 1E-20
+            Xsec_HL = 0.0646 * E_eV^1.478 * 1E-20
+            Xsec_HR = 634.22 / E_eV^2.605 * 1E-20
 
-        Xsec_High = Xsec_HL * Xsec_HR / (Xsec_HL + Xsec_HR)
+            Xsec_High = Xsec_HL * Xsec_HR / (Xsec_HL + Xsec_HR)
 
-        out_Xsec[k] = Xsec_Low + Xsec_High
+            out_Xsec[k] = Xsec_Low + Xsec_High
+        end
     end
 end
 

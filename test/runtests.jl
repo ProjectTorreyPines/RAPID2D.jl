@@ -14,6 +14,7 @@ else
     include("numeric/numeric_test.jl")
     include("operators/operators_test.jl")
     include("reactions/RRCs_test.jl")
+    include("reactions/electron_Xsec_test.jl")
 
     include("physics/physics_test.jl")
 end
