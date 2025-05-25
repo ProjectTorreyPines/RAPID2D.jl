@@ -54,6 +54,8 @@ using RAPID2D: Xsec_Electron_Momentum_Transfer, Xsec_Electron_Momentum_Transfer!
 
     @testset "Momentum Transfer Cross-Section" begin
         # Test single energy version
+        @test Xsec_Electron_Momentum_Transfer(-1.0) == 0.0
+        @test Xsec_Electron_Momentum_Transfer(0.0) == 0.0
         @test Xsec_Electron_Momentum_Transfer(1.0) > 0.0
         @test Xsec_Electron_Momentum_Transfer(0.0001) > 0.0
         @test Xsec_Electron_Momentum_Transfer(1000.0) > 0.0
@@ -82,6 +84,8 @@ using RAPID2D: Xsec_Electron_Momentum_Transfer, Xsec_Electron_Momentum_Transfer!
 
     @testset "Elastic Scattering Cross-Section" begin
         # Test single energy version
+        @test Xsec_Electron_Elastic_Scattering(-1.0) == 0.0
+        @test Xsec_Electron_Elastic_Scattering(0.0) == 0.0
         @test Xsec_Electron_Elastic_Scattering(1.0) > 0.0
         @test Xsec_Electron_Elastic_Scattering(0.01) > 0.0
         @test Xsec_Electron_Elastic_Scattering(150.0) > 0.0

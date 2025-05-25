@@ -162,14 +162,35 @@ using RAPID2D
         @test size(RRC_iz) == size(mock_RP.G.R2D)
         @test !any(isnan.(RRC_iz))
 
-        Halpha_RRC = get_electron_RRC(mock_RP, eRRCs, :Halpha)
-        @test size(Halpha_RRC) == size(mock_RP.G.R2D)
-        @test !any(isnan.(Halpha_RRC))
+        RRC_Hα = get_electron_RRC(mock_RP, eRRCs, :Halpha)
+        @test size(RRC_Hα) == size(mock_RP.G.R2D)
+        @test !any(isnan.(RRC_Hα))
+
+        # Test convenience dispatch
+        RRC_Hα2 = get_electron_RRC(mock_RP, :Halpha)
+        @test RRC_Hα == RRC_Hα2
 
         # Test get_H2_ion_RRC function - make sure it runs without errors
         # and returns expected size
         RRC_elastic = get_H2_ion_RRC(mock_RP, iRRCs, :Elastic)
         @test size(RRC_elastic) == size(mock_RP.G.R2D)
         @test !any(isnan.(RRC_elastic))
+
+        # Test convenience dispatch
+        RRC_elastic2 = get_H2_ion_RRC(mock_RP, :Elastic)
+        @test RRC_elastic == RRC_elastic2
+
+        # Test error handling for non-existent reactions
+        @test_throws ArgumentError get_electron_RRC(mock_RP, eRRCs, :NonExistentReaction)
+        @test_throws ArgumentError get_H2_ion_RRC(mock_RP, iRRCs, :NonExistentReaction)
+    end
+    @testset "RRC_T_ud_gFac placeholder" begin
+        T_eV = [1.0, 2.0, 3.0]
+        ud_para = [1, 2, 3]*1e6
+        gFac = [0.5, 1.0, 2.0]
+
+        raw_data = rand(length(T_eV), length(ud_para), length(gFac))
+
+        mock_RRC_T_ud_gFac = RRC_T_ud_gFac(T_eV, ud_para, gFac, raw_data)
     end
 end

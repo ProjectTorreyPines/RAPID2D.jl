@@ -209,8 +209,6 @@ function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Sym
 			return RRC.itp.(abs_Epara_over_pGas, mean_eErg_eV)
 		elseif RRC isa RRC_T_ud
 			return RRC.itp.(RP.plasma.Te_eV, abs.(RP.plasma.ue_para))
-		else
-			throw(ArgumentError("Unsupported eRRCs' Data type: $(typeof(RRC))"))
 		end
 	else
 		throw(ArgumentError("Invalid reaction type: $reaction"))
@@ -241,8 +239,6 @@ function get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol)
 		RRC = getfield(iRRCs, reaction)
 		if RRC isa RRC_T_ud
 			return RRC.itp.(RP.plasma.Ti_eV, abs.(RP.plasma.ui_para))
-		else
-			throw(ArgumentError("Unsupported iRRCs' Data type: $(typeof(RRC))"))
 		end
 	else
 		throw(ArgumentError("Invalid reaction type: $reaction"))

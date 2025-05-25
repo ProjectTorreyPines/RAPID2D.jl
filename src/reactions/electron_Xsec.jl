@@ -83,7 +83,6 @@ function Xsec_Electron_Momentum_Transfer!(in_Energy_eV::AbstractVector{Float64},
             out_Xsec[k] = (1.0 - w) * XT.Xsec[Eid] + w * XT.Xsec[Eid+1]
         elseif E_eV >= 100.0
             out_Xsec[k] = (1.2402E-18) * E_eV^(-1.10575) # Note
-        #   out_Xsec[k] = 0.2 * out_Xsec[k] # to match Xsec at 100 eV
         end
     end
 end
@@ -107,7 +106,6 @@ function Xsec_Electron_Momentum_Transfer(in_Energy_eV::AbstractVector{Float64}; 
             out_Xsec[k] = (1.0 - w) * XT.Xsec[Eid] + w * XT.Xsec[Eid+1]
         elseif E_eV >= 100.0
             out_Xsec[k] = (1.2402E-18) * E_eV^(-1.10575) # Note
-        #  out_Xsec[k] = 0.2 * out_Xsec[k] # to match Xsec at 100 eV
         end
     end
     return out_Xsec
@@ -116,7 +114,9 @@ end
 
 function Xsec_Electron_Momentum_Transfer(in_E_eV::Float64; XT=XT_mom::Xsec_Table)
 
-    if in_E_eV <= 0.001
+    if in_E_eV <=0.0
+        out_Xsec = 0.0
+    elseif in_E_eV <= 0.001
         out_Xsec = XT.Xsec[1]
     elseif in_E_eV > 0.001 && in_E_eV < 100.0
         Eid = floor(Int, (log10(in_E_eV) - log10(XT.E_eV[1])) / XT.dlog10E) + 1
@@ -124,12 +124,9 @@ function Xsec_Electron_Momentum_Transfer(in_E_eV::Float64; XT=XT_mom::Xsec_Table
         out_Xsec = (1.0 - w) * XT.Xsec[Eid] + w * XT.Xsec[Eid+1]
     elseif in_E_eV >= 100.0
         out_Xsec = (1.2402E-18) * in_E_eV^(-1.10575) # Note
-    #   out_Xsec = 0.2 * out_Xsec # to match Xsec at 100 eV
     end
-
     return out_Xsec
 end
-
 
 function Xsec_Electron_Momentum_Transfer_vectorized!(E_eV::Vector{Float64}, out_Xsec::Vector{Float64}; XT=XT_mom::Xsec_Table)
     @assert length(E_eV) == length(out_Xsec) "Length of input and output arrays should be same"
@@ -142,7 +139,6 @@ function Xsec_Electron_Momentum_Transfer_vectorized!(E_eV::Vector{Float64}, out_
     out_Xsec[idx] .= itp1(E_eV[idx])
     idx = (E_eV .>= 100)
     out_Xsec[idx] .= (1.2402E-18) .* E_eV[idx] .^ (-1.10575) # Note
-    #    out_Xsec[idx] .= 0.2 .* out_Xsec[idx] # to match Xsec at 100 eV
 end
 
 function Xsec_Electron_Momentum_Transfer_vectorized(E_eV::Vector{Float64}; XT=XT_mom::Xsec_Table)
@@ -156,7 +152,6 @@ function Xsec_Electron_Momentum_Transfer_vectorized(E_eV::Vector{Float64}; XT=XT
     out_Xsec[idx] .= itp1(E_eV[idx])
     idx = (E_eV .>= 100)
     out_Xsec[idx] .= (1.2402E-18) .* E_eV[idx] .^ (-1.10575) # Note
-    #    out_Xsec[idx] .= 0.2 .* out_Xsec[idx] # to match Xsec at 100 eV
 
     return out_Xsec
 end
@@ -454,8 +449,6 @@ function Xsec_Electron_Elastic_Scattering!(in_Energy_eV::AbstractVector{Float64}
             out_Xsec[k] = (1.0 - w) * XT.Xsec[Eid] + w * XT.Xsec[Eid+1]
         elseif E_eV >= 100.0
             out_Xsec[k] = (1.2402E-18) * E_eV^(-1.10575)
-        else
-            out_Xsec[k] = 0.0
         end
     end
 end
