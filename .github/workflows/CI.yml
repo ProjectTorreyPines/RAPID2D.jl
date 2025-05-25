@@ -92,7 +92,7 @@ jobs:
         run: |
           julia --project=. -e '
             include("discretized_operator_performance_test.jl");
-            main()' | tee results.txt
+            main(; bench_seconds=2)' | tee results.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
