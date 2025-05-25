@@ -518,7 +518,7 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # TODO: add convection and diffusion terms for ions if needed
 
     # Extract physical constants
-    @unpack ee, mi = RP.config.constants
+    @unpack ee, mi, me = RP.config.constants
 
     # Alias common objects for readability
     pla = RP.plasma
@@ -562,8 +562,7 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Handle equilibration power with electrons
     if RP.flags.Coulomb_Collision
-        # Use the same equilibration power as electrons (but opposite sign)
-        @. iPowers.equi = pla.ePowers.equi
+        @. iPowers.equi = (FT(2.0)*(mi*me/(mi+me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
     end
 
     # Calculate total ion heating power
