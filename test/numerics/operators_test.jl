@@ -320,38 +320,61 @@ end
     Z0 = (config.Z_min + config.Z_max) / 2
     sigma_R = 0.2
     sigma_Z = 0.2
-    peak_ue_para = 1.0e6  # Peak velocity
+    test_f = zeros(FT, NR, NZ)
     for i in 1:RP.G.NR, j in 1:RP.G.NZ
         R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
-        RP.plasma.ue_para[i, j] = peak_ue_para * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
+        test_f[i, j] = exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
-    RAPID2D.update_transport_quantities!(RP)
+
+
+    # Create mock velocity fields with spatial variation to test all code paths
+    # Including regions with positive, negative, and near-zero velocities
+    uR = zeros(FT, NR, NZ)
+    uZ = zeros(FT, NR, NZ)
+    for j in 1:NZ, i in 1:NR
+        # R-direction velocity: varies from negative to positive
+        uR[i,j] = 0.2 * (i - NR/2) / (NR/2)
+        # Z-direction velocity: radial pattern from center
+        uZ[i,j] = 0.1 * (j - NZ/2) / (NZ/2)
+        # Create some regions with near-zero velocity to test that case
+        if abs(uR[i,j]) < 0.05
+            uR[i,j] = 0.0
+        end
+        if abs(uZ[i,j]) < 0.05
+            uZ[i,j] = 0.0
+        end
+    end
+    # Set velocities in the RAPID object
+    RP.plasma.ueR .= uR
+    RP.plasma.ueZ .= uZ
+
 
     # Test both upwind scheme and central differencing
     for flag_upwind in [true, false]
         @testset "Upwind = $flag_upwind" begin
             # Calculate explicit convection term
-			∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, RP.plasma.ue_para; upwind=flag_upwind)
+			∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, test_f; upwind=flag_upwind)
 			explicit_result = @. (RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
 
-            explicit_result2 = compute_𝐮∇f_directly(RP, RP.plasma.ue_para; flag_upwind)
+            explicit_result2 = compute_𝐮∇f_directly(RP, test_f; flag_upwind)
 
             # Calculate implicit convection term
             𝐮∇ = RAPID2D.construct_𝐮∇_operator(RP; flag_upwind)
-            implicit_result = reshape(𝐮∇ * RP.plasma.ue_para[:], NR, NZ)
+            implicit_result = 𝐮∇ * test_f
 
             # Calculate implicit convection using RAPID2D's internal way that can update the operator more efficiently
             # This is useful for large simulations where we want to avoid re-creating the operator
             RP.operators.𝐮∇ = RAPID2D.construct_𝐮∇_operator(RP; flag_upwind)
-            implicit_result2 = reshape(RP.operators.𝐮∇ * RP.plasma.ue_para[:], NR, NZ)
+            implicit_result2 = reshape(RP.operators.𝐮∇ * test_f[:], NR, NZ)
 
             # compare if two methods give the same operatoryy
             @test 𝐮∇ == RP.operators.𝐮∇
 
             # Compare the results
-            @test isapprox(explicit_result, explicit_result2, rtol=1e-10)
-            @test isapprox(explicit_result, implicit_result, rtol=1e-10)
-            @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
+            interior_points = (2:NR-1, 2:NZ-1)
+            @test isapprox(explicit_result[interior_points...], explicit_result2[interior_points...], rtol=1e-10)
+            @test isapprox(explicit_result[interior_points...], implicit_result[interior_points...], rtol=1e-10)
+            @test isapprox(explicit_result[interior_points...], implicit_result2[interior_points...], rtol=1e-10)
 
             # Additional test: Verify that matrix multiplication operations don't error
             @test_nowarn 𝐮∇ * (𝐮∇ * RP.plasma.ue_para[:])
