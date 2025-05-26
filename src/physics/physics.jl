@@ -181,6 +181,15 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
+
+function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Solve the ion continuity equation
+    # This function is a placeholder and should be implemented based on the specific model
+    # For now, we just return the RAPID object unchanged
+    @warn "Ion continuity equation solver not implemented yet" maxlog=1
+    return RP
+end
+
 """
     update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
