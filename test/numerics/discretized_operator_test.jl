@@ -8,14 +8,14 @@ using LinearAlgebra
     # Test setup: Create a small test grid and basic operators
     @testset "Constructor" begin
         # Test basic constructor
-        dims = (5, 5)
+        dims_rz = (5, 5)
         I = [1, 2, 3]
         J = [1, 2, 3]
         V = [1.0, 2.0, 3.0]
 
-        dop = DiscretizedOperator(dims, I, J, V)
+        dop = DiscretizedOperator(dims_rz, I, J, V)
 
-        @test dop.dims == dims
+        @test dop.dims_rz == dims_rz
         @test dop.matrix isa SparseMatrixCSC{Float64}
         @test length(dop.k2csc) == 3
         @test size(dop.matrix) == (25, 25) # 5*5 = 25 elements in total
@@ -24,8 +24,8 @@ using LinearAlgebra
         @test dop.matrix[3, 3] == 3.0
 
         # Test the empty constructor
-        empty_dop = DiscretizedOperator{Float64}(dims)
-        @test empty_dop.dims == dims
+        empty_dop = DiscretizedOperator{Float64}(dims_rz)
+        @test empty_dop.dims_rz == dims_rz
         @test isempty(empty_dop.k2csc)
         @test size(empty_dop.matrix) == (25, 25)
         @test nnz(empty_dop.matrix) == 0
@@ -35,7 +35,7 @@ using LinearAlgebra
     function create_test_operators()
         # Create a simple 3x3 grid for testing
         NR, NZ = 3, 3
-        dims = (NR, NZ)
+        dims_rz = (NR, NZ)
 
         # Identity-like operator
         I_id = Int[]
@@ -75,8 +75,8 @@ using LinearAlgebra
         end
 
         # Create the operators
-        id_op = DiscretizedOperator(dims, I_id, J_id, V_id)
-        dr_op = DiscretizedOperator(dims, I_dr, J_dr, V_dr)
+        id_op = DiscretizedOperator(dims_rz, I_id, J_id, V_id)
+        dr_op = DiscretizedOperator(dims_rz, I_dr, J_dr, V_dr)
 
         return id_op, dr_op
     end
@@ -122,7 +122,7 @@ using LinearAlgebra
 
         @testset "Unary Minus" begin
             neg_id_op = -id_op
-            @test neg_id_op.dims == id_op.dims
+            @test neg_id_op.dims_rz == id_op.dims_rz
             @test all(neg_id_op.matrix .≈ -id_op.matrix)
 
             # Test with vector
@@ -133,7 +133,7 @@ using LinearAlgebra
         @testset "Scalar Multiplication" begin
             # Test left multiplication
             scaled_op = 2.0 * id_op
-            @test scaled_op.dims == id_op.dims
+            @test scaled_op.dims_rz == id_op.dims_rz
             @test all(scaled_op.matrix.nzval .≈ 2.0 * id_op.matrix.nzval)
 
             # Test right multiplication
@@ -147,7 +147,7 @@ using LinearAlgebra
 
         @testset "Scalar Division" begin
             scaled_op = id_op / 2.0
-            @test scaled_op.dims == id_op.dims
+            @test scaled_op.dims_rz == id_op.dims_rz
             @test all(scaled_op.matrix.nzval .≈ id_op.matrix.nzval / 2.0)
 
             # Test with vector
@@ -158,17 +158,17 @@ using LinearAlgebra
         @testset "Element-wise Scalar Operations" begin
             # Element-wise multiplication
             scaled_op = 2.0 .* id_op
-            @test scaled_op.dims == id_op.dims
+            @test scaled_op.dims_rz == id_op.dims_rz
             @test all(scaled_op.matrix.nzval .≈ 2.0 .* id_op.matrix.nzval)
 
             # Element-wise division
             scaled_op = id_op ./ 2.0
-            @test scaled_op.dims == id_op.dims
+            @test scaled_op.dims_rz == id_op.dims_rz
             @test all(scaled_op.matrix.nzval .≈ id_op.matrix.nzval ./ 2.0)
 
             # Element-wise division (scalar by operator)
             inv_op = 1.0 ./ id_op
-            @test inv_op.dims == id_op.dims
+            @test inv_op.dims_rz == id_op.dims_rz
             # Only check non-zeros to avoid division by zero
             for (i, j, v) in zip(findnz(id_op.matrix)...)
                 @test inv_op.matrix[i, j] ≈ 1.0 / v
@@ -178,51 +178,51 @@ using LinearAlgebra
         @testset "Addition and Subtraction" begin
             # Addition
             sum_op = id_op + dr_op
-            @test sum_op.dims == id_op.dims
+            @test sum_op.dims_rz == id_op.dims_rz
             @test all(sum_op.matrix .≈ id_op.matrix + dr_op.matrix)
 
             # Subtraction
             diff_op = id_op - dr_op
-            @test diff_op.dims == id_op.dims
+            @test diff_op.dims_rz == id_op.dims_rz
             @test all(diff_op.matrix .≈ id_op.matrix - dr_op.matrix)
 
             # Test dimension mismatch
-            wrong_dims = DiscretizedOperator{Float64}((4, 4))
-            @test_throws DimensionMismatch id_op + wrong_dims
-            @test_throws DimensionMismatch id_op - wrong_dims
+            wrong_dims_rz = DiscretizedOperator{Float64}((4, 4))
+            @test_throws DimensionMismatch id_op + wrong_dims_rz
+            @test_throws DimensionMismatch id_op - wrong_dims_rz
         end
 
         @testset "Element-wise Operations Between Operators" begin
             # Element-wise multiplication
             prod_op = id_op .* dr_op
-            @test prod_op.dims == id_op.dims
+            @test prod_op.dims_rz == id_op.dims_rz
             @test all(prod_op.matrix .≈ id_op.matrix .* dr_op.matrix)
 
             # Element-wise division
             div_op = id_op ./ (id_op .+ 0.1)  # Adding 0.1 to avoid division by zero
-            @test div_op.dims == id_op.dims
+            @test div_op.dims_rz == id_op.dims_rz
             @test all(div_op.matrix .≈ id_op.matrix ./ (id_op.matrix .+ 0.1))
 
             # Test dimension mismatch
-            wrong_dims = DiscretizedOperator{Float64}((4, 4))
-            @test_throws DimensionMismatch id_op .* wrong_dims
-            @test_throws DimensionMismatch id_op ./ wrong_dims
+            wrong_dims_rz = DiscretizedOperator{Float64}((4, 4))
+            @test_throws DimensionMismatch id_op .* wrong_dims_rz
+            @test_throws DimensionMismatch id_op ./ wrong_dims_rz
         end
 
         @testset "Operator Composition" begin
             # Composing an operator with itself
             id_squared = id_op * id_op
-            @test id_squared.dims == id_op.dims
+            @test id_squared.dims_rz == id_op.dims_rz
             @test all(id_squared.matrix .≈ id_op.matrix * id_op.matrix)
 
             # Composing different operators
             dr_id = dr_op * id_op
-            @test dr_id.dims == id_op.dims
+            @test dr_id.dims_rz == id_op.dims_rz
             @test all(dr_id.matrix .≈ dr_op.matrix * id_op.matrix)
 
             # Test dimensions
-            wrong_dims = DiscretizedOperator{Float64}((4, 4))
-            @test_throws DimensionMismatch id_op * wrong_dims
+            wrong_dims_rz = DiscretizedOperator{Float64}((4, 4))
+            @test_throws DimensionMismatch id_op * wrong_dims_rz
         end
     end
 
@@ -231,12 +231,12 @@ using LinearAlgebra
 
         # Test a complex expression combining multiple operations
         complex_op = 2.0 * id_op - 0.5 * dr_op
-        @test complex_op.dims == id_op.dims
+        @test complex_op.dims_rz == id_op.dims_rz
         @test all(complex_op.matrix .≈ 2.0 * id_op.matrix - 0.5 * dr_op.matrix)
 
         # Test operator composition with scaling
         composed_op = (2.0 * id_op) * (0.5 * dr_op)
-        @test composed_op.dims == id_op.dims
+        @test composed_op.dims_rz == id_op.dims_rz
         @test all(composed_op.matrix .≈ (2.0 * id_op.matrix) * (0.5 * dr_op.matrix))
 
         # Test associativity of scalar multiplication
@@ -261,7 +261,7 @@ using LinearAlgebra
             @test result1 == result2
 
             # Verify the result has correct dimensions and properties
-            @test result1.dims == op1.dims
+            @test result1.dims_rz == op1.dims_rz
             # More efficient sparse matrix comparison
             @test result1.matrix == op1.matrix .* op2.matrix
         end
@@ -278,7 +278,7 @@ using LinearAlgebra
             @test result1 == result2
 
             # Verify the result has correct dimensions and properties
-            @test result1.dims == op1.dims
+            @test result1.dims_rz == op1.dims_rz
             # More efficient sparse matrix comparison
             @test result1.matrix == op1.matrix ./ op2.matrix
         end
@@ -297,7 +297,7 @@ using LinearAlgebra
             result2 = α * op1 + β * op2
 
             @test result1 == result2
-            @test result1.dims == op1.dims
+            @test result1.dims_rz == op1.dims_rz
             # More efficient sparse matrix comparison
             @test result1.matrix == α * op1.matrix + β * op2.matrix
         end
@@ -312,7 +312,7 @@ using LinearAlgebra
             # Manually construct the expected result
             result2 = α * op .+ 1
 
-            @test result1.dims == op.dims
+            @test result1.dims_rz == op.dims_rz
             # More efficient sparse matrix comparison
             @test result1.matrix == α * op.matrix .+ 1
         end
@@ -333,7 +333,7 @@ using LinearAlgebra
             chainA = (2.0 * op1) .* op2
             chainB = @. (2.0 * op1) * op2
 
-            @test chainA.dims == chainB.dims
+            @test chainA.dims_rz == chainB.dims_rz
             # More efficient sparse matrix comparison
             @test chainA.matrix == chainB.matrix
         end

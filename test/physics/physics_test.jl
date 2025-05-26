@@ -714,5 +714,6 @@ end
     update_ion_heating_powers!(RP_cold)
 
     # Hot ions should lose more energy to atomic collisions than cold ions
-    @test mean(RP_hot.plasma.iPowers.atomic[in_wall_idx]) < mean(RP_cold.plasma.iPowers.atomic[in_wall_idx])
+    in_wall_nids = RP_hot.G.nodes.in_wall_nids
+    @test mean(RP_hot.plasma.iPowers.atomic[in_wall_nids]) < mean(RP_cold.plasma.iPowers.atomic[in_wall_nids])
 end

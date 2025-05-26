@@ -106,7 +106,7 @@ using Test
     end
 end
 
-@testset "Diffusion operator [∇𝐃∇] - Explicit vs Implicit" begin
+@testset "Diffusion operator [∇𝐃∇]" begin
     # Define test parameters
     NR, NZ = 15, 30  # Small grid for testing
     FT = Float64    # Floating point type
@@ -167,7 +167,7 @@ end
     @test_nowarn ∇𝐃∇ * (∇𝐃∇ * test_density)
 end
 
-@testset "Convection operator [-∇⋅(n 𝐮)]  - Explicit vs Implicit" begin
+@testset "Convective-flux divergence operator [∇⋅(𝐮 f)] " begin
     # Define test parameters
     NR, NZ = 15, 30  # Small grid for testing
     FT = Float64     # Floating point type
@@ -220,18 +220,18 @@ end
         @testset "Upwind = $flag_upwind" begin
             # Calculate explicit convection term
             RAPID2D.calculate_ne_convection_explicit_RHS!(RP, test_density, uR, uZ; flag_upwind)
-            explicit_result = copy(RP.operators.neRHS_convec)
+            explicit_result = -copy(RP.operators.neRHS_convec)
 
-            explicit_result2 = -compute_∇f𝐮_directly(RP, test_density, uR, uZ; flag_upwind)
+            explicit_result2 = compute_∇f𝐮_directly(RP, test_density, uR, uZ; flag_upwind)
 
             # Calculate implicit convection term
             ∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
-            implicit_result = -∇𝐮 * test_density
+            implicit_result = ∇𝐮 * test_density
 
             # Calculate implicit convection using RAPID2D's internal way that can update the operator more efficiently
             # This is useful for large simulations where we want to avoid re-creating the operator
             RP.operators.∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP; flag_upwind)
-            implicit_result2 = -RP.operators.∇𝐮 * test_density
+            implicit_result2 = RP.operators.∇𝐮 * test_density
 
             # compare if two methods give the same operatoryy
             @test ∇𝐮 == RP.operators.∇𝐮
@@ -290,7 +290,7 @@ end
 end
 
 
-@testset "[𝐮⋅∇] operator - Explicit vs Implicit" begin
+@testset "Directional derivative operator [𝐮⋅∇f]" begin
 
     FT = Float64
     # Create simulation configuration
