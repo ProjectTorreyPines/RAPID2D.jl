@@ -598,3 +598,121 @@ end
     @test isequal(explicit_plasma.ne, implicit_plasma_zeroθ.ne) # exactly the same
     @test isapprox(explicit_plasma.ne, implicit_plasma_oneθ.ne, rtol=1e-3)
 end
+
+@testset "Ion Heating Powers Tests" begin
+    # Create test configuration
+    config = SimulationConfig{Float64}(
+        device_Name = "manual",
+        NR = 20, NZ = 20,
+        prefilled_gas_pressure = 5e-3,
+        R0B0 = 1.0,
+        dt = 1.0e-6,
+        Dperp0 = 001
+    )
+
+    # Create RAPID instance
+    RP = RAPID{Float64}(config)
+    RP.flags.src = true
+    RP.flags.Coulomb_Collision = true
+    RP.flags.Atomic_Collision = true
+    RP.flags.Ti_evolve = true
+
+    # Initialize
+    initialize!(RP)
+
+    # Set up test conditions
+    RP.plasma.ne .= 1.0e18  # High density for visible effects
+    RP.plasma.ni .= RP.plasma.ne  # Charge neutrality
+
+    room_T_eV = RP.config.constants.room_T_eV
+
+    # Basic validation tests
+    @test size(RP.plasma.iPowers.tot) == (RP.G.NR, RP.G.NZ)
+    @test size(RP.plasma.iPowers.atomic) == (RP.G.NR, RP.G.NZ)
+    @test size(RP.plasma.iPowers.equi) == (RP.G.NR, RP.G.NZ)
+
+    @testset "ui=0, Ti=T_gas, Te>Ti" begin
+        # Set up ion velocities
+        RP.plasma.ui_para .= 0.0  # zero parallel velocity
+        RP.plasma.Ti_eV .= room_T_eV   # Room temperature ions
+        RP.plasma.T_gas_eV = room_T_eV # Room temperature gas
+        RP.plasma.Te_eV .= 10.0  # 10 eV electrons
+
+        update_transport_quantities!(RP)
+        update_coulomb_collision_parameters!(RP)
+        update_ion_heating_powers!(RP)
+
+        # Since ui=0, Ti = Tgas, atomict power must be zero
+        @test mean(RP.plasma.iPowers.atomic) == 0.0
+        # Since Ti < Te, equilibration should be positive (heating ions)
+        @test mean(RP.plasma.iPowers.equi) > 0.0
+    end
+    @testset "ui=1e3, Ti=T_gas, Ti<Te" begin
+        RP.plasma.ui_para .= 1e3
+        RP.plasma.Ti_eV .= 1.0
+        RP.plasma.T_gas_eV = 1.0
+        RP.plasma.Te_eV .= 0.1
+
+        update_transport_quantities!(RP)
+        update_coulomb_collision_parameters!(RP)
+        update_ion_heating_powers!(RP)
+
+        # Since ui>0, Ti = Tgas, atomict power must be positive
+        in_wall_nids = RP.G.nodes.in_wall_nids
+        @test all(RP.plasma.iPowers.atomic[in_wall_nids] .> 0.0)
+        # Since Ti > Te, equilibration should be negative (cooling ions)
+        @test all(RP.plasma.iPowers.equi[in_wall_nids] .< 0.0 )
+    end
+    @testset "ui=0, Ti>T_gas, Ti=Te" begin
+        RP.plasma.ui_para .= 0.0
+        RP.plasma.Ti_eV .= 10.0
+        RP.plasma.T_gas_eV = 1.0
+        RP.plasma.Te_eV .= 10.0
+
+        update_transport_quantities!(RP)
+        update_coulomb_collision_parameters!(RP)
+        update_ion_heating_powers!(RP)
+
+        # Since ui=0, Ti > Tgas, atomict power must be positive
+        in_wall_nids = RP.G.nodes.in_wall_nids
+        @test all(RP.plasma.iPowers.atomic[in_wall_nids] .< 0.0)
+        # Since Ti = Te, equilibration should be negative (cooling ions)
+        @test all(RP.plasma.iPowers.equi[in_wall_nids] .== 0.0)
+    end
+
+    # Test boundary conditions: power should be zero outside wall
+    out_wall_idx = RP.G.nodes.out_wall_nids
+    if !isempty(out_wall_idx)
+        @test all(RP.plasma.iPowers.tot[out_wall_idx] .== 0.0)
+        @test all(RP.plasma.iPowers.atomic[out_wall_idx] .== 0.0)
+        @test all(RP.plasma.iPowers.equi[out_wall_idx] .== 0.0)
+    end
+
+    # Test disabled source terms
+    RP_no_src = deepcopy(RP)
+    RP_no_src.flags.src = false
+    update_ion_heating_powers!(RP_no_src)
+
+    # With no source, ionization contribution should be zero
+    # But elastic and charge exchange should remain
+    in_wall_nids = RP_no_src.G.nodes.in_wall_nids
+    @test all(RP_no_src.plasma.iPowers.atomic[in_wall_nids] .!= 0.0)  # Still has elastic + charge exchange
+
+    # Test disabled Coulomb collisions
+    RP_no_coulomb = deepcopy(RP)
+    RP_no_coulomb.flags.Coulomb_Collision = false
+    update_ion_heating_powers!(RP_no_coulomb)
+    @test all(RP_no_coulomb.plasma.iPowers.equi .== 0.0)
+
+    # Test temperature dependence
+    RP_hot = deepcopy(RP)
+    RP_hot.plasma.Ti_eV .= 15.0  # Hotter than gas
+    update_ion_heating_powers!(RP_hot)
+
+    RP_cold = deepcopy(RP)
+    RP_cold.plasma.Ti_eV .= 0.01  # Colder than gas
+    update_ion_heating_powers!(RP_cold)
+
+    # Hot ions should lose more energy to atomic collisions than cold ions
+    @test mean(RP_hot.plasma.iPowers.atomic[in_wall_idx]) < mean(RP_cold.plasma.iPowers.atomic[in_wall_idx])
+end
