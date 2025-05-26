@@ -470,18 +470,18 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
         )
 
     # # Zero out power values outside the wall
-    # out_wall_nids = RP.G.nodes.out_wall_nids
-    # if !isempty(out_wall_nids)
-    #     @views ePowers.tot[out_wall_nids] .= zero_FT
-    #     @views ePowers.diffu[out_wall_nids] .= zero_FT
-    #     @views ePowers.conv[out_wall_nids] .= zero_FT
-    #     @views ePowers.drag[out_wall_nids] .= zero_FT
-    #     @views ePowers.dilution[out_wall_nids] .= zero_FT
-    #     @views ePowers.iz[out_wall_nids] .= zero_FT
-    #     @views ePowers.exc[out_wall_nids] .= zero_FT
-    #     @views ePowers.equi[out_wall_nids] .= zero_FT
-    #     @views ePowers.heat[out_wall_nids] .= zero_FT
-    # end
+    out_wall_nids = RP.G.nodes.out_wall_nids
+    if !isempty(out_wall_nids)
+        @views ePowers.tot[out_wall_nids] .= zero_FT
+        @views ePowers.diffu[out_wall_nids] .= zero_FT
+        @views ePowers.conv[out_wall_nids] .= zero_FT
+        @views ePowers.drag[out_wall_nids] .= zero_FT
+        @views ePowers.dilution[out_wall_nids] .= zero_FT
+        @views ePowers.iz[out_wall_nids] .= zero_FT
+        @views ePowers.exc[out_wall_nids] .= zero_FT
+        @views ePowers.equi[out_wall_nids] .= zero_FT
+        @views ePowers.heat[out_wall_nids] .= zero_FT
+    end
 
     return RP
 end
@@ -568,13 +568,13 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Calculate total ion heating power
     @. iPowers.tot = iPowers.atomic + iPowers.equi
 
-    # # Set power to zero outside wall boundaries
-    # out_wall_nids = RP.G.nodes.out_wall_nids
-    # if !isempty(out_wall_nids)
-    #     @views iPowers.tot[out_wall_nids] .= zero_FT
-    #     @views iPowers.atomic[out_wall_nids] .= zero_FT
-    #     @views iPowers.equi[out_wall_nids] .= zero_FT
-    # end
+    # Set power to zero outside wall boundaries
+    out_wall_nids = RP.G.nodes.out_wall_nids
+    if !isempty(out_wall_nids)
+        @views iPowers.tot[out_wall_nids] .= zero_FT
+        @views iPowers.atomic[out_wall_nids] .= zero_FT
+        @views iPowers.equi[out_wall_nids] .= zero_FT
+    end
 
     return RP
 end
