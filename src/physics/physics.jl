@@ -241,9 +241,9 @@ function update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         # Add electron-ion momentum transfer effect
         if RP.flags.Coulomb_Collision
             if RP.flags.Spitzer_Resistivity
-                @. Rui_ei = pla.sptz_fac*(cnst.me/cnst.mi)* pla.ν_ei * (pla.ue_para - pla.ui_para)
+                Rui_ei = @. pla.sptz_fac*(cnst.me/cnst.mi)* pla.ν_ei * (pla.ue_para - pla.ui_para)
             else
-                @. Rui_ei = (cnst.me/cnst.mi)*pla.ν_ei * (pla.ue_para - pla.ui_para)
+                Rui_ei = @. (cnst.me/cnst.mi)*pla.ν_ei * (pla.ue_para - pla.ui_para)
             end
             pla.ui_para .+= RP.dt * Rui_ei
         end
