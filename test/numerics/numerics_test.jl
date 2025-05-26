@@ -62,3 +62,83 @@ using RAPID2D
     @test isapprox(∇F_Z, expected_∇F_Z, rtol=1e-2)
     @test isapprox(tmp_para_∇F, para_∇F, rtol=1e-10)
 end
+
+
+
+@testset "smooth_data_2D" begin
+
+    FT = Float64
+    # Create simulation configuration
+    config = SimulationConfig{FT}(
+        NR=100, NZ=200,
+        R_min=0.8, R_max=2.2,
+        Z_min=-1.2, Z_max=1.2,
+        dt=1e-6, t_end_s=10e-6,
+        R0B0=1.0,
+        prefilled_gas_pressure=5e-3,
+        wall_R=[1.0, 2.0, 2.0, 1.0],
+        wall_Z=[-1.0, -1.0, 1.0, 1.0]
+    )
+
+    # Create RAPID object
+    RP = RAPID{FT}(config)
+    initialize!(RP)
+
+    # Set up a specific ff
+    R0 = (config.R_min + config.R_max) / 2
+    Z0 = (config.Z_min + config.Z_max) / 2
+    sigma_R = 0.3
+    sigma_Z = 0.3
+    ff = zeros(FT, RP.G.NR, RP.G.NZ)
+    for i in 1:RP.G.NR, j in 1:RP.G.NZ
+        R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
+        ff[i, j] =  exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
+    end
+
+    @testset "smooth_data_2D without weighting" begin
+        # No smoothing
+        num_SM = 0
+        ff_SM = RAPID2D.smooth_data_2D(ff; num_SM)
+        @test ff_SM == ff
+        RAPID2D.smooth_data_2D!(ff; num_SM)
+        @test ff_SM == ff
+
+        # Smooth with num_SM = 3
+        num_SM = 3
+        ff_SM = RAPID2D.smooth_data_2D(ff; num_SM)
+        @test ff_SM ≉ ff
+        @test isapprox(sum(ff_SM), sum(ff), rtol=1e-12)
+        RAPID2D.smooth_data_2D!(ff; num_SM)
+        @test ff_SM == ff
+    end
+
+    @testset "smooth_data_2D with weighting" begin
+        weighting = RP.G.Jacob
+        # No smoothing
+        num_SM = 0
+        ff_SM = RAPID2D.smooth_data_2D(ff; num_SM, weighting)
+        @test ff_SM == ff
+        RAPID2D.smooth_data_2D!(ff; num_SM)
+        @test ff_SM == ff
+
+        # Smooth with num_SM = 3
+        num_SM = 3
+        ff_SM = RAPID2D.smooth_data_2D(ff; num_SM, weighting)
+        @test ff_SM ≉ ff
+        @test !isapprox(sum(ff_SM), sum(ff), rtol=1e-12)
+        @test isapprox(sum(ff_SM.*weighting), sum(ff.*weighting), rtol=1e-12)
+        RAPID2D.smooth_data_2D!(ff; num_SM, weighting)
+        @test ff_SM == ff
+
+        # test with zero weighting
+        weighting[1, 1:3] .= 0.0
+        weighting[end-3:end, end - 1] .= 0.0
+        num_SM = 3
+        ff_SM = RAPID2D.smooth_data_2D(ff; num_SM, weighting)
+        @test ff_SM ≉ ff
+        @test !isapprox(sum(ff_SM), sum(ff), rtol=1e-12)
+        @test isapprox(sum(ff_SM.*weighting), sum(ff.*weighting), rtol=1e-12)
+        RAPID2D.smooth_data_2D!(ff; num_SM, weighting)
+        @test ff_SM == ff
+    end
+end
