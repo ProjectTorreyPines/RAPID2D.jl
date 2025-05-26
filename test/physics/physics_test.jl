@@ -2,6 +2,7 @@ using RAPID2D
 using Test
 using LinearAlgebra
 using Statistics
+using SimpleUnPack
 
 # Test basic physics module functionality
 @testset "Physics Module Basic Tests" begin
@@ -716,4 +717,92 @@ end
     # Hot ions should lose more energy to atomic collisions than cold ions
     in_wall_nids = RP_hot.G.nodes.in_wall_nids
     @test mean(RP_hot.plasma.iPowers.atomic[in_wall_nids]) < mean(RP_cold.plasma.iPowers.atomic[in_wall_nids])
+end
+
+@testset "Te-Ti equilibration by Coulomb_Collision" begin
+    # Create test configuration
+    config = SimulationConfig{Float64}(
+        device_Name = "manual",
+        NR = 20, NZ = 20,
+        prefilled_gas_pressure = 5e-3,
+        R0B0 = 1.0,
+        dt = 10e-6,
+        t_end_s = 10e-3
+    )
+
+    # Create RAPID instance
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags(
+        Coulomb_Collision = true,
+        Atomic_Collision = false,
+        Te_evolve = true,
+        Ti_evolve = true,
+        src = false,
+        convec = false,
+        diffu = false,
+        ud_evolve = false,
+        Include_ud_convec_term = false,
+        Include_ud_diffu_term = false,
+        Include_Te_convec_term = false,
+        update_ni_independently=false,
+        Gas_evolve=false,
+        Ampere =false,
+        E_para_self_ES=false
+    )
+
+    initialize!(RP)
+
+    # Set up initial conditions
+    RP.plasma.ne .= 2.841e15
+    RP.plasma.ni .= RP.plasma.ne
+    RP.plasma.Te_eV .= 1.0
+    RP.plasma.Ti_eV .= 1e-6
+
+    # Update collision parameters
+    update_coulomb_collision_parameters!(RP)
+
+    # alias
+    in_wall_nids = RP.G.nodes.in_wall_nids
+    @unpack mi, me = RP.config.constants
+
+    # Store initial temperature
+    avg_ini_Ti = mean(RP.plasma.Ti_eV[in_wall_nids])
+    avg_ini_Te = mean(RP.plasma.Te_eV[in_wall_nids])
+    avg_ini_τ_ei = 1.0 ./ mean(RP.plasma.ν_ei)
+    avg_ini_τ_eq = 0.5*((mi+me)^2/(mi*me))*avg_ini_τ_ei
+
+    @test isapprox(mean(RP.plasma.ν_ei), 1e5, rtol=1e-4)
+    @test isapprox(avg_ini_τ_ei, 10e-6, rtol=1e-4)
+
+    # define helper functions
+    ΔT0 = abs(avg_ini_Te - avg_ini_Ti)
+    analytic_ΔT = (τeq, t) -> ΔT0*exp(-2*t/τeq)
+    measure_ΔT = () -> mean(RP.plasma.Te_eV[in_wall_nids]) - mean(RP.plasma.Ti_eV[in_wall_nids])
+
+    # Very short simulation
+    RP.t_end_s = 50e-6
+    run_simulation!(RP)
+
+    @test isapprox(analytic_ΔT(avg_ini_τ_eq, RP.time_s), measure_ΔT(), rtol=1e-3)
+
+    # Still short simulation
+    RP.t_end_s = 1e-3
+    run_simulation!(RP)
+    @test isapprox(analytic_ΔT(avg_ini_τ_eq, RP.time_s), measure_ΔT(), rtol=1e-2)
+
+    # Longer
+    RP.t_end_s = 5e-3
+    run_simulation!(RP)
+    @test isapprox(mean(RP.plasma.Te_eV[in_wall_nids]), 0.7581, atol=0.01)
+    @test isapprox(mean(RP.plasma.Ti_eV[in_wall_nids]), 0.2425, atol=0.01)
+
+    # Much longer
+    RP.dt *= 10
+    RP.t_end_s = 40e-3
+    run_simulation!(RP)
+    @test isapprox(mean(RP.plasma.Te_eV[in_wall_nids]), 0.5, atol=0.01)
+    @test isapprox(mean(RP.plasma.Ti_eV[in_wall_nids]), 0.5, atol=0.01)
+
+    # Final check: Te and Ti should be approximately equal
+    @test isapprox(RP.plasma.Te_eV[in_wall_nids], RP.plasma.Ti_eV[in_wall_nids], rtol=1e-3)
 end
