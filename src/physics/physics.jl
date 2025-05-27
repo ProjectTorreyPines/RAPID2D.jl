@@ -588,45 +588,6 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-"""
-    get_avg_RRC_Te_ud_gFac(RP::RAPID{FT}, reaction::String, Te_eV::Matrix{FT}, ue_para::Matrix{FT}, gFac::Matrix{FT}) where {FT<:AbstractFloat}
-
-Calculate the average reaction rate coefficient for a specified reaction, accounting for electron temperature, drift velocity, and distribution function deformation (g-factor).
-"""
-function get_avg_RRC_Te_ud_gFac(RP::RAPID{FT}, reaction::String, Te_eV::Matrix{FT}, ue_para::Matrix{FT}, gFac::Matrix{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "get_avg_RRC_Te_ud_gFac not fully implemented yet"
-
-    # In a real implementation, this would interpolate in the reaction rate tables
-    # For now, return a simple approximation
-
-    # Simple Arrhenius form: A * exp(-E_a/T)
-    if reaction == "Ionization"
-        A = FT(2.0e-14)
-        E_a = FT(15.0)
-    elseif reaction == "Momentum"
-        A = FT(5.0e-15)
-        E_a = FT(5.0)
-    elseif reaction == "tot_Excitation"
-        A = FT(1.0e-14)
-        E_a = FT(10.0)
-    else
-        A = FT(1.0e-15)
-        E_a = FT(5.0)
-    end
-
-    # Calculate rate coefficient
-    rrc = A * exp.(-E_a ./ Te_eV)
-
-    # Apply drift velocity enhancement
-    u_thermal = sqrt.(Te_eV * RP.config.ee / RP.config.me)
-    u_ratio = abs.(ue_para) ./ u_thermal
-
-    # Enhancement factor (simplified)
-    enhancement = 1.0 .+ u_ratio.^2 .* gFac
-
-    return rrc .* enhancement
-end
 
 """
     calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
