@@ -16,9 +16,7 @@ export update_ue_para!,
        update_coulomb_collision_parameters!,
        update_electron_heating_powers!,
        update_ion_heating_powers!,
-       calculate_density_source_terms!,
-       calculate_density_diffusion_terms!,
-       calculate_density_convection_terms!,
+       calculate_ν_iz!,
        solve_electron_continuity_equation!,
        apply_electron_density_boundary_conditions!,
        calculate_para_grad_of_scalar_F,
@@ -588,13 +586,12 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-
 """
-    calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
+    calculate_ν_iz!(RP::RAPID{FT}) where FT<:AbstractFloat
 
-Calculate the source terms for electron density evolution, including ionization processes.
+Calculate the ionization frequency ν_iz = n_H2_gas * <σ_iz * v_e>
 """
-function calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
+function calculate_ν_iz!(RP::RAPID{FT}) where FT<:AbstractFloat
     # Calculate ionization rate based on the method specified in flags
     if RP.flags.Ionz_method == "Townsend_coeff"
         # Compute source by electron avalanche using Townsend coefficient
@@ -602,64 +599,24 @@ function calculate_density_source_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
         α = @. 3.88 * RP.config.prefilled_gas_pressure *
                exp(-95 * RP.config.prefilled_gas_pressure / abs(RP.fields.E_para_tot))
 
-        # Electron growth rate
-        RP.plasma.eGrowth_rate = @. α * abs(RP.plasma.ue_para)
+        # Electron ionization frequency
+        RP.plasma.ν_iz = @. α * abs(RP.plasma.ue_para)
     elseif RP.flags.Ionz_method == "Xsec"
-        # Method based on temperature, drift velocity and distribution function
-        RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-
-        # Growth rate = density * reaction rate
-        RP.plasma.eGrowth_rate = @. RP.plasma.n_H2_gas * RRC_iz
+        # Ionization frequency = (gas density) * (<σ_iz*v>)
+        eRRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
+        @. RP.plasma.ν_iz = RP.plasma.n_H2_gas * eRRC_iz
     else
         error("Unknown ionization method: $(RP.flags.Ionz_method)")
     end
 
-    # # Zero out the growth rate outside the wall
-    # eGrowth_rate[RP.G.nodes.out_wall_nids] .= 0.0
-    # Store the right-hand side source term
-    RP.operators.neRHS_src .= RP.plasma.ne .* RP.plasma.eGrowth_rate
+    # Zero out the ionization frequency outside the wall
+    RP.plasma.ν_iz[RP.G.nodes.out_wall_nids] .= 0.0
 
     # Update sparse matrix operator for implicit methods if needed
     if RP.flags.Implicit
-        RP.operators.𝐑_iz .= @views spdiagm(RP.plasma.eGrowth_rate[:])
+        RP.operators.ν_iz .= @views spdiagm(RP.plasma.ν_iz[:])
     end
 
-    return RP
-end
-
-"""
-    calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
-
-Calculate the diffusion terms for electron density evolution, including constructing
-the diffusion operator matrix for implicit time stepping or directly calculating the
-diffusion term for explicit time stepping.
-"""
-function calculate_density_diffusion_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
-    if RP.flags.Implicit
-        update_∇𝐃∇_operator!(RP)
-        RP.operators.neRHS_diffu .= RP.operators.∇𝐃∇ * RP.plasma.ne
-    else
-        # For explicit method, calculate diffusion term directly
-        calculate_ne_diffusion_explicit_RHS!(RP)
-    end
-    return RP
-end
-
-"""
-    calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
-
-Calculate the convection terms for electron density evolution, including constructing
-the convection operator matrix for implicit time stepping or directly calculating the
-convection term for explicit time stepping.
-"""
-function calculate_density_convection_terms!(RP::RAPID{FT}) where FT<:AbstractFloat
-    if RP.flags.Implicit
-        update_∇𝐮_operator!(RP)
-        RP.operators.neRHS_convec = -RP.operators.∇𝐮 * RP.plasma.ne
-    else
-        # For explicit method, calculate convection term directly
-        calculate_ne_convection_explicit_RHS!(RP)
-    end
     return RP
 end
 
@@ -682,13 +639,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
     # Calculate source terms for electron density
     fill!(op.RHS, zero(FT))  # Reset RHS to zero
     if RP.flags.src
-        # ne * 𝐑_iz = ne * nH2_gas * eRRC_iz
-        pla.eGrowth_rate  .= pla.n_H2_gas .*  get_electron_RRC(RP, :Ionization)
-        op.RHS += pla.ne .* pla.eGrowth_rate
-        if RP.flags.Implicit
-            op.𝐑_iz .= @views spdiagm(RP.plasma.eGrowth_rate[:])
-        end
+        # ne * ν_iz = ne * nH2_gas * eRRC_iz
+        calculate_ν_iz!(RP)
+        op.RHS += pla.ne .* pla.ν_iz
     end
+
     if RP.flags.diffu
         # ∇⋅𝐃⋅∇n
         update_∇𝐃∇_operator!(RP)
@@ -710,7 +665,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
         @. op.RHS = pla.ne + dt * (one(FT) - θn) * op.RHS
 
         # Build LHS operator
-        @. op.A_LHS = op.II - θn*dt* (op.∇𝐃∇ - op.∇𝐮 + op.𝐑_iz)
+        @. op.A_LHS = op.II - θn*dt* (op.∇𝐃∇ - op.∇𝐮 + op.ν_iz)
 
         # Solve the linear system
         @views pla.ne[:] = op.A_LHS \ op.RHS[:]

@@ -57,19 +57,6 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
 
     combine_external_and_self_fields!(RP)
 
-    # Calculate RHS terms for density equation
-    if RP.flags.src
-        calculate_density_source_terms!(RP)
-    end
-
-    if RP.flags.diffu
-        calculate_density_diffusion_terms!(RP)
-    end
-
-    if RP.flags.convec
-        calculate_density_convection_terms!(RP)
-    end
-
     # Update electron density
     solve_electron_continuity_equation!(RP)
 

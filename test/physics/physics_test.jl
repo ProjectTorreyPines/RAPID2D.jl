@@ -123,18 +123,22 @@ end
 
 	@test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -382634.21437302034
 
+    op = RP.operators
+
     # Calculate source terms
-    calculate_density_source_terms!(RP)
+    calculate_ν_iz!(RP)
 
     # Test source term calculation
-    @test !all(RP.operators.neRHS_src .== 0.0)  # Should have non-zero source terms
-    @test all(RP.operators.neRHS_src[RP.G.nodes.out_wall_nids] .== 0.0)  # Zero outside wall
-
-    # Calculate diffusion terms
-    calculate_density_diffusion_terms!(RP)
+    @test !all(RP.plasma.ν_iz .== 0.0)  # Should have non-zero source terms
+    @test all(RP.plasma.ν_iz[RP.G.nodes.out_wall_nids] .== 0.0)  # Zero outside wall
 
     # Test diffusion term calculation (will be zero initially since ne is uniform inside wall)
-    @test all(RP.operators.neRHS_diffu[RP.G.nodes.in_wall_nids] .== 0.0)
+    @test all( compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.in_wall_nids] .== 0.0)  # Zero inside wall
+
+    # another way to calculate diffusion term
+    RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
+    mean_inside_ne = mean(RP.plasma.ne[RP.G.nodes.in_wall_nids])
+    @test all( isapprox.(RHS_diffu[RP.G.nodes.in_wall_nids], 0.0, atol=1e-12*mean_inside_ne))  # Zero outside wall
 
     # Modify density to create gradients
     inside_idx = RP.G.nodes.in_wall_nids
@@ -146,20 +150,9 @@ end
     end
 
     # Recalculate diffusion terms with non-uniform density
-    calculate_density_diffusion_terms!(RP)
-
+    RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
     # Now diffusion should be non-zero inside wall
-    @test !all(RP.operators.neRHS_diffu[inside_idx] .== 0.0)
-
-    # Calculate convection terms
-    # Set up a test velocity field
-    RP.plasma.ueR .= 1000.0
-    RP.plasma.ueZ .= 0.0
-
-    calculate_density_convection_terms!(RP)
-
-    # Test convection term calculation
-    @test !all(RP.operators.neRHS_convec[inside_idx] .== 0.0)
+    @test !all(RHS_diffu[RP.G.nodes.in_wall_nids] .== 0.0)
 end
 
 @testset "Pure Convection Test: with constant ue_para" begin
@@ -564,7 +557,7 @@ end
         _set_initial_conditions!(RP, ini_n, 1e-4, 1e-4)
         RP.plasma.Te_eV .= 0.1
         RAPID2D.run_simulation!(RP);
-        @test all(RP.plasma.eGrowth_rate .== 0.0)
+        @test all(RP.plasma.ν_iz .== 0.0)
         @test all(RP.operators.neRHS_src .== 0.0)
         @test ini_n == RP.plasma.ne
     end

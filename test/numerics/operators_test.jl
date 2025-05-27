@@ -137,10 +137,7 @@ end
     end
 
 	# Explicit method
-    RAPID2D.calculate_ne_diffusion_explicit_RHS!(RP, test_density)
-    explicit_result = copy(RP.operators.neRHS_diffu)
-
-    explicit_result2 = compute_∇𝐃∇f_directly(RP, test_density)
+    explicit_result = compute_∇𝐃∇f_directly(RP, test_density)
 
     # Implicit method
     ∇𝐃∇ = RAPID2D.construct_∇𝐃∇_operator(RP)
@@ -157,7 +154,6 @@ end
     @test !(∇𝐃∇ === RP.operators.∇𝐃∇)
 
 	# Comparison
-	@test isapprox(explicit_result, explicit_result2, rtol=1e-10)
 	@test isapprox(explicit_result, implicit_result, rtol=1e-10)
 	@test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 
@@ -219,10 +215,7 @@ end
     for flag_upwind in [true, false]
         @testset "Upwind = $flag_upwind" begin
             # Calculate explicit convection term
-            RAPID2D.calculate_ne_convection_explicit_RHS!(RP, test_density, uR, uZ; flag_upwind)
-            explicit_result = -copy(RP.operators.neRHS_convec)
-
-            explicit_result2 = compute_∇f𝐮_directly(RP, test_density, uR, uZ; flag_upwind)
+            explicit_result = compute_∇f𝐮_directly(RP, test_density, uR, uZ; flag_upwind)
 
             # Calculate implicit convection term
             ∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
@@ -237,7 +230,6 @@ end
             @test ∇𝐮 == RP.operators.∇𝐮
 
             # Compare the results
-            @test isapprox(explicit_result, explicit_result2, rtol=1e-10)
             @test isapprox(explicit_result, implicit_result, rtol=1e-10)
             @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 
@@ -274,14 +266,13 @@ end
         RP.plasma.ueZ .= uZ
 
         for flag_upwind in [true, false]
-            RAPID2D.calculate_ne_convection_explicit_RHS!(RP, test_density, uR, uZ; flag_upwind)
-            explicit_result = copy(RP.operators.neRHS_convec)
+            explicit_result = compute_∇f𝐮_directly(RP, test_density, uR, uZ; flag_upwind)
 
             ∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP, uR, uZ; flag_upwind)
-            implicit_result = -∇𝐮 * test_density
+            implicit_result = ∇𝐮 * test_density
 
             RP.operators.∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP; flag_upwind)
-            implicit_result2 = -RP.operators.∇𝐮 * test_density
+            implicit_result2 = RP.operators.∇𝐮 * test_density
 
             @test isapprox(explicit_result, implicit_result, rtol=1e-10)
             @test isapprox(explicit_result, implicit_result2, rtol=1e-10)

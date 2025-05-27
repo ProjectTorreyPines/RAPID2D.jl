@@ -220,7 +220,7 @@ Contains the plasma state variables including density, temperature, and velocity
     # Current densities
     Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
 
-    eGrowth_rate::Matrix{FT} = zeros(FT, dims) # Electron growth rate [1/s]
+    ν_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
 
     # Power sources/sinks - using new struct-based approach
     ePowers::ElectronHeatingPowers{FT} = ElectronHeatingPowers{FT}(dims)
@@ -364,7 +364,7 @@ Fields include various matrices for solving different parts of the model.
 
     # Operators for solving continuity equations
     ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
-    𝐑_iz ::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction rate of ionization [#/m³]
+    ν_iz ::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization [1/s]
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]

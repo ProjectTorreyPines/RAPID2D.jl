@@ -11,9 +11,6 @@ Key functionalities include:
     - `construct_∂Z_operator`: Builds the vertical derivative operator (∂/∂Z).
     - `construct_𝐽⁻¹∂R_𝐽_operator`: Constructs the divergence-preserving radial derivative.
     - `calculate_divergence`: Computes vector field divergence in cylindrical coordinates.
-- Calculation of the Right-Hand Side (RHS) for explicit time-stepping schemes:
-    - `calculate_ne_diffusion_explicit_RHS!`: Computes the diffusion term [ ∇𝐃∇n ].
-    - `calculate_ne_convection_explicit_RHS!`: Computes the convection term [ -∇⋅(nv) ].
 - Construction and management of sparse matrix operators for implicit time-stepping:
     Implemented operators:
     - Diffusion operator [ ∇𝐃∇ ]
@@ -36,10 +33,8 @@ for stability and accuracy.
 export construct_∂R_operator, construct_∂Z_operator,
         calculate_divergence, construct_𝐽⁻¹∂R_𝐽_operator,
         calculate_diffusion_coefficients!,
-        calculate_ne_diffusion_explicit_RHS!,
         compute_∇𝐃∇f_directly,
         construct_∇𝐃∇_operator,
-        calculate_ne_convection_explicit_RHS!,
         compute_𝐮∇f_directly,
         construct_𝐮∇_operator,
         compute_∇f𝐮_directly,
@@ -47,58 +42,7 @@ export construct_∂R_operator, construct_∂Z_operator,
         update_∇𝐮_operator!
 
 
-"""
-    calculate_ne_diffusion_explicit_RHS!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne) where {FT<:AbstractFloat}
 
-Calculate the diffusion term for a given density field using the diffusion coefficients.
-
-# Arguments
-- `RP::RAPID{FT}`: The RAPID object containing simulation state
-- `density::AbstractMatrix{FT}=RP.plasma.ne`: The density field to calculate diffusion for (defaults to electron density)
-
-# Returns
-- `RP`: The updated RAPID object with the calculated diffusion term stored in RP.operators.neRHS_diffu
-
-# Notes
-- The calculation is performed only for interior points (2:NR-1, 2:NZ-1)
-- Boundary conditions must be handled separately
-- The result is stored in RP.operators.neRHS_diffu
-"""
-function calculate_ne_diffusion_explicit_RHS!(RP::RAPID{FT}, density::AbstractMatrix{FT}=RP.plasma.ne) where {FT<:AbstractFloat}
-    # Alias necessary fields from the RP object
-    G = RP.G
-    inv_Jacob = G.inv_Jacob
-    NR, NZ = G.NR, G.NZ
-
-    CTRR = RP.transport.CTRR
-    CTRZ = RP.transport.CTRZ
-    CTZZ = RP.transport.CTZZ
-
-    # Ensure the diffusion term array is properly initialized
-    diffu_term = RP.operators.neRHS_diffu
-    fill!(diffu_term, zero(FT))
-
-    # Note: Following the Julia convention where first index is R and second is Z
-    # We keep i as R-index and j as Z-index but switch the array indexing order
-    @inbounds for j in 2:NZ-1
-        for i in 2:NR-1
-            # Using @fastmath for potential performance improvements
-            @fastmath diffu_term[i,j] = (
-                +0.5*(CTRR[i+1,j]+CTRR[i,j])*(density[i+1,j]-density[i,j])
-                -0.5*(CTRR[i-1,j]+CTRR[i,j])*(density[i,j]-density[i-1,j])
-                +0.125*(CTRZ[i+1,j]+CTRZ[i,j])*(density[i,j+1]+density[i+1,j+1]-density[i,j-1]-density[i+1,j-1])
-                -0.125*(CTRZ[i-1,j]+CTRZ[i,j])*(density[i,j+1]+density[i-1,j+1]-density[i,j-1]-density[i-1,j-1])
-                +0.125*(CTRZ[i,j+1]+CTRZ[i,j])*(density[i+1,j]+density[i+1,j+1]-density[i-1,j]-density[i-1,j+1])
-                -0.125*(CTRZ[i,j-1]+CTRZ[i,j])*(density[i+1,j]+density[i+1,j-1]-density[i-1,j]-density[i-1,j-1])
-                +0.5*(CTZZ[i,j+1]+CTZZ[i,j])*(density[i,j+1]-density[i,j])
-                -0.5*(CTZZ[i,j-1]+CTZZ[i,j])*(density[i,j]-density[i,j-1])
-            )
-            diffu_term[i,j] = diffu_term[i,j]*inv_Jacob[i,j]
-        end
-    end
-
-    return RP
-end
 """
     compute_∇𝐃∇f_directly(RP::RAPID{FT}, f::AbstractMatrix{FT}) where {FT<:AbstractFloat}
 
@@ -546,6 +490,8 @@ function update_∇𝐃∇_operator!(RP::RAPID{FT}; ∇𝐃∇::DiscretizedOpera
     # define constants with FT for type stability
     half = FT(0.5)
     eighth = FT(0.125)
+    two_FT = FT(2.0)
+    zero_FT = zero(FT)
 
     # Alias the existing sparse matrix for readability
     nzval = ∇𝐃∇.matrix.nzval
@@ -562,138 +508,18 @@ function update_∇𝐃∇_operator!(RP::RAPID{FT}; ∇𝐃∇::DiscretizedOpera
             nzval[k2csc[k+2]] = factor * (half*(CTZZ[i,j+1]+CTZZ[i,j]) + eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # North [i,j+1]
             nzval[k2csc[k+3]] = factor * (half*(CTZZ[i,j-1]+CTZZ[i,j]) - eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # South [i,j-1]
 
-            two_CTRZ = 2 * CTRZ[i,j]
+            two_CTRZ = two_FT * CTRZ[i,j]
             nzval[k2csc[k+4]] = factor * (eighth*( two_CTRZ + CTRZ[i+1,j]+CTRZ[i,j+1]))  # Northeast [i+1,j+1]
             nzval[k2csc[k+5]] = factor * (eighth*( two_CTRZ + CTRZ[i-1,j]+CTRZ[i,j-1]))  # Southwest [i-1,j-1]
             nzval[k2csc[k+6]] = factor * (-eighth*( two_CTRZ + CTRZ[i,j+1]+CTRZ[i-1,j])) # Northwest [i-1,j+1]
             nzval[k2csc[k+7]] = factor * (-eighth*( two_CTRZ + CTRZ[i,j-1]+CTRZ[i+1,j])) # Southeast [i+1,j-1]
 
-            nzval[k2csc[k+8]] = zero(FT)
+            nzval[k2csc[k+8]] = zero_FT
             @inbounds for t in 0:7
                 nzval[k2csc[k+8]] -= nzval[k2csc[k+t]]
             end
 
             k += 9
-        end
-    end
-
-    return RP
-end
-
-
-"""
-    calculate_ne_convection_explicit_RHS!(
-        RP::RAPID{FT},
-        density::AbstractMatrix{FT}=RP.plasma.ne,
-        uR::AbstractMatrix{FT}=RP.plasma.ueR,
-        uZ::AbstractMatrix{FT}=RP.plasma.ueZ
-        ;
-        flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
-
-Calculate the convection term [-∇⋅(nv)] for a given density field using the velocity field.
-
-# Arguments
-- `RP::RAPID{FT}`: The RAPID object containing simulation state
-- `density::AbstractMatrix{FT}=RP.plasma.ne`: The density field to calculate convection for (defaults to electron density)
-- `uR::AbstractMatrix{FT}=RP.plasma.ueR`: The R-component of velocity field (defaults to electron fluid velocity)
-- `uZ::AbstractMatrix{FT}=RP.plasma.ueZ`: The Z-component of velocity field (defaults to electron fluid velocity)
-- `flag_upwind::Bool=RP.flags.upwind`: Flag to use upwind scheme (if false, uses central differencing)
-
-# Returns
-- `RP`: The updated RAPID object with the calculated convection term stored in RP.operators.neRHS_convec
-
-# Notes
-- The calculation is performed only for interior points (2:NR-1, 2:NZ-1)
-- Boundary conditions must be handled separately
-- The result is stored in RP.operators.neRHS_convec
-- Uses a first-order upwind scheme for numerical stability when upwind=true
-- Falls back to central differencing for zero velocity even when upwind=true
-- Uses second-order central differencing when upwind=false
-"""
-function calculate_ne_convection_explicit_RHS!(
-    RP::RAPID{FT},
-    density::AbstractMatrix{FT}=RP.plasma.ne,
-    uR::AbstractMatrix{FT}=RP.plasma.ueR,
-    uZ::AbstractMatrix{FT}=RP.plasma.ueZ
-    ;
-    flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
-
-    # Alias necessary fields from the RP object
-    G = RP.G
-    Jacob = G.Jacob
-    inv_Jacob = G.inv_Jacob
-    NR, NZ = G.NR, G.NZ
-    dR, dZ = G.dR, G.dZ
-
-    # Precompute inverse values for faster calculation (multiplication instead of division)
-    inv_dR = one(FT) / dR
-    inv_dZ = one(FT) / dZ
-
-    # Cache common constants with proper type once
-    zero_val = zero(FT)
-    eps_val = eps(FT)
-    half = FT(0.5)  # Define half once with correct type
-
-    convec_term = RP.operators.neRHS_convec
-    fill!(convec_term, zero_val)
-
-    # Apply appropriate differencing scheme based on upwind flag and velocity
-    # Move the upwind flag check outside the loop for better performance
-    if flag_upwind
-        # Upwind scheme with check for zero velocity
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                negative_flux_R = zero_val
-                negative_flux_Z = zero_val
-
-                # R-direction convection flux with upwind scheme
-                if abs(uR[i, j]) < eps_val
-                    # Zero velocity, use central differencing
-                    negative_flux_R = -Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * density[i+1, j] +
-                                        Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * density[i-1, j]
-                elseif uR[i, j] > zero_val
-                    # Flow from left to right, use left (upwind) node
-                    negative_flux_R = -Jacob[i, j] * uR[i, j] * inv_dR * density[i, j] + Jacob[i-1, j] * uR[i-1, j] * inv_dR * density[i-1, j]
-                else
-                    # Flow from right to left, use right (upwind) node
-                    negative_flux_R = -Jacob[i+1, j] * uR[i+1, j] * inv_dR * density[i+1, j] +
-                                      Jacob[i, j] * uR[i, j] * inv_dR * density[i, j]
-                end
-
-                # Z-direction convection flux with upwind scheme
-                if abs(uZ[i, j]) < eps_val
-                    # Zero velocity, use central differencing
-                    negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * density[i, j+1] +
-                                    Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * density[i, j-1]
-                elseif uZ[i, j] > zero_val
-                    # Flow from bottom to top, use bottom (upwind) node
-                    negative_flux_Z = -Jacob[i, j] * uZ[i, j] * inv_dZ * density[i, j] +
-                                      Jacob[i, j-1] * uZ[i, j-1] * inv_dZ * density[i, j-1]
-                else
-                    # Flow from top to bottom, use top (upwind) node
-                    negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * inv_dZ * density[i, j+1] +
-                                      Jacob[i, j] * uZ[i, j] * inv_dZ * density[i, j]
-                end
-
-                # Calculate the total convection contribution
-                # Note: The negative sign is already incorporated in the flux calculations
-                convec_term[i, j] = (negative_flux_R + negative_flux_Z) * inv_Jacob[i, j]
-            end
-        end
-    else
-        # Central differencing for both directions (simpler logic)
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                # Calculate fluxes with central differencing
-                negative_flux_R = -Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * density[i+1, j] +
-                                  Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * density[i-1, j]
-
-                negative_flux_Z = -Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * density[i, j+1] +
-                                  Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * density[i, j-1]
-
-                # Calculate the total convection contribution
-                convec_term[i, j] = (negative_flux_R + negative_flux_Z) * inv_Jacob[i, j]
-            end
         end
     end
 
