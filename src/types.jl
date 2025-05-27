@@ -5,6 +5,10 @@ Type definitions for RAPID2D.jl
 # Importing the PlasmaConstants from constants.jl
 import RAPID2D: PlasmaConstants
 
+
+include("diagnostics/types.jl")
+
+
 # Abstract types for reaction rate coefficients for a specific species
 """
     AbstractElectronRRCs{T<:AbstractFloat}
