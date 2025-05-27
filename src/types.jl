@@ -648,7 +648,7 @@ mutable struct RAPID{FT<:AbstractFloat}
     # Previous state and diagnostics
     prev_n::Matrix{FT}                # Previous density
     tElap::Dict{Symbol, Float64}      # Elapsed times
-    diagnostics::Dict{Symbol, Any}    # Diagnostic data
+    diagnostics::Diagnostics   # Diagnostic data
 
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
@@ -673,7 +673,15 @@ mutable struct RAPID{FT<:AbstractFloat}
         eRRC = load_electron_RRCs()
         iRRC = load_H2_Ion_RRCs()
         tElap = Dict{Symbol, Float64}()
-        diagnostics = Dict{Symbol, Any}()
+
+        dim_tt_0D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap1D_Interval_s)) + 1
+        dim_tt_2D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap2D_Interval_s)) + 1
+
+        diagnostics = Diagnostics{FT}(;
+                                dim_R = G.NR,
+                                dim_Z = G.NZ,
+                                dim_tt_0D = dim_tt_0D,
+                                dim_tt_2D = dim_tt_2D)
 
         # Create and return new instance
         return new{FT}(

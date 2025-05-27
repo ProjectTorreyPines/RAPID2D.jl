@@ -21,6 +21,7 @@ using SimpleUnPack
 # Include type definitions
 include("constants.jl")
 include("numerics/discretized_operator.jl")
+include("diagnostics.jl")
 include("types.jl")
 include("initialization.jl")
 include("numerics/numerics.jl")
