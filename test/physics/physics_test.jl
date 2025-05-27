@@ -173,7 +173,7 @@ end
     # Create RAPID object
     RP = RAPID{FT}(config)
 
-    RP.flags = SimulationFlags(
+    RP.flags = SimulationFlags{FT}(
         convec=true,           # Enable convection (simplify initial test)
         # Disable unnecessary flags for this test
         src=false,
@@ -312,7 +312,7 @@ end
     # Create RAPID object
     RP = RAPID{FT}(config)
 
-    RP.flags = SimulationFlags(
+    RP.flags = SimulationFlags{FT}(
         diffu=true,           # Enable convection (simplify initial test)
         # Disable unnecessary flags for this test
         src=false,
@@ -421,7 +421,7 @@ end
     # Create RAPID object
     RP = RAPID{FT}(config)
 
-    RP.flags = SimulationFlags(
+    RP.flags = SimulationFlags{FT}(
         ud_evolve=true,
         ud_method="Xsec",
         Te_evolve=false,
@@ -508,7 +508,7 @@ end
     # Create RAPID object
     RP = RAPID{FT}(config)
 
-    RP.flags = SimulationFlags(
+    RP.flags = SimulationFlags{FT}(
         src = true,
         # Disable other flags for this test
         ud_evolve=false,
@@ -713,8 +713,10 @@ end
 end
 
 @testset "Te-Ti equilibration by Coulomb_Collision" begin
+    FT = Float64
+
     # Create test configuration
-    config = SimulationConfig{Float64}(
+    config = SimulationConfig{FT}(
         device_Name = "manual",
         NR = 20, NZ = 20,
         prefilled_gas_pressure = 5e-3,
@@ -723,9 +725,10 @@ end
         t_end_s = 10e-3
     )
 
+
     # Create RAPID instance
-    RP = RAPID{Float64}(config)
-    RP.flags = SimulationFlags(
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
         Coulomb_Collision = true,
         Atomic_Collision = false,
         Te_evolve = true,

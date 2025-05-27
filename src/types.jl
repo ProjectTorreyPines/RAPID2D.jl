@@ -396,7 +396,7 @@ end
 
 Contains boolean flags that control various aspects of the simulation.
 """
-@kwdef mutable struct SimulationFlags
+@kwdef mutable struct SimulationFlags{FT<:AbstractFloat}
     # Method selection flags
     eRRC_method::String = "EoverP_Erg"        # Electron reaction rate coefficient method
     iRRC_method::String = "ud_T"              # Ion reaction rate coefficient method
@@ -430,7 +430,10 @@ Contains boolean flags that control various aspects of the simulation.
     # Ion dynamics
     update_ni_independently::Bool = true      # Update ion density independently
     Ti_evolve::Bool = true                   # Update ion temperature
-    Secondary_Electron::Bool = true           # Include secondary electron emission
+
+    # secondary electron emission by ion impact
+    secondary_electron::Bool = true           # Include secondary electron emission
+    γ_2nd_electron::FT = FT(0.1)         # Secondary electron emission coefficient
 
     # Field-related flags
     Ampere::Bool = false                      # Enable Ampere's law (magnetic field update)
@@ -449,12 +452,12 @@ Contains boolean flags that control various aspects of the simulation.
     Ampere_nstep::Int = 10                    # Steps between Ampere's law updates
     FLF_nstep::Int = 10                       # Steps between field line following updates
     Implicit::Bool = true                     # Use implicit methods
-    Implicit_weight::Float64 = 0.5            # Weight for implicit scheme
+    Implicit_weight::FT = FT(0.5)            # Weight for implicit scheme
     Adapt_dt::Bool = false                    # Use adaptive time stepping
 
     # Temperature limits
-    min_Te::Float64 = 0.001                   # Minimum electron temperature (eV)
-    max_Te::Float64 = 500.0                   # Maximum electron temperature (eV)
+    min_Te::FT = FT(0.001)                   # Minimum electron temperature (eV)
+    max_Te::FT = FT(500.0)                   # Maximum electron temperature (eV)
 
     # Global force balance
     Global_Force_Balance::Bool = false        # Include global toroidal force balance
@@ -465,19 +468,19 @@ Contains boolean flags that control various aspects of the simulation.
     # Numerical stability controls
     Limit_too_negative_Diffusion::Dict{Symbol, Any} = Dict{Symbol, Any}(
         :state => true,
-        :limit_lower_bound_ratio => -0.1  # -0.1*n
+        :limit_lower_bound_ratio => FT(-0.1)  # -0.1*n
     )
 
     # Current threshold for Ampere's equation
-    Ampere_Itor_threshold::Float64 = 0.0      # Current threshold for Ampere equation
+    Ampere_Itor_threshold::FT = FT(0.0)      # Current threshold for Ampere equation
 
     # Debug flags
     tmp_test::Bool = false                    # Enable temporary tests
     tmp_fig::Int = 100                        # Figure number for temporary tests
 
     # Initial parameters
-    ini_gFac::Float64 = 1.0                   # Initial g factor value
-    gamma_2nd_electron::Float64 = 0.1         # Secondary electron emission coefficient
+    ini_gFac::FT = FT(1.0)                   # Initial g factor value
+    gamma_2nd_electron::FT = FT(0.1)         # Secondary electron emission coefficient
 end
 
 """
@@ -660,7 +663,7 @@ mutable struct RAPID{FT<:AbstractFloat}
         fields = Fields{FT}(dims)
         transport = Transport{FT}(dims; Dpara0=config.Dpara0, Dperp0=config.Dperp0)
         operators = Operators{FT}(dims)
-        flags = SimulationFlags()
+        flags = SimulationFlags{FT}()
 
         # Initialize matrices
         damping_func = zeros(FT, dims)
