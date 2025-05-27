@@ -355,7 +355,7 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String="") where {FT<:Ab
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max));
 
-    if isnothing(RP.config.wall_R) || isnothing(RP.config.wall_Z)
+    if isempty(RP.config.wall_R) || isempty(RP.config.wall_Z)
         # Read device wall data
         read_device_wall_data!(RP)
     else
