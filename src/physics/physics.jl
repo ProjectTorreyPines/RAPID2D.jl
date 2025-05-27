@@ -671,28 +671,51 @@ Uses either explicit or implicit time integration based on RP.flags.Implicit.
 """
 function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFloat
     # Alias for readability
-    OP = RP.operators
+    op = RP.operators
     # Get time step from RP
     dt = RP.dt
+    pla = RP.plasma
 
     # Store previous density state for transport calculations
     RP.prev_n .= RP.plasma.ne
 
+    # Calculate source terms for electron density
+    fill!(op.RHS, zero(FT))  # Reset RHS to zero
+    if RP.flags.src
+        # ne * 𝐑_iz = ne * nH2_gas * eRRC_iz
+        pla.eGrowth_rate  .= pla.n_H2_gas .*  get_electron_RRC(RP, :Ionization)
+        op.RHS += pla.ne .* pla.eGrowth_rate
+        if RP.flags.Implicit
+            op.𝐑_iz .= @views spdiagm(RP.plasma.eGrowth_rate[:])
+        end
+    end
+    if RP.flags.diffu
+        # ∇⋅𝐃⋅∇n
+        update_∇𝐃∇_operator!(RP)
+        op.RHS .+= compute_∇𝐃∇f_directly(RP, pla.ne)
+    end
+    if RP.flags.convec
+        # -∇⋅(n 𝐮)
+        update_∇𝐮_operator!(RP)
+        op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
+    end
+
+    # update electron density
     if RP.flags.Implicit
         # Implicit method implementation
         # Weight for implicit method (0.0 = fully explicit, 1.0 = fully implicit)
-        θ = RP.flags.Implicit_weight
+        θn = RP.flags.Implicit_weight
 
         # Build full RHS with explicit contribution
-        @. OP.RHS = RP.plasma.ne + dt * (one(FT) - θ) * (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
+        @. op.RHS = pla.ne + dt * (one(FT) - θn) * op.RHS
+
         # Build LHS operator
-        @. OP.A_LHS = OP.II - θ*dt* (OP.∇𝐃∇ - OP.∇𝐮 + OP.𝐑_iz)
+        @. op.A_LHS = op.II - θn*dt* (op.∇𝐃∇ - op.∇𝐮 + op.𝐑_iz)
 
         # Solve the linear system
-        @views RP.plasma.ne[:] = OP.A_LHS \ OP.RHS[:]
+        @views pla.ne[:] = op.A_LHS \ op.RHS[:]
     else
-        # Explicit method
-        @. RP.plasma.ne += dt* (OP.neRHS_diffu + OP.neRHS_convec + OP.neRHS_src)
+        @. RP.plasma.ne += dt * op.RHS
     end
 
     return RP
