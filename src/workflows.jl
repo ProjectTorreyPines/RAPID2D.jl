@@ -151,8 +151,10 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
         RP.time_s += dt
         RP.step += 1
 
-        # Apply boundary conditions and handle negative values
-        apply_electron_density_boundary_conditions!(RP)
+        treat_electron_outside_wall!(RP)
+        if RP.flags.update_ni_independently
+            treat_ion_outside_wall!(RP)
+        end
 
         # Calculate self-consistent electrostatic field if enabled
         if RP.flags.E_para_self_ES
@@ -161,12 +163,10 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
         # Update transport coefficients after all state variables are updated
         update_transport_quantities!(RP)
 
-
         # Print progress
         if RP.step % 100 == 0
             @printf("Time: %.6e s, Step: %d\n", RP.time_s, RP.step)
         end
-
 
         # Handle snapshots and file outputs if needed
         if is_snap0D_time(RP)

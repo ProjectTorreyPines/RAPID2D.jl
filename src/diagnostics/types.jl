@@ -251,7 +251,7 @@ mutable struct Diagnostics{FT<:AbstractFloat}
     # Structured diagnostic components
     snap0D::Snap0D{FT} # 0D time series (renamed from snap1D)
     snap2D::Snap2D{FT} # 2D spatial snapshots
-    tracker::SrcLossTracker{FT} # Source/loss tracking
+    Ntracker::SrcLossTracker{FT} # tracking number of particles (source/loss)
 end
 
 function Diagnostics{FT}(; dim_R::Int, dim_Z::Int, dim_tt_0D::Int, dim_tt_2D::Int) where FT<:AbstractFloat
