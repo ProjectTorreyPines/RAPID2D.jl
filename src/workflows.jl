@@ -7,6 +7,32 @@ Contains high-level simulation workflows, including:
 - Multi-physics coupling strategies
 """
 
+
+"""
+    is_snap0D_time(time)
+
+Check if the given time corresponds to a 0D snapshot time.
+
+Returns `true` if the time matches a 0D snapshot timing, `false` otherwise.
+"""
+function is_snap0D_time(RP)
+    RP_Δt_s = RP.time_s - RP.t_start_s
+    return abs(RP_Δt_s - round(RP_Δt_s/RP.config.snap0D_Δt_s) * RP.config.snap0D_Δt_s) < 0.1 * RP.dt
+end
+
+"""
+    is_snap2D_time(time)
+
+Check if the given time corresponds to a 2D snapshot time.
+
+Returns `true` if the time matches a 2D snapshot timing, `false` otherwise.
+"""
+function is_snap2D_time(RP)
+    RP_Δt_s = RP.time_s - RP.t_start_s
+    return abs(RP_Δt_s- round(RP_Δt_s/RP.config.snap2D_Δt_s) * RP.config.snap2D_Δt_s) < 0.1 * RP.dt
+end
+
+
 """
     advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
 
@@ -143,8 +169,12 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
 
 
         # Handle snapshots and file outputs if needed
-        measure_snap0D!(RP)
-        measure_snap2D!(RP)
+        if is_snap0D_time(RP)
+            measure_snap0D!(RP)
+        end
+        if is_snap2D_time(RP)
+            measure_snap2D!(RP)
+        end
 
         # Handle snapshots and file outputs if needed
         # if hasfield(typeof(RP), :snap2D_Δt_s) && abs(RP.time_s - round(RP.time_s/RP.snap2D_Δt_s)*RP.snap2D_Δt_s) < 0.1*dt

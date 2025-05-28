@@ -10,12 +10,6 @@ This function is analogous to MATLAB's Measure_snap1D().
 - `RP::RAPID{FT}`: The RAPID simulation instance to measure
 """
 function measure_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Check timing interval (like MATLAB's nearestMultiple logic)
-    nearest_multiple = round(RP.time_s / RP.config.snap0D_Δt_s) * RP.config.snap0D_Δt_s
-    if abs(RP.time_s - nearest_multiple) >= 0.1 * RP.dt
-        return nothing  # Skip if not at the right interval
-    end
-
     snap0D = RP.diagnostics.snap0D  # alias for convenience
     pla = RP.plasma
     inVol2D = RP.G.inVol2D  # alias for convenience
@@ -184,14 +178,6 @@ This function is analogous to MATLAB's Measure_snap2D().
 - `RP::RAPID{FT}`: The RAPID simulation instance to measure
 """
 function measure_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Check timing interval (like MATLAB's nearestMultiple logic)
-    if hasfield(typeof(RP.config), :snap2D_Δt_s)
-        nearest_multiple = round(RP.time_s / RP.config.snap2D_Δt_s) * RP.config.snap2D_Δt_s
-        if abs(RP.time_s - nearest_multiple) >= 0.1 * RP.dt
-            return nothing  # Skip if not at the right interval
-        end
-    end
-
     # Get current index
     idx = RP.diagnostics.snap2D.idx
 
