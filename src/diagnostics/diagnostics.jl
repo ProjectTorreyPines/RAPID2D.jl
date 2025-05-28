@@ -83,24 +83,20 @@ function measure_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     end
 
     # Source/loss rates
-    if hasfield(typeof(RP.diagnostics.tracker), :cum1D_Ne_src)
-        snap0D.Ne_src_rate[idx] = RP.diagnostics.tracker.cum1D_Ne_src / RP.config.snap0D_Δt_s
-        snap0D.Ne_loss_rate[idx] = RP.diagnostics.tracker.cum1D_Ne_loss / RP.config.snap0D_Δt_s
+    Ntracker = RP.diagnostics.Ntracker
+    snap0D.Ne_src_rate[idx] = Ntracker.cum0D_Ne_src / RP.config.snap0D_Δt_s
+    snap0D.Ne_loss_rate[idx] = Ntracker.cum0D_Ne_loss / RP.config.snap0D_Δt_s
+    snap0D.Ni_src_rate[idx] = Ntracker.cum0D_Ni_src / RP.config.snap0D_Δt_s
+    snap0D.Ni_loss_rate[idx] = Ntracker.cum0D_Ni_loss / RP.config.snap0D_Δt_s
 
-        # Growth rates
-        prev_N = idx > 1 ? snap0D.ne[idx-1] * RP.G.device_inVolume : snap0D.ne[idx] * RP.G.device_inVolume
-        snap0D.eGrowth_rate[idx] = log(1 + RP.diagnostics.tracker.cum1D_Ne_src / prev_N) / RP.config.snap0D_Δt_s
-        snap0D.eLoss_rate[idx] = -log(1 - RP.diagnostics.tracker.cum1D_Ne_loss / prev_N) / RP.config.snap0D_Δt_s
+    # Growth rates
+    prev_N = idx > 1 ? snap0D.ne[idx-1] * RP.G.device_inVolume : snap0D.ne[idx] * RP.G.device_inVolume
+    snap0D.eGrowth_rate[idx] = log(FT(1) + Ntracker.cum0D_Ne_src / prev_N) / RP.config.snap0D_Δt_s
+    snap0D.eLoss_rate[idx] = -log(FT(1) - Ntracker.cum0D_Ne_loss / prev_N) / RP.config.snap0D_Δt_s
 
-        # Alternative growth rates
-        snap0D.growth_rate2[idx] = snap0D.Ne_src_rate[idx] / (snap0D.ne[idx] * RP.G.device_inVolume)
-        snap0D.loss_rate2[idx] = snap0D.Ne_loss_rate[idx] / (snap0D.ne[idx] * RP.G.device_inVolume)
-    end
-
-    if hasfield(typeof(RP.diagnostics.tracker), :cum1D_Ni_src)
-        snap0D.Ni_src_rate[idx] = RP.diagnostics.tracker.cum1D_Ni_src / RP.config.snap0D_Δt_s
-        snap0D.Ni_loss_rate[idx] = RP.diagnostics.tracker.cum1D_Ni_loss / RP.config.snap0D_Δt_s
-    end
+    # Alternative growth rates
+    snap0D.growth_rate2[idx] = snap0D.Ne_src_rate[idx] / (snap0D.ne[idx] * RP.G.device_inVolume)
+    snap0D.loss_rate2[idx] = snap0D.Ne_loss_rate[idx] / (snap0D.ne[idx] * RP.G.device_inVolume)
 
     # Power balance calculations
     # Update power calculations first
@@ -154,16 +150,11 @@ function measure_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Increment index
     snap0D.idx += 1
 
-    # Reset cumulative trackers (like MATLAB version)
-    if hasfield(typeof(RP.diagnostics.tracker), :cum1D_Ne_src)
-        RP.diagnostics.tracker.cum1D_Ne_src = zero(RP.diagnostics.tracker.cum1D_Ne_src)
-        RP.diagnostics.tracker.cum1D_Ne_loss = zero(RP.diagnostics.tracker.cum1D_Ne_loss)
-    end
-
-    if hasfield(typeof(RP.diagnostics.tracker), :cum1D_Ni_src)
-        RP.diagnostics.tracker.cum1D_Ni_src = zero(RP.diagnostics.tracker.cum1D_Ni_src)
-        RP.diagnostics.tracker.cum1D_Ni_loss = zero(RP.diagnostics.tracker.cum1D_Ni_loss)
-    end
+    # Reset cumulative trackers
+    RP.diagnostics.Ntracker.cum0D_Ne_src = zero(FT)
+    RP.diagnostics.Ntracker.cum0D_Ne_loss = zero(FT)
+    RP.diagnostics.Ntracker.cum0D_Ni_src = zero(FT)
+    RP.diagnostics.Ntracker.cum0D_Ni_loss = zero(FT)
 
     return nothing
 end
@@ -230,12 +221,11 @@ function measure_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     end
 
     # Source/loss rates from cumulative trackers
-    if hasfield(typeof(RP.diagnostics.tracker), :cum2D_Ne_src) && RP.config.snap2D_Δt_s > 0
-        snap2D.Ne_src_rate[:, :, idx] = RP.diagnostics.tracker.cum2D_Ne_src / RP.config.snap2D_Δt_s
-        snap2D.Ne_loss_rate[:, :, idx] = RP.diagnostics.tracker.cum2D_Ne_loss / RP.config.snap2D_Δt_s
-        snap2D.Ni_src_rate[:, :, idx] = RP.diagnostics.tracker.cum2D_Ni_src / RP.config.snap2D_Δt_s
-        snap2D.Ni_loss_rate[:, :, idx] = RP.diagnostics.tracker.cum2D_Ni_loss / RP.config.snap2D_Δt_s
-    end
+    Ntracker = RP.diagnostics.Ntracker
+    snap2D.Ne_src_rate[:, :, idx] = Ntracker.cum2D_Ne_src / RP.config.snap2D_Δt_s
+    snap2D.Ne_loss_rate[:, :, idx] = Ntracker.cum2D_Ne_loss / RP.config.snap2D_Δt_s
+    snap2D.Ni_src_rate[:, :, idx] = Ntracker.cum2D_Ni_src / RP.config.snap2D_Δt_s
+    snap2D.Ni_loss_rate[:, :, idx] = Ntracker.cum2D_Ni_loss / RP.config.snap2D_Δt_s
 
     # Current densities (parallel current components)
     snap2D.Jϕ[:, :, idx] = pla.Jϕ
@@ -334,13 +324,11 @@ function measure_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Increment index
     snap2D.idx += 1
 
-    # Reset cumulative trackers (like MATLAB version)
-    if hasfield(typeof(RP.diagnostics.tracker), :cum2D_Ne_src)
-        fill!(RP.diagnostics.tracker.cum2D_Ne_src, zero(FT))
-        fill!(RP.diagnostics.tracker.cum2D_Ne_loss, zero(FT))
-        fill!(RP.diagnostics.tracker.cum2D_Ni_src, zero(FT))
-        fill!(RP.diagnostics.tracker.cum2D_Ni_loss, zero(FT))
-    end
+    # Reset cumulative trackers
+    fill!(RP.diagnostics.Ntracker.cum2D_Ne_src, zero(FT))
+    fill!(RP.diagnostics.Ntracker.cum2D_Ne_loss, zero(FT))
+    fill!(RP.diagnostics.Ntracker.cum2D_Ni_src, zero(FT))
+    fill!(RP.diagnostics.Ntracker.cum2D_Ni_loss, zero(FT))
 
     return nothing
 end

@@ -224,10 +224,10 @@ Tracks cumulative sources and losses of particles and energy
     dims_RZ::Tuple{Int, Int}    # Number of R and Z grid points
 
     # 0D (volume-integrated) tracking
-    cum1D_Ne_src::FT = zero(FT)             # Cumulative electron source
-    cum1D_Ne_loss::FT = zero(FT)            # Cumulative electron loss
-    cum1D_Ni_src::FT = zero(FT)             # Cumulative ion source
-    cum1D_Ni_loss::FT = zero(FT)            # Cumulative ion loss
+    cum0D_Ne_src::FT = zero(FT)             # Cumulative electron source
+    cum0D_Ne_loss::FT = zero(FT)            # Cumulative electron loss
+    cum0D_Ni_src::FT = zero(FT)             # Cumulative ion source
+    cum0D_Ni_loss::FT = zero(FT)            # Cumulative ion loss
 
     # 2D (spatially-resolved) tracking
     cum2D_Ne_src::Matrix{FT} = zeros(FT, dims_RZ)     # Cumulative electron source (R,Z)
@@ -236,8 +236,8 @@ Tracks cumulative sources and losses of particles and energy
     cum2D_Ni_loss::Matrix{FT} = zeros(FT, dims_RZ)    # Cumulative ion loss (R,Z)
 
     # Energy tracking (can be added/extended as needed)
-    # cum1D_Energy_src::FT = zero(FT)
-    # cum1D_Energy_loss::FT = zero(FT)
+    # cum0D_Energy_src::FT = zero(FT)
+    # cum0D_Energy_loss::FT = zero(FT)
     # cum2D_Energy_src::Matrix{FT} = zeros(FT, dims_rz...)
     # cum2D_Energy_loss::Matrix{FT} = zeros(FT, dims_rz...)
 end
