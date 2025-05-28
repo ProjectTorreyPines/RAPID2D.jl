@@ -213,6 +213,12 @@ Contains the plasma state variables including density, temperature, and velocity
     uiZ::Matrix{FT} = zeros(FT, dims)   # Ion Z velocity [m/s]
     uiϕ::Matrix{FT} = zeros(FT, dims)   # Ion ϕ velocity [m/s]
 
+    # Parameters for Self-E field effects
+    nc_para::Matrix{FT} = zeros(FT, dims) # Parallel critical density [m^-3]
+    nc_perp::Matrix{FT} = zeros(FT, dims) # Perpendicular critical density [m^-3]
+    L_mixing::Matrix{FT} = zeros(FT, dims) # Mixing length for turbulent diffusion [m]
+    γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
+
     # Collision parameters
     lnΛ::Matrix{FT} = zeros(FT, dims)   # Coulomb logarithm
     ν_ei::Matrix{FT} = zeros(FT, dims) # Electron-ion collision frequency [1/s]

@@ -204,9 +204,9 @@ function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Sym
 
 		RRC = getfield(eRRCs, reaction)
 		if RRC isa RRC_EoverP_Erg
-			mean_eErg_eV = @. 1.5*RP.plasma.Te_eV + 0.5*mass*RP.plasma.ue_para^2/ee;
+			mean_𝒲e_eV = @. 1.5*RP.plasma.Te_eV + 0.5*mass*RP.plasma.ue_para^2/ee;
 			abs_Epara_over_pGas = @. abs(RP.fields.E_para_tot/(RP.plasma.n_H2_gas*RP.plasma.T_gas_eV*ee));
-			return RRC.itp.(abs_Epara_over_pGas, mean_eErg_eV)
+			return RRC.itp.(abs_Epara_over_pGas, mean_𝒲e_eV)
 		elseif RRC isa RRC_T_ud
 			return RRC.itp.(RP.plasma.Te_eV, abs.(RP.plasma.ue_para))
 		end

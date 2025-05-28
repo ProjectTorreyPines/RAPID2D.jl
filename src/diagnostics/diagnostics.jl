@@ -44,14 +44,14 @@ function measure_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     snap0D.ne_max[idx] = maximum(pla.ne)
     snap0D.ue_para[idx] = sum(@. pla.ue_para * pla.ne * inVol2D) / total_Ne
     snap0D.Te_eV[idx] = sum(@. pla.Te_eV * pla.ne * inVol2D) / total_Ne
-    snap0D.mean_eErg_eV[idx] = sum(@. (1.5 * pla.Te_eV + 0.5 * me * pla.ue_para.^2 )/ ee * pla.ne * inVol2D) / total_Ne
+    snap0D.𝒲e_eV[idx] = sum(@. (1.5 * pla.Te_eV + (0.5 * me * pla.ue_para.^2 )/ ee) * pla.ne * inVol2D) / total_Ne
 
     # Ion quantities
     snap0D.ni[idx] = total_Ni / RP.G.device_inVolume
     snap0D.ni_max[idx] = maximum(pla.ni)
     snap0D.ui_para[idx] = sum(@. pla.ui_para * pla.ni * inVol2D) / total_Ni
     snap0D.Ti_eV[idx] = sum(@. pla.Ti_eV * pla.ni * inVol2D) / total_Ni
-    snap0D.mean_iErg_eV[idx] = sum(@. (1.5 * pla.Ti_eV + 0.5 * mi * pla.ui_para.^2 ) / ee * pla.ni * inVol2D) / total_Ni
+    snap0D.𝒲i_eV[idx] = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para.^2 ) / ee) * pla.ni * inVol2D) / total_Ni
 
     # Toroidal current
     snap0D.I_tor[idx] = sum( pla.Jϕ * RP.G.dR * RP.G.dZ)
@@ -117,22 +117,22 @@ function measure_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Calculate density-weighted averages for electron power components
     if total_Ne > 0
-        snap0D.P_diffu[idx] = sum(@. ePowers.diffu * pla.ne * inVol2D) / total_Ne
-        snap0D.P_conv[idx] = sum(@. ePowers.conv * pla.ne * inVol2D) / total_Ne
-        snap0D.P_drag[idx] = sum(@. ePowers.drag * pla.ne * inVol2D) / total_Ne
-        snap0D.P_iz[idx] = sum(@. ePowers.iz * pla.ne * inVol2D) / total_Ne
-        snap0D.P_exc[idx] = sum(@. ePowers.exc * pla.ne * inVol2D) / total_Ne
-        snap0D.P_dilution[idx] = sum(@. ePowers.dilution * pla.ne * inVol2D) / total_Ne
-        snap0D.P_equi[idx] = sum(@. ePowers.equi * pla.ne * inVol2D) / total_Ne
-        snap0D.P_heat[idx] = sum(@. ePowers.heat * pla.ne * inVol2D) / total_Ne
-        snap0D.P_tot[idx] = sum(@. ePowers.tot * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.diffu[idx] = sum(@. ePowers.diffu * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.conv[idx] = sum(@. ePowers.conv * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.drag[idx] = sum(@. ePowers.drag * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.iz[idx] = sum(@. ePowers.iz * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.exc[idx] = sum(@. ePowers.exc * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.dilution[idx] = sum(@. ePowers.dilution * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.equi[idx] = sum(@. ePowers.equi * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.heat[idx] = sum(@. ePowers.heat * pla.ne * inVol2D) / total_Ne
+        snap0D.Pe.tot[idx] = sum(@. ePowers.tot * pla.ne * inVol2D) / total_Ne
     end
 
     # Calculate density-weighted averages for ion power components
     if total_Ni > 0
-        snap0D.Pi_tot[idx] = sum(@. iPowers.tot * pla.ni * inVol2D) / total_Ni
-        snap0D.Pi_atomic[idx] = sum(@. iPowers.atomic * pla.ni * inVol2D) / total_Ni
-        snap0D.Pi_equi[idx] = sum(@. iPowers.equi * pla.ni * inVol2D) / total_Ni
+        snap0D.Pi.tot[idx] = sum(@. iPowers.tot * pla.ni * inVol2D) / total_Ni
+        snap0D.Pi.atomic[idx] = sum(@. iPowers.atomic * pla.ni * inVol2D) / total_Ni
+        snap0D.Pi.equi[idx] = sum(@. iPowers.equi * pla.ni * inVol2D) / total_Ni
     end
 
     # Plasma center tracking
@@ -184,6 +184,14 @@ This function is analogous to MATLAB's Measure_snap2D().
 - `RP::RAPID{FT}`: The RAPID simulation instance to measure
 """
 function measure_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Check timing interval (like MATLAB's nearestMultiple logic)
+    if hasfield(typeof(RP.config), :snap2D_Δt_s)
+        nearest_multiple = round(RP.time_s / RP.config.snap2D_Δt_s) * RP.config.snap2D_Δt_s
+        if abs(RP.time_s - nearest_multiple) >= 0.1 * RP.dt
+            return nothing  # Skip if not at the right interval
+        end
+    end
+
     # Get current index
     idx = RP.diagnostics.snap2D.idx
 
@@ -193,18 +201,160 @@ function measure_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         return nothing
     end
 
-    # Store current time
-    RP.diagnostics.snap2D.time_s[idx] = RP.time_s
+    snap2D = RP.diagnostics.snap2D  # alias for convenience
+    pla = RP.plasma                  # alias for convenience
+    F = RP.fields                    # alias for convenience
+    T = RP.transport                 # alias for convenience
 
-    # Store 2D field snapshots using pre-allocated 3D arrays
-    # The arrays are already allocated with proper dimensions (NR, NZ, dim_tt_2D)
-    RP.diagnostics.snap2D.ne[:, :, idx] = RP.plasma.ne
-    RP.diagnostics.snap2D.Te_eV[:, :, idx] = RP.plasma.Te_eV
-    RP.diagnostics.snap2D.ue_para[:, :, idx] = RP.plasma.ue_para
-    RP.diagnostics.snap2D.E_para_tot[:, :, idx] = RP.fields.E_para_tot
+    @unpack ee, me, mi = RP.config.constants  # Unpack constants for convenience
+
+    # Store metadata
+    snap2D.step[idx] = RP.step
+    snap2D.dt[idx] = RP.dt
+    snap2D.time_s[idx] = RP.time_s
+
+    # Basic plasma quantities
+    snap2D.ne[:, :, idx] = pla.ne
+    snap2D.Te_eV[:, :, idx] = pla.Te_eV
+
+    # Transport coefficients
+    snap2D.Dpara[:, :, idx] = T.Dpara
+    snap2D.ue_para[:, :, idx] = pla.ue_para
+
+    # Calculate derived quantities
+    snap2D.u_pol[:, :, idx] = @. sqrt(pla.ueR^2 + pla.ueZ^2)
+    snap2D.D_pol[:, :, idx] = @. sqrt(T.DRR^2 + T.DZZ^2)
+
+    # Magnetic fields
+    snap2D.BR[:, :, idx] = F.BR
+    snap2D.BZ[:, :, idx] = F.BZ
+    snap2D.B_pol[:, :, idx] = F.Bpol
+    snap2D.BR_self[:, :, idx] = F.BR_self
+    snap2D.BZ_self[:, :, idx] = F.BZ_self
+
+    # Electric fields
+    snap2D.E_para_tot[:, :, idx] = F.E_para_tot
+    snap2D.E_para_ext[:, :, idx] = F.E_para_ext
+    snap2D.Epol_self[:, :, idx] = F.Epol_self
+    snap2D.Eϕ_self[:, :, idx] = F.Eϕ_self
+
+    # Calculate ExB drift magnitude
+    if hasfield(typeof(F), :mean_ExB_R) && hasfield(typeof(F), :mean_ExB_Z)
+        snap2D.mean_ExB_pol[:, :, idx] = @. sqrt(F.mean_ExB_R^2 + F.mean_ExB_Z^2)
+    end
+
+    # Source/loss rates from cumulative trackers
+    if hasfield(typeof(RP.diagnostics.tracker), :cum2D_Ne_src) && RP.config.snap2D_Δt_s > 0
+        snap2D.Ne_src_rate[:, :, idx] = RP.diagnostics.tracker.cum2D_Ne_src / RP.config.snap2D_Δt_s
+        snap2D.Ne_loss_rate[:, :, idx] = RP.diagnostics.tracker.cum2D_Ne_loss / RP.config.snap2D_Δt_s
+        snap2D.Ni_src_rate[:, :, idx] = RP.diagnostics.tracker.cum2D_Ni_src / RP.config.snap2D_Δt_s
+        snap2D.Ni_loss_rate[:, :, idx] = RP.diagnostics.tracker.cum2D_Ni_loss / RP.config.snap2D_Δt_s
+    end
+
+    # Current densities (parallel current components)
+    snap2D.Jϕ[:, :, idx] = pla.Jϕ
+    snap2D.J_para[:, :, idx] = @. ee * (pla.ni * pla.ui_para - pla.ne * pla.ue_para)
+
+    # Poloidal flux
+    snap2D.psi_ext[:, :, idx] = F.psi_ext
+    snap2D.psi_self[:, :, idx] = F.psi_self
+
+    # Electron velocity components
+    snap2D.ueR[:, :, idx] = pla.ueR
+    snap2D.ueϕ[:, :, idx] = pla.ueϕ
+    snap2D.ueZ[:, :, idx] = pla.ueZ
+
+    # Physics parameters
+    if hasfield(typeof(pla), :L_mixing)
+        snap2D.L_mixing[:, :, idx] = pla.L_mixing
+    end
+    if hasfield(typeof(pla), :nc_para)
+        snap2D.nc_para[:, :, idx] = pla.nc_para
+        snap2D.nc_perp[:, :, idx] = pla.nc_perp
+    end
+
+    snap2D.γ_shape_fac[:, :, idx] = pla.γ_shape_fac
+
+    # Ion quantities
+    snap2D.ni[:, :, idx] = pla.ni
+    snap2D.ui_para[:, :, idx] = pla.ui_para
+    snap2D.uiR[:, :, idx] = pla.uiR
+    snap2D.uiϕ[:, :, idx] = pla.uiϕ
+    snap2D.uiZ[:, :, idx] = pla.uiZ
+    snap2D.Ti_eV[:, :, idx] = pla.Ti_eV
+
+    # MHD accelerations
+    if hasfield(typeof(pla), :mean_aR_by_JxB)
+        snap2D.mean_aR_by_JxB[:, :, idx] = pla.mean_aR_by_JxB
+        snap2D.mean_aZ_by_JxB[:, :, idx] = pla.mean_aZ_by_JxB
+    end
+
+    # Coulomb logarithm
+    if hasfield(typeof(pla), :lnA)
+        snap2D.lnΛ[:, :, idx] = pla.lnA
+    end
+
+    # Neutral gas
+    snap2D.n_H2_gas[:, :, idx] = pla.n_H2_gas
+
+    # Calculate mean energies
+    snap2D.𝒲e_eV[:, :, idx] = @. 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
+    snap2D.𝒲i_eV[:, :, idx] = @. 1.5 * pla.Ti_eV + 0.5 * mi * pla.ui_para^2 / ee
+
+    # Collision frequencies using RRC methods
+    if RP.flags.Atomic_Collision
+        RRC_mom = get_electron_RRC(RP, :Momentum)
+        snap2D.coll_freq_en_mom[:, :, idx] = @. pla.n_H2_gas * RRC_mom
+    end
+
+    if RP.flags.Coulomb_Collision
+        snap2D.coll_freq_ei[:, :, idx] = pla.ν_ei
+    end
+
+    # H-alpha emission
+    if RP.flags.Atomic_Collision
+        RRC_Halpha = get_electron_RRC(RP, :Halpha)
+        snap2D.Halpha[:, :, idx] = @. pla.n_H2_gas * RRC_Halpha * pla.ne
+    end
+
+    # Update power calculations before storing
+    update_electron_heating_powers!(RP)
+    update_ion_heating_powers!(RP)
+
+    # Store electron power components
+    ePowers = pla.ePowers
+    snap2D.Pe.tot[:, :, idx] = ePowers.tot
+    snap2D.Pe.diffu[:, :, idx] = ePowers.diffu
+    snap2D.Pe.conv[:, :, idx] = ePowers.conv
+    snap2D.Pe.drag[:, :, idx] = ePowers.drag
+    snap2D.Pe.dilution[:, :, idx] = ePowers.dilution
+    snap2D.Pe.iz[:, :, idx] = ePowers.iz
+    snap2D.Pe.exc[:, :, idx] = ePowers.exc
+
+    # Store ion power components
+    iPowers = pla.iPowers
+    snap2D.Pi.tot[:, :, idx] = iPowers.tot
+    snap2D.Pi.atomic[:, :, idx] = iPowers.atomic
+    snap2D.Pi.equi[:, :, idx] = iPowers.equi
+
+    # Control fields (if enabled)
+    if hasfield(typeof(RP), :flags) && hasfield(typeof(RP.flags), :Control) && hasfield(typeof(RP.flags.Control), :state) && RP.flags.Control.state
+        if snap2D.BR_ctrl !== nothing && snap2D.BZ_ctrl !== nothing
+            snap2D.BR_ctrl[:, :, idx] = F.BR_ctrl
+            snap2D.BZ_ctrl[:, :, idx] = F.BZ_ctrl
+        end
+    end
 
     # Increment index
-    RP.diagnostics.snap2D.idx += 1
+    snap2D.idx += 1
+
+    # Reset cumulative trackers (like MATLAB version)
+    if hasfield(typeof(RP.diagnostics.tracker), :cum2D_Ne_src)
+        fill!(RP.diagnostics.tracker.cum2D_Ne_src, zero(FT))
+        fill!(RP.diagnostics.tracker.cum2D_Ne_loss, zero(FT))
+        fill!(RP.diagnostics.tracker.cum2D_Ni_src, zero(FT))
+        fill!(RP.diagnostics.tracker.cum2D_Ni_loss, zero(FT))
+    end
 
     return nothing
 end

@@ -21,14 +21,14 @@ All vector fields are automatically sized based on dim_tt
     ne_max::Vector{FT} = zeros(FT, dim_tt)          # Maximum electron density
     ue_para::Vector{FT} = zeros(FT, dim_tt)         # Average electron parallel velocity
     Te_eV::Vector{FT} = zeros(FT, dim_tt)           # Average electron temperature
-    mean_eErg_eV::Vector{FT} = zeros(FT, dim_tt)    # Average electron energy
+    𝒲e_eV::Vector{FT} = zeros(FT, dim_tt)          # Average electron energy (work)
 
     # Ion quantities
     ni::Vector{FT} = zeros(FT, dim_tt)              # Average ion density
     ni_max::Vector{FT} = zeros(FT, dim_tt)          # Maximum ion density
     ui_para::Vector{FT} = zeros(FT, dim_tt)         # Average ion parallel velocity
     Ti_eV::Vector{FT} = zeros(FT, dim_tt)           # Average ion temperature
-    mean_iErg_eV::Vector{FT} = zeros(FT, dim_tt)    # Average ion energy
+    𝒲i_eV::Vector{FT} = zeros(FT, dim_tt)          # Average ion energy (work)
 
     I_tor::Vector{FT} = zeros(FT, dim_tt)           # Toroidal current
 
@@ -53,21 +53,25 @@ All vector fields are automatically sized based on dim_tt
     ν_ei::Vector{FT} = zeros(FT, dim_tt)            # Electron-ion coulomb collision frequency [1/s]
 
 
-    # Power balance (electron)
-    P_diffu::Vector{FT} = zeros(FT, dim_tt)      # Diffusion power
-    P_conv::Vector{FT} = zeros(FT, dim_tt)       # Convection power
-    P_drag::Vector{FT} = zeros(FT, dim_tt)       # Drag power
-    P_iz::Vector{FT} = zeros(FT, dim_tt)         # Ionization power
-    P_exc::Vector{FT} = zeros(FT, dim_tt)        # Excitation power
-    P_dilution::Vector{FT} = zeros(FT, dim_tt)   # Dilution power
-    P_equi::Vector{FT} = zeros(FT, dim_tt)       # Equilibration power
-    P_heat::Vector{FT} = zeros(FT, dim_tt)       # Heating power
-    P_tot::Vector{FT} = zeros(FT, dim_tt)        # Total power
+    # Electron Heating Powers
+    Pe = (
+        diffu = zeros(FT, dim_tt),       # Diffusion power
+        conv = zeros(FT, dim_tt),        # Convection power
+        drag = zeros(FT, dim_tt),        # Drag power
+        iz = zeros(FT, dim_tt),          # Ionization power
+        exc = zeros(FT, dim_tt),         # Excitation power
+        dilution = zeros(FT, dim_tt),    # Dilution power
+        equi = zeros(FT, dim_tt),        # Equilibration power
+        heat = zeros(FT, dim_tt),        # Heating power
+        tot = zeros(FT, dim_tt)          # Total electron power
+    )
 
-    # Ion power balance
-    Pi_tot::Vector{FT} = zeros(FT, dim_tt)       # Total ion power
-    Pi_atomic::Vector{FT} = zeros(FT, dim_tt)    # Atomic processes power
-    Pi_equi::Vector{FT} = zeros(FT, dim_tt)      # Equilibration power
+    # Ion heating powers
+    Pi = (
+        atomic = zeros(FT, dim_tt),      # Atomic processes power
+        equi = zeros(FT, dim_tt),        # Equilibration power
+        tot = zeros(FT, dim_tt)          # Total ion power
+    )
 
     # Source/loss tracking
     Ne_src_rate::Vector{FT} = zeros(FT, dim_tt)      # Electron source rate
@@ -105,108 +109,105 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 """
 @kwdef mutable struct Snap2D{FT<:AbstractFloat}
     # Dimension parameters (must be first)
-    dim_R::Int    # Number of R grid points
-    dim_Z::Int    # Number of Z grid points
-    dim_tt::Int   # Number of time points
+    dims_RZt::Tuple{Int, Int, Int} # (NR, NZ, Ntime)
 
     # Metadata
     idx::Int = 1
-    step::Vector{Int} = zeros(Int, dim_tt)
-    dt::Vector{FT} = zeros(FT, dim_tt)
-    time_s::Vector{FT} = zeros(FT, dim_tt)
+    step::Vector{Int} = zeros(Int, dims_RZt[3])
+    dt::Vector{FT} = zeros(FT, dims_RZt[3])
+    time_s::Vector{FT} = zeros(FT, dims_RZt[3])
 
     # Basic plasma quantities
-    ne::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)             # Electron density (NR, NZ, time)
-    neRHS_diffu::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)    # Diffusion term
-    neRHS_convec::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)   # Convection term
-    neRHS_src::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)      # Source term
+    ne::Array{FT, 3} = zeros(FT, dims_RZt)             # Electron density (NR, NZ, time)
 
     # Transport coefficients
-    Dpara::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Parallel diffusion
-    D_pol::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Poloidal diffusion
-    ue_para::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Parallel electron velocity
-    u_pol::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Poloidal velocity magnitude
+    Dpara::Array{FT, 3} = zeros(FT, dims_RZt)          # Parallel diffusion
+    D_pol::Array{FT, 3} = zeros(FT, dims_RZt)          # Poloidal diffusion
+    ue_para::Array{FT, 3} = zeros(FT, dims_RZt)        # Parallel electron velocity
+    u_pol::Array{FT, 3} = zeros(FT, dims_RZt)          # Poloidal velocity magnitude
 
     # Electron properties
-    Te_eV::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Electron temperature
-    mean_eErg_eV::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)   # Mean electron energy
-    ueR::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Electron velocity R component
-    ueϕ::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Electron velocity ϕ component
-    ueZ::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Electron velocity Z component
+    Te_eV::Array{FT, 3} = zeros(FT, dims_RZt)          # Electron temperature
+    𝒲e_eV::Array{FT, 3} = zeros(FT, dims_RZt)        # Mean electron energy
+    ueR::Array{FT, 3} = zeros(FT, dims_RZt)            # Electron velocity R component
+    ueϕ::Array{FT, 3} = zeros(FT, dims_RZt)            # Electron velocity ϕ component
+    ueZ::Array{FT, 3} = zeros(FT, dims_RZt)            # Electron velocity Z component
 
     # Source/loss rates (2D)
-    Ne_src_rate::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)    # Electron source rate
-    Ne_loss_rate::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)   # Electron loss rate
+    Ne_src_rate::Array{FT, 3} = zeros(FT, dims_RZt)    # Electron source rate
+    Ne_loss_rate::Array{FT, 3} = zeros(FT, dims_RZt)   # Electron loss rate
 
     # Magnetic field
-    BR::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)             # Radial magnetic field
-    BZ::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)             # Vertical magnetic field
-    B_pol::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Poloidal magnetic field magnitude
-    BR_self::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Self-consistent BR
-    BZ_self::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Self-consistent BZ
+    BR::Array{FT, 3} = zeros(FT, dims_RZt)             # Radial magnetic field
+    BZ::Array{FT, 3} = zeros(FT, dims_RZt)             # Vertical magnetic field
+    B_pol::Array{FT, 3} = zeros(FT, dims_RZt)          # Poloidal magnetic field magnitude
+    BR_self::Array{FT, 3} = zeros(FT, dims_RZt)        # Self-consistent BR
+    BZ_self::Array{FT, 3} = zeros(FT, dims_RZt)        # Self-consistent BZ
 
     # Electric field
-    E_para_tot::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)     # Total parallel electric field
-    E_para_ext::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)     # External parallel electric field
-    mean_ExB_pol::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)   # ExB drift magnitude
-    Epol_self::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)      # Self-consistent poloidal E-field
-    Eϕ_self::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Self-consistent toroidal E-field
+    E_para_tot::Array{FT, 3} = zeros(FT, dims_RZt)     # Total parallel electric field
+    E_para_ext::Array{FT, 3} = zeros(FT, dims_RZt)     # External parallel electric field
+    mean_ExB_pol::Array{FT, 3} = zeros(FT, dims_RZt)   # ExB drift magnitude
+    Epol_self::Array{FT, 3} = zeros(FT, dims_RZt)      # Self-consistent poloidal E-field
+    Eϕ_self::Array{FT, 3} = zeros(FT, dims_RZt)        # Self-consistent toroidal E-field
 
     # Current density
-    Jpara_R::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Parallel current R component
-    Jpara_Z::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Parallel current Z component
-    Jpara_ϕ::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Parallel current phi component
+    Jϕ::Array{FT, 3} = zeros(FT, dims_RZt)             # Toroidal current density
+    J_para::Array{FT, 3} = zeros(FT, dims_RZt)         # Parallel current
 
     # Magnetic flux
-    psi_ext::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # External poloidal flux
-    psi_self::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)       # Self-consistent poloidal flux
+    psi_ext::Array{FT, 3} = zeros(FT, dims_RZt)        # External poloidal flux
+    psi_self::Array{FT, 3} = zeros(FT, dims_RZt)       # Self-consistent poloidal flux
 
     # Ion properties
-    ni::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)             # Ion density
-    ui_para::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Parallel ion velocity
-    uiR::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Ion velocity R component
-    uiPhi::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Ion velocity phi component
-    uiZ::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Ion velocity Z component
-    Ti_eV::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Ion temperature
-    mean_iErg_eV::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)   # Mean ion energy
-    Ni_src_rate::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)    # Ion source rate
-    Ni_loss_rate::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)   # Ion loss rate
+    ni::Array{FT, 3} = zeros(FT, dims_RZt)             # Ion density
+    ui_para::Array{FT, 3} = zeros(FT, dims_RZt)        # Parallel ion velocity
+    uiR::Array{FT, 3} = zeros(FT, dims_RZt)            # Ion velocity R component
+    uiϕ::Array{FT, 3} = zeros(FT, dims_RZt)            # Ion velocity ϕ component
+    uiZ::Array{FT, 3} = zeros(FT, dims_RZt)            # Ion velocity Z component
+    Ti_eV::Array{FT, 3} = zeros(FT, dims_RZt)          # Ion temperature
+    𝒲i_eV::Array{FT, 3} = zeros(FT, dims_RZt)         # Mean ion energy
+    Ni_src_rate::Array{FT, 3} = zeros(FT, dims_RZt)    # Ion source rate
+    Ni_loss_rate::Array{FT, 3} = zeros(FT, dims_RZt)   # Ion loss rate
 
     # MHD-like accelerations
-    mean_aR_by_JxB::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt) # JxB acceleration R component
-    mean_aZ_by_JxB::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt) # JxB acceleration Z component
+    mean_aR_by_JxB::Array{FT, 3} = zeros(FT, dims_RZt) # JxB acceleration R component
+    mean_aZ_by_JxB::Array{FT, 3} = zeros(FT, dims_RZt) # JxB acceleration Z component
 
     # Physics parameters
-    lnΛ::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Coulomb logarithm
-    L_mixing::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)       # Mixing length
-    nc_para::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Parallel critical density
-    nc_perp::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)        # Perpendicular critical density
-    gamma_coeff::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)    # Gamma coefficient
+    lnΛ::Array{FT, 3} = zeros(FT, dims_RZt)            # Coulomb logarithm
+    L_mixing::Array{FT, 3} = zeros(FT, dims_RZt)       # Mixing length
+    nc_para::Array{FT, 3} = zeros(FT, dims_RZt)        # Parallel critical density
+    nc_perp::Array{FT, 3} = zeros(FT, dims_RZt)        # Perpendicular critical density
+    γ_shape_fac::Array{FT, 3} = zeros(FT, dims_RZt)    # Gamma coefficient
 
     # Neutral gas
-    n_H2_gas::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)       # H2 neutral density
-    Halpha::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)         # H-alpha emission rate
+    n_H2_gas::Array{FT, 3} = zeros(FT, dims_RZt)       # H2 neutral density
+    Halpha::Array{FT, 3} = zeros(FT, dims_RZt)         # H-alpha emission rate
 
     # Collision frequencies (2D)
-    coll_freq_en_mom::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt) # Electron-neutral momentum collision frequency
-    coll_freq_ei::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)     # Electron-ion collision frequency
+    coll_freq_en_mom::Array{FT, 3} = zeros(FT, dims_RZt) # Electron-neutral momentum collision frequency
+    coll_freq_ei::Array{FT, 3} = zeros(FT, dims_RZt)     # Electron-ion collision frequency
 
-    # Power densities - electrons
-    ePowers::Dict{Symbol, Array{FT, 3}} = Dict{Symbol, Array{FT, 3}}(
-        :tot => zeros(FT, dim_R, dim_Z, dim_tt),
-        :diffu => zeros(FT, dim_R, dim_Z, dim_tt),
-        :conv => zeros(FT, dim_R, dim_Z, dim_tt),
-        :drag => zeros(FT, dim_R, dim_Z, dim_tt),
-        :dilution => zeros(FT, dim_R, dim_Z, dim_tt),
-        :iz => zeros(FT, dim_R, dim_Z, dim_tt),
-        :exc => zeros(FT, dim_R, dim_Z, dim_tt)
+
+    # Electron Heating Powers
+    Pe = (
+        diffu = zeros(FT, dims_RZt),       # Diffusion power
+        conv = zeros(FT, dims_RZt),        # Convection power
+        drag = zeros(FT, dims_RZt),        # Drag power
+        iz = zeros(FT, dims_RZt),          # Ionization power
+        exc = zeros(FT, dims_RZt),         # Excitation power
+        dilution = zeros(FT, dims_RZt),    # Dilution power
+        equi = zeros(FT, dims_RZt),        # Equilibration power
+        heat = zeros(FT, dims_RZt),        # Heating power
+        tot = zeros(FT, dims_RZt)          # Total electron power
     )
 
-    # Power densities - ions
-    iPowers::Dict{Symbol, Array{FT, 3}} = Dict{Symbol, Array{FT, 3}}(
-        :tot => zeros(FT, dim_R, dim_Z, dim_tt),
-        :atomic => zeros(FT, dim_R, dim_Z, dim_tt),
-        :equi => zeros(FT, dim_R, dim_Z, dim_tt)
+    # Ion heating powers
+    Pi = (
+        atomic = zeros(FT, dims_RZt),      # Atomic processes power
+        equi = zeros(FT, dims_RZt),        # Equilibration power
+        tot = zeros(FT, dims_RZt)          # Total ion power
     )
 
     # Control fields (optional)
@@ -220,8 +221,7 @@ Tracks cumulative sources and losses of particles and energy
 """
 @kwdef mutable struct SrcLossTracker{FT<:AbstractFloat}
     # Dimension parameters (must be first)
-    dim_R::Int    # Number of R grid points
-    dim_Z::Int    # Number of Z grid points
+    dims_RZ::Tuple{Int, Int}    # Number of R and Z grid points
 
     # 0D (volume-integrated) tracking
     cum1D_Ne_src::FT = zero(FT)             # Cumulative electron source
@@ -230,10 +230,10 @@ Tracks cumulative sources and losses of particles and energy
     cum1D_Ni_loss::FT = zero(FT)            # Cumulative ion loss
 
     # 2D (spatially-resolved) tracking
-    cum2D_Ne_src::Matrix{FT} = zeros(FT, dim_R, dim_Z)     # Cumulative electron source (R,Z)
-    cum2D_Ne_loss::Matrix{FT} = zeros(FT, dim_R, dim_Z)    # Cumulative electron loss (R,Z)
-    cum2D_Ni_src::Matrix{FT} = zeros(FT, dim_R, dim_Z)     # Cumulative ion source (R,Z)
-    cum2D_Ni_loss::Matrix{FT} = zeros(FT, dim_R, dim_Z)    # Cumulative ion loss (R,Z)
+    cum2D_Ne_src::Matrix{FT} = zeros(FT, dims_RZ)     # Cumulative electron source (R,Z)
+    cum2D_Ne_loss::Matrix{FT} = zeros(FT, dims_RZ)    # Cumulative electron loss (R,Z)
+    cum2D_Ni_src::Matrix{FT} = zeros(FT, dims_RZ)     # Cumulative ion source (R,Z)
+    cum2D_Ni_loss::Matrix{FT} = zeros(FT, dims_RZ)    # Cumulative ion loss (R,Z)
 
     # Energy tracking (can be added/extended as needed)
     # cum1D_Energy_src::FT = zero(FT)
@@ -257,9 +257,9 @@ end
 function Diagnostics{FT}(; dim_R::Int, dim_Z::Int, dim_tt_0D::Int, dim_tt_2D::Int) where FT<:AbstractFloat
     # Create structured diagnostics with default dimensions
     return Diagnostics(
-        Snap0D{FT}(; dim_tt=dim_tt_0D),
-        Snap2D{FT}(; dim_R=dim_R, dim_Z = dim_Z, dim_tt=dim_tt_2D),
-        SrcLossTracker{FT}(; dim_R=dim_R, dim_Z=dim_Z)
+        Snap0D{FT}(; dim_tt = dim_tt_0D),
+        Snap2D{FT}(; dims_RZt=(dim_R, dim_Z, dim_tt_2D)),
+        SrcLossTracker{FT}(; dims_RZ=(dim_R, dim_Z))
     )
 end
 
