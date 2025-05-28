@@ -115,8 +115,6 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Initialize operators
     initialize_operators!(RP)
 
-    # Setup other components
-    initialize_diagnostics!(RP)
 
     # Set initial time
     RP.time_s = RP.t_start_s

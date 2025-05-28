@@ -14,8 +14,8 @@ using SimpleUnPack
         prefilled_gas_pressure = 1.0e-2, # Pressure in Pa
         R0B0 = 1.0,                    # R0B0 value for toroidal field
         dt = 1.0e-8,             # Fixed timestep
-        snap1D_Interval_s = 1.0e-7,
-        snap2D_Interval_s = 1.0e-6
+        snap0D_Δt_s = 1.0e-7,
+        snap2D_Δt_s = 1.0e-6
     )
 
     # Create RAPID instance
@@ -167,7 +167,9 @@ end
         Dpara0=10.0, Dperp0=0.1,
         prefilled_gas_pressure=5e-3,
         wall_R=[0.15, 0.45, 0.45, 0.15],
-        wall_Z=[-0.35, -0.35, 0.35, 0.35]
+        wall_Z=[-0.35, -0.35, 0.35, 0.35],
+        snap0D_Δt_s = 10e-6,
+        snap2D_Δt_s = 20e-6,
     )
 
     # Create RAPID object
@@ -223,9 +225,7 @@ end
         RAPID2D.combine_external_and_self_fields!(RP)
     end
 
-    for flag_implicit in [false, true], flag_upwind in [false, true]
-        RP.flags.Implicit = flag_implicit
-        RP.flags.upwind = flag_upwind
+    for RP.flags.Implicit in [false, true], RP.flags.upwind in [false, true]
 
         initialize!(RP)
         _set_initial_conditions!(RP)
@@ -242,7 +242,7 @@ end
         # Run simulation
         println("")
         println("")
-        @info "Starting simulation with (implicit=$flag_implicit, upwind=$flag_upwind)..."
+        @info "Starting simulation with (implicit=$(RP.flags.Implicit), upwind=$(RP.flags.upwind))..."
         @time RAPID2D.run_simulation!(RP);
 
         # Check the actual displacement
@@ -253,7 +253,7 @@ end
         println("minimum ne: ", minimum(RP.plasma.ne))
 
         # Check final state
-        if flag_upwind
+        if RP.flags.upwind
             @test all(RP.plasma.ne .>= 0.0)  # No negative densities
         else
             @test all(RP.plasma.ne .>= -1e-9*maximum(ini_ne))  # No significant negative densities

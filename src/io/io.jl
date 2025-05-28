@@ -49,9 +49,9 @@ Save a snapshot of the current simulation state.
 """
 function save_snapshot(RP::RAPID{FT}, snapshot_type::Symbol) where {FT<:AbstractFloat}
     if snapshot_type == :snap1D
-        update_snap0D!(RP)
+        measure_snap0D!(RP)
     elseif snapshot_type == :snap2D
-        update_snap2D!(RP)
+        measure_snap2D!(RP)
     else
         @warn "Unknown snapshot type: $snapshot_type"
     end
@@ -69,7 +69,7 @@ Save a 2D snapshot of the current simulation state and write to file if needed.
 """
 function save_snapshot2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # First update the snapshot data
-    update_snap2D!(RP)
+    measure_snap2D!(RP)
 
     # If we need to save to file (based on RAPID2D configuration)
     if hasfield(typeof(RP), :write_snap2D_to_file) && RP.write_snap2D_to_file

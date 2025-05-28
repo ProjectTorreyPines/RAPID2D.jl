@@ -70,8 +70,8 @@ Contains simulation configuration parameters.
     Dperp0::FT = FT(0.0)               # Base perpendicular diffusion coefficient
 
     # Output intervals
-    snap1D_Interval_s::FT = FT(20e-6)  # Time interval for 1D snapshots
-    snap2D_Interval_s::FT = FT(100e-6)  # Time interval for 2D snapshots
+    snap0D_Δt_s::FT = FT(20e-6)  # Time interval for 1D snapshots
+    snap2D_Δt_s::FT = FT(100e-6)  # Time interval for 2D snapshots
     write_File_Interval_s::FT = FT(1e-3)  # Time interval for file writing
 
     # Wall geometry
@@ -678,8 +678,8 @@ mutable struct RAPID{FT<:AbstractFloat}
         iRRC = load_H2_Ion_RRCs()
         tElap = Dict{Symbol, Float64}()
 
-        dim_tt_0D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap1D_Interval_s)) + 1
-        dim_tt_2D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap2D_Interval_s)) + 1
+        dim_tt_0D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap0D_Δt_s)) + 1
+        dim_tt_2D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap2D_Δt_s)) + 1
 
         diagnostics = Diagnostics{FT}(;
                                 dim_R = G.NR,

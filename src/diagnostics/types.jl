@@ -16,21 +16,58 @@ All vector fields are automatically sized based on dim_tt
     dt::Vector{FT} = zeros(FT, dim_tt)
     step::Vector{Int} = zeros(Int, dim_tt)
 
-    # Basic plasma quantities
-    ne_avg::Vector{FT} = zeros(FT, dim_tt)           # Average electron density
-    ne_max::Vector{FT} = zeros(FT, dim_tt)           # Maximum electron density
-    I_tor::Vector{FT} = zeros(FT, dim_tt)            # Toroidal current
-    avg_mean_eErg_eV::Vector{FT} = zeros(FT, dim_tt) # Average electron energy
+    # Basic electron quantities
+    ne::Vector{FT} = zeros(FT, dim_tt)              # Average electron density
+    ne_max::Vector{FT} = zeros(FT, dim_tt)          # Maximum electron density
+    ue_para::Vector{FT} = zeros(FT, dim_tt)         # Average electron parallel velocity
+    Te_eV::Vector{FT} = zeros(FT, dim_tt)           # Average electron temperature
+    mean_eErg_eV::Vector{FT} = zeros(FT, dim_tt)    # Average electron energy
+
+    # Ion quantities
+    ni::Vector{FT} = zeros(FT, dim_tt)              # Average ion density
+    ni_max::Vector{FT} = zeros(FT, dim_tt)          # Maximum ion density
+    ui_para::Vector{FT} = zeros(FT, dim_tt)         # Average ion parallel velocity
+    Ti_eV::Vector{FT} = zeros(FT, dim_tt)           # Average ion temperature
+    mean_iErg_eV::Vector{FT} = zeros(FT, dim_tt)    # Average ion energy
+
+    I_tor::Vector{FT} = zeros(FT, dim_tt)           # Toroidal current
 
     # Electric fields
-    avg_Epara_tot::Vector{FT} = zeros(FT, dim_tt)    # Total parallel E-field
-    avg_Epara_ext::Vector{FT} = zeros(FT, dim_tt)    # External parallel E-field
-    avg_Epara_self_ES::Vector{FT} = zeros(FT, dim_tt) # Self-consistent electrostatic E-field
-    avg_Epara_self_EM::Vector{FT} = zeros(FT, dim_tt) # Self-consistent electromagnetic E-field
+    Epara_tot::Vector{FT} = zeros(FT, dim_tt)       # Total parallel E-field
+    Epara_ext::Vector{FT} = zeros(FT, dim_tt)       # External parallel E-field
+    Epara_self_ES::Vector{FT} = zeros(FT, dim_tt)   # Self-consistent electrostatic E-field
+    Epara_self_EM::Vector{FT} = zeros(FT, dim_tt)   # Self-consistent electromagnetic E-field
 
     # Transport quantities
-    avg_vpara_RZ::Vector{FT} = zeros(FT, dim_tt)     # Average parallel velocity
-    avg_D_RZ::Vector{FT} = zeros(FT, dim_tt)         # Average diffusion coefficient
+    abs_ue_para_RZ::Vector{FT} = zeros(FT, dim_tt)     # Average parallel velocity
+    D_RZ::Vector{FT} = zeros(FT, dim_tt)         # Average diffusion coefficient
+
+    # Neutral gas
+    n_H2_gas::Vector{FT} = zeros(FT, dim_tt)     # Average H2 density
+    n_H2_gas_min::Vector{FT} = zeros(FT, dim_tt)     # Minimum H2 density
+
+    # Collision frequencies
+    ν_iz::Vector{FT} = zeros(FT, dim_tt)            # Average ionization frequency [1/s]
+    ν_mom::Vector{FT} = zeros(FT, dim_tt)           # Average momentum transfer frequency [1/s]
+    ν_Hα::Vector{FT} = zeros(FT, dim_tt)            # Hα emission frequency [1/s]
+    ν_ei::Vector{FT} = zeros(FT, dim_tt)            # Electron-ion coulomb collision frequency [1/s]
+
+
+    # Power balance (electron)
+    P_diffu::Vector{FT} = zeros(FT, dim_tt)      # Diffusion power
+    P_conv::Vector{FT} = zeros(FT, dim_tt)       # Convection power
+    P_drag::Vector{FT} = zeros(FT, dim_tt)       # Drag power
+    P_iz::Vector{FT} = zeros(FT, dim_tt)         # Ionization power
+    P_exc::Vector{FT} = zeros(FT, dim_tt)        # Excitation power
+    P_dilution::Vector{FT} = zeros(FT, dim_tt)   # Dilution power
+    P_equi::Vector{FT} = zeros(FT, dim_tt)       # Equilibration power
+    P_heat::Vector{FT} = zeros(FT, dim_tt)       # Heating power
+    P_tot::Vector{FT} = zeros(FT, dim_tt)        # Total power
+
+    # Ion power balance
+    Pi_tot::Vector{FT} = zeros(FT, dim_tt)       # Total ion power
+    Pi_atomic::Vector{FT} = zeros(FT, dim_tt)    # Atomic processes power
+    Pi_equi::Vector{FT} = zeros(FT, dim_tt)      # Equilibration power
 
     # Source/loss tracking
     Ne_src_rate::Vector{FT} = zeros(FT, dim_tt)      # Electron source rate
@@ -38,39 +75,8 @@ All vector fields are automatically sized based on dim_tt
     eGrowth_rate::Vector{FT} = zeros(FT, dim_tt)     # Electron growth rate
     eLoss_rate::Vector{FT} = zeros(FT, dim_tt)       # Electron loss rate
 
-    # Power balance (electron)
-    avg_P_diffu::Vector{FT} = zeros(FT, dim_tt)      # Diffusion power
-    avg_P_conv::Vector{FT} = zeros(FT, dim_tt)       # Convection power
-    avg_P_drag::Vector{FT} = zeros(FT, dim_tt)       # Drag power
-    avg_P_iz::Vector{FT} = zeros(FT, dim_tt)         # Ionization power
-    avg_P_exc::Vector{FT} = zeros(FT, dim_tt)        # Excitation power
-    avg_P_dilution::Vector{FT} = zeros(FT, dim_tt)   # Dilution power
-    avg_P_equi::Vector{FT} = zeros(FT, dim_tt)       # Equilibration power
-    avg_P_heat::Vector{FT} = zeros(FT, dim_tt)       # Heating power
-    avg_P_tot::Vector{FT} = zeros(FT, dim_tt)        # Total power
-
-    # Ion quantities
-    ni_avg::Vector{FT} = zeros(FT, dim_tt)           # Average ion density
-    ni_max::Vector{FT} = zeros(FT, dim_tt)           # Maximum ion density
-    avg_Ti_eV::Vector{FT} = zeros(FT, dim_tt)        # Average ion temperature
-    avg_mean_iErg_eV::Vector{FT} = zeros(FT, dim_tt) # Average ion energy
-    avg_ui_para::Vector{FT} = zeros(FT, dim_tt)      # Average ion parallel velocity
-
-    # Ion power balance
-    avg_Pi_tot::Vector{FT} = zeros(FT, dim_tt)       # Total ion power
-    avg_Pi_atomic::Vector{FT} = zeros(FT, dim_tt)    # Atomic processes power
-    avg_Pi_equi::Vector{FT} = zeros(FT, dim_tt)      # Equilibration power
     Ni_src_rate::Vector{FT} = zeros(FT, dim_tt)      # Ion source rate
     Ni_loss_rate::Vector{FT} = zeros(FT, dim_tt)     # Ion loss rate
-
-    # Neutral gas
-    avg_n_H2_gas::Vector{FT} = zeros(FT, dim_tt)     # Average H2 density
-    min_n_H2_gas::Vector{FT} = zeros(FT, dim_tt)     # Minimum H2 density
-    avg_Halpha::Vector{FT} = zeros(FT, dim_tt)       # Average H-alpha emission
-
-    # Collision frequencies
-    avg_coll_freq_ei::Vector{FT} = zeros(FT, dim_tt) # Electron-ion collision frequency
-    avg_coll_freq_en::Vector{FT} = zeros(FT, dim_tt) # Electron-neutral collision frequency
 
     # Plasma center tracking
     ne_cen_R::Vector{FT} = zeros(FT, dim_tt)         # Electron density center R
@@ -84,8 +90,8 @@ All vector fields are automatically sized based on dim_tt
     # Control system (optional)
     I_coils::Union{Nothing, Matrix{FT}} = nothing    # Coil currents (N_coils × time)
     pidFac::Union{Nothing, Vector{FT}} = nothing     # PID control factor
-    avg_BR_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BR
-    avg_BZ_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BZ
+    BR_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BR
+    BZ_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BZ
 
     # Growth rates (alternative calculation)
     growth_rate2::Vector{FT} = zeros(FT, dim_tt)     # Alternative growth rate
@@ -125,7 +131,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Te_eV::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Electron temperature
     mean_eErg_eV::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)   # Mean electron energy
     ueR::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Electron velocity R component
-    uePhi::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)          # Electron velocity phi component
+    ueϕ::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Electron velocity ϕ component
     ueZ::Array{FT, 3} = zeros(FT, dim_R, dim_Z, dim_tt)            # Electron velocity Z component
 
     # Source/loss rates (2D)

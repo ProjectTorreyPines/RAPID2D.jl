@@ -111,6 +111,10 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
     dt = RP.dt
     t_end = RP.t_end_s
 
+    # Initial snapshots at t=0
+    measure_snap0D!(RP)
+    measure_snap2D!(RP)
+
     # Main time loop
     while RP.time_s < t_end - 0.1*dt
 
@@ -123,7 +127,6 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
 
         # Apply boundary conditions and handle negative values
         apply_electron_density_boundary_conditions!(RP)
-
 
         # Calculate self-consistent electrostatic field if enabled
         if RP.flags.E_para_self_ES
@@ -138,11 +141,16 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
             @printf("Time: %.6e s, Step: %d\n", RP.time_s, RP.step)
         end
 
+
         # Handle snapshots and file outputs if needed
-        if hasfield(typeof(RP), :snap2D_Interval_s) && abs(RP.time_s - round(RP.time_s/RP.snap2D_Interval_s)*RP.snap2D_Interval_s) < 0.1*dt
-            # Take snapshot of 2D data
-            save_snapshot2D(RP)
-        end
+        measure_snap0D!(RP)
+        measure_snap2D!(RP)
+
+        # Handle snapshots and file outputs if needed
+        # if hasfield(typeof(RP), :snap2D_Δt_s) && abs(RP.time_s - round(RP.time_s/RP.snap2D_Δt_s)*RP.snap2D_Δt_s) < 0.1*dt
+        #     # Take snapshot of 2D data
+        #     save_snapshot2D(RP)
+        # end
 
         # if(obj.Flag.Adapt_dt)
         #     obj.Check_adaptive_dt();
