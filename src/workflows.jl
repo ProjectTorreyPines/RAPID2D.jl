@@ -137,9 +137,13 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
     dt = RP.dt
     t_end = RP.t_end_s
 
-    # Initial snapshots at t=0
+    # Initial snapshots at t_start_s
     update_snaps0D!(RP)
     update_snaps2D!(RP)
+
+    # Save initial snapshots at t_start_s
+    save_latest_snap0D!(RP)
+    save_latest_snap2D!(RP)
 
     # Main time loop
     while RP.time_s < t_end - 0.1*dt
@@ -172,9 +176,12 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
         # Handle snapshots and file outputs if needed
         if is_snap0D_time(RP)
             update_snaps0D!(RP)
+            save_latest_snap0D!(RP)
         end
+
         if is_snap2D_time(RP)
             update_snaps2D!(RP)
+            save_latest_snap2D!(RP)
         end
 
         # Handle snapshots and file outputs if needed
@@ -199,6 +206,9 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
     # if(obj.Flag.vis2D)
     #     obj.vis_snap2D(obj.snap2D);
     # end
+
+    close_snapshots_IO!(RP)
+
     println("Simulation completed")
     return RP
 end

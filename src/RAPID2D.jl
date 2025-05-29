@@ -17,6 +17,7 @@ using Printf
 using DelimitedFiles
 using Interpolations
 using SimpleUnPack
+using ADIOS2
 
 # Include type definitions
 include("constants.jl")

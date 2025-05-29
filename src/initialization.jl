@@ -116,6 +116,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     initialize_operators!(RP)
 
     initialize_diagnostics!(RP)
+    initialize_snapshots_IO!(RP)
 
     # Set initial time
     RP.time_s = RP.t_start_s
@@ -624,6 +625,23 @@ function initialize_diagnostics!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     dim_tt_2D = Int(ceil((RP.config.t_end_s - RP.config.t_start_s) / RP.config.snap2D_Δt_s)) + 1
 
     RP.diagnostics = Diagnostics{FT}(RP.G.NR, RP.G.NZ, dim_tt_0D, dim_tt_2D)
+    return RP
+end
+
+function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    prefixName = joinpath( RP.config.Output_path, RP.config.Output_prefix)
+
+    RP.Afile_snap0D = adios_open_serial(prefixName * "snap0D.bp", mode_write)
+    RP.Afile_snap2D = adios_open_serial(prefixName * "snap2D.bp", mode_write)
+
+    return RP
+end
+
+function close_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Close the ADIOS files for snapshots
+    close(RP.Afile_snap0D)
+    close(RP.Afile_snap2D)
+
     return RP
 end
 
