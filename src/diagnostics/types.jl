@@ -183,11 +183,12 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Neutral gas
     n_H2_gas::Array{FT, 3} = zeros(FT, dims_RZt)       # H2 neutral density
-    Halpha::Array{FT, 3} = zeros(FT, dims_RZt)         # H-alpha emission rate
 
-    # Collision frequencies (2D)
-    coll_freq_en_mom::Array{FT, 3} = zeros(FT, dims_RZt) # Electron-neutral momentum collision frequency
-    coll_freq_ei::Array{FT, 3} = zeros(FT, dims_RZt)     # Electron-ion collision frequency
+    # Collision frequencies
+    ν_iz::Array{FT, 3} = zeros(FT, dims_RZt)            # Average ionization frequency [1/s]
+    ν_mom::Array{FT, 3} = zeros(FT, dims_RZt)           # Average momentum transfer frequency [1/s]
+    ν_Hα::Array{FT, 3} = zeros(FT, dims_RZt)            # Hα emission frequency [1/s]
+    ν_ei::Array{FT, 3} = zeros(FT, dims_RZt)            # Electron-ion coulomb collision frequency [1/s]
 
 
     # Electron Heating Powers
