@@ -115,6 +115,7 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Initialize operators
     initialize_operators!(RP)
 
+    initialize_diagnostics!(RP)
 
     # Set initial time
     RP.time_s = RP.t_start_s
@@ -614,6 +615,15 @@ function initialize_velocities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @. RP.plasma.uiZ = RP.plasma.ui_para * RP.fields.bZ
     @. RP.plasma.uiϕ = RP.plasma.ui_para * RP.fields.bϕ
 
+    return RP
+end
+
+
+function initialize_diagnostics!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    dim_tt_0D = Int(ceil((RP.config.t_end_s - RP.config.t_start_s) / RP.config.snap0D_Δt_s)) + 1
+    dim_tt_2D = Int(ceil((RP.config.t_end_s - RP.config.t_start_s) / RP.config.snap2D_Δt_s)) + 1
+
+    RP.diagnostics = Diagnostics{FT}(RP.G.NR, RP.G.NZ, dim_tt_0D, dim_tt_2D)
     return RP
 end
 

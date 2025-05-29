@@ -138,8 +138,8 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
     t_end = RP.t_end_s
 
     # Initial snapshots at t=0
-    measure_snap0D!(RP)
-    measure_snap2D!(RP)
+    update_snaps0D!(RP)
+    update_snaps2D!(RP)
 
     # Main time loop
     while RP.time_s < t_end - 0.1*dt
@@ -168,12 +168,13 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
             @printf("Time: %.6e s, Step: %d\n", RP.time_s, RP.step)
         end
 
+
         # Handle snapshots and file outputs if needed
         if is_snap0D_time(RP)
-            measure_snap0D!(RP)
+            update_snaps0D!(RP)
         end
         if is_snap2D_time(RP)
-            measure_snap2D!(RP)
+            update_snaps2D!(RP)
         end
 
         # Handle snapshots and file outputs if needed

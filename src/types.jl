@@ -686,12 +686,7 @@ mutable struct RAPID{FT<:AbstractFloat}
 
         dim_tt_0D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap0D_Δt_s)) + 1
         dim_tt_2D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap2D_Δt_s)) + 1
-
-        diagnostics = Diagnostics{FT}(;
-                                dim_R = G.NR,
-                                dim_Z = G.NZ,
-                                dim_tt_0D = dim_tt_0D,
-                                dim_tt_2D = dim_tt_2D)
+        diagnostics = Diagnostics{FT}(G.NR, G.NZ, dim_tt_0D, dim_tt_2D)
 
         # Create and return new instance
         return new{FT}(
