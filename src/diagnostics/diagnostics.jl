@@ -1,13 +1,14 @@
 using SimpleUnPack
 
 """
-    measure_snap0D(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:AbstractFloat}
 
-Measure snap0D diagnostics in the RAPID object, which are 0D (scalar) quantities averaged over the volume.
-This function is analogous to MATLAB's Measure_snap1D().
+In-place measurement of 0D (scalar) diagnostics into an existing Snapshot0D object.
+Updates the provided snap0D with current simulation state and volume-averaged quantities.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance to measure
+- `snap0D::Snapshot0D{FT}`: Pre-allocated snapshot object to fill with measurements
 """
 function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:AbstractFloat}
 
@@ -143,6 +144,18 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     return RP
 end
 
+"""
+    measure_snap0D(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Measure 0D (scalar) diagnostics and return a new Snapshot0D object.
+Creates a new snapshot and fills it with volume-averaged quantities from the simulation.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance to measure
+
+# Returns
+- `Snapshot0D{FT}`: New snapshot object containing measured diagnostics
+"""
 function measure_snap0D(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Create a new Snapshot0D object
     snap0D = Snapshot0D{FT}()
@@ -153,14 +166,16 @@ function measure_snap0D(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return snap0D
 end
 
-"""
-    measure_snap2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Measure 2D diagnostic snapshots in the RAPID object.
-This function is analogous to MATLAB's Measure_snap2D().
+"""
+    measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:AbstractFloat}
+
+In-place measurement of 2D diagnostics into an existing Snapshot2D object.
+Updates the provided snap2D with current simulation state and 2D field distributions.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance to measure
+- `snap2D::Snapshot2D{FT}`: Pre-allocated snapshot object to fill with measurements
 """
 function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:AbstractFloat}
 
@@ -299,6 +314,18 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     return RP
 end
 
+"""
+    measure_snap2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Measure 2D diagnostics and return a new Snapshot2D object.
+Creates a new snapshot with correct grid dimensions and fills it with 2D field distributions.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance to measure
+
+# Returns
+- `Snapshot2D{FT}`: New snapshot object containing measured 2D diagnostics
+"""
 function measure_snap2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Create a new Snapshot2D object with the correct dimensions
     snap2D = Snapshot2D{FT}(dims_RZ = (RP.G.NR, RP.G.NZ) )
@@ -310,6 +337,15 @@ function measure_snap2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 
+"""
+    reset_Ntracker_cumulative_0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Reset cumulative 0D particle number trackers to zero.
+Called after each 0D snapshot to restart accumulation for the next diagnostic interval.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance with trackers to reset
+"""
 function reset_Ntracker_cumulative_0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Reset cumulative trackers
     RP.diagnostics.Ntracker.cum0D_Ne_src = zero(FT)
@@ -320,6 +356,15 @@ function reset_Ntracker_cumulative_0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
+"""
+    reset_Ntracker_cumulative_2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Reset cumulative 2D particle number trackers to zero.
+Called after each 2D snapshot to restart accumulation for the next diagnostic interval.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance with trackers to reset
+"""
 function reset_Ntracker_cumulative_2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Reset cumulative trackers
     fill!(RP.diagnostics.Ntracker.cum2D_Ne_src, zero(FT))
@@ -331,6 +376,16 @@ function reset_Ntracker_cumulative_2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 
+"""
+    update_snaps0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Update the 0D snapshots vector with a new measurement.
+Increments the time index and either fills a pre-allocated snapshot or creates a new one.
+Automatically resets cumulative trackers after measurement.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance to update diagnostics for
+"""
 function update_snaps0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # update time index for 0D snapshots
     RP.diagnostics.tid_0D += 1
@@ -354,6 +409,16 @@ function update_snaps0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 
+"""
+    update_snaps2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Update the 2D snapshots vector with a new measurement.
+Increments the time index and either fills a pre-allocated snapshot or creates a new one.
+Automatically resets cumulative trackers after measurement.
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation instance to update diagnostics for
+"""
 function update_snaps2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # update time index for 2D snapshots
     RP.diagnostics.tid_2D += 1
