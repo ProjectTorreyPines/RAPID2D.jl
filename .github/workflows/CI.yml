@@ -53,6 +53,10 @@ jobs:
         with:
           cache-registries: "true"
 
+      - name: Add ADIOS2 from main branch
+        run: |
+          julia -e 'import Pkg; Pkg.add(url="https://github.com/eschnett/ADIOS2.jl.git", rev="main")'
+
       - uses: julia-actions/julia-buildpkg@v1
 
       - uses: julia-actions/julia-runtest@v1
@@ -79,6 +83,10 @@ jobs:
           version: '1.x'
 
       - uses: julia-actions/cache@v2
+
+      - name: Add ADIOS2 from main branch
+        run: |
+          julia -e 'import Pkg; Pkg.add(url="https://github.com/eschnett/ADIOS2.jl.git", rev="main")'
 
       - uses: julia-actions/julia-buildpkg@v1
 
