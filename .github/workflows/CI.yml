@@ -55,20 +55,6 @@ jobs:
 
       - uses: julia-actions/julia-buildpkg@v1
 
-      - name: Remove existing ADIOS2 and install latest versions
-        run: |
-          julia -e '
-            import Pkg;
-            try
-              Pkg.rm("ADIOS2")
-            catch
-              println("ADIOS2 not found, continuing...")
-            end;
-            Pkg.add("ADIOS2_jll");
-            Pkg.add(url="https://github.com/eschnett/ADIOS2.jl.git", rev="main");
-            println("ADIOS2 setup complete")
-          '
-
       - uses: julia-actions/julia-runtest@v1
         env:
           GKSwstype: 100  # Disable graphics output during tests
@@ -96,19 +82,6 @@ jobs:
 
       - uses: julia-actions/julia-buildpkg@v1
 
-      - name: Remove existing ADIOS2 and install latest versions
-        run: |
-          julia -e '
-            import Pkg;
-            try
-              Pkg.rm("ADIOS2")
-            catch
-              println("ADIOS2 not found, continuing...")
-            end;
-            Pkg.add("ADIOS2_jll");
-            Pkg.add(url="https://github.com/eschnett/ADIOS2.jl.git", rev="main");
-            println("ADIOS2 setup complete")
-          '
 
       - name: Setup benchmark environment
         run: |
