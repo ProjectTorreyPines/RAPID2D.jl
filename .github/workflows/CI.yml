@@ -53,11 +53,15 @@ jobs:
         with:
           cache-registries: "true"
 
-      - name: Add ADIOS2 from main branch
+      - name: Add ADIOS2 from main branch (pre-build)
         run: |
           julia -e 'import Pkg; Pkg.add(url="https://github.com/eschnett/ADIOS2.jl.git", rev="main")'
 
       - uses: julia-actions/julia-buildpkg@v1
+
+      - name: Ensure ADIOS2 main branch (post-build)
+        run: |
+          julia -e 'import Pkg; Pkg.add(url="https://github.com/eschnett/ADIOS2.jl.git", rev="main")'
 
       - uses: julia-actions/julia-runtest@v1
         env:
@@ -84,11 +88,15 @@ jobs:
 
       - uses: julia-actions/cache@v2
 
-      - name: Add ADIOS2 from main branch
+      - name: Add ADIOS2 from main branch (pre-build)
         run: |
           julia -e 'import Pkg; Pkg.add(url="https://github.com/eschnett/ADIOS2.jl.git", rev="main")'
 
       - uses: julia-actions/julia-buildpkg@v1
+
+      - name: Ensure ADIOS2 main branch (post-build)
+        run: |
+          julia -e 'import Pkg; Pkg.add(url="https://github.com/eschnett/ADIOS2.jl.git", rev="main")'
 
       - name: Setup benchmark environment
         run: |
