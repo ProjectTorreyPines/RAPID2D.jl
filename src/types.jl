@@ -7,6 +7,7 @@ import RAPID2D: PlasmaConstants
 
 
 include("diagnostics/types.jl")
+include("io/types.jl")
 
 
 # Abstract types for reaction rate coefficients for a specific species
@@ -660,9 +661,9 @@ mutable struct RAPID{FT<:AbstractFloat}
     tElap::Dict{Symbol, Float64}      # Elapsed times
     diagnostics::Diagnostics   # Diagnostic data
 
-    # Fiel IO
-    Afile_snap0D::AdiosFile    # AdiosFile for 0D snapshots
-    Afile_snap2D::AdiosFile    # AdiosFile for 2D snapshots
+    # File IO
+    AW_snap0D::AdiosFileWrapper    # Wrapped AdiosFile for 0D snapshots
+    AW_snap2D::AdiosFileWrapper    # Wrapped AdiosFile for 2D snapshots
 
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
@@ -692,10 +693,10 @@ mutable struct RAPID{FT<:AbstractFloat}
         dim_tt_2D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap2D_Δt_s)) + 1
         diagnostics = Diagnostics{FT}(G.NR, G.NZ, dim_tt_0D, dim_tt_2D)
 
-        # Create AdiosFile instances for snapshots
+        # Create AdiosFileWrapper instances for snapshots
         prefixName = joinpath(config.Output_path, config.Output_prefix)
-        Afile_snap0D = adios_open_serial(prefixName * "snap0D.bp", mode_write)
-        Afile_snap2D = adios_open_serial(prefixName * "snap2D.bp", mode_write)
+        AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
+        AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
         # Create and return new instance
         return new{FT}(
@@ -705,7 +706,7 @@ mutable struct RAPID{FT<:AbstractFloat}
             config, flags, plasma, fields, transport, operators,
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
             prev_n, tElap, diagnostics,
-            Afile_snap0D, Afile_snap2D
+            AW_snap0D, AW_snap2D
         )
     end
 end

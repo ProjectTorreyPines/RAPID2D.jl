@@ -12,7 +12,7 @@ Write the latest 0D snapshot data to ADIOS2 file.
 """
 function write_latest_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     snap0D = RP.diagnostics.snaps0D[RP.diagnostics.tid_0D]
-    write_to_adiosBP!(RP.Afile_snap0D, snap0D)
+    write_to_adiosBP!(RP.AW_snap0D, snap0D)
     return RP
 end
 
@@ -23,7 +23,7 @@ Write the latest 2D snapshot data to ADIOS2 file.
 """
 function write_latest_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     snap2D = RP.diagnostics.snaps2D[RP.diagnostics.tid_2D]
-    write_to_adiosBP!(RP.Afile_snap2D, snap2D)
+    write_to_adiosBP!(RP.AW_snap2D, snap2D)
     return RP
 end
 
@@ -109,6 +109,17 @@ function write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractSt
 	Afile = adios_open_serial(fileName, mode_write)
 	write_to_adiosBP!(Afile, data; data_name)
 	close(Afile)
+end
+
+
+"""
+    write_to_adiosBP!(wrapper::AdiosFileWrapper, data; data_name::AbstractString="")
+
+Write a data object to an open ADIOS2 file through an AdiosFileWrapper.
+This method forwards the call to the underlying AdiosFile.
+"""
+function write_to_adiosBP!(wrapper::AdiosFileWrapper, data; data_name::AbstractString="")
+    return write_to_adiosBP!(wrapper.file, data; data_name=data_name)
 end
 
 

@@ -45,6 +45,7 @@ include("workflows.jl")
 
 # Include the IO-related functionality
 include("io/io.jl")
+include("io/adios_io.jl")
 
 # Include utility functions
 include("utils/grid.jl")  # Grid-related utility functions

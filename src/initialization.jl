@@ -636,21 +636,11 @@ function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     prefixName = joinpath( RP.config.Output_path, RP.config.Output_prefix)
 
     # Check and close existing files if they are already open
-    close_snapshots_IO!(RP)
+    close_wrapper!(RP.AW_snap0D)
+    close_wrapper!(RP.AW_snap2D)
 
-    RP.Afile_snap0D = adios_open_serial(prefixName * "snap0D.bp", mode_write)
-    RP.Afile_snap2D = adios_open_serial(prefixName * "snap2D.bp", mode_write)
-
-    return RP
-end
-
-function close_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    for Afile in [RP.Afile_snap0D, RP.Afile_snap2D]
-        # Close existing files if they are already open
-        if !(Afile.adios.ptr == C_NULL)
-            close(Afile)
-        end
-    end
+    RP.AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
+    RP.AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
     return RP
 end
