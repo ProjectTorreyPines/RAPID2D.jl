@@ -10,11 +10,7 @@ Contains functions for file input/output, including:
 """
 
 # Export public functions
-export save_snapshot,
-       write_output_file,
-       read_input_file,
-       save_snapshot!,
-       save_snapshots!,
+export read_input_file,
 
        # Wall geometry functions
        read_wall_data_file,
@@ -30,110 +26,10 @@ using Printf
 using LinearAlgebra
 using DelimitedFiles
 using Interpolations
-using ADIOS2
 
 # Import from fields module
 import RAPID2D: TimeSeriesExternalField, AbstractExternalField
 import RAPID2D: calculate_external_fields_at_time  # Import this to avoid duplicate definition
-
-# =============================================================================
-# Snapshot and diagnostic functions
-# =============================================================================
-
-"""
-    save_snapshot!(Afile::AdiosFile, snap::Union{Snapshot0D{FT}, Snapshot2D{FT}}) where {FT<:AbstractFloat}
-
-Save a single snapshot to ADIOS2 file.
-"""
-function save_snapshot!(Afile::AdiosFile, snap::Union{Snapshot0D{FT}, Snapshot2D{FT}}) where {FT<:AbstractFloat}
-    begin_step(Afile.engine)
-
-    snapshot_type = typeof(snap)
-
-    # Schedule writing the variable
-    for fname in fieldnames(snapshot_type)
-        if fieldtype(snapshot_type, fname) <: Union{Real, AbstractArray}
-            adios_put!(Afile, string(fname), getfield(snap, fname))
-        end
-    end
-    # perform the actual write operation
-    adios_perform_puts!(Afile)
-
-    end_step(Afile.engine)
-
-    return Afile
-end
-
-"""
-    save_snapshots!(Afile::AdiosFile, snaps::Vector{<:Union{Snapshot0D{FT}, Snapshot2D{FT}}}) where {FT<:AbstractFloat}
-
-Save multiple snapshots to ADIOS2 file.
-"""
-function save_snapshots!(Afile::AdiosFile, snaps::Union{Vector{Snapshot0D{FT}}, Vector{Snapshot2D{FT}}}) where {FT<:AbstractFloat}
-    for snap in snaps
-        save_snapshot!(Afile, snap)
-    end
-    return Afile
-end
-
-# Convinience dispatches
-"""
-    save_latest_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-
-Save the latest 0D snapshot data to ADIOS2 file.
-"""
-function save_latest_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    snap0D = RP.diagnostics.snaps0D[RP.diagnostics.tid_0D]
-    save_snapshot!(RP.Afile_snap0D, snap0D)
-    return RP
-end
-
-"""
-    save_latest_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-
-Save the latest 2D snapshot data to ADIOS2 file.
-"""
-function save_latest_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    snap2D = RP.diagnostics.snaps2D[RP.diagnostics.tid_2D]
-    save_snapshot!(RP.Afile_snap2D, snap2D)
-    return RP
-end
-
-
-"""
-    write_output_file(RP::RAPID{FT}, filename::String=nothing) where {FT<:AbstractFloat}
-
-Write simulation results to file.
-
-# Arguments
-- `RP::RAPID{FT}`: The RAPID simulation instance
-- `filename::String=nothing`: Optional filename for output (default generates name based on time)
-"""
-function write_output_file(RP::RAPID{FT}, filename::String=nothing) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "write_output_file not fully implemented yet"
-
-    # Generate default filename if none provided
-    if isnothing(filename)
-        # Format time with leading zeros
-        time_str = @sprintf("%08.6f", RP.time_s)
-
-        # Construct filename
-        filename = joinpath(
-            RP.config.Output_path,
-            "$(RP.config.Output_prefix)$(RP.config.Output_name)_t=$(time_str)s.jld2"
-        )
-    end
-
-    # Create output directory if it doesn't exist
-    mkpath(dirname(filename))
-
-    # In a real implementation, we would save all relevant data to a JLD2 file
-    # For now, just print a message
-    println("Would save data to: $filename")
-
-    return nothing
-end
 
 """
     read_input_file(RP::RAPID{FT}, filename::String) where {FT<:AbstractFloat}

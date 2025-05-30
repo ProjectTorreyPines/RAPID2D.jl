@@ -142,8 +142,8 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
     update_snaps2D!(RP)
 
     # Save initial snapshots at t_start_s
-    save_latest_snap0D!(RP)
-    save_latest_snap2D!(RP)
+    write_latest_snap0D!(RP)
+    write_latest_snap2D!(RP)
 
     # Main time loop
     while RP.time_s < t_end - 0.1*dt
@@ -176,18 +176,18 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
         # Handle snapshots and file outputs if needed
         if is_snap0D_time(RP)
             update_snaps0D!(RP)
-            save_latest_snap0D!(RP)
+            write_latest_snap0D!(RP)
         end
 
         if is_snap2D_time(RP)
             update_snaps2D!(RP)
-            save_latest_snap2D!(RP)
+            write_latest_snap2D!(RP)
         end
 
         # Handle snapshots and file outputs if needed
         # if hasfield(typeof(RP), :snap2D_Δt_s) && abs(RP.time_s - round(RP.time_s/RP.snap2D_Δt_s)*RP.snap2D_Δt_s) < 0.1*dt
         #     # Take snapshot of 2D data
-        #     save_snapshot2D(RP)
+        #     write_snapshot2D(RP)
         # end
 
         # if(obj.Flag.Adapt_dt)

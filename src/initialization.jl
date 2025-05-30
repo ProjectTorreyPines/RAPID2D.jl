@@ -122,6 +122,10 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.time_s = RP.t_start_s
     RP.step = 0
 
+    output_prefix = joinpath(RP.config.Output_path, RP.config.Output_prefix)
+    write_to_adiosBP!(output_prefix * "config.bp", RP.config)
+    write_to_adiosBP!(output_prefix * "grid.bp", RP.G)
+
     return RP
 end
 
@@ -631,6 +635,9 @@ end
 function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     prefixName = joinpath( RP.config.Output_path, RP.config.Output_prefix)
 
+    # Check and close existing files if they are already open
+    close_snapshots_IO!(RP)
+
     RP.Afile_snap0D = adios_open_serial(prefixName * "snap0D.bp", mode_write)
     RP.Afile_snap2D = adios_open_serial(prefixName * "snap2D.bp", mode_write)
 
@@ -638,9 +645,12 @@ function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 function close_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Close the ADIOS files for snapshots
-    close(RP.Afile_snap0D)
-    close(RP.Afile_snap2D)
+    for Afile in [RP.Afile_snap0D, RP.Afile_snap2D]
+        # Close existing files if they are already open
+        if !(Afile.adios.ptr == C_NULL)
+            close(Afile)
+        end
+    end
 
     return RP
 end
