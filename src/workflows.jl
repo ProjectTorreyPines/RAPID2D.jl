@@ -172,7 +172,6 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
             @printf("Time: %.6e s, Step: %d\n", RP.time_s, RP.step)
         end
 
-
         # Handle snapshots and file outputs if needed
         if is_snap0D_time(RP)
             update_snaps0D!(RP)
@@ -207,7 +206,6 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
     #     obj.vis_snap2D(obj.snap2D);
     # end
 
-    close_snapshots_IO!(RP)
 
     println("Simulation completed")
     return RP
