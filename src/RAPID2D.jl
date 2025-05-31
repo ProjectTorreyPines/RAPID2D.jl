@@ -7,7 +7,6 @@ plasma dynamics.
 """
 module RAPID2D
 
-using Plots
 using StaticArrays
 using SparseArrays
 using LinearAlgebra
