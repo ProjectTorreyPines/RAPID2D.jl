@@ -4,6 +4,10 @@ RAPID2D.jl - Rapid Analysis of Plasma Initiation and Dynamics in 2D
 A Julia implementation of the RAPID-2D plasma modeling code for axisymmetric
 (R,Z) plasma simulation with a focus on tokamak startup, current drive, and
 plasma dynamics.
+
+Plotting functionality is provided through package extensions:
+- Load Plots.jl to enable RAPID2DPlotsExt with plot_snap1D, plot_snap2D, etc.
+- Load GLMakie.jl to enable RAPID2DMakieExt for high-performance plotting
 """
 module RAPID2D
 
@@ -41,6 +45,9 @@ include("reactions/reaction_rate_coefficients.jl")
 
 # Include simulation workflows
 include("workflows.jl")
+
+# Include plotting interface (actual implementations in extensions)
+include("plotting.jl")
 
 # Include the IO-related functionality
 include("io/io.jl")
@@ -105,5 +112,8 @@ end
 
 # Export main functions
 export create_rapid_object, initialize_simulation
+
+# Export plotting functions (actual implementations in extensions)
+export plot_snap1D, plot_snap2D, animate_snap2D, plot_comparison
 
 end # module RAPID2D
