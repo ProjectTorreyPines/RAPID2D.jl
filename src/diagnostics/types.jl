@@ -271,5 +271,242 @@ function Diagnostics{FT}(dim_R::Int, dim_Z::Int, dim_tt_0D::Int, dim_tt_2D::Int)
     )
 end
 
-# Export everything
+# Export everything for external use
 export Diagnostics, Snapshot0D, Snapshot2D, SrcLossTracker
+
+# Equality operators for testing ADIOS BP reading routines
+"""
+    ==(snap1::Snapshot0D, snap2::Snapshot0D) -> Bool
+
+Compare two Snapshot0D objects for equality. All fields must match exactly.
+This is used for testing ADIOS BP reading routines to ensure they produce
+identical results to existing methods.
+
+Note: This uses == semantics where NaN != NaN. For NaN-safe comparison, use isequal().
+"""
+function Base.:(==)(snap1::Snapshot0D{<:AbstractFloat}, snap2::Snapshot0D{<:AbstractFloat})
+    # Compare all scalar fields
+    for field in fieldnames(Snapshot0D)
+        val1 = getfield(snap1, field)
+        val2 = getfield(snap2, field)
+
+        # Special handling for different field types
+        if val1 isa Dict && val2 isa Dict
+            # Compare dictionaries (like CFL)
+            if val1 != val2
+                return false
+            end
+        elseif val1 isa Union{Nothing, AbstractArray} && val2 isa Union{Nothing, AbstractArray}
+            # Compare optional arrays (like I_coils, pidFac, etc.)
+            if (val1 === nothing) != (val2 === nothing)
+                return false
+            elseif val1 !== nothing && val2 !== nothing
+                if val1 != val2
+                    return false
+                end
+            end
+        else
+            # Compare scalar values - standard == semantics (NaN != NaN)
+            if val1 != val2
+                return false
+            end
+        end
+    end
+    return true
+end
+
+"""
+    isequal(snap1::Snapshot0D, snap2::Snapshot0D) -> Bool
+
+Check if two Snapshot0D objects are equal, with special handling for NaN values.
+Unlike ==, this function treats NaN values as equal to other NaN values.
+This is recommended for testing ADIOS BP reading routines where NaN values
+should be considered identical.
+"""
+function Base.isequal(snap1::Snapshot0D{<:AbstractFloat}, snap2::Snapshot0D{<:AbstractFloat})
+    # Compare all scalar fields
+    for field in fieldnames(Snapshot0D)
+        val1 = getfield(snap1, field)
+        val2 = getfield(snap2, field)
+
+        # Special handling for different field types
+        if val1 isa Dict && val2 isa Dict
+            # Compare dictionaries with isequal semantics (NaN-safe)
+            if !isequal(val1, val2)
+                return false
+            end
+        elseif val1 isa Union{Nothing, AbstractArray} && val2 isa Union{Nothing, AbstractArray}
+            # Compare optional arrays
+            if (val1 === nothing) != (val2 === nothing)
+                return false
+            elseif val1 !== nothing && val2 !== nothing
+                if !isequal(val1, val2)  # NaN-safe array comparison
+                    return false
+                end
+            end
+        else
+            # Compare scalar values with isequal semantics (NaN == NaN)
+            if !isequal(val1, val2)
+                return false
+            end
+        end
+    end
+    return true
+end
+
+"""
+    ==(snap1::Snapshot2D, snap2::Snapshot2D) -> Bool
+
+Compare two Snapshot2D objects for equality. All fields must match exactly.
+This is used for testing ADIOS BP reading routines to ensure they produce
+identical results to existing methods.
+
+Note: This uses == semantics where NaN != NaN. For NaN-safe comparison, use isequal().
+"""
+function Base.:(==)(snap1::Snapshot2D{<:AbstractFloat}, snap2::Snapshot2D{<:AbstractFloat})
+    # First compare dimensions
+    if snap1.dims_RZ != snap2.dims_RZ
+        return false
+    end
+
+    # Compare all fields
+    for field in fieldnames(Snapshot2D)
+        val1 = getfield(snap1, field)
+        val2 = getfield(snap2, field)
+
+        # All fields are either scalars, tuples, or matrices - standard == semantics
+        if val1 != val2
+            return false
+        end
+    end
+    return true
+end
+
+"""
+    isequal(snap1::Snapshot2D, snap2::Snapshot2D) -> Bool
+
+Check if two Snapshot2D objects are equal, with special handling for NaN values.
+Unlike ==, this function treats NaN values as equal to other NaN values.
+This is recommended for testing ADIOS BP reading routines where NaN values
+should be considered identical.
+"""
+function Base.isequal(snap1::Snapshot2D{FT}, snap2::Snapshot2D{FT}) where {FT <: AbstractFloat}
+    # First compare dimensions
+    if snap1.dims_RZ != snap2.dims_RZ
+        return false
+    end
+
+    # Compare all fields
+    for field in fieldnames(Snapshot2D)
+        val1 = getfield(snap1, field)
+        val2 = getfield(snap2, field)
+
+        # Use isequal for NaN-safe comparison
+        if !isequal(val1, val2)
+            return false
+        end
+    end
+    return true
+end
+
+"""
+    isapprox(snap1::Snapshot0D, snap2::Snapshot0D; kwargs...) -> Bool
+
+Check if two Snapshot0D objects are approximately equal within floating-point tolerance.
+This is useful for comparing results from different numerical methods that may have
+small differences due to rounding errors.
+
+# Arguments
+- `rtol::Real=√eps()`: Relative tolerance
+- `atol::Real=0`: Absolute tolerance
+- `nans::Bool=false`: Whether to treat NaN values as equal (default: false)
+
+Note: When nans=true, NaN values are considered equal. When nans=false (default),
+NaN values are not considered equal to anything, including other NaN values.
+"""
+function Base.isapprox(snap1::Snapshot0D{<:AbstractFloat}, snap2::Snapshot0D{<:AbstractFloat}; kwargs...)
+    # Compare all scalar fields
+    for field in fieldnames(Snapshot0D)
+        val1 = getfield(snap1, field)
+        val2 = getfield(snap2, field)
+
+        # Special handling for different field types
+        if val1 isa Dict && val2 isa Dict
+            # Compare dictionaries approximately
+            if Set(keys(val1)) != Set(keys(val2))
+                return false
+            end
+            for key in keys(val1)
+                if !isapprox(val1[key], val2[key]; kwargs...)
+                    return false
+                end
+            end
+        elseif val1 isa Union{Nothing, AbstractArray} && val2 isa Union{Nothing, AbstractArray}
+            # Compare optional arrays
+            if (val1 === nothing) != (val2 === nothing)
+                return false
+            elseif val1 !== nothing && val2 !== nothing
+                if !isapprox(val1, val2; kwargs...)
+                    return false
+                end
+            end
+        elseif val1 isa AbstractFloat && val2 isa AbstractFloat
+            # Compare floating-point values approximately
+            if !isapprox(val1, val2; kwargs...)
+                return false
+            end
+        else
+            # Compare other scalar values exactly (Int, Bool, etc.)
+            if val1 != val2
+                return false
+            end
+        end
+    end
+    return true
+end
+
+"""
+    isapprox(snap1::Snapshot2D, snap2::Snapshot2D; kwargs...) -> Bool
+
+Check if two Snapshot2D objects are approximately equal within floating-point tolerance.
+This is useful for comparing results from different numerical methods that may have
+small differences due to rounding errors.
+
+# Arguments
+- `rtol::Real=√eps()`: Relative tolerance
+- `atol::Real=0`: Absolute tolerance
+- `nans::Bool=false`: Whether to treat NaN values as equal (default: false)
+
+Note: When nans=true, NaN values are considered equal. When nans=false (default),
+NaN values are not considered equal to anything, including other NaN values.
+"""
+function Base.isapprox(snap1::Snapshot2D{<:AbstractFloat}, snap2::Snapshot2D{<:AbstractFloat}; kwargs...)
+    # First compare dimensions
+    if snap1.dims_RZ != snap2.dims_RZ
+        return false
+    end
+
+    # Compare all fields
+    for field in fieldnames(Snapshot2D)
+        val1 = getfield(snap1, field)
+        val2 = getfield(snap2, field)
+
+        if val1 isa AbstractFloat && val2 isa AbstractFloat
+            # Compare floating-point scalars approximately
+            if !isapprox(val1, val2; kwargs...)
+                return false
+            end
+        elseif val1 isa Matrix{<:AbstractFloat} && val2 isa Matrix{<:AbstractFloat}
+            # Compare matrices approximately
+            if !isapprox(val1, val2; kwargs...)
+                return false
+            end
+        else
+            # Compare other values exactly (Int, Tuple, etc.)
+            if val1 != val2
+                return false
+            end
+        end
+    end
+    return true
+end

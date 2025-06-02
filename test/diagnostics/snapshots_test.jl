@@ -178,3 +178,283 @@ using Test
         @test test_data[2,2] != 7.77e19  # Original data should be unaffected
     end
 end
+
+
+@testset "Snapshot Equality Operators" begin
+
+    @testset "Snapshot0D Equality Tests" begin
+        # Basic equality tests
+        @testset "Basic Equality" begin
+            snap1 = Snapshot0D{Float64}()
+            snap2 = Snapshot0D{Float64}()
+
+            # Test basic equality on empty snapshots
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+            @test isapprox(snap1, snap2)
+        end
+
+        @testset "Scalar Field Equality" begin
+            snap1 = Snapshot0D{Float64}()
+            snap2 = Snapshot0D{Float64}()
+
+            # Set identical values
+            snap1.ne = 1.5e19
+            snap1.Te_eV = 5.0
+            snap1.step = 100
+            snap1.time_s = 1.23
+
+            snap2.ne = 1.5e19
+            snap2.Te_eV = 5.0
+            snap2.step = 100
+            snap2.time_s = 1.23
+
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+            @test isapprox(snap1, snap2)
+
+            # Test inequality
+            snap2.ne = 2.0e19
+            @test !(snap1 == snap2)
+            @test !isequal(snap1, snap2)
+            @test !isapprox(snap1, snap2)
+        end
+
+        @testset "NaN Handling" begin
+            snap1 = Snapshot0D{Float64}()
+            snap2 = Snapshot0D{Float64}()
+
+            # Set other fields to identical values
+            snap1.Te_eV = 5.0
+            snap1.step = 100
+            snap2.Te_eV = 5.0
+            snap2.step = 100
+
+            # Test NaN handling
+            snap1.ne = NaN
+            snap2.ne = NaN
+
+            # With ==, NaN != NaN (standard Julia behavior)
+            @test !(snap1 == snap2)
+
+            # With isequal, NaN == NaN (this is what we want for testing!)
+            @test isequal(snap1, snap2)
+
+            # With isapprox, depends on nans parameter
+            @test !isapprox(snap1, snap2)  # nans=false by default
+            @test isapprox(snap1, snap2, nans=true)  # nans=true treats NaN as equal
+        end
+
+        @testset "Dictionary Field Equality" begin
+            snap1 = Snapshot0D{Float64}()
+            snap2 = Snapshot0D{Float64}()
+
+            # Test with empty CFL dictionaries (default)
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+            @test isapprox(snap1, snap2)
+
+            # Test with populated dictionaries
+            snap1.CFL = Dict(:electron => 0.5, :ion => 0.3)
+            snap2.CFL = Dict(:electron => 0.5, :ion => 0.3)
+
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+            @test isapprox(snap1, snap2)
+
+            # Test dictionary inequality
+            snap2.CFL = Dict(:electron => 0.6, :ion => 0.3)
+            @test !(snap1 == snap2)
+            @test !isequal(snap1, snap2)
+            @test !isapprox(snap1, snap2)
+        end
+
+        @testset "Optional Array Field Equality" begin
+            snap1 = Snapshot0D{Float64}()
+            snap2 = Snapshot0D{Float64}()
+
+            # Test with nothing arrays (default)
+            @test snap1.I_coils === nothing
+            @test snap2.I_coils === nothing
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+
+            # Test with populated arrays
+            snap1.I_coils = [1.0 2.0; 3.0 4.0]
+            snap2.I_coils = [1.0 2.0; 3.0 4.0]
+
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+            @test isapprox(snap1, snap2)
+
+            # Test one nothing, one array
+            snap2.I_coils = nothing
+            @test !(snap1 == snap2)
+            @test !isequal(snap1, snap2)
+            @test !isapprox(snap1, snap2)
+        end
+
+        @testset "Type Consistency" begin
+            snap_f64 = Snapshot0D{Float64}()
+            snap_f32 = Snapshot0D{Float32}()
+
+            # Different float types should still be comparable if values are the same
+            snap_f64.ne = 1.5e19
+            snap_f32.ne = 1.5f19
+
+            # Note: These may not be exactly equal due to precision differences
+            # but the operators should work without throwing errors
+            @test !(snap_f64 == snap_f32)
+            @test !isequal(snap_f64, snap_f32)
+            @test isapprox(snap_f64, snap_f32)
+        end
+    end
+
+    @testset "Snapshot2D Equality Tests" begin
+        @testset "Basic Equality" begin
+            dims_RZ = (10, 15)
+            snap1 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+            snap2 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+
+            # Test basic equality on zero-initialized snapshots
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+            @test isapprox(snap1, snap2)
+        end
+
+        @testset "Dimension Mismatch" begin
+            dims1 = (10, 15)
+            dims2 = (12, 15)
+            snap1 = Snapshot2D{Float64}(dims_RZ = dims1)
+            snap2 = Snapshot2D{Float64}(dims_RZ = dims2)
+
+            # Different dimensions should not be equal
+            @test !(snap1 == snap2)
+            @test !isequal(snap1, snap2)
+            @test !isapprox(snap1, snap2)
+        end
+
+        @testset "Matrix Field Equality" begin
+            dims_RZ = (8, 12)
+            snap1 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+            snap2 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+
+            # Set some matrix values
+            snap1.ne[1,1] = 1.5e19
+            snap1.Te_eV[2,3] = 8.0
+            snap1.step = 100
+            snap1.time_s = 1.23
+
+            snap2.ne[1,1] = 1.5e19
+            snap2.Te_eV[2,3] = 8.0
+            snap2.step = 100
+            snap2.time_s = 1.23
+
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+            @test isapprox(snap1, snap2)
+
+            # Test matrix inequality
+            snap2.ne[1,1] = 2.0e19
+            @test !(snap1 == snap2)
+            @test !isequal(snap1, snap2)
+            @test !isapprox(snap1, snap2)
+        end
+
+        @testset "NaN Handling in Matrices" begin
+            dims_RZ = (6, 8)
+            snap1 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+            snap2 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+
+            # Set some regular values
+            snap1.ne[1,1] = 1.5e19
+            snap2.ne[1,1] = 1.5e19
+
+            # Test NaN handling in matrices
+            snap1.ne[3,3] = NaN
+            snap2.ne[3,3] = NaN
+
+            # With ==, NaN != NaN
+            @test !(snap1 == snap2)
+
+            # With isequal, NaN == NaN
+            @test isequal(snap1, snap2)
+
+            # With isapprox
+            @test !isapprox(snap1, snap2)  # nans=false by default
+            @test isapprox(snap1, snap2, nans=true)  # nans=true treats NaN as equal
+        end
+
+        @testset "Approximate Equality" begin
+            dims_RZ = (5, 7)
+            snap1 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+            snap2 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+
+            # Set slightly different values
+            snap1.ne[1,1] = 1.0000001e19
+            snap2.ne[1,1] = 1.0000002e19
+
+            snap1.Te_eV[2,2] = 5.0000001
+            snap2.Te_eV[2,2] = 5.0000002
+
+            # Should not be exactly equal
+            @test !(snap1 == snap2)
+            @test !isequal(snap1, snap2)
+
+            # But should be approximately equal
+            @test isapprox(snap1, snap2, rtol=1e-6)
+            @test !isapprox(snap1, snap2, rtol=1e-8)
+        end
+
+        @testset "Scalar vs Matrix Field Types" begin
+            dims_RZ = (4, 6)
+            snap1 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+            snap2 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+
+            # Test scalar fields
+            snap1.step = 100
+            snap1.time_s = 1.23
+            snap2.step = 100
+            snap2.time_s = 1.23
+
+            @test snap1 == snap2
+            @test isequal(snap1, snap2)
+            @test isapprox(snap1, snap2)
+
+            # Test mixed changes
+            snap1.step = 200  # Change scalar
+            @test !(snap1 == snap2)
+
+            snap1.step = 100  # Reset
+            snap1.ne[1,1] = 1e19  # Change matrix
+            @test !(snap1 == snap2)
+        end
+
+        @testset "Type Consistency" begin
+            dims_RZ = (3, 4)
+            snap_f64 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+            snap_f32 = Snapshot2D{Float32}(dims_RZ = dims_RZ)
+
+            # Set some values
+            snap_f64.ne[1,1] = 1.5e19
+            snap_f32.ne[1,1] = 1.5f19
+
+            # Different float types should be comparable
+            @test !(snap_f64 == snap_f32)
+            @test !isequal(snap_f64, snap_f32)
+            @test isapprox(snap_f64, snap_f32)
+        end
+    end
+
+    @testset "Cross-Type Comparisons" begin
+        # Test that comparing different snapshot types fails gracefully
+        snap0D = Snapshot0D{Float64}()
+        dims_RZ = (2, 3)
+        snap2D = Snapshot2D{Float64}(dims_RZ = dims_RZ)
+
+        # These should not be equal (and shouldn't crash)
+        @test !( snap0D == snap2D ) # Fall back to default equality
+        @test !isequal(snap0D, snap2D) # Fall back to default equality
+        @test_throws MethodError isapprox(snap0D, snap2D)
+    end
+end

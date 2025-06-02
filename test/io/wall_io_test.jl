@@ -1,7 +1,7 @@
 using Test
 using RAPID2D
 
-@testset "IO Tests" begin
+@testset "Wall IO Tests" begin
     @testset "Wall Data Reading Tests" begin
         test_dir = joinpath(@__DIR__, "..", "data", "wall")
 
