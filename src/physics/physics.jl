@@ -161,10 +161,12 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
                                 )
 
             # Add pressure and convection terms in the same way as MATLAB
+            accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
+             @. pla.ue_para +=  inv_factor * dt * ( accel_by_pressure )
+
             if RP.flags.Include_ud_convec_term
-                accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
                 accel_by_grad_ud = calculate_electron_acceleration_by_convection(RP)
-                @. pla.ue_para +=  inv_factor * dt * (accel_by_pressure + accel_by_grad_ud)
+                @. pla.ue_para +=  inv_factor * dt * ( accel_by_grad_ud)
             end
         end
 
