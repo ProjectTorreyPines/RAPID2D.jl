@@ -183,7 +183,6 @@ write_to_adiosBP!("output/snapshots.bp", snapshot_array; data_name="time_series"
 function write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractString="")
 	@assert !isempty(fileName) "File name cannot be empty"
 	@assert endswith(fileName, ".bp") "File name must end with '.bp'"
-	@assert !isfile(fileName) && !isdir(fileName) "File already exists: $fileName"
 
 	# Create new ADIOS2 file handle (overwriting if exists) with Windows compatibility
 	Afile = safe_adios_open_serial(fileName, mode_write)
