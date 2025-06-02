@@ -4,13 +4,25 @@ using RAPID2D
 if !isempty(ARGS) && !(length(ARGS) == 1 && ARGS[1] == "")
     println(ARGS)
     for testfile in ARGS
+        # Skip ADIOS tests on Windows due to compatibility issues
+        if Sys.iswindows() && contains(testfile, "adios_io_test.jl")
+            @warn "Skipping ADIOS I/O test on Windows: $testfile"
+            continue
+        end
+
         @info "Running test file: $testfile"
         include(testfile)
     end
 else
     # Default behavior: run all tests
     include("io/wall_io_test.jl")
-    include("io/adios_io_test.jl")
+
+    # Skip ADIOS tests on Windows due to compatibility issues
+    if !Sys.iswindows()
+        include("io/adios_io_test.jl")
+    else
+        @warn "Skipping ADIOS I/O tests on Windows due to known compatibility issues"
+    end
 
     include("utils/utils_test.jl")
 
