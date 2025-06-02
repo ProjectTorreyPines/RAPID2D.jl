@@ -736,7 +736,7 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
         if !isempty(neg_n_idx)
             Ne_loss = @. RP.plasma.ne[neg_n_idx] * FT(2.0 * pi) * RP.G.Jacob[neg_n_idx] * RP.G.dR * RP.G.dZ
             Ntracker.cum0D_Ne_loss += sum(Ne_loss)
-            @. @views Ntracker.cum2D_Ne_loss[neg_n_idx] += Ne_loss[neg_n_idx]
+            @. @views Ntracker.cum2D_Ne_loss[neg_n_idx] += Ne_loss
             RP.plasma.ne[neg_n_idx] .= 0.0
         end
     end
@@ -797,7 +797,7 @@ function treat_ion_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
         if !isempty(neg_n_idx)
             Ni_loss = @. RP.plasma.ni[neg_n_idx] * FT(2.0 * pi) * RP.G.Jacob[neg_n_idx] * RP.G.dR * RP.G.dZ
             Ntracker.cum0D_Ni_loss += sum(Ni_loss)
-            @. @views Ntracker.cum2D_Ni_loss[neg_n_idx] += Ni_loss[neg_n_idx]
+            @. @views Ntracker.cum2D_Ni_loss[neg_n_idx] += Ni_loss
             RP.plasma.ni[neg_n_idx] .= 0.0
         end
     end
