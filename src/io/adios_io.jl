@@ -257,7 +257,7 @@ function adiosBP_to_snap2D(bpPath::AbstractString)
     # Retrieve basic information
     FT = eltype(Adict["time_s"])
     dim_tt = length(Adict["time_s"])
-    dims_RZ = (Adict["dims_RZ/1"][1], Adict["dims_RZ/2"][2])
+    dims_RZ = (Adict["dims_RZ/1"][1], Adict["dims_RZ/2"][1])
 
     # Create snapshot array
     snaps2D = [Snapshot2D{FT}(;dims_RZ) for _ in 1:dim_tt]
