@@ -639,9 +639,8 @@ function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     close_wrapper!(RP.AW_snap0D)
     close_wrapper!(RP.AW_snap2D)
 
-    # Create new ADIOS2 file handles (overwriting if exists) with Windows compatibility
-    RP.AW_snap0D = AdiosFileWrapper(safe_adios_open_serial(prefixName * "snap0D.bp", mode_write))
-    RP.AW_snap2D = AdiosFileWrapper(safe_adios_open_serial(prefixName * "snap2D.bp", mode_write))
+    RP.AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
+    RP.AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
     return RP
 end

@@ -695,8 +695,8 @@ mutable struct RAPID{FT<:AbstractFloat}
 
         # Create AdiosFileWrapper instances for snapshots
         prefixName = joinpath(config.Output_path, config.Output_prefix)
-        AW_snap0D = AdiosFileWrapper(safe_adios_open_serial(prefixName * "snap0D.bp", mode_write))
-        AW_snap2D = AdiosFileWrapper(safe_adios_open_serial(prefixName * "snap2D.bp", mode_write))
+        AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
+        AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
         # Create and return new instance
         return new{FT}(

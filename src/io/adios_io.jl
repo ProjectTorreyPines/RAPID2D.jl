@@ -4,85 +4,7 @@ export write_to_adiosBP!,
 		write_latest_snap0D!,
 		write_latest_snap2D!,
         adiosBP_to_snap0D,
-        adiosBP_to_snap2D,
-        safe_adios_open_serial,
-        safe_adios_load,
-        normalize_adios_path
-
-"""
-    normalize_adios_path(path::AbstractString)
-
-Normalize file path for ADIOS2 compatibility across platforms.
-Ensures consistent path separators and handles Windows-specific issues.
-"""
-function normalize_adios_path(path::AbstractString)
-    # Convert to forward slashes for ADIOS2 compatibility
-    normalized = replace(path, "\\" => "/")
-
-    # On Windows, ensure we don't have drive letter issues
-    if Sys.iswindows() && occursin(":", normalized)
-        # Convert Windows absolute paths to be ADIOS2-friendly
-        if startswith(normalized, r"[A-Za-z]:/"i)
-            # Already normalized
-            return normalized
-        elseif occursin(":\\", path)
-            # Convert to forward slashes
-            return replace(path, "\\" => "/")
-        end
-    end
-
-    return normalized
-end
-
-"""
-    safe_adios_open_serial(fileName::AbstractString, mode)
-
-Safely open ADIOS2 file with Windows compatibility and error handling.
-"""
-function safe_adios_open_serial(fileName::AbstractString, mode)
-    normalized_path = normalize_adios_path(fileName)
-
-    try
-        # Add small delay on Windows to avoid file system timing issues
-        if Sys.iswindows()
-            sleep(0.01)
-        end
-
-        return adios_open_serial(normalized_path, mode)
-    catch e
-        @error "Failed to open ADIOS file: $normalized_path" exception=e
-        rethrow(e)
-    end
-end
-
-"""
-    safe_adios_load(bpPath::AbstractString)
-
-Safely load ADIOS2 BP file with Windows compatibility.
-"""
-function safe_adios_load(bpPath::AbstractString)
-    normalized_path = normalize_adios_path(bpPath)
-
-    try
-        # Add small delay on Windows to avoid file system timing issues
-        if Sys.iswindows()
-            sleep(0.01)
-        end
-
-        return adios_load(normalized_path)
-    catch e
-        @error "Failed to load ADIOS file: $normalized_path" exception=e
-        rethrow(e)
-    end
-end
-
-"""
-    write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractString="")
-
-Write data to a new ADIOS2 BP file with Windows compatibility.
-Creates a new file and writes the data, ensuring proper cleanup.
-"""
-
+        adiosBP_to_snap2D
 
 # Convinience dispatches
 """
@@ -184,18 +106,10 @@ function write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractSt
 	@assert !isempty(fileName) "File name cannot be empty"
 	@assert endswith(fileName, ".bp") "File name must end with '.bp'"
 
-	# Create new ADIOS2 file handle (overwriting if exists) with Windows compatibility
-	Afile = safe_adios_open_serial(fileName, mode_write)
-	try
-		write_to_adiosBP!(Afile, data; data_name)
-	finally
-		# Ensure file is always closed, even on Windows
-		try
-			close(Afile)
-		catch e
-			@warn "Error closing ADIOS file: $fileName" exception=e
-		end
-	end
+	# Create new ADIOS2 file handle (overwriting if exists)
+	Afile = adios_open_serial(fileName, mode_write)
+	write_to_adiosBP!(Afile, data; data_name)
+	close(Afile)
 end
 
 
@@ -293,7 +207,7 @@ function adiosBP_to_snap0D(bpPath::AbstractString)
     @assert isfile(bpPath) || isdir(bpPath) "$bpPath does not exist"
     @assert endswith(bpPath, ".bp") "File must end with '.bp' extension"
 
-    Adict = safe_adios_load(bpPath)
+    Adict = adios_load(bpPath)
 
     # Retrieve basic information
     FT = eltype(Adict["time_s"])
@@ -339,7 +253,7 @@ function adiosBP_to_snap2D(bpPath::AbstractString)
     @assert isfile(bpPath) || isdir(bpPath) "$bpPath does not exist"
     @assert endswith(bpPath, ".bp") "File must end with '.bp' extension"
 
-    Adict = safe_adios_load(bpPath)
+    Adict = adios_load(bpPath)
 
     # Retrieve basic information
     FT = eltype(Adict["time_s"])
