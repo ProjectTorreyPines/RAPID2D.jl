@@ -2,7 +2,9 @@ using ADIOS2
 
 export write_to_adiosBP!,
 		write_latest_snap0D!,
-		write_latest_snap2D!
+		write_latest_snap2D!,
+        adiosBP_to_snap0D,
+        adiosBP_to_snap2D
 
 # Convinience dispatches
 """

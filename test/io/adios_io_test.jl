@@ -1,67 +1,19 @@
 using RAPID2D
 using Test
-# using Tempfile
 
 @testset "ADIOS I/O Round-trip Tests" begin
-
-
-	# Generate test data
-	FT = Float64
-	# Create simulation configuration
-	config = SimulationConfig{FT}(
-		NR=10, NZ=20,
-		R_min=0.8, R_max=2.2,
-		Z_min=-1.2, Z_max=1.2,
-		dt=1e-6, t_end_s=10e-6,
-		R0B0=1.0,
-		prefilled_gas_pressure=5e-3,
-		wall_R=[1.0, 2.0, 2.0, 1.0],
-		wall_Z=[-1.0, -1.0, 1.0, 1.0]
-	)
-
-	# Create RAPID object
-	RP = RAPID{FT}(config)
-
-	RP.flags = SimulationFlags{FT}(
-		# Disable unnecessary flags for this test
-		Ampere=false,
-		E_para_self_ES=false, E_para_self_EM=false, Gas_evolve=false,
-		update_ni_independently=false, Include_ud_convec_term=false,
-		Coulomb_Collision=false, negative_n_correction=false
-	)
-
-	# Initial conditions: Gaussian electron density distribution centered in domain
-	R0 = (config.R_min + config.R_max) / 2
-	Z0 = (config.Z_min + config.Z_max) / 2
-	sigma_R = 0.1
-	sigma_Z = 0.1
-	peak_density = 1.0e6  # Peak density [m^-3]
-
-	initialize!(RP)
-	# Initialize electron density
-	ini_n = zeros(FT, RP.G.NR, RP.G.NZ)
-	for i in 1:RP.G.NR, j in 1:RP.G.NZ
-		R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
-		ini_n[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
-	end
-	ini_n[RP.G.nodes.out_wall_nids] .= 0.0
-
-	RP.plasma.ne = copy(ini_n)
-	RP.plasma.ni = copy(ini_n)
-	RP.fields.BR_ext .= 1e-4
-	RP.fields.BZ_ext .= 1e-4
-	RAPID2D.combine_external_and_self_fields!(RP)
-
-	initialize!(RP)
-	RAPID2D.run_simulation!(RP);
-
-
 
     @testset "Snapshot0D ADIOS Round-trip" begin
         @testset "Basic Snapshot0D Round-trip" begin
             # Create a test Snapshot0D with realistic plasma parameters
+			original_snap = Snapshot0D{Float64}()
+			snap2 = Snapshot0D{Float64}()
 
-			original_snap = deepcopy(RP.diagnostics.snaps0D[1])  # Use the first snapshot as a template
+			original_snap.ne = 1.5e19
+			original_snap.Te_eV = 5.5
+			original_snap.step = 100
+
+			# original_snap = deepcopy(RP.diagnostics.snaps0D[1])  # Use the first snapshot as a template
             # Test round-trip through ADIOS BP format
 			tmpdir = mktempdir()
             mktempdir() do tmpdir
