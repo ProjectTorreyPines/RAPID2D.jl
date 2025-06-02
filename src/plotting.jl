@@ -84,7 +84,19 @@ run_simulation!(RP)
 plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
 ```
 """
-function plot_snaps2D(snap2D, R1D, Z1D; kwargs...)
+function plot_snaps2D(snap2D, R1D, Z1D, field::Symbol, kwargs...)
+    error("""
+    plot_snaps2D requires a plotting package to be loaded.
+
+    For Plots.jl backend:
+        using Plots
+
+    For Makie.jl backend:
+        using CairoMakie  # or GLMakie
+    """)
+end
+
+function plot_snaps2D(snap2D, R1D, Z1D, fields::AbstractArray{Symbol}, kwargs...)
     error("""
     plot_snaps2D requires a plotting package to be loaded.
 
@@ -121,7 +133,7 @@ animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
                field=:ne, fps=10, filename="ne_evolution.mp4")
 ```
 """
-function animate_snaps2D(snaps2D, R1D, Z1D; kwargs...)
+function animate_snaps2D(snaps2D, R1D, Z1D, field::Symbol; kwargs...)
     error("""
     animate_snaps2D requires a plotting package to be loaded.
 
@@ -132,6 +144,19 @@ function animate_snaps2D(snaps2D, R1D, Z1D; kwargs...)
         using CairoMakie  # or GLMakie
     """)
 end
+
+function animate_snaps2D(snaps2D, R1D, Z1D, fields::AbstarctArray{Symbol}; kwargs...)
+    error("""
+    animate_snaps2D requires a plotting package to be loaded.
+
+    For Plots.jl backend:
+        using Plots
+
+    For Makie.jl backend (faster for large datasets):
+        using CairoMakie  # or GLMakie
+    """)
+end
+
 
 """
     plot_comparison(snaps0D_1, snaps0D_2; labels=["Case 1", "Case 2"], kwargs...)

@@ -110,8 +110,29 @@ Plot 2D field distribution from RAPID2D simulation.
 - `:E_para_tot` - Total parallel electric field
 - `:Jϕ` - Toroidal current density
 """
-function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D;
-                     field=:ne, colorscale=:auto, streamlines=true, wall=nothing, kwargs...)
+function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, fields::AbstractArray{Symbol}; colorscale=:auto, streamlines=true, wall=nothing, kwargs...)
+
+    # Get field data
+	p_vec = Plots.Plot[];
+
+    for field in fields
+        push!(p_vec,
+                plot_snaps2D(snap2D, R1D, Z1D, field; colorscale=colorscale,
+                   streamlines=streamlines, wall=wall, kwargs...)
+            )
+    end
+
+	ncols = 2
+	nrows = ceil(Int, length(p_vec) / ncols)
+
+    return plot(p_vec...; layout=(nrows, ncols), size=(800, 1200),
+                plot_title="RAPID2D 2D fields",
+                left_margin=5Plots.mm, right_margin=5Plots.mm,
+                top_margin=5Plots.mm, bottom_margin=5Plots.mm,
+                kwargs...)
+end
+
+function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, field; colorscale=:auto, streamlines=true, wall=nothing, kwargs...)
 
     # Get field data
     field_data = getfield(snap2D, field)
@@ -141,7 +162,7 @@ function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D;
                 title="$(field) at t = $(round(snap2D.time_s*1e3, digits=2)) ms",
                 colorbar_title=get_field_label(field),
                 left_margin=2Plots.mm, right_margin=8Plots.mm,
-                top_margin=3Plots.mm, bottom_margin=3Plots.mm)
+                top_margin=3Plots.mm, bottom_margin=3Plots.mm, kwargs...)
 
     if colorscale == :log10
         if clims[1] <= 0
@@ -169,6 +190,7 @@ function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D;
              ylims=(minimum(Z1D), maximum(Z1D)))
     return plot(p; kwargs...)
 end
+
 
 """
     get_field_label(field::Symbol)
@@ -203,8 +225,7 @@ Create animation of 2D field evolution.
 - `field::Symbol`: Field to animate
 - `fps::Int`: Frames per second
 """
-function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D;
-                       field=:ne, fps=5, filename="rapid2d_animation.mp4", kwargs...)
+function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D, field::Symbol; fps=5, filename="rapid2d_animation.mp4", kwargs...)
 
     if isempty(snaps2D)
         error("No snapshot data available for animation")
@@ -225,13 +246,31 @@ function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D;
 
     # Create animation
     anim = @animate for (i, snap) in enumerate(snaps2D)
-        RAPID2D.plot_snaps2D(snap, R1D, Z1D; field=field, colorscale=colorscale,
+        RAPID2D.plot_snaps2D(snap, R1D, Z1D, field; colorscale=colorscale,
                    clims=clims, title="$(get_field_label(field)) at t = $(round(snap.time_s*1e3, digits=2)) ms",
                    kwargs...)
     end
 
     return mp4(anim, filename, fps=fps)
 end
+
+function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D, fields::AbstractArray{Symbol}; fps=5, filename="rapid2d_animation.mp4", kwargs...)
+
+    if isempty(snaps2D)
+        error("No snapshot data available for animation")
+    end
+
+    # Create animation
+    anim = @animate for (i, snap) in enumerate(snaps2D)
+        RAPID2D.plot_snaps2D(snap, R1D, Z1D, fields; size=(800,1200),dpi=151, kwargs...)
+        # Force exact size
+        # plot!(size=(801,1200))
+    end
+
+    return mp4(anim, filename, fps=fps)
+end
+
+
 
 """
     plot_comparison(snaps0D_1::Vector{Snapshot0D{FT}}, snaps0D_2::Vector{Snapshot0D{FT}};
