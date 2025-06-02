@@ -15,11 +15,11 @@ using GLMakie
 import RAPID2D: Snapshot0D, Snapshot2D, RAPID, Diagnostics
 
 """
-    RAPID2D.plot_snap1D(snap0D::Vector{Snapshot0D{FT}}; kwargs...) where {FT}
+    RAPID2D.plot_snaps0D(snap0D::Vector{Snapshot0D{FT}}; kwargs...) where {FT}
 
 Plot 1D/0D time series diagnostics using Makie for better performance.
 """
-function RAPID2D.plot_snap1D(snap0D; kwargs...)
+function RAPID2D.plot_snaps0D(snap0D; kwargs...)
     if isempty(snap0D)
         error("No snapshot data available for plotting")
     end
@@ -50,11 +50,11 @@ function RAPID2D.plot_snap1D(snap0D; kwargs...)
 end
 
 """
-    RAPID2D.plot_snap2D(snap2D::Snapshot2D{FT}, R1D, Z1D; field=:ne, kwargs...) where {FT}
+    RAPID2D.plot_snaps2D(snap2D::Snapshot2D{FT}, R1D, Z1D; field=:ne, kwargs...) where {FT}
 
 High-performance 2D plotting using Makie.
 """
-function RAPID2D.plot_snap2D(snap2D, R1D, Z1D;
+function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D;
                            field=:ne, colormap=:turbo, kwargs...)
 
     field_data = getfield(snap2D, field)
@@ -71,11 +71,11 @@ function RAPID2D.plot_snap2D(snap2D, R1D, Z1D;
 end
 
 """
-    RAPID2D.animate_snap2D(snaps2D::Vector{Snapshot2D{FT}}, R1D, Z1D; field=:ne, kwargs...) where {FT}
+    RAPID2D.animate_snaps2D(snaps2D::Vector{Snapshot2D{FT}}, R1D, Z1D; field=:ne, kwargs...) where {FT}
 
 Create interactive animation using Makie.
 """
-function RAPID2D.animate_snap2D(snaps2D, R1D, Z1D;
+function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D;
                              field=:ne, colormap=:turbo, fps=10, filename="rapid2d_makie.mp4", kwargs...)
 
     if isempty(snaps2D)

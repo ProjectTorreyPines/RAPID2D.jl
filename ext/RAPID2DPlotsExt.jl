@@ -13,12 +13,12 @@ using Plots
 import RAPID2D: Snapshot0D, Snapshot2D, RAPID, Diagnostics
 
 """
-    RAPID2D.plot_snap1D(snap0D; kwargs...)
+    RAPID2D.plot_snaps0D(snaps0D; kwargs...)
 
 Plot 1D/0D time series diagnostics from RAPID2D simulation.
 
 # Arguments
-- `snap0D`: Vector of 0D snapshots
+- `snaps0D`: Vector of 0D snapshots
 - `kwargs...`: Additional keyword arguments for plot customization
 
 # Example
@@ -26,35 +26,65 @@ Plot 1D/0D time series diagnostics from RAPID2D simulation.
 using RAPID2D, Plots
 RP = RAPID{Float64}(config)
 run_simulation!(RP)
-plot_snap1D(RP.diagnostics.snaps0D)
+plot_snaps0D(RP.diagnostics.snaps0D)
 ```
 """
-function RAPID2D.plot_snap1D(snap0D; kwargs...)
-    if isempty(snap0D)
+function RAPID2D.plot_snaps0D(snaps0D; kwargs...)
+    if isempty(snaps0D)
         error("No snapshot data available for plotting")
     end
 
+
     # Extract time series
-    times_ms = [s.time_s * 1e3 for s in snap0D]  # Convert to ms
+    times_ms = [s.time_s * 1e3 for s in snaps0D]  # Convert to ms
+
+
+	p_vec = Plots.Plot[];
+
 
     # Create multi-panel plot
-    p1 = plot(times_ms, [s.ne for s in snap0D],
+    push!(p_vec, plot(times_ms, [s.ne for s in snaps0D],
               ylabel="⟨ne⟩ (m⁻³)", label="Electron density",
-              yscale=:log10, linewidth=2)
+              yscale=:log10, linewidth=2))
 
-    p2 = plot(times_ms, [s.Te_eV for s in snap0D],
+    push!(p_vec, plot(times_ms, [s.Te_eV for s in snaps0D],
               ylabel="⟨Te⟩ (eV)", label="Electron temperature",
-              linewidth=2)
+              linewidth=2))
+	push!(p_vec, plot(times_ms, [s.𝒲e_eV for s in snaps0D],
+			  ylabel="⟨We⟩ (eV)", label="Electron energy",
+			  linewidth=2))
 
-    p3 = plot(times_ms, [abs(s.Epara_tot) for s in snap0D],
-              ylabel="|⟨E∥⟩| (V/m)", label="Parallel E-field",
-              yscale=:log10, linewidth=2)
+	push!(p_vec, plot(times_ms, [s.Ti_eV for s in snaps0D],
+              ylabel="⟨Ti⟩ (eV)", label="Ion temperature",
+              linewidth=2))
 
-    p4 = plot(times_ms, [abs(s.ue_para) for s in snap0D],
-              ylabel="|⟨u∥⟩| (m/s)", label="Parallel velocity",
-              xlabel="Time (ms)", yscale=:log10, linewidth=2)
+	p = plot(times_ms,  [s.ν_iz for s in snaps0D],
+			  ylabel="⟨νiz⟩ (s⁻¹)", label="Ionization rate",
+			  linewidth=2)
+	plot!(p, times_ms, [s.eLoss_rate for s in snaps0D],
+			  label="loss rate", linestyle=:dash,
+			  linewidth=2)
+	push!(p_vec, p)
 
-    return plot(p1, p2, p3, p4, layout=(2,2), size=(800, 600),
+	push!(p_vec, plot(times_ms, [abs(s.Epara_tot) for s in snaps0D],
+			  ylabel="|⟨E∥⟩| (V/m)", label="Parallel E-field",
+			  linewidth=2))
+	plot!(p_vec[end], times_ms, [abs(s.Epara_ext) for s in snaps0D],
+			label="E_{ext}", linewidth=2)
+	plot!(p_vec[end], times_ms, [abs(s.Epara_self_ES) for s in snaps0D],
+			label="E_{self}^{ES}", linewidth=2)
+	plot!(p_vec[end], times_ms, [abs(s.Epara_self_EM) for s in snaps0D],
+			label="E_{self}^{EM}", linewidth=2)
+
+	push!(p_vec, plot(times_ms, [abs(s.ue_para) for s in snaps0D],
+			  ylabel="|⟨u∥⟩| (m/s)", label="Parallel velocity",
+			  xlabel="Time (ms)", linewidth=2))
+
+	ncols = 2
+	nrows = ceil(Int, length(p_vec) / ncols)
+
+
+    return plot(p_vec..., layout=(nrows, ncols), size=(1000, 1200),
                 plot_title="RAPID2D Time Evolution",
                 left_margin=5Plots.mm, right_margin=5Plots.mm,
                 top_margin=5Plots.mm, bottom_margin=5Plots.mm,
@@ -62,7 +92,7 @@ function RAPID2D.plot_snap1D(snap0D; kwargs...)
 end
 
 """
-    plot_snap2D(snap2D::Snapshot2D{FT}, R1D, Z1D; field=:ne, kwargs...) where {FT}
+    plot_snaps2D(snap2D::Snapshot2D{FT}, R1D, Z1D; field=:ne, kwargs...) where {FT}
 
 Plot 2D field distribution from RAPID2D simulation.
 
@@ -80,7 +110,7 @@ Plot 2D field distribution from RAPID2D simulation.
 - `:E_para_tot` - Total parallel electric field
 - `:Jϕ` - Toroidal current density
 """
-function RAPID2D.plot_snap2D(snap2D, R1D, Z1D;
+function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D;
                      field=:ne, colorscale=:auto, streamlines=true, wall=nothing, kwargs...)
 
     # Get field data
@@ -163,7 +193,7 @@ function get_field_label(field::Symbol)
 end
 
 """
-    animate_snap2D(snaps2D::Vector{Snapshot2D{FT}}, R1D, Z1D; field=:ne, fps=5, kwargs...) where {FT}
+    animate_snaps2D(snaps2D::Vector{Snapshot2D{FT}}, R1D, Z1D; field=:ne, fps=5, kwargs...) where {FT}
 
 Create animation of 2D field evolution.
 
@@ -173,7 +203,7 @@ Create animation of 2D field evolution.
 - `field::Symbol`: Field to animate
 - `fps::Int`: Frames per second
 """
-function RAPID2D.animate_snap2D(snaps2D, R1D, Z1D;
+function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D;
                        field=:ne, fps=5, filename="rapid2d_animation.mp4", kwargs...)
 
     if isempty(snaps2D)
@@ -195,7 +225,7 @@ function RAPID2D.animate_snap2D(snaps2D, R1D, Z1D;
 
     # Create animation
     anim = @animate for (i, snap) in enumerate(snaps2D)
-        RAPID2D.plot_snap2D(snap, R1D, Z1D; field=field, colorscale=colorscale,
+        RAPID2D.plot_snaps2D(snap, R1D, Z1D; field=field, colorscale=colorscale,
                    clims=clims, title="$(get_field_label(field)) at t = $(round(snap.time_s*1e3, digits=2)) ms",
                    kwargs...)
     end

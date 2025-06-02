@@ -21,7 +21,7 @@ println("\nTesting fallback plotting functions:")
 try
     config = SimulationConfig{Float64}()
     RP = RAPID{Float64}(config)
-    plot_snap1D(RP.diagnostics.snaps0D)
+    plot_snaps0D(RP.diagnostics.snaps0D)
 catch e
     println("✓ Expected error: ", split(string(e), '\n')[1])
 end
@@ -79,23 +79,23 @@ println("\nStep 4: Creating plots with Plots.jl backend...")
 
 try
     # 1D time series plot
-    p1 = plot_snap1D(RP.diagnostics.snaps0D)
+    p1 = plot_snaps0D(RP.diagnostics.snaps0D)
     savefig(p1, "demo_time_series_plots.png")
     println("✓ Time series plot saved as 'demo_time_series_plots.png'")
 
     # 2D density plot
-    p2 = plot_snap2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
+    p2 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
     savefig(p2, "demo_density_2d_plots.png")
     println("✓ 2D density plot saved as 'demo_density_2d_plots.png'")
 
     # 2D temperature plot
-    p3 = plot_snap2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:Te_eV)
+    p3 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:Te_eV)
     savefig(p3, "demo_temperature_2d_plots.png")
     println("✓ 2D temperature plot saved as 'demo_temperature_2d_plots.png'")
 
     # Animation
     println("Creating animation with Plots.jl (this may take a moment)...")
-    animate_snap2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
+    animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
                    field=:ne, fps=2, filename="demo_evolution_plots..mp4")
     println("✓ Animation saved as 'demo_evolution_plots.mp4'")
 
@@ -111,18 +111,18 @@ try
     println("✓ Makie.jl loaded - RAPID2DMakieExt extension activated")
 
     # High-performance 1D plot
-    fig1 = plot_snap1D(RP.diagnostics.snaps0D)
+    fig1 = plot_snaps0D(RP.diagnostics.snaps0D)
     save("demo_time_series_makie.png", fig1)
     println("✓ Makie time series saved as 'demo_time_series_makie.png'")
 
     # High-performance 2D plot
-    fig2 = plot_snap2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
+    fig2 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
     save("demo_density_2d_makie.png", fig2)
     println("✓ Makie 2D plot saved as 'demo_density_2d_makie.png'")
 
     # High-performance animation
     println("Creating animation with Makie.jl (faster for large datasets)...")
-    animate_snap2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
+    animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
                          field=:ne, fps=3, filename="demo_evolution_makie.mp4")
     println("✓ Makie animation saved as 'demo_evolution_makie.mp4'")
 

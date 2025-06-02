@@ -6,7 +6,7 @@ The actual implementations are provided by package extensions when plotting pack
 """
 
 """
-    plot_snap1D(snap0D::Vector{Snapshot0D{FT}}; kwargs...) where {FT}
+    plot_snaps0D(snap0D::Vector{Snapshot0D{FT}}; kwargs...) where {FT}
 
 Plot 1D/0D time series diagnostics from RAPID2D simulation.
 
@@ -19,7 +19,7 @@ using Plots  # This activates the RAPID2DPlotsExt extension
 
 RP = RAPID{Float64}(config)
 run_simulation!(RP)
-plot_snap1D(RP.diagnostics.snaps0D)
+plot_snaps0D(RP.diagnostics.snaps0D)
 ```
 
 For high-performance plotting with large datasets:
@@ -37,9 +37,9 @@ makie_plot_snap1D(RP.diagnostics.snaps0D)
 # Returns
 - Plot object (type depends on the loaded plotting backend)
 """
-function plot_snap1D(snap0D; kwargs...)
+function plot_snaps0D(snap0D; kwargs...)
     error("""
-    plot_snap1D requires a plotting package to be loaded.
+    plot_snaps0D requires a plotting package to be loaded.
 
     For Plots.jl backend:
         using Plots
@@ -50,7 +50,7 @@ function plot_snap1D(snap0D; kwargs...)
 end
 
 """
-    plot_snap2D(snap2D::Snapshot2D{FT}, R1D, Z1D; field=:ne, kwargs...) where {FT}
+    plot_snaps2D(snap2D::Snapshot2D{FT}, R1D, Z1D; field=:ne, kwargs...) where {FT}
 
 Plot 2D field distribution from RAPID2D simulation.
 
@@ -81,12 +81,12 @@ RP = RAPID{Float64}(config)
 run_simulation!(RP)
 
 # Plot electron density at last time step
-plot_snap2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
+plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
 ```
 """
-function plot_snap2D(snap2D, R1D, Z1D; kwargs...)
+function plot_snaps2D(snap2D, R1D, Z1D; kwargs...)
     error("""
-    plot_snap2D requires a plotting package to be loaded.
+    plot_snaps2D requires a plotting package to be loaded.
 
     For Plots.jl backend:
         using Plots
@@ -97,7 +97,7 @@ function plot_snap2D(snap2D, R1D, Z1D; kwargs...)
 end
 
 """
-    animate_snap2D(snaps2D, R1D, Z1D; field=:ne, kwargs...)
+    animate_snaps2D(snaps2D, R1D, Z1D; field=:ne, kwargs...)
 
 Create animation of 2D field evolution.
 
@@ -117,13 +117,13 @@ RP = RAPID{Float64}(config)
 run_simulation!(RP)
 
 # Create animation of electron density evolution
-animate_snap2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
+animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
                field=:ne, fps=10, filename="ne_evolution.mp4")
 ```
 """
-function animate_snap2D(snaps2D, R1D, Z1D; kwargs...)
+function animate_snaps2D(snaps2D, R1D, Z1D; kwargs...)
     error("""
-    animate_snap2D requires a plotting package to be loaded.
+    animate_snaps2D requires a plotting package to be loaded.
 
     For Plots.jl backend:
         using Plots
@@ -168,4 +168,4 @@ function plot_comparison(snaps0D_1, snaps0D_2; kwargs...)
 end
 
 # Export plotting interface functions (implementations provided by extensions)
-export plot_snap1D, plot_snap2D, animate_snap2D, plot_comparison
+export plot_snaps0D, plot_snaps2D, animate_snaps2D, plot_comparison

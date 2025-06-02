@@ -6,7 +6,7 @@ A Julia implementation of the RAPID-2D plasma modeling code for axisymmetric
 plasma dynamics.
 
 Plotting functionality is provided through package extensions:
-- Load Plots.jl to enable RAPID2DPlotsExt with plot_snap1D, plot_snap2D, etc.
+- Load Plots.jl to enable RAPID2DPlotsExt with plot_snaps0D, plot_snaps2D, etc.
 - Load GLMakie.jl to enable RAPID2DMakieExt for high-performance plotting
 """
 module RAPID2D
@@ -114,6 +114,6 @@ end
 export create_rapid_object, initialize_simulation
 
 # Export plotting functions (actual implementations in extensions)
-export plot_snap1D, plot_snap2D, animate_snap2D, plot_comparison
+export plot_snaps0D, plot_snaps2D, animate_snaps2D, plot_comparison
 
 end # module RAPID2D
