@@ -10,6 +10,7 @@ if !isempty(ARGS) && !(length(ARGS) == 1 && ARGS[1] == "")
 else
     # Default behavior: run all tests
     include("io/wall_io_test.jl")
+    include("io/adios_io_test.jl")
 
     include("utils/utils_test.jl")
 
