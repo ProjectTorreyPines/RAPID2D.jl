@@ -59,13 +59,13 @@ Result of tracing a single magnetic field line in one direction.
 - `final_R::FT`: Final R coordinate
 - `final_Z::FT`: Final Z coordinate
 """
-mutable struct SingleTraceResult{FT<:AbstractFloat}
-    Lpol::FT
-    Lc::FT
-    min_Bpol::FT
-    steps::Int
-    is_closed::Bool
-    hit_wall::Bool
-    final_R::FT
-    final_Z::FT
+@kwdef mutable struct SingleTraceResult{FT<:AbstractFloat}
+    Lpol::FT = zero(FT)
+    Lc::FT = zero(FT)
+    min_Bpol::FT = zero(FT)
+    steps::Int = zero(FT)
+    is_closed::Bool = false
+    hit_wall::Bool = false
+    final_R::FT = zero(FT)
+    final_Z::FT = zero(FT)
 end

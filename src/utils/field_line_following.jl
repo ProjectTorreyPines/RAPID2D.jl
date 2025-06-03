@@ -175,8 +175,8 @@ function trace_single_field_line(
     Z_current = Z0
 
     # Initialize accumulated quantities
-    Lpol_total = zero(FT)
-    Lc_total = zero(FT)
+    Lpol = zero(FT)
+    Lc = zero(FT)
     min_Bpol = FT(Inf)
     steps = 0
 
@@ -187,13 +187,26 @@ function trace_single_field_line(
     # Integration step size with direction
     dl = direction * step_size
 
+
+    # Check if starting point is a null point (Bpol = 0)
+    BR = interp_BR(R_current, Z_current)
+    BZ = interp_BZ(R_current, Z_current)
+    Bpol = sqrt(BR^2 + BZ^2)
+
+    if Bpol == 0
+        return SingleTraceResult{FT}(;
+            Lpol=FT(Inf), Lc=FT(Inf), min_Bpol, steps,
+            is_closed=false, hit_wall=false, final_R = R_current, final_Z = Z_current
+        )
+    end
+
     # Main integration loop
     for step in 1:max_steps
         # Check wall boundary
         if !wall_checker(R_current, Z_current)
-            return SingleTraceResult(
-                Lpol_total, Lc_total, min_Bpol, steps,
-                false, true, R_current, Z_current
+            return SingleTraceResult{FT}(;
+                Lpol, Lc, min_Bpol, steps,
+                is_closed = false, hit_wall = true, final_R = R_current, final_Z = Z_current
             )
         end
 
@@ -212,6 +225,14 @@ function trace_single_field_line(
         Bphi = interp_Bphi(R_current, Z_current)
 
         Bpol = sqrt(BR^2 + BZ^2)
+
+        if Bpol == 0
+            return SingleTraceResult{FT}(;
+                Lpol=FT(Inf), Lc=FT(Inf), min_Bpol, steps,
+                is_closed=false, hit_wall=false, final_R = R_current, final_Z = Z_current
+            )
+        end
+
         Btot = sqrt(Bpol^2 + Bphi^2)
 
         # Calculate step lengths
@@ -219,16 +240,16 @@ function trace_single_field_line(
         dl_tot = dl_pol * Btot / Bpol
 
         # Update accumulated quantities
-        Lpol_total += dl_pol
-        Lc_total += dl_tot
+        Lpol += dl_pol
+        Lc += dl_tot
         min_Bpol = min(min_Bpol, Bpol)
         steps += 1
 
         # Check maximum poloidal length
-        if Lpol_total > max_Lpol
-            return SingleTraceResult(
-                Lpol_total, Lc_total, min_Bpol, steps,
-                false, false, R_current, Z_current
+        if Lpol > max_Lpol
+            return SingleTraceResult{FT}(;
+                Lpol, Lc, min_Bpol, steps,
+                is_closed=false, hit_wall=false, final_R = R_current, final_Z = Z_current
             )
         end
 
@@ -248,9 +269,9 @@ function trace_single_field_line(
 
                 # Check for 360° circulation
                 if abs(total_angle) >= 2π - closure_tolerance
-                    return SingleTraceResult(
-                        Lpol_total, Lc_total, min_Bpol, steps,
-                        true, false, R_current, Z_current
+                    return SingleTraceResult{FT}(;
+                        Lpol, Lc, min_Bpol, steps,
+                        is_closed=true, hit_wall=false, final_R = R_current, final_Z = Z_current
                     )
                 end
             end
@@ -261,9 +282,9 @@ function trace_single_field_line(
 
 
     # Reached maximum steps
-    return SingleTraceResult(
-        Lpol_total, Lc_total, min_Bpol, steps,
-        false, false, R_current, Z_current
+    return SingleTraceResult{FT}(;
+        Lpol, Lc, min_Bpol, steps,
+        is_closed=false, hit_wall=false, final_R = R_current, final_Z = Z_current
     )
 end
 
