@@ -320,8 +320,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     # 1. Calculate shape factor (γ_shape_fac) based on magnetic field properties
     # =========================================================================
 
-    # Normalize magnetic field quantities (similar to MATLAB lines 546-553)
-    Bpol_norm = F.Bpol ./ maximum(F.Bpol[G.nodes.in_wall_nids])
+    Bpol_norm = F.Bpol ./ mean(F.Bpol[G.nodes.in_wall_nids])
     # tan_θB = F.Bpol ./ F.Bϕ
     # tan_θB_norm = tan_θB ./ maximum(tan_θB[G.nodes.in_wall_nids])
 
