@@ -139,19 +139,19 @@ function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, field; colorscale=:auto, streaml
     R2D = R1D' .* ones(length(Z1D))
     Z2D = ones(length(R1D))' .* Z1D
 
-    # Determine color scale and limits
-    if colorscale == :auto
-        if field in [:ne, :ni]
-            colorscale = :log10
-            clims = (maximum(field_data) * 1e-3, maximum(field_data))
-        elseif field in [:Te_eV, :Ti_eV]
-            colorscale = :linear
-            clims = (0, maximum(field_data))
-        else
-            colorscale = :linear
-            clims = (minimum(field_data), maximum(field_data))
-        end
-    end
+    # # Determine color scale and limits
+    # if colorscale == :auto
+    #     if field in [:ne, :ni]
+    #         colorscale = :log10
+    #         clims = (maximum(field_data) * 1e-3, maximum(field_data))
+    #     elseif field in [:Te_eV, :Ti_eV]
+    #         colorscale = :linear
+    #         clims = (0, maximum(field_data))
+    #     else
+    #         colorscale = :linear
+    #         clims = (minimum(field_data), maximum(field_data))
+    #     end
+    # end
 
 
     # Create base heatmap
@@ -162,7 +162,7 @@ function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, field; colorscale=:auto, streaml
                 title="$(field) at t = $(round(snap2D.time_s*1e3, digits=2)) ms",
                 colorbar_title=get_field_label(field),
                 left_margin=2Plots.mm, right_margin=8Plots.mm,
-                top_margin=3Plots.mm, bottom_margin=3Plots.mm, kwargs...)
+                top_margin=3Plots.mm, bottom_margin=3Plots.mm)
 
     if colorscale == :log10
         if clims[1] <= 0

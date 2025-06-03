@@ -145,7 +145,7 @@ function animate_snaps2D(snaps2D, R1D, Z1D, field::Symbol; kwargs...)
     """)
 end
 
-function animate_snaps2D(snaps2D, R1D, Z1D, fields::AbstarctArray{Symbol}; kwargs...)
+function animate_snaps2D(snaps2D, R1D, Z1D, fields::AbstractArray{Symbol}; kwargs...)
     error("""
     animate_snaps2D requires a plotting package to be loaded.
 
