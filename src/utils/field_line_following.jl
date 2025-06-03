@@ -353,6 +353,9 @@ function flf_analysis_field_lines_rz_plane!(
         R, Z, Rmin, Zmin, NR, inv_dR, inv_dZ, cell_state
     )
 
+
+    empty!(flf.closed_surface_nids)  # Clear previous results
+
     @inbounds for i in 1:NR, j in 1:NZ
         R0, Z0 = R1D[i], Z1D[j]
 
@@ -382,7 +385,11 @@ function flf_analysis_field_lines_rz_plane!(
         flf.Lc_backward[i, j] = backward_result.Lc
         flf.min_Bpol[i, j] = min(forward_result.min_Bpol, backward_result.min_Bpol)
         flf.step[i, j] = forward_result.steps + backward_result.steps
-        flf.is_closed[i, j] = forward_result.is_closed || backward_result.is_closed
+
+        if forward_result.is_closed || backward_result.is_closed
+            flf.is_closed[i, j] = true
+            push!(flf.closed_surface_nids, (j - 1) * NR + i)  # Store linear index of closed field line
+        end
     end
 
     # Calculate total lengths

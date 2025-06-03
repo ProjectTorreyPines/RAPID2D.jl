@@ -31,11 +31,17 @@ Results structure for field line following analysis.
     step::Matrix{Int} = zeros(Int, dims_RZ)
     is_closed::Matrix{Bool} = zeros(Bool, dims_RZ)
 
+    closed_surface_nids::Vector{Int} = Int[]
+
     max_Lpol::FT = FT(0.0)
     max_step::Int = 0
 end
 
-FieldLineFollowingResult{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat} = FieldLineFollowingResult{FT}(dims_RZ=(NR, NZ))
+function FieldLineFollowingResult{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
+    flf = FieldLineFollowingResult{FT}(dims_RZ=(NR, NZ))
+    sizehint!(flf.closed_surface_nids, NR*NZ)  # Preallocate for closed surfaces
+    return flf
+end
 
 
 """

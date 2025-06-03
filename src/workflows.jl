@@ -160,6 +160,13 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
             treat_ion_outside_wall!(RP)
         end
 
+        if mod(RP.step, RP.flags.FLF_nstep)==0
+            flf_analysis_field_lines_rz_plane!(RP)
+            if !isempty(RP.flf.closed_surface_nids)
+                RP.flags.FLF_nstep=1;
+            end
+        end
+
         # Calculate self-consistent electrostatic field if enabled
         if RP.flags.E_para_self_ES
             estimate_electrostatic_field_effects!(RP)

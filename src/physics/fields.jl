@@ -13,8 +13,7 @@ Contains functions related to electromagnetic field calculations, including:
 export update_external_fields!,
        update_self_fields!,
        combine_external_and_self_fields!,
-       calculate_magnetic_field_unit_vectors!,
-       flf_analysis_of_field_lines_in_RZ_plane
+       calculate_magnetic_field_unit_vectors!
 
 # Export external field types and functions
 export AbstractExternalField, TimeSeriesExternalField
@@ -105,27 +104,6 @@ function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT<:AbstractFl
     @. F.E_para_tot = F.E_para_ext + F.E_para_self_ES + F.E_para_self_EM
 
     return RP
-end
-
-"""
-    flf_analysis_of_field_lines_in_RZ_plane(RP::RAPID{FT}) where {FT<:AbstractFloat}
-
-Perform field line following (FLF) analysis in the R-Z plane.
-Returns a dictionary with field line connection lengths and related data.
-"""
-function flf_analysis_of_field_lines_in_RZ_plane(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "flf_analysis_of_field_lines_in_RZ_plane not fully implemented yet"
-
-    # Create a placeholder FLF structure
-    FLF = Dict{Symbol, Any}(
-        :Lpol_forward => zeros(FT, RP.G.NR, RP.G.NZ),
-        :Lpol_backward => zeros(FT, RP.G.NR, RP.G.NZ),
-        :Lpol_tot => zeros(FT, RP.G.NR, RP.G.NZ),
-        :is_closed => zeros(Int, RP.G.NZ*RP.G.NR)
-    )
-
-    return FLF
 end
 
 """
@@ -392,7 +370,9 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     # # TODO: implement computing length of connection length
     # F.L_mixing .= 10.0;
     tp = RP.transport
-    tp.L_mixing .= FT(0.8)  # Placeholder value for mixing length
+    tp.L_mixing .= RP.flf.Lpol_tot
+    # smooth_data_2D!(tp.L_mixing; num_SM = 3)
+
     # # Turbulent diffusion coefficient
     # Dturb_para = 0.5 * v_(ExB) * L_mixing
     @. tp.Dturb_para = 0.5 * F.Epol_self / F.Btot * tp.L_mixing;
