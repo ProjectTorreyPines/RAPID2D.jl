@@ -11,65 +11,6 @@ using LinearAlgebra
 using RAPID2D
 
 """
-    FieldLineFollowingResult{FT<:AbstractFloat}
-
-Results structure for field line following analysis.
-
-# Fields
-- `Lpol_forward::Matrix{FT}`: Poloidal length in forward direction
-- `Lpol_backward::Matrix{FT}`: Poloidal length in backward direction
-- `Lpol_tot::Matrix{FT}`: Total poloidal length
-- `Lc_forward::Matrix{FT}`: Connection length in forward direction
-- `Lc_backward::Matrix{FT}`: Connection length in backward direction
-- `Lc_tot::Matrix{FT}`: Total connection length
-- `min_Bpol::Matrix{FT}`: Minimum poloidal field along field line
-- `step::Array{Int,2}`: Number of integration steps taken
-- `is_closed::Array{Bool,2}`: Whether field line is closed (360° circulation)
-- `max_Lpol::FT`: Maximum allowed poloidal length
-- `max_step::Int`: Maximum number of integration steps
-"""
-mutable struct FieldLineFollowingResult{FT<:AbstractFloat}
-    Lpol_forward::Matrix{FT}
-    Lpol_backward::Matrix{FT}
-    Lpol_tot::Matrix{FT}
-    Lc_forward::Matrix{FT}
-    Lc_backward::Matrix{FT}
-    Lc_tot::Matrix{FT}
-    min_Bpol::Matrix{FT}
-    step::Matrix{Int}
-    is_closed::Matrix{Bool}
-    max_Lpol::FT
-    max_step::Int
-end
-
-
-"""
-    SingleTraceResult{FT<:AbstractFloat}
-
-Result of tracing a single magnetic field line in one direction.
-
-# Fields
-- `Lpol::FT`: Poloidal length traveled
-- `Lc::FT`: Connection length traveled
-- `min_Bpol::FT`: Minimum poloidal field encountered
-- `steps::Int`: Number of integration steps taken
-- `is_closed::Bool`: Whether field line closed (360° circulation)
-- `hit_wall::Bool`: Whether field line hit the wall
-- `final_R::FT`: Final R coordinate
-- `final_Z::FT`: Final Z coordinate
-"""
-mutable struct SingleTraceResult{FT<:AbstractFloat}
-    Lpol::FT
-    Lc::FT
-    min_Bpol::FT
-    steps::Int
-    is_closed::Bool
-    hit_wall::Bool
-    final_R::FT
-    final_Z::FT
-end
-
-"""
     advance_step_along_b_rz_plane(dl, R, Z, interp_BR, interp_BZ)
 
 Advance one step along magnetic field line using 4th-order Runge-Kutta integration.
@@ -367,12 +308,15 @@ flf_result, _ = flf_analysis_field_lines_rz_plane(
 )
 ```
 """
-function flf_analysis_field_lines_rz_plane(
+function flf_analysis_field_lines_rz_plane!(
+    flf::FieldLineFollowingResult{FT},
     R1D::Vector{FT}, Z1D::Vector{FT}, BR::Matrix{FT}, BZ::Matrix{FT}, Bϕ::Matrix{FT},
     cell_state::AbstractMatrix{Bool};
     dR::Union{FT,Nothing}=nothing, dZ::Union{FT,Nothing}=nothing,
     out_wall_idx::Union{Vector{Int},Nothing}=nothing,
 ) where FT<:AbstractFloat
+
+    # @assert size(flf.Lc_tot) == (length(R1D), length(Z1D)) "FieldLineFollowingResult size mismatch"
 
     # Compute grid spacing if not provided
     if dR === nothing
@@ -381,6 +325,8 @@ function flf_analysis_field_lines_rz_plane(
     if dZ === nothing
         dZ = length(Z1D) > 1 ? Z1D[2] - Z1D[1] : one(FT)
     end
+
+    NR, NZ = length(R1D), length(Z1D)
 
     # Grid parameters
     Rmin = R1D[1]
@@ -399,24 +345,15 @@ function flf_analysis_field_lines_rz_plane(
     max_Lpol = FT(3) * sqrt((maximum(R1D) - minimum(R1D))^2 + (maximum(Z1D) - minimum(Z1D))^2)
     max_step_per_direction = floor(Int, max_Lpol / step_size)
 
+    flf.max_Lpol = max_Lpol
+    flf.max_step = 2 * max_step_per_direction
+
     # Create wall checker function
     wall_checker = (R, Z) -> is_in_wall_by_cell_state(
-        R, Z, Rmin, Zmin, length(R1D), inv_dR, inv_dZ, cell_state
+        R, Z, Rmin, Zmin, NR, inv_dR, inv_dZ, cell_state
     )
 
-    # Initialize result arrays
-    NR, NZ_grid = length(R1D), length(Z1D)
-    Lpol_forward = zeros(FT, NR, NZ_grid)
-    Lpol_backward = zeros(FT, NR, NZ_grid)
-    Lc_forward = zeros(FT, NR, NZ_grid)
-    Lc_backward = zeros(FT, NR, NZ_grid)
-    min_Bpol = zeros(FT, NR, NZ_grid)
-    step_count = zeros(Int, NR, NZ_grid)
-    is_closed = zeros(Bool, NR, NZ_grid)
-
-
-    # Sequential processing
-    @inbounds for i in 1:NR, j in 1:NZ_grid
+    @inbounds for i in 1:NR, j in 1:NZ
         R0, Z0 = R1D[i], Z1D[j]
 
         # Forward tracing
@@ -439,46 +376,59 @@ function flf_analysis_field_lines_rz_plane(
         end
 
         # Store results
-        Lpol_forward[i, j] = forward_result.Lpol
-        Lpol_backward[i, j] = backward_result.Lpol
-        Lc_forward[i, j] = forward_result.Lc
-        Lc_backward[i, j] = backward_result.Lc
-        min_Bpol[i, j] = min(forward_result.min_Bpol, backward_result.min_Bpol)
-        step_count[i, j] = forward_result.steps + backward_result.steps
-        is_closed[i, j] = forward_result.is_closed || backward_result.is_closed
+        flf.Lpol_forward[i, j] = forward_result.Lpol
+        flf.Lpol_backward[i, j] = backward_result.Lpol
+        flf.Lc_forward[i, j] = forward_result.Lc
+        flf.Lc_backward[i, j] = backward_result.Lc
+        flf.min_Bpol[i, j] = min(forward_result.min_Bpol, backward_result.min_Bpol)
+        flf.step[i, j] = forward_result.steps + backward_result.steps
+        flf.is_closed[i, j] = forward_result.is_closed || backward_result.is_closed
     end
 
     # Calculate total lengths
-    Lpol_tot = Lpol_forward + Lpol_backward
-    Lc_tot = Lc_forward + Lc_backward
+    @. flf.Lpol_tot = flf.Lpol_forward + flf.Lpol_backward
+    @. flf.Lc_tot = flf.Lc_forward + flf.Lc_backward
 
     # Handle closed field lines (total = forward = backward for closed lines)
-    Lpol_backward[is_closed] = Lpol_forward[is_closed]
-    Lc_backward[is_closed] = Lc_forward[is_closed]
+    @. flf.Lpol_backward[flf.is_closed] = flf.Lpol_forward[flf.is_closed]
+    @. flf.Lc_backward[flf.is_closed] = flf.Lc_forward[flf.is_closed]
 
     # For closed field lines, total equals one direction
-    Lpol_tot[is_closed] = Lpol_forward[is_closed]
-    Lc_tot[is_closed] = Lc_forward[is_closed]
+    @. flf.Lpol_tot[flf.is_closed] = flf.Lpol_forward[flf.is_closed]
+    @. flf.Lc_tot[flf.is_closed] = flf.Lc_forward[flf.is_closed]
 
     # Set NaN values for points outside wall
     if out_wall_idx !== nothing
-        min_Bpol[out_wall_idx] .= FT(NaN)
+        @. flf.min_Bpol[out_wall_idx] = FT(NaN)
     end
 
-    # Create result structure
-    flf = FieldLineFollowingResult(
-        Lpol_forward, Lpol_backward, Lpol_tot,
-        Lc_forward, Lc_backward, Lc_tot,
-        min_Bpol, step_count, is_closed,
-        max_Lpol, 2 * max_step_per_direction
-    )
-
     return flf
+end
+
+function flf_analysis_field_lines_rz_plane(
+    R1D::Vector{FT}, Z1D::Vector{FT}, BR::Matrix{FT}, BZ::Matrix{FT}, Bϕ::Matrix{FT},
+    cell_state::AbstractMatrix{Bool};
+    dR::Union{FT,Nothing}=nothing, dZ::Union{FT,Nothing}=nothing,
+    out_wall_idx::Union{Vector{Int},Nothing}=nothing,
+) where FT<:AbstractFloat
+
+    flf = FieldLineFollowingResult{FT}(; dims_RZ = (length(R1D), length(Z1D)))
+    return flf_analysis_field_lines_rz_plane!(flf, R1D, Z1D, BR, BZ, Bϕ, cell_state;
+                                       dR, dZ, out_wall_idx)
 end
 
 # Convenience dispatch for RAPID object
 function flf_analysis_field_lines_rz_plane(RP::RAPID)
     return flf_analysis_field_lines_rz_plane(
+        RP.G.R1D, RP.G.Z1D, RP.fields.BR, RP.fields.BZ, RP.fields.Bϕ,
+        RP.G.cell_state.>=0; # Use cell_state as boolean mask
+        dR=RP.G.dR, dZ=RP.G.dZ,
+        out_wall_idx=RP.G.nodes.out_wall_nids
+    )
+end
+
+function flf_analysis_field_lines_rz_plane!(RP::RAPID)
+    return flf_analysis_field_lines_rz_plane!(RP.flf,
         RP.G.R1D, RP.G.Z1D, RP.fields.BR, RP.fields.BZ, RP.fields.Bϕ,
         RP.G.cell_state.>=0; # Use cell_state as boolean mask
         dR=RP.G.dR, dZ=RP.G.dZ,

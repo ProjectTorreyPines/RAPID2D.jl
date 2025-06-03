@@ -8,6 +8,7 @@ import RAPID2D: PlasmaConstants
 
 include("diagnostics/types.jl")
 include("io/types.jl")
+include("utils/types.jl")
 
 
 # Abstract types for reaction rate coefficients for a specific species
@@ -673,6 +674,9 @@ mutable struct RAPID{FT<:AbstractFloat}
     tElap::Dict{Symbol, Float64}      # Elapsed times
     diagnostics::Diagnostics   # Diagnostic data
 
+    # Field-Line-Following analysis
+    flf::FieldLineFollowingResult{FT}  # Results of field line following analysis
+
     # File IO
     AW_snap0D::AdiosFileWrapper    # Wrapped AdiosFile for 0D snapshots
     AW_snap2D::AdiosFileWrapper    # Wrapped AdiosFile for 2D snapshots
@@ -705,6 +709,8 @@ mutable struct RAPID{FT<:AbstractFloat}
         dim_tt_2D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap2D_Δt_s)) + 1
         diagnostics = Diagnostics{FT}(G.NR, G.NZ, dim_tt_0D, dim_tt_2D)
 
+        flf = FieldLineFollowingResult{FT}(NR, NZ)
+
         # Create AdiosFileWrapper instances for snapshots
         prefixName = joinpath(config.Output_path, config.Output_prefix)
         AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
@@ -718,6 +724,7 @@ mutable struct RAPID{FT<:AbstractFloat}
             config, flags, plasma, fields, transport, operators,
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
             prev_n, tElap, diagnostics,
+            flf,
             AW_snap0D, AW_snap2D
         )
     end

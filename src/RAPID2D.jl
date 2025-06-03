@@ -55,6 +55,7 @@ include("io/adios_io.jl")
 
 # Include utility functions
 include("utils/grid.jl")  # Grid-related utility functions
+include("utils/field_line_following.jl")
 include("utils/utils.jl")
 
 # Export types from various modules for convenience
