@@ -129,7 +129,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             end
 
             # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
-            accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
+            if RP.flags.Include_ud_pressure_term
+                accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
+            end
 
             # #4: collision drag force  (1-θ)*[-(ν_tot)*ue_para]
             @. accel_para_tilde += (one_FT - θu) * (-tot_coll_freq * pla.ue_para)
@@ -161,8 +163,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
                                 )
 
             # Add pressure and convection terms in the same way as MATLAB
-            accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
-             @. pla.ue_para +=  inv_factor * dt * ( accel_by_pressure )
+            if RP.flags.Include_ud_pressure_term
+                accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
+                @. pla.ue_para +=  inv_factor * dt * ( accel_by_pressure )
+            end
 
             if RP.flags.Include_ud_convec_term
                 accel_by_grad_ud = calculate_electron_acceleration_by_convection(RP)

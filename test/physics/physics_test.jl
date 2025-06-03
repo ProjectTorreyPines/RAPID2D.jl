@@ -108,6 +108,7 @@ end
     RP.flags.convec = true     # Enable convection
     RP.flags.src = true        # Enable sources
 	RP.flags.Include_ud_convec_term = false
+	RP.flags.Include_ud_pressure_term = false
     # RP.flags.Ionz_method = "Townsend_coeff"
     RP.flags.Ionz_method = "Xsec"
 	# -6.50391e5
