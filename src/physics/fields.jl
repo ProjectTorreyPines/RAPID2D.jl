@@ -161,20 +161,20 @@ External fields should be updated separately using `update_external_fields!` bef
 Self-generated fields should be updated using appropriate physics functions.
 """
 function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+    @timeit RAPID_TIMER "combine_external_and_self_fields!" begin
+        F = RP.fields
 
-    F = RP.fields
+        # Combine external and self-generated fields
+        @. F.BR = F.BR_ext + F.BR_self
+        @. F.BZ = F.BZ_ext + F.BZ_self
+        @. F.Eϕ = F.Eϕ_ext + F.Eϕ_self
+        @. F.psi = F.psi_ext + F.psi_self
 
-    # Combine external and self-generated fields
-    @. F.BR = F.BR_ext + F.BR_self
-    @. F.BZ = F.BZ_ext + F.BZ_self
-    @. F.Eϕ = F.Eϕ_ext + F.Eϕ_self
-    @. F.psi = F.psi_ext + F.psi_self
-
-    # Update derived magnetic field quantities (Bpol, Btot, unit b vector)
-    calculate_derived_magnetic_field_quantities!(RP)
-    calculate_parallel_electric_field!(RP)
-
-    return RP
+        # Update derived magnetic field quantities (Bpol, Btot, unit b vector)
+        calculate_derived_magnetic_field_quantities!(RP)
+        calculate_parallel_electric_field!(RP)
+        return RP
+    end
 end
 
 # -----------------------------------------------------------------------------

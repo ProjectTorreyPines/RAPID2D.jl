@@ -66,6 +66,9 @@ export validate_config!
 Initialize all components of the RAPID simulation.
 """
 function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Reset the global timer for fresh timing measurements
+    reset_timer!(RAPID_TIMER)
+
     # Validate configuration parameters first
     validate_config!(RP.config)
 

@@ -8,6 +8,10 @@ Contains functions related to plasma physics models, including:
 - Power balance
 """
 
+using TimerOutputs
+
+# Use the global timer from the main module
+
 # Export public functions
 export update_ue_para!,
        update_ui_para!,
@@ -30,14 +34,15 @@ export update_ue_para!,
 Update the parallel electron velocity.
 """
 function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Define constants at function start for type stability
-    one_FT = one(FT)
-    zero_FT = zero(FT)
+    @timeit RAPID_TIMER "update_ue_para!" begin
+        # Define constants at function start for type stability
+        one_FT = one(FT)
+        zero_FT = zero(FT)
 
-    # Update method depends on flag
-    if RP.flags.ud_method == "Lloyd_fit"
-        # Simple fit for drift velocity
-        @. RP.plasma.ue_para = 5719.0 * (-RP.fields.E_para_tot / RP.config.prefilled_gas_pressure)
+        # Update method depends on flag
+        if RP.flags.ud_method == "Lloyd_fit"
+            # Simple fit for drift velocity
+            @. RP.plasma.ue_para = 5719.0 * (-RP.fields.E_para_tot / RP.config.prefilled_gas_pressure)
 
     elseif RP.flags.ud_method == "Xsec_fit"
         # Cross section fit with simplified collisions
@@ -153,7 +158,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             @. OP.RHS = pla.ue_para + dt * accel_para_tilde
 
             # Solve the momentum equation
-            pla.ue_para .= OP.A_LHS \ OP.RHS
+            @timeit RAPID_TIMER "ue_para LinearSolve" begin
+                pla.ue_para .= OP.A_LHS \ OP.RHS
+            end
         else
 
             inv_factor = @. one_FT / (one_FT + θu * tot_coll_freq * dt)
@@ -178,11 +185,12 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += mom_eff_nu_ei * (-θu * pla.ue_para)
         end
-    else
+        else
         error("Unknown electron drift velocity method: $(RP.flags.ud_method)")
     end
 
     return RP
+    end # @timeit
 end
 
 
@@ -200,7 +208,8 @@ end
 Update the parallel ion velocity.
 """
 function update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    if RP.flags.ud_method == "Xsec"
+    @timeit RAPID_TIMER "update_ui_para!" begin
+        if RP.flags.ud_method == "Xsec"
         # Use cross sections for ion velocity update
         # Alias
         cnst = RP.config.constants
@@ -251,8 +260,9 @@ function update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             end
             pla.ui_para .+= RP.dt * Rui_ei
         end
-    else
-        error("Ion velocity update only implemented for ud_method = Xsec")
+        else
+            error("Ion velocity update only implemented for ud_method = Xsec")
+        end
     end
 end
 
@@ -273,8 +283,9 @@ where:
 The implementation supports both explicit and implicit time integration schemes.
 """
 function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Update power terms for energy equation
-    update_electron_heating_powers!(RP)
+    @timeit RAPID_TIMER "update_Te!" begin
+        # Update power terms for energy equation
+        update_electron_heating_powers!(RP)
 
     ee = RP.config.constants.ee
     dt = RP.dt
@@ -297,7 +308,9 @@ function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             OP.A_LHS = OP.II - dt*θimp*(OP.∇𝐃∇ - OP.𝐮∇ + spdiagm(div_u[:]/FT(3.0)))
 
             # Solve the linear system
-            pla.Te_eV .= OP.A_LHS \ OP.RHS
+            @timeit RAPID_TIMER "Te_eV LinearSolve" begin
+                pla.Te_eV .= OP.A_LHS \ OP.RHS
+            end
         end
     else
         # Explicit method (forward Euler)
@@ -309,6 +322,7 @@ function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @. pla.Te_eV = min(pla.Te_eV, RP.config.max_Te)
 
     return RP
+    end # @timeit
 end
 
 """
@@ -334,6 +348,7 @@ where P_ion_heating includes atomic collision heating and equilibration with ele
 - Sets ion temperature equal to electron temperature if Ti_evolve is disabled
 """
 function update_Ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    @timeit RAPID_TIMER "update_Ti!" begin
     # Update ion heating power terms
     update_ion_heating_powers!(RP)
 
@@ -349,6 +364,7 @@ function update_Ti!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @. pla.Ti_eV = min(pla.Ti_eV, RP.config.max_Te)
 
     return RP
+    end # @timeit
 end
 
 """
@@ -372,6 +388,7 @@ Update electron heating power components for electron energy equation.
 - All powers stored in the RP.plasma.ePowers struct
 """
 function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    @timeit RAPID_TIMER "update_electron_heating_powers!" begin
     # Ionization energy for H2 molecule (H2->H2+ + e-) in eV
     iz_erg_eV = FT(15.46)
 
@@ -497,6 +514,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
     end
 
     return RP
+    end # @timeit
 end
 
 """
@@ -525,6 +543,7 @@ The power calculation includes:
 - Sets power to zero outside wall boundaries
 """
 function update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    @timeit RAPID_TIMER "update_ion_heating_powers!" begin
     # Define type-stable constants
     zero_FT = zero(FT)
 
@@ -590,6 +609,7 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     end
 
     return RP
+    end # @timeit
 end
 
 """
@@ -633,53 +653,56 @@ Solve the electron continuity equation to update electron density.
 Uses either explicit or implicit time integration based on RP.flags.Implicit.
 """
 function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFloat
-    # Alias for readability
-    op = RP.operators
-    # Get time step from RP
-    dt = RP.dt
-    pla = RP.plasma
+    @timeit RAPID_TIMER "solve_electron_continuity_equation!" begin
+        # Alias for readability
+        op = RP.operators
+        # Get time step from RP
+        dt = RP.dt
+        pla = RP.plasma
 
-    # Store previous density state for transport calculations
-    RP.prev_n .= RP.plasma.ne
+        # Store previous density state for transport calculations
+        RP.prev_n .= RP.plasma.ne
 
-    # Calculate source terms for electron density
-    fill!(op.RHS, zero(FT))  # Reset RHS to zero
-    if RP.flags.src
-        # ne * ν_iz = ne * nH2_gas * eRRC_iz
-        calculate_ν_iz!(RP)
-        op.RHS += pla.ne .* pla.ν_iz
-    end
+        # Calculate source terms for electron density
+        fill!(op.RHS, zero(FT))  # Reset RHS to zero
+        if RP.flags.src
+            # ne * ν_iz = ne * nH2_gas * eRRC_iz
+            calculate_ν_iz!(RP)
+            op.RHS += pla.ne .* pla.ν_iz
+        end
 
-    if RP.flags.diffu
-        # ∇⋅𝐃⋅∇n
-        update_∇𝐃∇_operator!(RP)
-        op.RHS .+= compute_∇𝐃∇f_directly(RP, pla.ne)
-    end
-    if RP.flags.convec
-        # -∇⋅(n 𝐮)
-        update_∇𝐮_operator!(RP)
-        op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
-    end
+        if RP.flags.diffu
+            # ∇⋅𝐃⋅∇n
+            update_∇𝐃∇_operator!(RP)
+            op.RHS .+= compute_∇𝐃∇f_directly(RP, pla.ne)
+        end
+        if RP.flags.convec
+            # -∇⋅(n 𝐮)
+            update_∇𝐮_operator!(RP)
+            op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
+        end
 
-    # update electron density
-    if RP.flags.Implicit
-        # Implicit method implementation
-        # Weight for implicit method (0.0 = fully explicit, 1.0 = fully implicit)
-        θn = RP.flags.Implicit_weight
+        # update electron density
+        if RP.flags.Implicit
+            # Implicit method implementation
+            # Weight for implicit method (0.0 = fully explicit, 1.0 = fully implicit)
+            θn = RP.flags.Implicit_weight
 
-        # Build full RHS with explicit contribution
-        @. op.RHS = pla.ne + dt * (one(FT) - θn) * op.RHS
+            # Build full RHS with explicit contribution
+            @. op.RHS = pla.ne + dt * (one(FT) - θn) * op.RHS
 
-        # Build LHS operator
-        @. op.A_LHS = op.II - θn*dt* (op.∇𝐃∇ - op.∇𝐮 + op.ν_iz)
+            # Build LHS operator
+            @. op.A_LHS = op.II - θn*dt* (op.∇𝐃∇ - op.∇𝐮 + op.ν_iz)
 
-        # Solve the linear system
-        @views pla.ne[:] = op.A_LHS \ op.RHS[:]
-    else
-        @. RP.plasma.ne += dt * op.RHS
-    end
-
-    return RP
+            # Solve the linear system
+            @timeit RAPID_TIMER "ne LinearSolve`" begin
+                pla.ne .= op.A_LHS \ op.RHS
+            end
+        else
+            @. RP.plasma.ne += dt * op.RHS
+        end
+        return RP
+    end # @timeit
 end
 
 """
@@ -707,6 +730,7 @@ This function performs three main operations:
 - `RP`: Modified RAPID object with updated electron density and particle tracking
 """
 function treat_electron_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
+    @timeit RAPID_TIMER "treat_electron_outside_wall!" begin
     # Estimate the number of electrons generated by ionization
     if RP.flags.Implicit
         θimp = RP.flags.Implicit_weight
@@ -748,6 +772,7 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
     end
 
     return RP
+    end # @timeit
 end
 
 
@@ -766,6 +791,7 @@ electrons from ion wall impacts, and optionally corrects negative densities.
 - Modified `RP` object with updated ion density and temperature boundary conditions
 """
 function treat_ion_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
+    @timeit RAPID_TIMER "treat_ion_outside_wall!" begin
     # Estimate the number of ions generated by ionization
     # NOTE: ν_iz must be multiplied by the electron density to get the ionization rate
     # In other words, Ne_iz = Ni_iz
@@ -809,6 +835,7 @@ function treat_ion_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
     end
 
     return RP
+    end # @timeit
 end
 
 """

@@ -78,34 +78,36 @@ where:
 - Performance is enhanced with @fastmath macro for interior calculations
 """
 function compute_∇𝐃∇f_directly(RP::RAPID{FT}, f::AbstractMatrix{FT}) where {FT<:AbstractFloat}
-    # Alias necessary fields from the RP object
-    G = RP.G
-    inv_Jacob = G.inv_Jacob
-    NR, NZ = G.NR, G.NZ
+    @timeit RAPID_TIMER "compute_∇𝐃∇f_directly" begin
+        # Alias necessary fields from the RP object
+        G = RP.G
+        inv_Jacob = G.inv_Jacob
+        NR, NZ = G.NR, G.NZ
 
-    CTRR = RP.transport.CTRR
-    CTRZ = RP.transport.CTRZ
-    CTZZ = RP.transport.CTZZ
+        CTRR = RP.transport.CTRR
+        CTRZ = RP.transport.CTRZ
+        CTZZ = RP.transport.CTZZ
 
-    ∇𝐃∇f = zeros(FT, size(f))
+        ∇𝐃∇f = zeros(FT, size(f))
 
-    @inbounds for j in 2:NZ-1
-        for i in 2:NR-1
-            # Using @fastmath for potential performance improvements
-            @fastmath ∇𝐃∇f[i,j] = inv_Jacob[i,j]*(
-                +0.5*(CTRR[i+1,j]+CTRR[i,j])*(f[i+1,j]-f[i,j])
-                -0.5*(CTRR[i-1,j]+CTRR[i,j])*(f[i,j]-f[i-1,j])
-                +0.125*(CTRZ[i+1,j]+CTRZ[i,j])*(f[i,j+1]+f[i+1,j+1]-f[i,j-1]-f[i+1,j-1])
-                -0.125*(CTRZ[i-1,j]+CTRZ[i,j])*(f[i,j+1]+f[i-1,j+1]-f[i,j-1]-f[i-1,j-1])
-                +0.125*(CTRZ[i,j+1]+CTRZ[i,j])*(f[i+1,j]+f[i+1,j+1]-f[i-1,j]-f[i-1,j+1])
-                -0.125*(CTRZ[i,j-1]+CTRZ[i,j])*(f[i+1,j]+f[i+1,j-1]-f[i-1,j]-f[i-1,j-1])
-                +0.5*(CTZZ[i,j+1]+CTZZ[i,j])*(f[i,j+1]-f[i,j])
-                -0.5*(CTZZ[i,j-1]+CTZZ[i,j])*(f[i,j]-f[i,j-1])
-            )
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                # Using @fastmath for potential performance improvements
+                @fastmath ∇𝐃∇f[i,j] = inv_Jacob[i,j]*(
+                    +0.5*(CTRR[i+1,j]+CTRR[i,j])*(f[i+1,j]-f[i,j])
+                    -0.5*(CTRR[i-1,j]+CTRR[i,j])*(f[i,j]-f[i-1,j])
+                    +0.125*(CTRZ[i+1,j]+CTRZ[i,j])*(f[i,j+1]+f[i+1,j+1]-f[i,j-1]-f[i+1,j-1])
+                    -0.125*(CTRZ[i-1,j]+CTRZ[i,j])*(f[i,j+1]+f[i-1,j+1]-f[i,j-1]-f[i-1,j-1])
+                    +0.125*(CTRZ[i,j+1]+CTRZ[i,j])*(f[i+1,j]+f[i+1,j+1]-f[i-1,j]-f[i-1,j+1])
+                    -0.125*(CTRZ[i,j-1]+CTRZ[i,j])*(f[i+1,j]+f[i+1,j-1]-f[i-1,j]-f[i-1,j-1])
+                    +0.5*(CTZZ[i,j+1]+CTZZ[i,j])*(f[i,j+1]-f[i,j])
+                    -0.5*(CTZZ[i,j-1]+CTZZ[i,j])*(f[i,j]-f[i,j-1])
+                )
+            end
         end
-    end
 
-    return ∇𝐃∇f
+        return ∇𝐃∇f
+    end
 end
 
 """
@@ -407,9 +409,11 @@ Initialize the sparse matrix representation of the diffusion operator [∇𝐃�
 - Uses `update_∇𝐃∇_operator!` to populate the non-zero values
 """
 function construct_∇𝐃∇_operator(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    ∇𝐃∇ = allocate_∇𝐃∇_operator_pattern(RP)
-    update_∇𝐃∇_operator!(RP; ∇𝐃∇)
-    return ∇𝐃∇
+    @timeit RAPID_TIMER "construct_∇𝐃∇_operator" begin
+        ∇𝐃∇ = allocate_∇𝐃∇_operator_pattern(RP)
+        update_∇𝐃∇_operator!(RP; ∇𝐃∇)
+        return ∇𝐃∇
+    end
 end
 
 """
@@ -477,53 +481,55 @@ Update the non-zero entries of the diffusion operator matrix based on the curren
 - The function updates the non-zero entries of the matrix based on the current state of the RAPID object.
 """
 function update_∇𝐃∇_operator!(RP::RAPID{FT}; ∇𝐃∇::DiscretizedOperator=RP.operators.∇𝐃∇) where {FT<:AbstractFloat}
-    @assert !isempty(∇𝐃∇.matrix.nzval) "Diffusion operator not initialized"
+    @timeit RAPID_TIMER "update_∇𝐃∇_operator!" begin
+        @assert !isempty(∇𝐃∇.matrix.nzval) "Diffusion operator not initialized"
 
-    # Alias necessary fields from the RP object
-    inv_Jacob = RP.G.inv_Jacob
-    NR, NZ = RP.G.NR, RP.G.NZ
+        # Alias necessary fields from the RP object
+        inv_Jacob = RP.G.inv_Jacob
+        NR, NZ = RP.G.NR, RP.G.NZ
 
-    CTRR = RP.transport.CTRR
-    CTRZ = RP.transport.CTRZ
-    CTZZ = RP.transport.CTZZ
+        CTRR = RP.transport.CTRR
+        CTRZ = RP.transport.CTRZ
+        CTZZ = RP.transport.CTZZ
 
-    # define constants with FT for type stability
-    half = FT(0.5)
-    eighth = FT(0.125)
-    two_FT = FT(2.0)
-    zero_FT = zero(FT)
+        # define constants with FT for type stability
+        half = FT(0.5)
+        eighth = FT(0.125)
+        two_FT = FT(2.0)
+        zero_FT = zero(FT)
 
-    # Alias the existing sparse matrix for readability
-    nzval = ∇𝐃∇.matrix.nzval
-    k2csc = ∇𝐃∇.k2csc
+        # Alias the existing sparse matrix for readability
+        nzval = ∇𝐃∇.matrix.nzval
+        k2csc = ∇𝐃∇.k2csc
 
-    k = 1
+        k = 1
 
-    @inbounds for j in 2:NZ-1
-        for i in 2:NR-1
-            factor = inv_Jacob[i,j]
+        @inbounds for j in 2:NZ-1
+            for i in 2:NR-1
+                factor = inv_Jacob[i,j]
 
-            nzval[k2csc[k]]   = factor * (half*(CTRR[i+1,j]+CTRR[i,j]) + eighth*(CTRZ[i,j+1]-CTRZ[i,j-1])) # East [i+1,j]
-            nzval[k2csc[k+1]] = factor * (half*(CTRR[i-1,j]+CTRR[i,j]) - eighth*(CTRZ[i,j+1]-CTRZ[i,j-1])) # West [i-1,j]
-            nzval[k2csc[k+2]] = factor * (half*(CTZZ[i,j+1]+CTZZ[i,j]) + eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # North [i,j+1]
-            nzval[k2csc[k+3]] = factor * (half*(CTZZ[i,j-1]+CTZZ[i,j]) - eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # South [i,j-1]
+                nzval[k2csc[k]]   = factor * (half*(CTRR[i+1,j]+CTRR[i,j]) + eighth*(CTRZ[i,j+1]-CTRZ[i,j-1])) # East [i+1,j]
+                nzval[k2csc[k+1]] = factor * (half*(CTRR[i-1,j]+CTRR[i,j]) - eighth*(CTRZ[i,j+1]-CTRZ[i,j-1])) # West [i-1,j]
+                nzval[k2csc[k+2]] = factor * (half*(CTZZ[i,j+1]+CTZZ[i,j]) + eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # North [i,j+1]
+                nzval[k2csc[k+3]] = factor * (half*(CTZZ[i,j-1]+CTZZ[i,j]) - eighth*(CTRZ[i+1,j]-CTRZ[i-1,j])) # South [i,j-1]
 
-            two_CTRZ = two_FT * CTRZ[i,j]
-            nzval[k2csc[k+4]] = factor * (eighth*( two_CTRZ + CTRZ[i+1,j]+CTRZ[i,j+1]))  # Northeast [i+1,j+1]
-            nzval[k2csc[k+5]] = factor * (eighth*( two_CTRZ + CTRZ[i-1,j]+CTRZ[i,j-1]))  # Southwest [i-1,j-1]
-            nzval[k2csc[k+6]] = factor * (-eighth*( two_CTRZ + CTRZ[i,j+1]+CTRZ[i-1,j])) # Northwest [i-1,j+1]
-            nzval[k2csc[k+7]] = factor * (-eighth*( two_CTRZ + CTRZ[i,j-1]+CTRZ[i+1,j])) # Southeast [i+1,j-1]
+                two_CTRZ = two_FT * CTRZ[i,j]
+                nzval[k2csc[k+4]] = factor * (eighth*( two_CTRZ + CTRZ[i+1,j]+CTRZ[i,j+1]))  # Northeast [i+1,j+1]
+                nzval[k2csc[k+5]] = factor * (eighth*( two_CTRZ + CTRZ[i-1,j]+CTRZ[i,j-1]))  # Southwest [i-1,j-1]
+                nzval[k2csc[k+6]] = factor * (-eighth*( two_CTRZ + CTRZ[i,j+1]+CTRZ[i-1,j])) # Northwest [i-1,j+1]
+                nzval[k2csc[k+7]] = factor * (-eighth*( two_CTRZ + CTRZ[i,j-1]+CTRZ[i+1,j])) # Southeast [i+1,j-1]
 
-            nzval[k2csc[k+8]] = zero_FT
-            @inbounds for t in 0:7
-                nzval[k2csc[k+8]] -= nzval[k2csc[k+t]]
+                nzval[k2csc[k+8]] = zero_FT
+                @inbounds for t in 0:7
+                    nzval[k2csc[k+8]] -= nzval[k2csc[k+t]]
+                end
+
+                k += 9
             end
-
-            k += 9
         end
-    end
 
-    return RP
+        return RP
+    end
 end
 
 
@@ -571,71 +577,73 @@ function compute_𝐮∇f_directly(
     ;
     flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
-    # Alias necessary fields from the RP object
-    G = RP.G
-    NR, NZ = G.NR, G.NZ
-    dR, dZ = G.dR, G.dZ
+    @timeit RAPID_TIMER "compute_𝐮∇f_directly" begin
+        # Alias necessary fields from the RP object
+        G = RP.G
+        NR, NZ = G.NR, G.NZ
+        dR, dZ = G.dR, G.dZ
 
-    # Precompute inverse values for faster calculation (multiplication instead of division)
-    inv_dR = one(FT) / dR
-    inv_dZ = one(FT) / dZ
+        # Precompute inverse values for faster calculation (multiplication instead of division)
+        inv_dR = one(FT) / dR
+        inv_dZ = one(FT) / dZ
 
-    # Cache common constants with proper type once
-    zero_val = zero(FT)
-    eps_val = eps(FT)
-    half = FT(0.5)  # Define half once with correct type
+        # Cache common constants with proper type once
+        zero_val = zero(FT)
+        eps_val = eps(FT)
+        half = FT(0.5)  # Define half once with correct type
 
 
-    𝐮∇f = zeros(size(f))
+        𝐮∇f = zeros(size(f))
 
-    # Apply appropriate differencing scheme based on upwind flag and velocity
-    # Move the upwind flag check outside the loop for better performance
-    if flag_upwind
-        # Upwind scheme with check for zero velocity
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                # R-direction convection flux with upwind scheme
-                if abs(uR[i, j]) < eps_val
-                    # Zero velocity, use central differencing
-                    uR_∇f = uR[i, j] * half * inv_dR * (f[i+1, j] - f[i-1, j])
-                elseif uR[i, j] > zero_val
-                    # Flow from left to right, use left (upwind) node
-                    uR_∇f = uR[i, j] * inv_dR * (f[i, j] - f[i-1, j])
-                else
-                    # Flow from right to left, use right (upwind) node
-                    uR_∇f = uR[i, j] * inv_dR * (f[i+1, j] - f[i, j])
+        # Apply appropriate differencing scheme based on upwind flag and velocity
+        # Move the upwind flag check outside the loop for better performance
+        if flag_upwind
+            # Upwind scheme with check for zero velocity
+            @inbounds for j in 2:NZ-1
+                for i in 2:NR-1
+                    # R-direction convection flux with upwind scheme
+                    if abs(uR[i, j]) < eps_val
+                        # Zero velocity, use central differencing
+                        uR_∇f = uR[i, j] * half * inv_dR * (f[i+1, j] - f[i-1, j])
+                    elseif uR[i, j] > zero_val
+                        # Flow from left to right, use left (upwind) node
+                        uR_∇f = uR[i, j] * inv_dR * (f[i, j] - f[i-1, j])
+                    else
+                        # Flow from right to left, use right (upwind) node
+                        uR_∇f = uR[i, j] * inv_dR * (f[i+1, j] - f[i, j])
+                    end
+
+                    # Z-direction convection flux with upwind scheme
+                    if abs(uZ[i, j]) < eps_val
+                        # Zero velocity, use central differencing
+                        uZ_∇f = uZ[i, j] * half * inv_dZ * (f[i, j+1] - f[i, j-1])
+                    elseif uZ[i, j] > zero_val
+                        # Flow from bottom to top, use bottom (upwind) node
+                        uZ_∇f = uZ[i, j] * inv_dZ * (f[i, j] - f[i, j-1])
+                    else
+                        # Flow from top to bottom, use top (upwind) node
+                        uZ_∇f = uZ[i, j] * inv_dZ * (f[i, j+1] - f[i, j])
+                    end
+
+                    # Calculate the convective-flux divergance [∇f𝐮]
+                    𝐮∇f[i, j] = uR_∇f + uZ_∇f
                 end
-
-                # Z-direction convection flux with upwind scheme
-                if abs(uZ[i, j]) < eps_val
-                    # Zero velocity, use central differencing
-                    uZ_∇f = uZ[i, j] * half * inv_dZ * (f[i, j+1] - f[i, j-1])
-                elseif uZ[i, j] > zero_val
-                    # Flow from bottom to top, use bottom (upwind) node
-                    uZ_∇f = uZ[i, j] * inv_dZ * (f[i, j] - f[i, j-1])
-                else
-                    # Flow from top to bottom, use top (upwind) node
-                    uZ_∇f = uZ[i, j] * inv_dZ * (f[i, j+1] - f[i, j])
+            end
+        else
+            # Central differencing for both directions (simpler logic)
+            @inbounds for j in 2:NZ-1
+                for i in 2:NR-1
+                    𝐮∇f[i, j] = (
+                        +uR[i, j] * half * inv_dR * (f[i+1, j] - f[i-1, j])
+                        +
+                        uZ[i, j] * half * inv_dZ * (f[i, j+1] - f[i, j-1])
+                    )
                 end
-
-                # Calculate the convective-flux divergance [∇f𝐮]
-                𝐮∇f[i, j] = uR_∇f + uZ_∇f
             end
         end
-    else
-        # Central differencing for both directions (simpler logic)
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                𝐮∇f[i, j] = (
-                    +uR[i, j] * half * inv_dR * (f[i+1, j] - f[i-1, j])
-                    +
-                    uZ[i, j] * half * inv_dZ * (f[i, j+1] - f[i, j-1])
-                )
-            end
-        end
+
+        return 𝐮∇f
     end
-
-    return 𝐮∇f
 end
 
 
@@ -664,13 +672,15 @@ function construct_𝐮∇_operator(RP::RAPID{FT},
                             uR::AbstractMatrix{FT}=RP.plasma.ueR,
                             uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
                             flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
-    # Create the sparsity patter
-    𝐮∇ = allocate_𝐮∇_operator_pattern(RP)
+    @timeit RAPID_TIMER "construct_𝐮∇_operator" begin
+        # Create the sparsity patter
+        𝐮∇ = allocate_𝐮∇_operator_pattern(RP)
 
-    # Update the values based on current velocity field
-    update_𝐮∇_operator!(RP, uR, uZ; 𝐮∇, flag_upwind)
+        # Update the values based on current velocity field
+        update_𝐮∇_operator!(RP, uR, uZ; 𝐮∇, flag_upwind)
 
-    return 𝐮∇
+        return 𝐮∇
+    end
 end
 
 """
@@ -753,87 +763,89 @@ function update_𝐮∇_operator!(RP::RAPID{FT},
                             𝐮∇::DiscretizedOperator{FT}=RP.operators.𝐮∇,
                             flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
-    @assert !isempty(𝐮∇.matrix.nzval) "Divergence operator not initialized"
+    @timeit RAPID_TIMER "update_𝐮∇_operator!" begin
+        @assert !isempty(𝐮∇.matrix.nzval) "Divergence operator not initialized"
 
-    # Alias necessary fields from the RP object
-    G = RP.G
-    NR, NZ = G.NR, G.NZ
+        # Alias necessary fields from the RP object
+        G = RP.G
+        NR, NZ = G.NR, G.NZ
 
-    # Precompute inverse values for faster calculation
-    inv_dR = one(FT) / G.dR
-    inv_dZ = one(FT) / G.dZ
+        # Precompute inverse values for faster calculation
+        inv_dR = one(FT) / G.dR
+        inv_dZ = one(FT) / G.dZ
 
-    # Cache common constants for type stability
-    zero_FT = zero(FT)
-    eps_val = eps(FT)
-    half = FT(0.5)
+        # Cache common constants for type stability
+        zero_FT = zero(FT)
+        eps_val = eps(FT)
+        half = FT(0.5)
 
-    # Get direct access to sparse matrix values
-    nzval = 𝐮∇.matrix.nzval
-    k2csc = 𝐮∇.k2csc
+        # Get direct access to sparse matrix values
+        nzval = 𝐮∇.matrix.nzval
+        k2csc = 𝐮∇.k2csc
 
-    # Reset values to zero
-    fill!(nzval, zero_FT)
+        # Reset values to zero
+        fill!(nzval, zero_FT)
 
-    # Update values based on current velocity and chosen scheme
-    # Start index for the main loop entries
-    k = 1
-    if flag_upwind
-        # Upwind scheme with special handling for zero velocity
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                # R-direction contribution
-                if abs(uR[i,j]) < eps_val
-                    # Zero velocity: central difference
-                    nzval[k2csc[k+1]] += uR[i,j] * half * inv_dR   # East
-                    nzval[k2csc[k+2]] -= uR[i,j] * half * inv_dR   # West
-                elseif uR[i,j] > zero_FT
-                    # Positive flow: backward difference
-                    nzval[k2csc[k]] += uR[i,j] * inv_dR            # Center
-                    nzval[k2csc[k+2]] -= uR[i,j] * inv_dR          # West
-                else
-                    # Negative flow: forward difference
-                    nzval[k2csc[k+1]] += uR[i,j] * inv_dR          # East
-                    nzval[k2csc[k]] -= uR[i,j] * inv_dR            # Center
+        # Update values based on current velocity and chosen scheme
+        # Start index for the main loop entries
+        k = 1
+        if flag_upwind
+            # Upwind scheme with special handling for zero velocity
+            @inbounds for j in 2:NZ-1
+                for i in 2:NR-1
+                    # R-direction contribution
+                    if abs(uR[i,j]) < eps_val
+                        # Zero velocity: central difference
+                        nzval[k2csc[k+1]] += uR[i,j] * half * inv_dR   # East
+                        nzval[k2csc[k+2]] -= uR[i,j] * half * inv_dR   # West
+                    elseif uR[i,j] > zero_FT
+                        # Positive flow: backward difference
+                        nzval[k2csc[k]] += uR[i,j] * inv_dR            # Center
+                        nzval[k2csc[k+2]] -= uR[i,j] * inv_dR          # West
+                    else
+                        # Negative flow: forward difference
+                        nzval[k2csc[k+1]] += uR[i,j] * inv_dR          # East
+                        nzval[k2csc[k]] -= uR[i,j] * inv_dR            # Center
+                    end
+
+                    # Z-direction contribution
+                    if abs(uZ[i,j]) < eps_val
+                        # Zero velocity: central difference
+                        nzval[k2csc[k+3]] += uZ[i,j] * half * inv_dZ   # North
+                        nzval[k2csc[k+4]] -= uZ[i,j] * half * inv_dZ   # South
+                    elseif uZ[i,j] > zero_FT
+                        # Positive flow: backward difference
+                        nzval[k2csc[k]] += uZ[i,j] * inv_dZ           # Center
+                        nzval[k2csc[k+4]] -= uZ[i,j] * inv_dZ         # South
+                    else
+                        # Negative flow: forward difference
+                        nzval[k2csc[k+3]] += uZ[i,j] * inv_dZ        # North
+                        nzval[k2csc[k]] -= uZ[i,j] * inv_dZ          # Center
+                    end
+
+                    # Move to next node's entries
+                    k += 5
                 end
+            end
+        else
+            # Central differencing for all points (simpler logic)
+            @inbounds for j in 2:NZ-1
+                for i in 2:NR-1
+                    # R-direction central difference
+                    nzval[k2csc[k+1]] = uR[i,j] * half * inv_dR      # East
+                    nzval[k2csc[k+2]] = -uR[i,j] * half * inv_dR     # West
 
-                # Z-direction contribution
-                if abs(uZ[i,j]) < eps_val
-                    # Zero velocity: central difference
-                    nzval[k2csc[k+3]] += uZ[i,j] * half * inv_dZ   # North
-                    nzval[k2csc[k+4]] -= uZ[i,j] * half * inv_dZ   # South
-                elseif uZ[i,j] > zero_FT
-                    # Positive flow: backward difference
-                    nzval[k2csc[k]] += uZ[i,j] * inv_dZ           # Center
-                    nzval[k2csc[k+4]] -= uZ[i,j] * inv_dZ         # South
-                else
-                    # Negative flow: forward difference
-                    nzval[k2csc[k+3]] += uZ[i,j] * inv_dZ        # North
-                    nzval[k2csc[k]] -= uZ[i,j] * inv_dZ          # Center
+                    # Z-direction central difference
+                    nzval[k2csc[k+3]] = uZ[i,j] * half * inv_dZ      # North
+                    nzval[k2csc[k+4]] = -uZ[i,j] * half * inv_dZ     # South
+
+                    k += 5
                 end
-
-                # Move to next node's entries
-                k += 5
             end
         end
-    else
-        # Central differencing for all points (simpler logic)
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                # R-direction central difference
-                nzval[k2csc[k+1]] = uR[i,j] * half * inv_dR      # East
-                nzval[k2csc[k+2]] = -uR[i,j] * half * inv_dR     # West
 
-                # Z-direction central difference
-                nzval[k2csc[k+3]] = uZ[i,j] * half * inv_dZ      # North
-                nzval[k2csc[k+4]] = -uZ[i,j] * half * inv_dZ     # South
-
-                k += 5
-            end
-        end
+        return RP
     end
-
-    return RP
 end
 
 """
@@ -880,83 +892,85 @@ function compute_∇f𝐮_directly(
     ;
     flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
-    # Alias necessary fields from the RP object
-    G = RP.G
-    Jacob = G.Jacob
-    inv_Jacob = G.inv_Jacob
-    NR, NZ = G.NR, G.NZ
-    dR, dZ = G.dR, G.dZ
+    @timeit RAPID_TIMER "compute_∇f𝐮_directly" begin
+        # Alias necessary fields from the RP object
+        G = RP.G
+        Jacob = G.Jacob
+        inv_Jacob = G.inv_Jacob
+        NR, NZ = G.NR, G.NZ
+        dR, dZ = G.dR, G.dZ
 
-    # Precompute inverse values for faster calculation (multiplication instead of division)
-    inv_dR = one(FT) / dR
-    inv_dZ = one(FT) / dZ
+        # Precompute inverse values for faster calculation (multiplication instead of division)
+        inv_dR = one(FT) / dR
+        inv_dZ = one(FT) / dZ
 
-    # Cache common constants with proper type once
-    zero_val = zero(FT)
-    eps_val = eps(FT)
-    half = FT(0.5)  # Define half once with correct type
+        # Cache common constants with proper type once
+        zero_val = zero(FT)
+        eps_val = eps(FT)
+        half = FT(0.5)  # Define half once with correct type
 
 
-    ∇f𝐮 = zeros(size(f))
+        ∇f𝐮 = zeros(size(f))
 
-    # Apply appropriate differencing scheme based on upwind flag and velocity
-    # Move the upwind flag check outside the loop for better performance
-    if flag_upwind
-        # Upwind scheme with check for zero velocity
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                flux_R = zero_val
-                flux_Z = zero_val
+        # Apply appropriate differencing scheme based on upwind flag and velocity
+        # Move the upwind flag check outside the loop for better performance
+        if flag_upwind
+            # Upwind scheme with check for zero velocity
+            @inbounds for j in 2:NZ-1
+                for i in 2:NR-1
+                    flux_R = zero_val
+                    flux_Z = zero_val
 
-                # R-direction convection flux with upwind scheme
-                if abs(uR[i, j]) < eps_val
-                    # Zero velocity, use central differencing
-                    flux_R = ( +Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * f[i+1, j]
-                                -Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * f[i-1, j])
-                elseif uR[i, j] > zero_val
-                    # Flow from left to right, use left (upwind) node
-                    flux_R = ( +Jacob[i, j] * uR[i, j] * inv_dR * f[i, j]
-                                - Jacob[i-1, j] * uR[i-1, j] * inv_dR * f[i-1, j])
-                else
-                    # Flow from right to left, use right (upwind) node
-                    flux_R = ( +Jacob[i+1, j] * uR[i+1, j] * inv_dR * f[i+1, j]
-                                - Jacob[i, j] * uR[i, j] * inv_dR * f[i, j])
+                    # R-direction convection flux with upwind scheme
+                    if abs(uR[i, j]) < eps_val
+                        # Zero velocity, use central differencing
+                        flux_R = ( +Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * f[i+1, j]
+                                    -Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * f[i-1, j])
+                    elseif uR[i, j] > zero_val
+                        # Flow from left to right, use left (upwind) node
+                        flux_R = ( +Jacob[i, j] * uR[i, j] * inv_dR * f[i, j]
+                                    - Jacob[i-1, j] * uR[i-1, j] * inv_dR * f[i-1, j])
+                    else
+                        # Flow from right to left, use right (upwind) node
+                        flux_R = ( +Jacob[i+1, j] * uR[i+1, j] * inv_dR * f[i+1, j]
+                                    - Jacob[i, j] * uR[i, j] * inv_dR * f[i, j])
+                    end
+
+                    # Z-direction convection flux with upwind scheme
+                    if abs(uZ[i, j]) < eps_val
+                        # Zero velocity, use central differencing
+                        flux_Z = ( +Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * f[i, j+1]
+                                    - Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * f[i, j-1])
+                    elseif uZ[i, j] > zero_val
+                        # Flow from bottom to top, use bottom (upwind) node
+                        flux_Z = ( +Jacob[i, j] * uZ[i, j] * inv_dZ * f[i, j]
+                                    - Jacob[i, j-1] * uZ[i, j-1] * inv_dZ * f[i, j-1])
+                    else
+                        # Flow from top to bottom, use top (upwind) node
+                        flux_Z = ( +Jacob[i, j+1] * uZ[i, j+1] * inv_dZ * f[i, j+1]
+                                    - Jacob[i, j] * uZ[i, j] * inv_dZ * f[i, j])
+                    end
+
+                    # Calculate the convective-flux divergance [∇f𝐮]
+                    ∇f𝐮[i, j] = (flux_R + flux_Z) * inv_Jacob[i, j]
                 end
-
-                # Z-direction convection flux with upwind scheme
-                if abs(uZ[i, j]) < eps_val
-                    # Zero velocity, use central differencing
-                    flux_Z = ( +Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * f[i, j+1]
-                                - Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * f[i, j-1])
-                elseif uZ[i, j] > zero_val
-                    # Flow from bottom to top, use bottom (upwind) node
-                    flux_Z = ( +Jacob[i, j] * uZ[i, j] * inv_dZ * f[i, j]
-                                - Jacob[i, j-1] * uZ[i, j-1] * inv_dZ * f[i, j-1])
-                else
-                    # Flow from top to bottom, use top (upwind) node
-                    flux_Z = ( +Jacob[i, j+1] * uZ[i, j+1] * inv_dZ * f[i, j+1]
-                                - Jacob[i, j] * uZ[i, j] * inv_dZ * f[i, j])
+            end
+        else
+            # Central differencing for both directions (simpler logic)
+            @inbounds for j in 2:NZ-1
+                for i in 2:NR-1
+                    ∇f𝐮[i, j] = inv_Jacob[i, j]*(
+                        +Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * f[i+1, j]
+                        -Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * f[i-1, j]
+                        +Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * f[i, j+1]
+                        -Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * f[i, j-1]
+                    )
                 end
-
-                # Calculate the convective-flux divergance [∇f𝐮]
-                ∇f𝐮[i, j] = (flux_R + flux_Z) * inv_Jacob[i, j]
             end
         end
-    else
-        # Central differencing for both directions (simpler logic)
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                ∇f𝐮[i, j] = inv_Jacob[i, j]*(
-                    +Jacob[i+1, j] * uR[i+1, j] * half * inv_dR * f[i+1, j]
-                    -Jacob[i-1, j] * uR[i-1, j] * half * inv_dR * f[i-1, j]
-                    +Jacob[i, j+1] * uZ[i, j+1] * half * inv_dZ * f[i, j+1]
-                    -Jacob[i, j-1] * uZ[i, j-1] * half * inv_dZ * f[i, j-1]
-                )
-            end
-        end
+
+        return ∇f𝐮
     end
-
-    return ∇f𝐮
 end
 
 
@@ -985,12 +999,14 @@ function construct_∇𝐮_operator(RP::RAPID{FT},
                             uR::AbstractMatrix{FT}=RP.plasma.ueR,
                             uZ::AbstractMatrix{FT}=RP.plasma.ueZ;
                             flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
-    # create a sparse matrix with the sparisty pattern
-    ∇𝐮 = allocate_∇𝐮_operator_pattern(RP)
-    # update the divergence operator's non-zero entries with the actual values
-    update_∇𝐮_operator!(RP, uR, uZ; ∇𝐮, flag_upwind)
+    @timeit RAPID_TIMER "construct_∇𝐮_operator" begin
+        # create a sparse matrix with the sparisty pattern
+        ∇𝐮 = allocate_∇𝐮_operator_pattern(RP)
+        # update the divergence operator's non-zero entries with the actual values
+        update_∇𝐮_operator!(RP, uR, uZ; ∇𝐮, flag_upwind)
 
-    return ∇𝐮
+        return ∇𝐮
+    end
 end
 
 """
@@ -1068,89 +1084,91 @@ function update_∇𝐮_operator!(RP::RAPID{FT},
                             ∇𝐮::DiscretizedOperator{FT}=RP.operators.∇𝐮,
                             flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
-    @assert !isempty(∇𝐮.matrix.nzval) "Divergence operator not initialized"
+    @timeit RAPID_TIMER "update_∇𝐮_operator!" begin
+        @assert !isempty(∇𝐮.matrix.nzval) "Divergence operator not initialized"
 
-    # Alias necessary fields
-    G = RP.G
-    Jacob = G.Jacob
-    inv_Jacob = G.inv_Jacob
-    NR, NZ = G.NR, G.NZ
+        # Alias necessary fields
+        G = RP.G
+        Jacob = G.Jacob
+        inv_Jacob = G.inv_Jacob
+        NR, NZ = G.NR, G.NZ
 
-    # Precompute for efficiency
-    inv_dR = one(FT) / G.dR
-    inv_dZ = one(FT) / G.dZ
+        # Precompute for efficiency
+        inv_dR = one(FT) / G.dR
+        inv_dZ = one(FT) / G.dZ
 
-    # Constants for type stability
-    zero_FT = zero(FT)
-    eps_FT = eps(FT)
-    half = FT(0.5)
+        # Constants for type stability
+        zero_FT = zero(FT)
+        eps_FT = eps(FT)
+        half = FT(0.5)
 
-    # Access the sparse matrix values directly
-    nzval = ∇𝐮.matrix.nzval
-    k2csc = ∇𝐮.k2csc
+        # Access the sparse matrix values directly
+        nzval = ∇𝐮.matrix.nzval
+        k2csc = ∇𝐮.k2csc
 
-    # Reset values to zero before updating
-    fill!(nzval, zero(FT))
+        # Reset values to zero before updating
+        fill!(nzval, zero(FT))
 
-    # Follow the established pattern and update values
-    k = 1
-    if flag_upwind
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                # Jacobian factor at current position
-                ij_factor = inv_Jacob[i,j]
+        # Follow the established pattern and update values
+        k = 1
+        if flag_upwind
+            @inbounds for j in 2:NZ-1
+                for i in 2:NR-1
+                    # Jacobian factor at current position
+                    ij_factor = inv_Jacob[i,j]
 
-                # Pattern indices: center(k), east(k+1), west(k+2), north(k+3), south(k+4)
+                    # Pattern indices: center(k), east(k+1), west(k+2), north(k+3), south(k+4)
 
-                # R-direction velocity-dependent coefficients
-                if abs(uR[i,j]) < eps_FT
-                    # Zero velocity: use central differencing
-                    nzval[k2csc[k+1]] += Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*ij_factor  # East - Sign flipped from convection
-                    nzval[k2csc[k+2]] -= Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*ij_factor  # West - Sign flipped from convection
-                elseif uR[i,j] > zero_FT
-                    # Positive velocity: flow from west
-                    nzval[k2csc[k]] += Jacob[i,j]*uR[i,j]*inv_dR*ij_factor          # Center - Sign flipped from convection
-                    nzval[k2csc[k+2]] -= Jacob[i-1,j]*uR[i-1,j]*inv_dR*ij_factor   # West - Sign flipped from convection
-                else
-                    # Negative velocity: flow from east
-                    nzval[k2csc[k+1]] += Jacob[i+1,j]*uR[i+1,j]*inv_dR*ij_factor   # East - Sign flipped from convection
-                    nzval[k2csc[k]] -= Jacob[i,j]*uR[i,j]*inv_dR*ij_factor         # Center - Sign flipped from convection
+                    # R-direction velocity-dependent coefficients
+                    if abs(uR[i,j]) < eps_FT
+                        # Zero velocity: use central differencing
+                        nzval[k2csc[k+1]] += Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*ij_factor  # East - Sign flipped from convection
+                        nzval[k2csc[k+2]] -= Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*ij_factor  # West - Sign flipped from convection
+                    elseif uR[i,j] > zero_FT
+                        # Positive velocity: flow from west
+                        nzval[k2csc[k]] += Jacob[i,j]*uR[i,j]*inv_dR*ij_factor          # Center - Sign flipped from convection
+                        nzval[k2csc[k+2]] -= Jacob[i-1,j]*uR[i-1,j]*inv_dR*ij_factor   # West - Sign flipped from convection
+                    else
+                        # Negative velocity: flow from east
+                        nzval[k2csc[k+1]] += Jacob[i+1,j]*uR[i+1,j]*inv_dR*ij_factor   # East - Sign flipped from convection
+                        nzval[k2csc[k]] -= Jacob[i,j]*uR[i,j]*inv_dR*ij_factor         # Center - Sign flipped from convection
+                    end
+
+                    # Z-direction velocity-dependent coefficients
+                    if abs(uZ[i,j]) < eps_FT
+                        # Zero velocity: use central differencing
+                        nzval[k2csc[k+3]] += Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*ij_factor  # North - Sign flipped from convection
+                        nzval[k2csc[k+4]] -= Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*ij_factor  # South - Sign flipped from convection
+                    elseif uZ[i,j] > zero_FT
+                        # Positive velocity: flow from south
+                        nzval[k2csc[k]] += Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor          # Center - Sign flipped from convection
+                        nzval[k2csc[k+4]] -= Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*ij_factor   # South - Sign flipped from convection
+                    else
+                        # Negative velocity: flow from north
+                        nzval[k2csc[k+3]] += Jacob[i,j+1]*uZ[i,j+1]*inv_dZ*ij_factor   # North - Sign flipped from convection
+                        nzval[k2csc[k]] -= Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor         # Center - Sign flipped from convection
+                    end
+
+                    k += 5
                 end
+            end
+        else
+            @inbounds for j in 2:NZ-1
+                for i in 2:NR-1
+                    # Jacobian factor at current position
+                    ij_factor = inv_Jacob[i,j]
 
-                # Z-direction velocity-dependent coefficients
-                if abs(uZ[i,j]) < eps_FT
-                    # Zero velocity: use central differencing
-                    nzval[k2csc[k+3]] += Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*ij_factor  # North - Sign flipped from convection
-                    nzval[k2csc[k+4]] -= Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*ij_factor  # South - Sign flipped from convection
-                elseif uZ[i,j] > zero_FT
-                    # Positive velocity: flow from south
-                    nzval[k2csc[k]] += Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor          # Center - Sign flipped from convection
-                    nzval[k2csc[k+4]] -= Jacob[i,j-1]*uZ[i,j-1]*inv_dZ*ij_factor   # South - Sign flipped from convection
-                else
-                    # Negative velocity: flow from north
-                    nzval[k2csc[k+3]] += Jacob[i,j+1]*uZ[i,j+1]*inv_dZ*ij_factor   # North - Sign flipped from convection
-                    nzval[k2csc[k]] -= Jacob[i,j]*uZ[i,j]*inv_dZ*ij_factor         # Center - Sign flipped from convection
+                    # Always use central differencing - All signs flipped from convection
+                    nzval[k2csc[k+1]] += Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*ij_factor  # East
+                    nzval[k2csc[k+2]] -= Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*ij_factor  # West
+                    nzval[k2csc[k+3]] += Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*ij_factor  # North
+                    nzval[k2csc[k+4]] -= Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*ij_factor  # South
+
+                    k += 5
                 end
-
-                k += 5
             end
         end
-    else
-        @inbounds for j in 2:NZ-1
-            for i in 2:NR-1
-                # Jacobian factor at current position
-                ij_factor = inv_Jacob[i,j]
 
-                # Always use central differencing - All signs flipped from convection
-                nzval[k2csc[k+1]] += Jacob[i+1,j]*uR[i+1,j]*half*inv_dR*ij_factor  # East
-                nzval[k2csc[k+2]] -= Jacob[i-1,j]*uR[i-1,j]*half*inv_dR*ij_factor  # West
-                nzval[k2csc[k+3]] += Jacob[i,j+1]*uZ[i,j+1]*half*inv_dZ*ij_factor  # North
-                nzval[k2csc[k+4]] -= Jacob[i,j-1]*uZ[i,j-1]*half*inv_dZ*ij_factor  # South
-
-                k += 5
-            end
-        end
+        return RP
     end
-
-    return RP
 end

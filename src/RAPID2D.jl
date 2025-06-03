@@ -21,6 +21,10 @@ using DelimitedFiles
 using Interpolations
 using SimpleUnPack
 using ADIOS2
+using TimerOutputs
+
+# Global timer for performance monitoring
+const RAPID_TIMER = TimerOutput()
 
 # Include type definitions
 include("constants.jl")
