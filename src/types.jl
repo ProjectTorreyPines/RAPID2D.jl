@@ -214,10 +214,13 @@ Contains the plasma state variables including density, temperature, and velocity
     uiZ::Matrix{FT} = zeros(FT, dims)   # Ion Z velocity [m/s]
     uiϕ::Matrix{FT} = zeros(FT, dims)   # Ion ϕ velocity [m/s]
 
+    # mean ExB transport
+    mean_ExB_R::Matrix{FT} = zeros(FT, dims) # Mean ExB drift R component [m/s]
+    mean_ExB_Z::Matrix{FT} = zeros(FT, dims) # Mean ExB drift Z component [m/s]
+
     # Parameters for Self-E field effects
     nc_para::Matrix{FT} = zeros(FT, dims) # Parallel critical density [m^-3]
     nc_perp::Matrix{FT} = zeros(FT, dims) # Perpendicular critical density [m^-3]
-    L_mixing::Matrix{FT} = zeros(FT, dims) # Mixing length for turbulent diffusion [m]
     γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
 
     # Collision parameters
@@ -330,6 +333,15 @@ Fields include diffusion coefficients in different directions.
     # Spatially-varying diffusion coefficients
     Dpara::Matrix{FT} = zeros(FT, dims)  # Parallel diffusion coefficient [m²/s]
     Dperp::Matrix{FT} = zeros(FT, dims)  # Perpendicular diffusion coefficient [m²/s]
+
+    # turbulent diffusion coefficients
+    L_mixing::Matrix{FT} = zeros(FT, dims)          # Length of field line mixing [m]
+    Dturb_para::Matrix{FT} = zeros(FT, dims)       # Turbulent diffusion coefficient parallel [m²/s]
+    Dturb_perp::Matrix{FT} = zeros(FT, dims)       # Turbulent diffusion coefficient perpendicular [m²/s]
+
+    DRR_turb::Matrix{FT} = zeros(FT, dims)  # R-R component of turbulent diffusion tensor
+    DRZ_turb::Matrix{FT} = zeros(FT, dims)  # R-Z component of turbulent diffusion tensor
+    DZZ_turb::Matrix{FT} = zeros(FT, dims)  # Z-Z component of turbulent diffusion tensor
 
     # Diffusion tensor components
     DRR::Matrix{FT} = zeros(FT, dims)    # R-R component of diffusion tensor

@@ -286,3 +286,118 @@ function calculate_external_fields_at_time(extF::TimeSeriesExternalField{FT}, ti
         time_s = time
     )
 end
+
+# -----------------------------------------------------------------------------
+# Electrostatic Field Effects Functions
+# -----------------------------------------------------------------------------
+
+"""
+    my_sigmf(x, a, c)
+
+Sigmoid function equivalent to MATLAB's my_sigmf.
+Returns y = 1./(1+exp(-a*(x-c)))
+
+# Arguments
+- `x`: Input values
+- `a`: Steepness parameter
+- `c`: Center point
+"""
+function my_sigmf(x, a, c)
+    return @. 1.0 / (1.0 + exp(-a * (x - c)))
+end
+
+"""
+    estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Estimate self-consistent electrostatic field effects on plasma transport.
+
+This function ports the MATLAB `Estimate_E_self_effects` function from lines 544-679
+in c_RAPID.m. It calculates:
+- Shape factor (γ_shape_fac) based on magnetic field properties
+- Critical densities for parallel and perpendicular transport
+- Self-consistent electric fields (E_self_pol, E_para_self_ES)
+- Mean ExB drift velocities
+- Turbulent diffusion coefficients
+
+# Arguments
+- `RP::RAPID{FT}`: The RAPID simulation object
+
+# Returns
+- `RP::RAPID{FT}`: Updated RAPID object with calculated field effects
+"""
+function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Extract commonly used variables
+    pla = RP.plasma
+    F = RP.fields
+    G = RP.G
+
+    # Physical constants
+    cnst = RP.config.constants
+    @unpack me, mi, ee, eps0 = RP.config.constants
+
+    # Initialize arrays for calculations
+    NR, NZ = G.NR, G.NZ
+
+    # =========================================================================
+    # 1. Calculate shape factor (γ_shape_fac) based on magnetic field properties
+    # =========================================================================
+
+    # Normalize magnetic field quantities (similar to MATLAB lines 546-553)
+    Bpol_norm = F.Bpol ./ maximum(F.Bpol[G.nodes.in_wall_nids])
+    # tan_θB = F.Bpol ./ F.Bϕ
+    # tan_θB_norm = tan_θB ./ maximum(tan_θB[G.nodes.in_wall_nids])
+
+    # # Calculate shape factor using sigmoid functions (MATLAB lines 554-556)
+    # term1 = my_sigmf(FT(1e4) * Bpol_norm, FT(20.0), FT(0.4))
+    # term2 = my_sigmf(tan_θB_norm, FT(5.0), FT(0.4))
+    # pla.γ_shape_fac = @. term1 * term2
+
+    pla.γ_shape_fac = min.(FT(1.0), 0.65*Bpol_norm)
+
+    # TODO: implement the following line, when closed surface is formed
+    # obj.gamma_coeff(obj.idx_closed_surface) = 0.0; % closed surface has no self-E effects
+
+    # =========================================================================
+    # 2. Calculate critical densities
+    # =========================================================================
+    @. pla.nc_para = (eps0 / (ee * pla.Te_eV)) * (F.Bϕ / F.Bpol)^FT(2.0) * (F.Eϕ / pla.γ_shape_fac)^FT(2.0)
+    @. pla.nc_perp = eps0 / me * (F.Btot * F.Bpol / F.Bϕ)^FT(2.0) * (FT(1.0) / pla.γ_shape_fac)^FT(2.0)
+
+    # =========================================================================
+    # 3. Calculate self-consistent electric fields (MATLAB lines 582-620)
+    # =========================================================================
+    # Parallel electrostatic self-field component
+    # E_para_self_ES = E_self_pol * (Bpol/Btot) * sign(direction)
+    E_pol_required_for_cancellation = @. abs(F.E_para_ext + RP.flags.E_para_self_EM * F.E_para_self_EM)*(F.Btot/F.Bpol);
+    E_self_debye = @. sqrt(abs(pla.ne)*ee*pla.Te_eV/eps0)
+
+    F.Epol_self = @. min(pla.γ_shape_fac * E_pol_required_for_cancellation, E_self_debye)
+
+    calculate_parallel_electric_field!(RP)
+
+    if RP.flags.mean_ExB
+        BRoverBpol = @. F.BR ./ F.Bpol
+        BRoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
+        BZoverBpol = @. F.BZ ./ F.Bpol
+        BZoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
+
+        @. pla.mean_ExB_R = (F.Epol_self / F.Btot) * sign(F.Eϕ) * BZoverBpol
+        @. pla.mean_ExB_Z = (F.Epol_self / F.Btot) * sign(F.Eϕ) * (-BRoverBpol)
+
+        @. F.ER = -sign(F.Eϕ.*F.Bϕ)*F.Epol_self*BRoverBpol;
+        @. F.EZ = -sign(F.Eϕ.*F.Bϕ)*F.Epol_self*BZoverBpol;
+    end
+
+    # # Turbulent parallel diffusion based on fluctuation levels
+    # # TODO: implement computing length of connection length
+    # F.L_mixing .= 10.0;
+    tp = RP.transport
+    tp.L_mixing .= FT(0.8)  # Placeholder value for mixing length
+    # # Turbulent diffusion coefficient
+    # Dturb_para = 0.5 * v_(ExB) * L_mixing
+    @. tp.Dturb_para = 0.5 * F.Epol_self / F.Btot * tp.L_mixing;
+    perp_fac = 0.05
+    @. tp.Dturb_perp = perp_fac*(0.5 * F.Epol_self / F.Btot * tp.L_mixing);
+
+    return RP
+end
