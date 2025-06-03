@@ -219,9 +219,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Eϕ_self .= F.Eϕ_self
 
     # Calculate ExB drift magnitude
-    if hasfield(typeof(F), :mean_ExB_R) && hasfield(typeof(F), :mean_ExB_Z)
-        @. snap2D.mean_ExB_pol = sqrt(F.mean_ExB_R^2 + F.mean_ExB_Z^2)
-    end
+    @. snap2D.mean_ExB_pol = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
 
     # Source/loss rates from cumulative trackers
     Ntracker = RP.diagnostics.Ntracker
@@ -244,7 +242,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.ueZ .= pla.ueZ
 
     # Physics parameters
-    snap2D.L_mixing .= pla.L_mixing
+    tp = RP.transport
+    snap2D.L_mixing .= tp.L_mixing
     snap2D.nc_para .= pla.nc_para
     snap2D.nc_perp .= pla.nc_perp
 

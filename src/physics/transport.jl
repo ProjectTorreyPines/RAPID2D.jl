@@ -41,8 +41,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Field line mixing length-based diffusion coefficient
     Dpara_coll_2 = zeros(FT, size(RP.plasma.Te_eV))
-    if hasfield(typeof(RP), :L_mixing) && hasfield(typeof(RP), :idx_closed_surface)
-        Dpara_coll_2 = @. 0.5 * vthe * RP.L_mixing * RP.fields.Btot / RP.fields.Bpol
+    Dpara_coll_2 = @. 0.5 * vthe * RP.transport.L_mixing * RP.fields.Btot / RP.fields.Bpol
+    if hasfield(typeof(RP), :idx_closed_surface)
         Dpara_coll_2[RP.idx_closed_surface] .= typemax(FT) # Effectively infinity for closed surfaces
     end
 
@@ -64,10 +64,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         @. RP.transport.Dperp *= RP.damping_func
         @. RP.plasma.ue_para *= RP.damping_func
 
-        if hasfield(typeof(RP.plasma), :mean_ExB_R)
-            @. RP.plasma.mean_ExB_R *= RP.damping_func
-            @. RP.plasma.mean_ExB_Z *= RP.damping_func
-        end
+        @. RP.plasma.mean_ExB_R *= RP.damping_func
+        @. RP.plasma.mean_ExB_Z *= RP.damping_func
 
         @. RP.plasma.ui_para *= RP.damping_func
     end
@@ -96,7 +94,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         RP.plasma.ueZ .= RP.plasma.ue_para .* RP.fields.bZ
 
         # Add ExB and diamagnetic drifts if enabled
-        if RP.flags.mean_ExB && hasfield(typeof(RP.plasma), :mean_ExB_R)
+        if RP.flags.mean_ExB
             RP.plasma.ueR .+= RP.plasma.mean_ExB_R
             RP.plasma.ueZ .+= RP.plasma.mean_ExB_Z
         end
@@ -112,7 +110,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         RP.plasma.uiZ .= RP.plasma.ui_para .* RP.fields.bZ
 
         # Add ExB drift for ions too if enabled
-        if RP.flags.mean_ExB && hasfield(typeof(RP.plasma), :mean_ExB_R)
+        if RP.flags.mean_ExB
             RP.plasma.uiR .+= RP.plasma.mean_ExB_R
             RP.plasma.uiZ .+= RP.plasma.mean_ExB_Z
         end
@@ -123,35 +121,38 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         # obj.Global_Toroidal_Force_Balance;
     end
 
-    # Update diffusion tensor components
-    BRoverBpol = RP.fields.BR ./ RP.fields.Bpol
-    BRoverBpol[RP.fields.Bpol .== 0] .= zero(FT)
-    BZoverBpol = RP.fields.BZ ./ RP.fields.Bpol
-    BZoverBpol[RP.fields.Bpol .== 0] .= zero(FT)
 
-    # Apply turbulent diffusion if enabled
-    if RP.flags.turb_ExB_mixing && hasfield(typeof(RP.transport), :Dturb_para)
-        @. RP.transport.DRR_turb = RP.transport.Dturb_para * (BRoverBpol)^2 + RP.transport.Dturb_perp * (BZoverBpol)^2
-        @. RP.transport.DRZ_turb = (RP.transport.Dturb_para - RP.transport.Dturb_perp) * (BRoverBpol * BZoverBpol)
-        @. RP.transport.DZZ_turb = RP.transport.Dturb_para * (BZoverBpol)^2 + RP.transport.Dturb_perp * (BRoverBpol)^2
+    # compute RR, RZ, ZZ components of the diffusivity tensor
+    tp = RP.transport
+    @. tp.DRR = tp.Dperp + (tp.Dpara - tp.Dperp) * RP.fields.bR^2
+    @. tp.DRZ = (tp.Dpara - tp.Dperp) * RP.fields.bR * RP.fields.bZ
+    @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * RP.fields.bZ^2
 
-        # Add turbulent diffusion to total diffusion tensor
-        @. RP.transport.DRR = RP.transport.Dperp + (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bR^2 + RP.transport.DRR_turb
-        @. RP.transport.DRZ = (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bR * RP.fields.bZ + RP.transport.DRZ_turb
-        @. RP.transport.DZZ = RP.transport.Dperp + (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bZ^2 + RP.transport.DZZ_turb
-    else
-        # Standard diffusion tensor without turbulence
-        @. RP.transport.DRR = RP.transport.Dperp + (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bR^2
-        @. RP.transport.DRZ = (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bR * RP.fields.bZ
-        @. RP.transport.DZZ = RP.transport.Dperp + (RP.transport.Dpara - RP.transport.Dperp) * RP.fields.bZ^2
+    # Add turbulent diffusion if enabled
+    if RP.flags.turb_ExB_mixing
+        # In a real implementation, turbulent diffusion would be calculated based on
+        # field line connection length, ExB drifts, etc.
+        F = RP.fields
+        BRoverBpol = @. F.BR ./ F.Bpol
+        BRoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
+        BZoverBpol = @. F.BZ ./ F.Bpol
+        BZoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
+
+        @. tp.DRR_turb = tp.Dturb_para * (BRoverBpol)^2 + tp.Dturb_perp * (BZoverBpol)^2
+        @. tp.DRZ_turb = (tp.Dturb_para - tp.Dturb_perp) * (BRoverBpol * BZoverBpol)
+        @. tp.DZZ_turb = tp.Dturb_para * (BZoverBpol)^2 + tp.Dturb_perp * (BRoverBpol)^2
+
+        # Add turbulent diffusion to base diffusion
+        @. tp.DRR .+= tp.DRR_turb
+        @. tp.DRZ .+= tp.DRZ_turb
+        @. tp.DZZ .+= tp.DZZ_turb
     end
-
 
     dR, dZ = RP.G.dR, RP.G.dZ
 
-    @. RP.transport.CTRR = RP.G.Jacob*RP.transport.DRR/(dR*dR);
-    @. RP.transport.CTRZ = RP.G.Jacob*RP.transport.DRZ/(dR*dZ);
-    @. RP.transport.CTZZ = RP.G.Jacob*RP.transport.DZZ/(dZ*dZ);
+    @. tp.CTRR = RP.G.Jacob*tp.DRR/(dR*dR);
+    @. tp.CTRZ = RP.G.Jacob*tp.DRZ/(dR*dZ);
+    @. tp.CTZZ = RP.G.Jacob*tp.DZZ/(dZ*dZ);
 
     return RP
 end
