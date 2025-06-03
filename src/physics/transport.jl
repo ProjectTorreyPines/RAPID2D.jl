@@ -9,7 +9,7 @@ Contains functions related to transport phenomena, including:
 
 # Export public functions
 export update_transport_quantities!,
-       calculate_diffusion_coefficients!,
+       update_diffusion_tensor!,
        calculate_particle_fluxes!
 
 """
@@ -121,18 +121,30 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         # obj.Global_Toroidal_Force_Balance;
     end
 
+    # update diffusion tensor (DRR,DRZ,DZZ) & (CTRR,CTRZ,CTZZ)
+    update_diffusion_tensor!(RP)
 
+
+    return RP
+end
+
+"""
+    update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Calculate diffusion coefficients based on field configuration and turbulence models.
+"""
+function update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # compute RR, RZ, ZZ components of the diffusivity tensor
+    F = RP.fields
     tp = RP.transport
-    @. tp.DRR = tp.Dperp + (tp.Dpara - tp.Dperp) * RP.fields.bR^2
-    @. tp.DRZ = (tp.Dpara - tp.Dperp) * RP.fields.bR * RP.fields.bZ
-    @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * RP.fields.bZ^2
+    @. tp.DRR = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bR^2
+    @. tp.DRZ = (tp.Dpara - tp.Dperp) * F.bR * F.bZ
+    @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bZ^2
 
     # Add turbulent diffusion if enabled
     if RP.flags.turb_ExB_mixing
         # In a real implementation, turbulent diffusion would be calculated based on
         # field line connection length, ExB drifts, etc.
-        F = RP.fields
         BRoverBpol = @. F.BR ./ F.Bpol
         BRoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
         BZoverBpol = @. F.BZ ./ F.Bpol
@@ -153,50 +165,6 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @. tp.CTRR = RP.G.Jacob*tp.DRR/(dR*dR);
     @. tp.CTRZ = RP.G.Jacob*tp.DRZ/(dR*dZ);
     @. tp.CTZZ = RP.G.Jacob*tp.DZZ/(dZ*dZ);
-
-    return RP
-end
-
-"""
-    calculate_diffusion_coefficients!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-
-Calculate diffusion coefficients based on field configuration and turbulence models.
-"""
-function calculate_diffusion_coefficients!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Base diffusion coefficients
-    RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.G.NR, RP.G.NZ)
-    RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.G.NR, RP.G.NZ)
-
-    # Add turbulent diffusion if enabled
-    if RP.flags.turb_ExB_mixing
-        # In a real implementation, turbulent diffusion would be calculated based on
-        # field line connection length, ExB drifts, etc.
-        RP.transport.Dturb_para .= zeros(FT, RP.G.NR, RP.G.NZ)
-        RP.transport.Dturb_perp .= zeros(FT, RP.G.NR, RP.G.NZ)
-
-        # Add turbulent diffusion to base diffusion
-        RP.transport.Dpara .+= RP.transport.Dturb_para
-        RP.transport.Dperp .+= RP.transport.Dturb_perp
-    end
-
-    # Calculate full diffusivity tensor components
-    RP.transport.DRR .= RP.transport.Dperp .+
-                         (RP.transport.Dpara .- RP.transport.Dperp) .*
-                         (RP.fields.bR).^2
-
-    RP.transport.DRZ .= (RP.transport.Dpara .- RP.transport.Dperp) .*
-                         RP.fields.bR .* RP.fields.bZ
-
-    RP.transport.DZZ .= RP.transport.Dperp .+
-                         (RP.transport.Dpara .- RP.transport.Dperp) .*
-                         (RP.fields.bZ).^2
-
-    # Apply damping outside the wall if enabled
-    if RP.flags.Damp_Transp_outWall
-        RP.transport.DRR .*= RP.damping_func
-        RP.transport.DRZ .*= RP.damping_func
-        RP.transport.DZZ .*= RP.damping_func
-    end
 
     return RP
 end

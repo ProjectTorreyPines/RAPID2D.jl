@@ -32,7 +32,7 @@ for stability and accuracy.
 # Export public functions
 export construct_∂R_operator, construct_∂Z_operator,
         calculate_divergence, construct_𝐽⁻¹∂R_𝐽_operator,
-        calculate_diffusion_coefficients!,
+        update_diffusion_tensor!,
         compute_∇𝐃∇f_directly,
         construct_∇𝐃∇_operator,
         compute_𝐮∇f_directly,
