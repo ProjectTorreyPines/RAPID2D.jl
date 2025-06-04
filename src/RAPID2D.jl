@@ -23,6 +23,8 @@ using SimpleUnPack
 using ADIOS2
 using TimerOutputs
 
+LinearAlgebra.BLAS.set_num_threads(1)
+
 # Global timer for performance monitoring
 const RAPID_TIMER = TimerOutput()
 
