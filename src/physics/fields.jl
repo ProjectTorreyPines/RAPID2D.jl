@@ -369,10 +369,8 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     # smooth_data_2D!(tp.L_mixing; num_SM = 3)
 
     # # Turbulent diffusion coefficient
-    # Dturb_para = 0.5 * v_(ExB) * L_mixing
-    @. tp.Dturb_para = 0.5 * F.Epol_self / F.Btot * tp.L_mixing;
-    perp_fac = 0.05
-    @. tp.Dturb_perp = perp_fac*(0.5 * F.Epol_self / F.Btot * tp.L_mixing);
+    # Dpol_turb = 0.5 * v_(ExB) * L_mixing
+    @. tp.Dpol_turb = 0.5 * F.Epol_self / F.Btot * tp.L_mixing;
 
     return RP
 end

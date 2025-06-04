@@ -340,8 +340,7 @@ Fields include diffusion coefficients in different directions.
 
     # turbulent diffusion coefficients
     L_mixing::Matrix{FT} = zeros(FT, dims)          # Length of field line mixing [m]
-    Dturb_para::Matrix{FT} = zeros(FT, dims)       # Turbulent diffusion coefficient parallel [m²/s]
-    Dturb_perp::Matrix{FT} = zeros(FT, dims)       # Turbulent diffusion coefficient perpendicular [m²/s]
+    Dpol_turb::Matrix{FT} = zeros(FT, dims)       # Turbulent diffusion coefficient on poloidal plane [m²/s]
 
     DRR_turb::Matrix{FT} = zeros(FT, dims)  # R-R component of turbulent diffusion tensor
     DRZ_turb::Matrix{FT} = zeros(FT, dims)  # R-Z component of turbulent diffusion tensor

@@ -146,9 +146,9 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         # In a real implementation, turbulent diffusion would be calculated based on
         # field line connection length, ExB drifts, etc.
 
-        @. tp.DRR_turb = tp.Dturb_para * (F.bpol_R)^2 + tp.Dturb_perp * (F.bpol_Z)^2
-        @. tp.DRZ_turb = (tp.Dturb_para - tp.Dturb_perp) * (F.bpol_R * F.bpol_Z)
-        @. tp.DZZ_turb = tp.Dturb_para * (F.bpol_Z)^2 + tp.Dturb_perp * (F.bpol_R)^2
+        @. tp.DRR_turb = tp.Dpol_turb * (F.bpol_R)^2
+        @. tp.DRZ_turb = (tp.Dpol_turb) * (F.bpol_R * F.bpol_Z)
+        @. tp.DZZ_turb = tp.Dpol_turb * (F.bpol_Z)^2
 
         # Add turbulent diffusion to base diffusion
         @. tp.DRR .+= tp.DRR_turb
