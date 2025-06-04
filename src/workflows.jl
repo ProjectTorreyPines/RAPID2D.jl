@@ -224,8 +224,6 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
 
         println("Simulation completed")
 
-        print_timer_results()
-        save_timer_results("rapid_timing_results.txt")
         return RP
     end
 end
