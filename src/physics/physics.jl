@@ -284,8 +284,8 @@ The implementation supports both explicit and implicit time integration schemes.
 """
 function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @timeit RAPID_TIMER "update_Te!" begin
-        # Update power terms for energy equation
-        update_electron_heating_powers!(RP)
+    # Update power terms for energy equation
+    update_electron_heating_powers!(RP)
 
     ee = RP.config.constants.ee
     dt = RP.dt
@@ -293,19 +293,37 @@ function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     OP = RP.operators
     θimp = RP.flags.Implicit_weight
 
+    two_thirds_FT = FT(2.0)/FT(3.0)
+
     # Apply time integration method based on flag
     if RP.flags.Implicit
         if RP.flags.evolve_Te_inWall_only
             @warn "Implicit method for Te_evolve_inWall_only not implemented yet" maxlog=1
         else
+            @. OP.A_LHS = OP.II
+
+            ePowers_tilde = copy(pla.ePowers.tot)
+
             # Calculate RHS
             # ePowers_tilde = ePowers already known at crruent time t
-            ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
-            OP.RHS .= pla.Te_eV + (FT(2.0)/FT(3.0)*dt*ePowers_tilde / ee)
+            # Note: diffu and conv will have (1-θimp) contribution
+            # ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
 
             # Calculate LHS
-            div_u = calculate_divergence(RP.G, pla.ueR, pla.ueZ)
-            OP.A_LHS = OP.II - dt*θimp*(OP.∇𝐃∇ - OP.𝐮∇ + spdiagm(div_u[:]/FT(3.0)))
+            if RP.flags.Include_Te_diffu_term
+                # P_diffu = 1.5*∇𝐃∇*Te
+                @. ePowers_tilde -= θimp * pla.ePowers.diffu
+                @. OP.A_LHS -= two_thirds_FT * FT(1.5) * (dt * θimp * OP.∇𝐃∇)
+            end
+
+            if RP.flags.Include_Te_convec_term
+                # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)
+                @. ePowers_tilde -= θimp * pla.ePowers.conv
+                div_u = calculate_divergence(RP.G, pla.ueR, pla.ueZ)
+                OP.A_LHS .-= two_thirds_FT * (@views dt * θimp * ( -FT(1.5) * OP.∇𝐮 + spdiagm( FT(0.5) * div_u[:]) ))
+            end
+
+            OP.RHS .= pla.Te_eV + two_thirds_FT * (dt*ePowers_tilde / ee)
 
             # Solve the linear system
             @timeit RAPID_TIMER "Te_eV LinearSolve" begin
@@ -314,7 +332,7 @@ function update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         end
     else
         # Explicit method (forward Euler)
-        @. pla.Te_eV += (FT(2.0)/FT(3.0)) * pla.ePowers.tot * dt / ee;
+        @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee;
     end
 
     # Apply temperature limits
@@ -418,10 +436,8 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
     # If diffusion term is included in temperature equation
     if RP.flags.Include_Te_diffu_term
         # P_diffu = 1.5*∇𝐃∇*Te
-        if RP.flags.evolve_Te_inWall_only
-            @warn "Include_Te_diffu_term not implemented for evolve_Te_inWall_only" maxlog=1
-            # TODO:Need to implement A_Dturb_diffu_reflective instead of using ∇𝐃∇
-            # obj.ePowers.diffu(obj.in_Wall_idx) =  obj.ee*(1.5*obj.A_Dturb_diffu_reflective)*obj.Te_eV(obj.in_Wall_idx);
+        if RP.flags.Implicit
+            ePowers.diffu .= ee*FT(1.5)*( OP.∇𝐃∇ * pla.Te_eV )
         else
             ePowers.diffu .= ee*FT(1.5)*compute_∇𝐃∇f_directly(RP, RP.plasma.Te_eV)
         end
@@ -429,10 +445,12 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
 
     # If convection term is included in temperature equation
     if RP.flags.Include_Te_convec_term
-        if RP.flags.evolve_Te_inWall_only
-            @warn "Include_Te_convec_term not implemented for evolve_Te_inWall_only" maxlog=1
-            # obj.A_Te_conv = obj.Construct_A_Te_convec_only_IN_nodes(obj.Jacob,obj.ueR,obj.ueZ,obj.Flag);
-            # obj.ePowers.conv(obj.in_Wall_idx) = obj.ee*obj.A_Te_conv*obj.Te_eV(obj.in_Wall_idx);
+        # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)
+        if RP.flags.Implicit
+            ePowers.conv .= ee*(
+                    -FT(1.5) * (OP.∇𝐮 * pla.Te_eV)
+                    .+FT(0.5)* pla.Te_eV .* calculate_divergence(RP.G, pla.ueR, pla.ueZ)
+            )
         else
             ePowers.conv .= ee*(
                     -FT(1.5)*compute_∇f𝐮_directly(RP, pla.Te_eV)
