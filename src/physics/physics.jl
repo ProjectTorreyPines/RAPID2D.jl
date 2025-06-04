@@ -149,9 +149,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
             # #6: turbulent Diffusive term by ExB mixing
             if RP.flags.Include_ud_diffu_term
-                @warn "Turbulent diffusion term not implemented yet" maxlog=1
-                @. accel_para_tilde += (one_FT - θu) * (OP.A_𝐮_diffu * pla.ue_para[:])
-                @. OP.A_LHS += θu * dt * OP.A_𝐮_diffu
+                update_∇𝐃∇_operator!(RP) # TODO: check if this is needed here
+                accel_para_tilde .+= (one_FT - θu) * (OP.∇𝐃∇ * pla.ue_para)
+                @. OP.A_LHS -= θu * dt * OP.∇𝐃∇
             end
 
             # Set-up the RHS
