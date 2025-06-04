@@ -145,14 +145,10 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     if RP.flags.turb_ExB_mixing
         # In a real implementation, turbulent diffusion would be calculated based on
         # field line connection length, ExB drifts, etc.
-        BRoverBpol = @. F.BR ./ F.Bpol
-        BRoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
-        BZoverBpol = @. F.BZ ./ F.Bpol
-        BZoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
 
-        @. tp.DRR_turb = tp.Dturb_para * (BRoverBpol)^2 + tp.Dturb_perp * (BZoverBpol)^2
-        @. tp.DRZ_turb = (tp.Dturb_para - tp.Dturb_perp) * (BRoverBpol * BZoverBpol)
-        @. tp.DZZ_turb = tp.Dturb_para * (BZoverBpol)^2 + tp.Dturb_perp * (BRoverBpol)^2
+        @. tp.DRR_turb = tp.Dturb_para * (F.bpol_R)^2 + tp.Dturb_perp * (F.bpol_Z)^2
+        @. tp.DRZ_turb = (tp.Dturb_para - tp.Dturb_perp) * (F.bpol_R * F.bpol_Z)
+        @. tp.DZZ_turb = tp.Dturb_para * (F.bpol_Z)^2 + tp.Dturb_perp * (F.bpol_R)^2
 
         # Add turbulent diffusion to base diffusion
         @. tp.DRR .+= tp.DRR_turb

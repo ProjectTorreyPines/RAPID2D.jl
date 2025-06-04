@@ -63,21 +63,22 @@ end
 Calculate unit vectors for the magnetic field.
 """
 function calculate_magnetic_field_unit_vectors!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Avoid division by zero
-    epsilon = FT(1.0e-10)
-    mask = RP.fields.Btot .< epsilon
 
-    b_denominator = copy(RP.fields.Btot)
-    b_denominator[mask] .= FT(1.0)
+    F = RP.fields
 
-    RP.fields.bR .= RP.fields.BR ./ b_denominator
-    RP.fields.bZ .= RP.fields.BZ ./ b_denominator
-    RP.fields.bϕ .= RP.fields.Bϕ ./ b_denominator
+    # Unit vectors for magnetic field
+    @. F.bR = F.BR / F.Btot
+    @. F.bZ = F.BZ / F.Btot
+    @. F.bϕ = F.Bϕ / F.Btot
 
-    # Zero out unit vectors where total field is near zero
-    RP.fields.bR[mask] .= FT(0.0)
-    RP.fields.bZ[mask] .= FT(0.0)
-    RP.fields.bϕ[mask] .= FT(1.0) # Default to toroidal direction
+    # Poloidal magnetic field unit vectors
+    @. F.bpol_R = F.BR / F.Bpol
+    @. F.bpol_Z = F.BZ / F.Bpol
+
+    # Avoid division by zero for poloidal unit vectors
+    mask = (F.Bpol .== 0)
+    F.bpol_R[mask] .= FT(0.0)
+    F.bpol_Z[mask] .= FT(0.0)
 
     return RP
 end
@@ -353,16 +354,11 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     calculate_parallel_electric_field!(RP)
 
     if RP.flags.mean_ExB
-        BRoverBpol = @. F.BR ./ F.Bpol
-        BRoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
-        BZoverBpol = @. F.BZ ./ F.Bpol
-        BZoverBpol[F.Bpol .== 0] .= FT(0.0)  # Avoid division by zero
+        @. pla.mean_ExB_R = (F.Epol_self / F.Btot) * sign(F.Eϕ) * F.bpol_Z
+        @. pla.mean_ExB_Z = (F.Epol_self / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
 
-        @. pla.mean_ExB_R = (F.Epol_self / F.Btot) * sign(F.Eϕ) * BZoverBpol
-        @. pla.mean_ExB_Z = (F.Epol_self / F.Btot) * sign(F.Eϕ) * (-BRoverBpol)
-
-        @. F.ER = -sign(F.Eϕ.*F.Bϕ)*F.Epol_self*BRoverBpol;
-        @. F.EZ = -sign(F.Eϕ.*F.Bϕ)*F.Epol_self*BZoverBpol;
+        @. F.ER = -sign(F.Eϕ.*F.Bϕ)*F.Epol_self*F.bpol_R;
+        @. F.EZ = -sign(F.Eϕ.*F.Bϕ)*F.Epol_self*F.bpol_Z;
     end
 
     # # Turbulent parallel diffusion based on fluctuation levels

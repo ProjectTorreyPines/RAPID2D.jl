@@ -295,6 +295,9 @@ Fields include components of the magnetic and electric fields.
     bZ::Matrix{FT} = zeros(FT, dims)            # Vertical unit vector
     bϕ::Matrix{FT} = zeros(FT, dims)            # Toroidal unit vector
 
+    bpol_R::Matrix{FT} = zeros(FT, dims)        # Radial component of poloidal unit vector
+    bpol_Z::Matrix{FT} = zeros(FT, dims)        # Radial component of poloidal unit vector
+
     # Electric field components
     ER::Matrix{FT} = zeros(FT, dims)            # Radial electric field [V/m]
     EZ::Matrix{FT} = zeros(FT, dims)            # Vertical electric field [V/m]
