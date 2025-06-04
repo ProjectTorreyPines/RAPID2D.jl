@@ -19,19 +19,19 @@ Stores both raw data and an interpolation object for efficient calculation of ra
 - `EoverP::Vector{FT}`: Electric field over pressure (E/p) coordinates
 - `Erg_eV::Vector{FT}`: Particle energy in eV
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp::Interpolations.GriddedInterpolation`: Interpolation object for quick access
-"""
+- `itp`: Interpolation object with extrapolation for quick access"""
 struct RRC_EoverP_Erg{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 2 variables for given reaction rate coefficient
 	EoverP::Vector{FT}  # Electric field over pressure (E/p) coordinates
 	Erg_eV::Vector{FT}  # Particle's energy
 
 	raw_data::AbstractArray{FT}
-	itp::Interpolations.GriddedInterpolation
+	itp  # Interpolation object with extrapolation
 
 	function RRC_EoverP_Erg(EoverP::Vector{FT}, Erg_eV::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
 		itp = interpolate((EoverP, Erg_eV), raw_data, Gridded(Linear()))
-		new{FT}(EoverP, Erg_eV, raw_data, itp)
+		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
+		new{FT}(EoverP, Erg_eV, raw_data, itp_extrap)
 	end
 end
 
@@ -45,7 +45,7 @@ Used for reactions where the rate depends on temperature and drift velocity.
 - `T_eV::Vector{FT}`: Temperature in eV
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp::Interpolations.GriddedInterpolation`: Interpolation object for quick access
+- `itp`: Interpolation object with extrapolation for quick access
 """
 struct RRC_T_ud{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 2 variables for given reaction rate coefficient
@@ -53,11 +53,12 @@ struct RRC_T_ud{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	ud_para::Vector{FT}  # parallel velocity
 
 	raw_data::AbstractArray{FT}
-	itp::Interpolations.GriddedInterpolation
+	itp  # Interpolation object with extrapolation
 
 	function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
 		itp = interpolate((T_eV, ud_para), raw_data, Gridded(Linear()))
-		new{FT}(T_eV, ud_para, raw_data, itp)
+		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
+		new{FT}(T_eV, ud_para, raw_data, itp_extrap)
 	end
 end
 
@@ -72,7 +73,7 @@ Used for more complex reactions where the distribution function shape affects th
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `gFac::Vector{FT}`: g-factor of the distribution function
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data
-- `itp::Interpolations.GriddedInterpolation`: Interpolation object for quick access
+- `itp`: Interpolation object with extrapolation for quick access
 """
 struct RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 3 variables for given reaction rate coefficient
@@ -81,11 +82,12 @@ struct RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	gFac::Vector{FT}  # g-factor of Distribution function
 
 	raw_data::AbstractArray{FT}
-	itp::Interpolations.GriddedInterpolation
+	itp  # Interpolation object with extrapolation
 
 	function RRC_T_ud_gFac(T_eV::Vector{FT}, ud_para::Vector{FT}, gFac::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
 		itp = interpolate((T_eV, ud_para, gFac), raw_data, Gridded(Linear()))
-		new{FT}(T_eV, ud_para, gFac, raw_data, itp)
+		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
+		new{FT}(T_eV, ud_para, gFac, raw_data, itp_extrap)
 	end
 end
 
