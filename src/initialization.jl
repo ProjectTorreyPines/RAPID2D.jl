@@ -523,6 +523,73 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
     # This ensures we have a complete set of nodes that are either on the wall or outside it
     nodes.on_out_wall_nids = sort(union(nodes.on_wall_nids, nodes.out_wall_nids))
 
+    # Find and store neighboring node information for on-wall nodes
+    for zid in 1:NZ, rid in 1:NR
+        # Define neighborhood indices (3x3 grid around current node)
+        ngh_rids = max(1, rid-1):min(NR, rid+1)
+        ngh_zids = max(1, zid-1):min(NZ, zid+1)
+
+        # Initialize neighbor lists for this node
+        nodes.ngh_normal_in_wall_nids[rid, zid] = Int[]
+        nodes.ngh_in_wall_nids[rid, zid] = Int[]
+
+        # Find all neighboring in-wall nodes (state == 1)
+        for i in ngh_rids, j in ngh_zids
+            if nodes.state[i, j] == 1
+                push!(nodes.ngh_in_wall_nids[rid, zid], nodes.nid[i, j])
+            end
+        end
+
+        # Find neighboring in-wall nodes in cardinal directions (normal neighbors)
+        # Horizontal neighbors (same Z, different R)
+        j = zid
+        for i in ngh_rids
+            if nodes.state[i, j] == 1
+                push!(nodes.ngh_normal_in_wall_nids[rid, zid], nodes.nid[i, j])
+            end
+        end
+
+        # Vertical neighbors (same R, different Z)
+        i = rid
+        for j in ngh_zids
+            if nodes.state[i, j] == 1
+                push!(nodes.ngh_normal_in_wall_nids[rid, zid], nodes.nid[i, j])
+            end
+        end
+    end
+
+    # Find and store neighboring on-wall nodes for in-wall nodes
+    for zid in 1:NZ, rid in 1:NR
+        ngh_rids = max(1, rid-1):min(NR, rid+1)
+        ngh_zids = max(1, zid-1):min(NZ, zid+1)
+
+        # Initialize neighbor list for this node
+        nodes.ngh_on_wall_nids[rid, zid] = Int[]
+
+        # Find all neighboring on-wall nodes (state == 0)
+        for j in ngh_zids, i in ngh_rids
+            if nodes.state[i, j] == 0
+                push!(nodes.ngh_on_wall_nids[rid, zid], nodes.nid[i, j])
+            end
+        end
+    end
+
+    # Classify in-wall nodes based on proximity to wall boundary
+    nodes.inWall_but_nearWall_nids = Int[]
+    for k in 1:length(nodes.in_wall_nids)
+        nid = nodes.in_wall_nids[k]
+        rid = nodes.rid[nid]
+        zid = nodes.zid[nid]
+
+        # If this in-wall node has neighboring on-wall nodes, it's near the wall
+        if length(nodes.ngh_on_wall_nids[rid, zid]) > 0
+            push!(nodes.inWall_but_nearWall_nids, nid)
+        end
+    end
+
+    # Deep in-wall nodes are those that are not near the wall
+    nodes.inWall_deepInWall_nids = setdiff(nodes.in_wall_nids, nodes.inWall_but_nearWall_nids)
+
     # Ensure we have on-wall nodes before proceeding
     if !isempty(nodes.on_wall_nids)
         # Select first on_wall node as starting point

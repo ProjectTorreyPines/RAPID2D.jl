@@ -534,6 +534,15 @@ mutable struct NodeState{FT<:AbstractFloat}
     on_wall_nids::Vector{Int}  # Linear indices of nodes on the wall
     on_out_wall_nids::Vector{Int}  # Linear indices of nodes on & out the wall
 
+    # Neighbor information for each node (including itself)
+    ngh_in_wall_nids::Matrix{Vector{Int}}      # All neighboring in-wall nodes for each node
+    ngh_normal_in_wall_nids::Matrix{Vector{Int}}  # Neighboring in-wall nodes in cardinal directions
+    ngh_on_wall_nids::Matrix{Vector{Int}}      # Neighboring on-wall nodes for each node
+
+    # Classification based on proximity to wall
+    inWall_but_nearWall_nids::Vector{Int}  # In-wall nodes near the wall boundary
+    inWall_deepInWall_nids::Vector{Int}    # In-wall nodes deep inside (away from boundary)
+
     # Constructor
     function NodeState{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
         rid = zeros(Int, NR, NZ)
@@ -541,7 +550,20 @@ mutable struct NodeState{FT<:AbstractFloat}
         nid = zeros(Int, NR, NZ)
         state = fill(NaN, NR, NZ)
 
-        return new{FT}(rid, zid, nid, state, Int[], Int[], Int[])
+        # Initialize neighbor information matrices
+        ngh_in_wall_nids = Matrix{Vector{Int}}(undef, NR, NZ)
+        ngh_normal_in_wall_nids = Matrix{Vector{Int}}(undef, NR, NZ)
+        ngh_on_wall_nids = Matrix{Vector{Int}}(undef, NR, NZ)
+
+        # Initialize all vectors to empty
+        for i in 1:NR, j in 1:NZ
+            ngh_in_wall_nids[i, j] = Int[]
+            ngh_normal_in_wall_nids[i, j] = Int[]
+            ngh_on_wall_nids[i, j] = Int[]
+        end
+
+        return new{FT}(rid, zid, nid, state, Int[], Int[], Int[], Int[],
+                       ngh_in_wall_nids, ngh_normal_in_wall_nids, ngh_on_wall_nids, Int[], Int[])
     end
 
     # Convenience constructor
