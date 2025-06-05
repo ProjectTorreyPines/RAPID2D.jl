@@ -782,10 +782,20 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
     if RP.flags.negative_n_correction
         neg_n_idx = findall(RP.plasma.ne .< 0)
         if !isempty(neg_n_idx)
-            Ne_loss = @. RP.plasma.ne[neg_n_idx] * FT(2.0 * pi) * RP.G.Jacob[neg_n_idx] * RP.G.dR * RP.G.dZ
-            Ntracker.cum0D_Ne_loss += sum(Ne_loss)
-            @. @views Ntracker.cum2D_Ne_loss[neg_n_idx] += Ne_loss
-            RP.plasma.ne[neg_n_idx] .= 0.0
+            ori_ne = copy(RP.plasma.ne)
+            @inbounds for nid in neg_n_idx
+                rid = RP.G.nodes.rid[nid]
+                zid = RP.G.nodes.zid[nid]
+
+                ngh_rids = max(1, rid-1):min(RP.G.NR, rid+1)
+                ngh_zids = max(1, zid-1):min(RP.G.NZ, zid+1)
+
+                RP.plasma.ne[nid] = min(0.1*abs(ori_ne[nid]), 0.001*mean(abs.(ori_ne[ngh_rids, ngh_zids])))
+
+                Ne_loss = (RP.plasma.ne[nid] - ori_ne[nid])  * FT(2.0 * pi) * RP.G.Jacob[nid] * RP.G.dR * RP.G.dZ
+                Ntracker.cum0D_Ne_loss += Ne_loss
+                Ntracker.cum2D_Ne_loss[nid] += Ne_loss
+            end
         end
     end
 
