@@ -352,9 +352,13 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     # Parallel electrostatic self-field component
     # E_para_self_ES = E_self_pol * (Bpol/Btot) * sign(direction)
     E_pol_required_for_cancellation = @. abs(F.E_para_ext + RP.flags.E_para_self_EM * F.E_para_self_EM)*(F.Btot/F.Bpol);
-    E_self_debye = @. sqrt(abs(pla.ne)*ee*pla.Te_eV/eps0)
+
+    ne_SM = smooth_data_2D(pla.ne; num_SM=2, weighting=RP.G.inVol2D)
+    # E_self_debye = @. sqrt(abs(pla.ne)*ee*pla.Te_eV/eps0)
+    E_self_debye = @. sqrt(abs(ne_SM)*ee*pla.Te_eV/eps0)
 
     F.Epol_self = @. min(pla.γ_shape_fac * E_pol_required_for_cancellation, E_self_debye)
+    extrapolate_field_to_boundary_nodes!(RP.G, F.Epol_self)
 
     calculate_parallel_electric_field!(RP)
 
@@ -371,6 +375,8 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     # F.L_mixing .= 10.0;
     tp = RP.transport
     tp.L_mixing .= RP.flf.Lpol_tot
+
+    extrapolate_field_to_boundary_nodes!(RP.G, tp.L_mixing)
     # smooth_data_2D!(tp.L_mixing; num_SM = 3)
 
     # # Turbulent diffusion coefficient

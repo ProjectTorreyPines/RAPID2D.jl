@@ -58,6 +58,9 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     Dperp_bohm = @. abs((1/16) * RP.plasma.Te_eV / RP.fields.Bϕ)
     @. RP.transport.Dperp = RP.transport.Dperp0 + Dperp_bohm
 
+    extrapolate_field_to_boundary_nodes!(RP.G, RP.transport.Dpara)
+    extrapolate_field_to_boundary_nodes!(RP.G, RP.transport.Dperp)
+
     # Apply damping function outside wall if enabled
     if RP.flags.Damp_Transp_outWall
         @. RP.transport.Dpara *= RP.damping_func
