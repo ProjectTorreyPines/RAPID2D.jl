@@ -87,14 +87,15 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     snap0D.Ni_loss_rate = Ntracker.cum0D_Ni_loss / RP.config.snap0D_Δt_s
 
     # Growth rates
-    prev_total_Ne = sum(RP.prev_n .* inVol2D)
+    # TODO: Check if this is the correct way to calculate growth rates
+    prev_snap0D = RP.diagnostics.snaps0D[max(1, RP.diagnostics.tid_0D-1)]
+    prev_total_Ne = prev_snap0D.ne * RP.G.device_inVolume
     snap0D.eGrowth_rate = log(FT(1) + Ntracker.cum0D_Ne_src / prev_total_Ne) / RP.config.snap0D_Δt_s
     snap0D.eLoss_rate = -log(FT(1) - Ntracker.cum0D_Ne_loss / prev_total_Ne) / RP.config.snap0D_Δt_s
 
     # Alternative growth rates
-    snap0D.growth_rate2 = snap0D.Ne_src_rate / (snap0D.ne * RP.G.device_inVolume)
-    snap0D.loss_rate2 = snap0D.Ne_loss_rate / (snap0D.ne * RP.G.device_inVolume)
-
+    snap0D.growth_rate2 = snap0D.Ne_src_rate / total_Ne
+    snap0D.loss_rate2 = snap0D.Ne_loss_rate / total_Ne
     # Power balance calculations
 
     ePowers, iPowers = RP.plasma.ePowers, RP.plasma.iPowers
