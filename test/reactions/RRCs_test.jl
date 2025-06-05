@@ -66,8 +66,11 @@ using RAPID2D
             end
 
             # Test bounds handling
-            @test_throws BoundsError rrc.itp(EoverP[1] - 1.0, Erg_eV[1])
-            @test_throws BoundsError rrc.itp(EoverP[end] + 1.0, Erg_eV[1])
+            # It should return the zero value beyond edges
+            @test rrc.itp(EoverP[1] - 1.0, Erg_eV[1]) == 0.0
+            @test rrc.itp(-10.0, 100.0) == 0.0
+            @test rrc.itp(1e5, 100.0) == 0.0
+            @test rrc.itp(EoverP[end] + 1.0, Erg_eV[1]) == 0.0
         end
     end
 
