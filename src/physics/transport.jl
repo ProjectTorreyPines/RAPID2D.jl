@@ -49,7 +49,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Use the minimum of the two diffusion coefficients
     Dpara_coll = min.(Dpara_coll_1, Dpara_coll_2)
     Dpara_coll[.!isfinite.(Dpara_coll)] .= zero(FT)
-    Dpara_coll[RP.G.nodes.out_wall_nids] .= zero(FT)
+    Dpara_coll[RP.G.nodes.on_out_wall_nids] .= zero(FT)
 
     # Combine base and collision diffusion
     @. RP.transport.Dpara = RP.transport.Dpara0 + Dpara_coll

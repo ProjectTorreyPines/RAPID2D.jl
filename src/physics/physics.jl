@@ -654,7 +654,7 @@ function calculate_ν_iz!(RP::RAPID{FT}) where FT<:AbstractFloat
     end
 
     # Zero out the ionization frequency outside the wall
-    RP.plasma.ν_iz[RP.G.nodes.out_wall_nids] .= 0.0
+    RP.plasma.ν_iz[RP.G.nodes.on_out_wall_nids] .= 0.0
 
     # Update sparse matrix operator for implicit methods if needed
     if RP.flags.Implicit

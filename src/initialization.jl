@@ -665,7 +665,7 @@ function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Set small initial seed density inside and on wall
     RP.plasma.ne .= FT(1.0e6)
     # RP.plasma.ne[RP.G.nodes.in_wall_nids] .= FT(1.0e6)
-    RP.plasma.ne[RP.G.nodes.out_wall_nids] .= zero(FT)
+    RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= zero(FT)
 
     # Ion density matches electron for now
     RP.plasma.ni .= copy(RP.plasma.ne)

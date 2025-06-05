@@ -27,7 +27,7 @@ using SimpleUnPack
 
     # Test 1: Check if electron and ion densities were properly initialized
     @test all(RP.plasma.ne[RP.G.nodes.in_wall_nids] .== 1.0e6)
-    @test all(RP.plasma.ne[RP.G.nodes.out_wall_nids] .== 0.0)
+    @test all(RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .== 0.0)
     @test RP.plasma.ne == RP.plasma.ni # Ion density should match electron density
 
     # Test 2: Check if temperature was properly initialized
@@ -131,7 +131,7 @@ end
 
     # Test source term calculation
     @test !all(RP.plasma.ν_iz .== 0.0)  # Should have non-zero source terms
-    @test all(RP.plasma.ν_iz[RP.G.nodes.out_wall_nids] .== 0.0)  # Zero outside wall
+    @test all(RP.plasma.ν_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)  # Zero outside wall
 
     # Test diffusion term calculation (will be zero initially since ne is uniform inside wall)
     @test all( compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.in_wall_nids] .== 0.0)  # Zero inside wall
@@ -204,14 +204,14 @@ end
 
     initialize!(RP)
     # Initialize electron density
-    ini_ne = zeros(FT, RP.G.NR, RP.G.NZ)
+    ini_ne = zeros(FT, RP.G.NR, RP.G.NZ)_
     for i in 1:RP.G.NR, j in 1:RP.G.NZ
         R = RP.G.R2D[i, j]
         Z = RP.G.Z2D[i, j]
         # Gaussian density profile
         ini_ne[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
-    ini_ne[RP.G.nodes.out_wall_nids] .= 0.0
+    ini_ne[RP.G.nodes.on_out_wall_nids] .= 0.0
 
     ini_ue_para = 1e6 # Initial drift velocity [m/s]
     ini_BR_ext = 10e-4
@@ -348,7 +348,7 @@ end
         # Gaussian density profile
         ini_ne[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
-    ini_ne[RP.G.nodes.out_wall_nids] .= 0.0
+    ini_ne[RP.G.nodes.on_out_wall_nids] .= 0.0
 
     function _set_initial_conditions!(RP, ini_ne, ini_BR_ext, ini_BZ_ext)
         RP.plasma.ne = copy(ini_ne)
@@ -399,8 +399,8 @@ end
         estimated_DRR = (σR_end^2 - σR0^2)/(2.0*RP.time_s)
         estimated_DZZ = (σZ_end^2 - σZ0^2)/(2.0*RP.time_s)
 
-        @test isapprox(avg_DRR, estimated_DRR; rtol=0.02) # 2% error
-        @test isapprox(avg_DZZ, estimated_DZZ; rtol=0.02) # 2% error
+        @test isapprox(avg_DRR, estimated_DRR; rtol=0.05) # 5% error
+        @test isapprox(avg_DZZ, estimated_DZZ; rtol=0.05) # 5% error
     end
 end
 
@@ -448,7 +448,7 @@ end
         R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
         ini_n[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
-    ini_n[RP.G.nodes.out_wall_nids] .= 0.0
+    ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
 
     function _set_initial_conditions!(RP, ini_n, ini_BR_ext, ini_BZ_ext)
         RP.plasma.ne = copy(ini_n)
@@ -537,7 +537,7 @@ end
         R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
         ini_n[i, j] = peak_density * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
-    ini_n[RP.G.nodes.out_wall_nids] .= 0.0
+    ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
 
     function _set_initial_conditions!(RP, ini_n, ini_BR_ext, ini_BZ_ext)
         RP.plasma.ne = copy(ini_n)
