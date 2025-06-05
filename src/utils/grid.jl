@@ -186,5 +186,46 @@ function trace_zero_contour(matrix::Matrix{T}, start_rid::Int, start_zid::Int) w
     return trace_zero_contour(matrix, (rid=start_rid, zid=start_zid))
 end
 
+"""
+    extrapolate_field_to_boundary_nodes!(G::GridGeometry{FT}, field::AbstractMatrix{FT}) where FT<:AbstractFloat
+
+Extrapolate field values from interior nodes to boundary and exterior nodes using neighbor averaging.
+
+This function applies boundary conditions by:
+1. Setting on-wall node values to the mean of neighboring in-wall nodes
+2. Setting out-wall node values to the mean of neighboring on-wall nodes
+
+This ensures field continuity across the wall boundary and provides reasonable
+values for nodes outside the computational domain.
+
+# Arguments
+- `G`: Grid geometry containing node classification and neighbor information
+- `field`: 2D field array to be extrapolated (modified in-place)
+
+# Physical Interpretation
+This implements a zero-gradient (Neumann-like) boundary condition by extending
+interior values to the boundary through local averaging, which is commonly used
+for velocity components and other transport quantities.
+"""
+function extrapolate_field_to_boundary_nodes!(G::GridGeometry{FT}, field::AbstractMatrix{FT}) where FT<:AbstractFloat
+    # Set on-wall node values using neighboring in-wall nodes
+    for nid in G.nodes.on_wall_nids
+        if !isempty(G.nodes.ngh_in_wall_nids[nid])
+            # Use mean of neighboring in-wall nodes
+            # If no neighbors, keep original value (could be NaN)
+            field[nid] = mean(field[G.nodes.ngh_in_wall_nids[nid]])
+        end
+    end
+
+    # Set out-wall node values using neighboring on-wall nodes
+    for nid in G.nodes.out_wall_nids
+        if !isempty(G.nodes.ngh_on_wall_nids[nid])
+            # Use mean of neighboring on-wall nodes
+            # If no neighbors, keep original value (could be NaN)
+            field[nid] = mean(field[G.nodes.ngh_on_wall_nids[nid]])
+        end
+    end
+end
+
 # Export functions
-export initialize_grid_geometry, initialize_grid_geometry!, trace_zero_contour
+export initialize_grid_geometry, initialize_grid_geometry!, trace_zero_contour, extrapolate_field_to_boundary_nodes!
