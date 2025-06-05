@@ -134,12 +134,12 @@ end
     @test all(RP.plasma.ν_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)  # Zero outside wall
 
     # Test diffusion term calculation (will be zero initially since ne is uniform inside wall)
-    @test all( compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.in_wall_nids] .== 0.0)  # Zero inside wall
+    @test all( compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.inWall_deepInWall_nids] .== 0.0)  # Zero inside wall
 
     # another way to calculate diffusion term
     RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
     mean_inside_ne = mean(RP.plasma.ne[RP.G.nodes.in_wall_nids])
-    @test all( isapprox.(RHS_diffu[RP.G.nodes.in_wall_nids], 0.0, atol=1e-12*mean_inside_ne))  # Zero outside wall
+    @test all( isapprox.(RHS_diffu[RP.G.nodes.inWall_deepInWall_nids], 0.0, atol=1e-12*mean_inside_ne))  # Zero outside wall
 
     # Modify density to create gradients
     inside_idx = RP.G.nodes.in_wall_nids
@@ -204,7 +204,7 @@ end
 
     initialize!(RP)
     # Initialize electron density
-    ini_ne = zeros(FT, RP.G.NR, RP.G.NZ)_
+    ini_ne = zeros(FT, RP.G.NR, RP.G.NZ)
     for i in 1:RP.G.NR, j in 1:RP.G.NZ
         R = RP.G.R2D[i, j]
         Z = RP.G.Z2D[i, j]
