@@ -60,6 +60,8 @@ jobs:
           GKSwstype: 100  # Disable graphics output during tests
 
       - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: src
 
       - uses: codecov/codecov-action@v5
         with:
