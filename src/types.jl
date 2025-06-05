@@ -532,6 +532,7 @@ mutable struct NodeState{FT<:AbstractFloat}
     in_wall_nids::Vector{Int}  # Linear indices of nodes inside wall
     out_wall_nids::Vector{Int} # Linear indices of nodes outside wall
     on_wall_nids::Vector{Int}  # Linear indices of nodes on the wall
+    on_out_wall_nids::Vector{Int}  # Linear indices of nodes on & out the wall
 
     # Constructor
     function NodeState{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat

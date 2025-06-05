@@ -519,6 +519,10 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
     # NOTE: Update out_wall_nids to exclude on-wall nodes
     nodes.out_wall_nids = sort(setdiff(nodes.out_wall_nids, nodes.on_wall_nids))
 
+    # union on_wall and out_wall nodes
+    # This ensures we have a complete set of nodes that are either on the wall or outside it
+    nodes.on_out_wall_nids = sort(union(nodes.on_wall_nids, nodes.out_wall_nids))
+
     # Ensure we have on-wall nodes before proceeding
     if !isempty(nodes.on_wall_nids)
         # Select first on_wall node as starting point
