@@ -71,10 +71,11 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
         @timeit RAPID_TIMER "current_calculation" begin
             # Calculate the current density based on electron drift velocity
             RP.plasma.Jϕ .= (-RP.config.ee) .* RP.plasma.ne .* RP.plasma.ue_para .* RP.fields.bϕ
+            I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
         end
 
         # For high current: update electromagnetic fields using Ampere's law
-        if RP.flags.Ampere && sum(abs.(RP.plasma.Jϕ) .* RP.G.inVol2D) * RP.G.dR * RP.G.dZ >= RP.flags.Ampere_Itor_threshold
+        if RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
             if RP.flags.E_para_self_EM && RP.flags.ud_evolve && RP.flags.ud_method == "Xsec" && RP.step % RP.flags.Ampere_nstep == 0
                 # Solve the coupled drift velocity and magnetic field equations
                 @timeit RAPID_TIMER "coupled_ud_GS" solve_coupled_ud_GS_equations!(RP)
@@ -85,7 +86,7 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
                 end
 
                 # Solve the Grad-Shafranov equation for the magnetic field
-                @timeit RAPID_TIMER "grad_shafranov" solve_grad_shafranov_equation!(RP)
+                @timeit RAPID_TIMER "grad_shafranov" solve_Ampere_equation!(RP)
             end
         else
             # For low current: only update drift velocity

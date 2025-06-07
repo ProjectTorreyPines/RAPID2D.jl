@@ -1163,3 +1163,40 @@ function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::In
 
     return accel_by_convection
 end
+
+"""
+    solve_Ampere_equation!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Solve Ampère's equation (Grad-Shafranov equation) to update self-consistent magnetic fields.
+
+Solves: ΔGS * ψ = - μ₀R²Jϕ with boundary conditions from Green's function.
+Updates ψ_self, BR_self, BZ_self, and optionally Eϕ_self.
+"""
+function solve_Ampere_equation!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    @timeit RAPID_TIMER "solve_Ampere_equation" begin
+    # Alias for readability
+    pla = RP.plasma
+    OP = RP.operators
+    F = RP.fields
+    μ0 = RP.config.constants.μ0
+
+    @. OP.RHS = - μ0 * RP.G.R2D * pla.Jϕ
+
+    # Boudnary condition: calculate psi values at boundaries using the Green_inWall2bdy
+    @views OP.RHS[RP.G.BDY_idx] .= (RP.G.Green_inWall2bdy * pla.Jϕ[RP.G.nodes.in_wall_nids]) * RP.G.dR * RP.G.dZ
+
+    old_ψ_self = copy(F.ψ_self)
+
+    # solve Ampere's equation
+    F.ψ_self = OP.ΔGS \ OP.RHS;
+
+    # % calculate the magnetic field from the self-consistent ψ
+    calculate_B_from_ψ!(RP.G, F.ψ_self, F.BR_self, F.BZ_self)
+
+    if RP.flags.E_para_self_EM
+        @. F.Eϕ_self = - (F.ψ_self - old_ψ_self) / (RP.G.R2D * RP.flags.Ampere_nstep * RP.dt)
+    end
+
+    return RP
+    end # @timeit
+end
