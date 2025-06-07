@@ -616,6 +616,9 @@ mutable struct GridGeometry{FT<:AbstractFloat}
     # Boundary indices
     BDY_idx::Vector{Int}     # Indices of boundary points
 
+    # Green's function tables
+    Green_inWall2bdy::Matrix{FT} # Green's function from in-wall nodes to boundary nodes
+
     # Node information
     nodes::NodeState{FT}     # Information about grid nodes
 
@@ -637,12 +640,14 @@ mutable struct GridGeometry{FT<:AbstractFloat}
         cell_state = zeros(Int, NR, NZ)
         device_inVolume = FT(0.0)
 
+        Green_inWall2bdy = zeros(0, 0) # Empty matrix for now
         return new{FT}(
             NR, NZ,
             R1D, Z1D, R2D, Z2D,
             FT(0.0), FT(0.0),
             Jacob, inv_Jacob, inVol2D,
             BDY_idx,
+            Green_inWall2bdy,
             nodes, cell_state,
             device_inVolume
         )

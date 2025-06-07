@@ -204,7 +204,7 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         Zdest = RP.G.Z2D[RP.G.BDY_idx]
 
         # Placeholder for the Green's function calculation
-        # RP.G_inWall2bdy = cal_psi_by_green_function(RP, Rdest, Zdest, Rsrc, Zsrc, ones(FT, length(Rsrc)))
+        RP.G.Green_inWall2bdy = calculate_ψ_by_green_function(Rdest, Zdest, Rsrc, Zsrc, one(FT))
     end
 
     # Create the diffusion operator if needed

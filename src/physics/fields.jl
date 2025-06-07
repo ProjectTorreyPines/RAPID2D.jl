@@ -15,7 +15,8 @@ export update_external_fields!,
        combine_external_and_self_fields!,
        calculate_magnetic_field_unit_vectors!,
        calculate_B_from_ψ!,
-       calculate_B_from_ψ
+       calculate_B_from_ψ,
+       calculate_ψ_by_green_function
 
 # Export external field types and functions
 export AbstractExternalField, TimeSeriesExternalField
@@ -23,6 +24,9 @@ export calculate_external_fields_at_time
 
 # Required imports for field calculations
 using LinearAlgebra
+
+# Required imports for Green's function calculations
+using SpecialFunctions
 
 """
     update_self_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
