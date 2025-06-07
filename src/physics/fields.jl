@@ -13,7 +13,9 @@ Contains functions related to electromagnetic field calculations, including:
 export update_external_fields!,
        update_self_fields!,
        combine_external_and_self_fields!,
-       calculate_magnetic_field_unit_vectors!
+       calculate_magnetic_field_unit_vectors!,
+       calculate_B_from_ψ!,
+       calculate_B_from_ψ
 
 # Export external field types and functions
 export AbstractExternalField, TimeSeriesExternalField
@@ -384,4 +386,125 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     @. tp.Dpol_turb = 0.5 * F.Epol_self / F.Btot * tp.L_mixing;
 
     return RP
+end
+
+"""
+    calculate_B_from_ψ!(G::GridGeometry{FT}, ψ::Matrix{FT}, BR::Matrix{FT}, BZ::Matrix{FT}) where {FT<:AbstractFloat}
+
+Calculate magnetic field components (BR, BZ) from poloidal flux function ψ using in-place computation.
+
+Uses the relations:
+- BR = -(1/R)*(∂ψ/∂Z)
+- BZ = (1/R)*(∂ψ/∂R)
+
+# Arguments
+- `G::GridGeometry{FT}`: Grid geometry containing R, Z coordinates and spacing
+- `ψ::Matrix{FT}`: Poloidal flux function on the grid
+- `BR::Matrix{FT}`: Pre-allocated matrix for radial magnetic field component (modified in-place)
+- `BZ::Matrix{FT}`: Pre-allocated matrix for vertical magnetic field component (modified in-place)
+
+# Notes
+- Uses second-order central differences for interior points
+- Uses first-order forward/backward differences at boundaries
+- All matrices must have dimensions (G.NR, G.NZ)
+"""
+function calculate_B_from_ψ!(G::GridGeometry{FT}, ψ::Matrix{FT}, BR::Matrix{FT}, BZ::Matrix{FT}) where {FT<:AbstractFloat}
+    @assert size(ψ) == (G.NR, G.NZ) "ψ must match grid size (NR=$(G.NR), NZ=$(G.NZ))"
+    @assert size(BR) == (G.NR, G.NZ) "BR must match grid size (NR=$(G.NR), NZ=$(G.NZ))"
+    @assert size(BZ) == (G.NR, G.NZ) "BZ must match grid size (NR=$(G.NR), NZ=$(G.NZ))"
+
+    NR, NZ = G.NR, G.NZ
+
+    inv_dR = one(FT) / G.dR
+    inv_dZ = one(FT) / G.dZ
+    half = FT(0.5)
+
+    # BR = -(1/R)*(∂ψ/∂Z)
+    # BZ = (1/R)*(∂ψ/∂R)
+
+    # Interior points: use second-order central differences
+    @inbounds for j in 2:NZ-1
+        for i in 2:NR-1
+            inv_R = one(FT) / G.R1D[i]
+            BR[i,j] = inv_R * (- (ψ[i, j+1] - ψ[i, j-1]) * half * inv_dZ)
+            BZ[i,j] = inv_R * ((ψ[i+1, j] - ψ[i-1, j]) * half * inv_dR)
+        end
+    end
+
+    # R-direction boundaries (left and right edges)
+    @inbounds for j in 1:NZ
+        for i in [1, NR]
+            inv_R = one(FT) / G.R1D[i]
+
+            # BZ component: use forward/backward difference in R
+            if i == 1
+                # Left boundary: forward difference in R
+                BZ[i,j] = inv_R * ((ψ[i+1, j] - ψ[i, j]) * inv_dR)
+            else  # i == NR
+                # Right boundary: backward difference in R
+                BZ[i,j] = inv_R * ((ψ[i, j] - ψ[i-1, j]) * inv_dR)
+            end
+
+            # BR component: use appropriate difference in Z
+            if j == 1
+                # Bottom corner: forward difference in Z
+                BR[i,j] = inv_R * (- (ψ[i, j+1] - ψ[i, j]) * inv_dZ)
+            elseif j == NZ
+                # Top corner: backward difference in Z
+                BR[i,j] = inv_R * (- (ψ[i, j] - ψ[i, j-1]) * inv_dZ)
+            else
+                # Interior in Z: central difference in Z
+                BR[i,j] = inv_R * (- (ψ[i, j+1] - ψ[i, j-1]) * half * inv_dZ)
+            end
+        end
+    end
+
+    # Z-direction boundaries (bottom and top edges, excluding corners already handled)
+    @inbounds for i in 2:NR-1
+        for j in [1, NZ]
+            inv_R = one(FT) / G.R1D[i]
+
+            # BR component: use forward/backward difference in Z
+            if j == 1
+                # Bottom boundary: forward difference in Z
+                BR[i,j] = inv_R * (- (ψ[i, j+1] - ψ[i, j]) * inv_dZ)
+            else  # j == NZ
+                # Top boundary: backward difference in Z
+                BR[i,j] = inv_R * (- (ψ[i, j] - ψ[i, j-1]) * inv_dZ)
+            end
+
+            # BZ component: central difference in R (interior points)
+            BZ[i,j] = inv_R * ((ψ[i+1, j] - ψ[i-1, j]) * half * inv_dR)
+        end
+    end
+end
+
+"""
+    calculate_B_from_ψ(G::GridGeometry{FT}, ψ::Matrix{FT}) where {FT<:AbstractFloat}
+
+Calculate magnetic field components (BR, BZ) from poloidal flux function ψ.
+
+This is a convenience wrapper around `calculate_B_from_ψ!` that allocates output arrays.
+
+# Arguments
+- `G::GridGeometry{FT}`: Grid geometry containing R, Z coordinates and spacing
+- `ψ::Matrix{FT}`: Poloidal flux function on the grid
+
+# Returns
+- `Tuple{Matrix{FT}, Matrix{FT}}`: (BR, BZ) magnetic field components
+
+# See also
+- [`calculate_B_from_ψ!`](@ref): In-place version for better performance
+"""
+function calculate_B_from_ψ(G::GridGeometry{FT}, ψ::Matrix{FT}) where {FT<:AbstractFloat}
+    @assert size(ψ) == (G.NR, G.NZ) "ψ must match grid size (NR=$(G.NR), NZ=$(G.NZ))"
+
+    # Initialize BR and BZ matrices
+    BR = zeros(FT, G.NR, G.NZ)
+    BZ = zeros(FT, G.NR, G.NZ)
+
+    # Calculate the magnetic field from the poloidal flux function
+    calculate_B_from_ψ!(G, ψ, BR, BZ)
+
+    return BR, BZ
 end

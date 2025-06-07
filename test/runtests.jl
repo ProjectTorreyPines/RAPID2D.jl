@@ -28,6 +28,8 @@ else
 
     include("diagnostics/snapshots_test.jl")
 
+    include("fields/calculate_B_fields_test.jl")
+
     include("numerics/numerics_test.jl")
     include("numerics/operators_test.jl")
     include("numerics/discretized_operator_test.jl")
