@@ -393,6 +393,36 @@ function calculate_divergence(
     return result
 end
 
+"""
+    construct_ΔGS_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
+
+Constructs a sparse matrix operator for the Grad-Shafranov differential operator in cylindrical coordinates (R, Z).
+
+# Mathematical Definition
+The Grad-Shafranov operator is defined as:
+```
+ΔGS ≡ ∂²/∂R² - (1/R)∂/∂R + ∂²/∂Z²
+```
+
+This operator appears in the Grad-Shafranov equation for magnetohydrodynamic equilibrium:
+```
+ΔGS ψ = -μ₀ * R * Jϕ
+      = -μ₀ R² p'(ψ) - FF'(ψ)
+```
+,where ψ is the magnetic flux function, Jϕ is the toroidal current density, p'(ψ) is the pressure gradient, and FF'(ψ) is related to the poloidal current function.
+
+# Discretization Scheme
+The operator is discretized using finite differences on a regular cylindrical grid with Dirichlet boundary conditions.
+
+# Arguments
+- `G::GridGeometry{FT}`: Grid geometry containing:
+
+# Returns
+- `DiscretizedOperator{FT}`: A sparse matrix operator of size (NR×NZ) × (NR×NZ) representing the discretized Grad-Shafranov operator
+
+# See Also
+- [`calculate_B_from_ψ!`](@ref): Computes magnetic field components from flux function
+"""
 function construct_ΔGS_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
     @timeit RAPID_TIMER "constrcut_ΔGS_operator" begin
         # ΔGS ≡ (∂R)^2 - (1/R)*∂R + (∂Z)^2
@@ -406,15 +436,25 @@ function construct_ΔGS_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
         twoFT = FT(2.0)
 
         # Pre-allocate arrays for sparse matrix construction
-        num_entries = (NR-2) * (NZ-2) * 5
+        num_entries = (NR-2) * (NZ-2) * 5 + 2*NR+2*NZ-4;
         I = zeros(Int, num_entries)  # Row indices
         J = zeros(Int, num_entries)  # Column indices
         V = zeros(FT, num_entries)   # Values (all zeros initially)
 
         # Fill arrays for sparse matrix construction
         k = 1
-        for j in 2:NZ-1
-            for i in 2:NR-1
+        for j in 1:NZ
+            for i in 1:NR
+
+                if i == 1 || i == NR || j == 1 || j == NZ
+                    # Boundary nodes only have one neighbor, so we skip them
+                    I[k] = nid[i, j]
+                    J[k] = nid[i, j]
+                    V[k] = FT(1.0)  # Dirichlet boundary condition
+                    k += 1
+                    continue
+                end
+
                 # Set row indices
                 I[k:k+4] .= nid[i, j]
 
