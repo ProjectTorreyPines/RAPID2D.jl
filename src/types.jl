@@ -71,6 +71,8 @@ Contains simulation configuration parameters.
     Dpara0::FT = FT(0.0)               # Base parallel diffusion coefficient
     Dperp0::FT = FT(0.0)               # Base perpendicular diffusion coefficient
 
+    turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
+
     # Output intervals
     snap0D_Δt_s::FT = FT(20e-6)  # Time interval for 1D snapshots
     snap2D_Δt_s::FT = FT(100e-6)  # Time interval for 2D snapshots

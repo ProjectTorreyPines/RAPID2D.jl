@@ -790,7 +790,7 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
                 ngh_rids = max(1, rid-1):min(RP.G.NR, rid+1)
                 ngh_zids = max(1, zid-1):min(RP.G.NZ, zid+1)
 
-                RP.plasma.ne[nid] = min(0.1*abs(ori_ne[nid]), 0.001*mean(abs.(ori_ne[ngh_rids, ngh_zids])))
+                RP.plasma.ne[nid] = min(0.1*abs(ori_ne[nid]), 0.01*mean(abs.(ori_ne[ngh_rids, ngh_zids])))
 
                 Ne_loss = (RP.plasma.ne[nid] - ori_ne[nid])  * FT(2.0 * pi) * RP.G.Jacob[nid] * RP.G.dR * RP.G.dZ
                 Ntracker.cum0D_Ne_loss += Ne_loss
