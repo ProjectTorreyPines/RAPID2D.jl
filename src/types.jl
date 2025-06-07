@@ -270,14 +270,14 @@ Fields include components of the magnetic and electric fields.
     BR_ext::Matrix{FT} = zeros(FT, dims)        # External radial magnetic field [T]
     BZ_ext::Matrix{FT} = zeros(FT, dims)        # External vertical magnetic field [T]
     LV_ext::Matrix{FT} = zeros(FT, dims)        # External Loop Voltage [V]
-    psi_ext::Matrix{FT} = zeros(FT, dims)       # External magnetic flux [Wb/rad]
+    ψ_ext::Matrix{FT} = zeros(FT, dims)         # External magnetic flux [Wb/rad]
     Eϕ_ext::Matrix{FT} = zeros(FT, dims)        # External toroidal electric field [V/m]
     E_para_ext::Matrix{FT} = zeros(FT, dims)    # External parallel electric field [V/m]
 
     # Self-generated fields
     BR_self::Matrix{FT} = zeros(FT, dims)       # Self-generated radial magnetic field [T]
     BZ_self::Matrix{FT} = zeros(FT, dims)       # Self-generated vertical magnetic field [T]
-    psi_self::Matrix{FT} = zeros(FT, dims)      # Self-generated magnetic flux [Wb/rad]
+    ψ_self::Matrix{FT} = zeros(FT, dims)      # Self-generated magnetic flux [Wb/rad]
     Eϕ_self::Matrix{FT} = zeros(FT, dims)       # Self-generated toroidal electric field [V/m]
     Epol_self::Matrix{FT} = zeros(FT, dims)       # Self-generated poloidal electric field [V/m]
     E_para_self_ES::Matrix{FT} = zeros(FT, dims) # Electrostatic self-generated parallel electric field [V/m]
@@ -310,7 +310,7 @@ Fields include components of the magnetic and electric fields.
     E_para_tot::Matrix{FT} = zeros(FT, dims)    # Total parallel electric field [V/m]
 
     # Magnetic flux
-    psi::Matrix{FT} = zeros(FT, dims)           # Total magnetic flux [Wb/rad]
+    ψ::Matrix{FT} = zeros(FT, dims)             # Total magnetic flux [Wb/rad]
 end
 
 # Constructor with separate dimensions

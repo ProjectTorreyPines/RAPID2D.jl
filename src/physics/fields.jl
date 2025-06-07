@@ -132,7 +132,7 @@ function update_external_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<
         F.BR_ext .= extF.BR
         F.BZ_ext .= extF.BZ
         F.LV_ext .= extF.LV
-        F.psi_ext .= extF.psi
+        F.ψ_ext .= extF.psi
     end
 
     # Set toroidal magnetic field
@@ -174,7 +174,7 @@ function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) 
         @. F.BR = F.BR_ext + F.BR_self
         @. F.BZ = F.BZ_ext + F.BZ_self
         @. F.Eϕ = F.Eϕ_ext + F.Eϕ_self
-        @. F.psi = F.psi_ext + F.psi_self
+        @. F.ψ = F.ψ_ext + F.ψ_self
 
         # Update derived magnetic field quantities (Bpol, Btot, unit b vector)
         calculate_derived_magnetic_field_quantities!(RP)

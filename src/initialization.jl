@@ -304,7 +304,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Initialize other field components
     RP.fields.BR_ext = copy(RP.fields.BR)
     RP.fields.BZ_ext = copy(RP.fields.BZ)
-    RP.fields.psi_ext = zeros(FT, NR, NZ)
+    RP.fields.ψ_ext = zeros(FT, NR, NZ)
 
     # Copy external fields to total fields initially
     RP.fields.E_para_tot = copy(RP.fields.E_para_ext)

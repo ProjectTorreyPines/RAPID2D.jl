@@ -234,8 +234,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     @. snap2D.J_para = ee * (pla.ni * pla.ui_para - pla.ne * pla.ue_para)
 
     # Poloidal flux
-    snap2D.psi_ext .= F.psi_ext
-    snap2D.psi_self .= F.psi_self
+    snap2D.ψ_ext .= F.ψ_ext
+    snap2D.ψ_self .= F.ψ_self
 
     # Electron velocity components
     snap2D.ueR .= pla.ueR
