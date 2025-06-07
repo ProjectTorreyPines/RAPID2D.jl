@@ -54,7 +54,7 @@ Contains simulation configuration parameters.
     me::FT = FT(9.1093837015e-31)      # Electron mass (kg)
     mi::FT = FT(3.34754699166e-27)     # Ion mass (kg)
     eps0::FT = FT(8.8541878128e-12)    # Vacuum permittivity (F/m)
-    mu0::FT = FT(1.25663706212e-6)     # Vacuum permeability (H/m)
+    μ0::FT = FT(1.25663706212e-6)     # Vacuum permeability (H/m)
     kB::FT = FT(1.380649e-23)          # Boltzmann constant (J/K)
 
     # Field configuration
@@ -501,7 +501,7 @@ Contains boolean flags that control various aspects of the simulation.
     )
 
     # Current threshold for Ampere's equation
-    Ampere_Itor_threshold::FT = FT(0.0)      # Current threshold for Ampere equation
+    Ampere_Itor_threshold::FT = FT(1.0)      # Current threshold for Ampere equation (Default: 1.0 A)
 
     # Debug flags
     tmp_test::Bool = false                    # Enable temporary tests
