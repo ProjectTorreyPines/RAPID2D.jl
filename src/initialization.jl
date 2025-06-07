@@ -195,7 +195,7 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Initialize specific operators based on flags
     if RP.flags.Ampere
-        RP.operators.A_GS = construct_A_GS(RP)
+        RP.operators.ΔGS = construct_ΔGS_operator(RP.G)
 
         # Calculate Green's function for boundaries if needed
         Rsrc = RP.G.R2D[RP.G.nodes.in_wall_nids]

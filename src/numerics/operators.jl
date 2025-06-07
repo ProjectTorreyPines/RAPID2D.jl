@@ -32,6 +32,7 @@ for stability and accuracy.
 # Export public functions
 export construct_∂R_operator, construct_∂Z_operator,
         calculate_divergence, construct_𝐽⁻¹∂R_𝐽_operator,
+        construct_ΔGS_operator,
         update_diffusion_tensor!,
         compute_∇𝐃∇f_directly,
         construct_∇𝐃∇_operator,
@@ -391,6 +392,63 @@ function calculate_divergence(
 
     return result
 end
+
+function construct_ΔGS_operator(G::GridGeometry{FT}) where {FT<:AbstractFloat}
+    @timeit RAPID_TIMER "constrcut_ΔGS_operator" begin
+        # ΔGS ≡ (∂R)^2 - (1/R)*∂R + (∂Z)^2
+        NR, NZ = G.NR, G.NZ
+        nid = G.nodes.nid
+        inv_dR = one(FT) / G.dR
+        inv_dZ = one(FT) / G.dZ
+
+        # define constants with FT for type stability
+        half = FT(0.5)
+        twoFT = FT(2.0)
+
+        # Pre-allocate arrays for sparse matrix construction
+        num_entries = (NR-2) * (NZ-2) * 5
+        I = zeros(Int, num_entries)  # Row indices
+        J = zeros(Int, num_entries)  # Column indices
+        V = zeros(FT, num_entries)   # Values (all zeros initially)
+
+        # Fill arrays for sparse matrix construction
+        k = 1
+        for j in 2:NZ-1
+            for i in 2:NR-1
+                # Set row indices
+                I[k:k+4] .= nid[i, j]
+
+                # Note the negative sign of -(1/R)*∂R
+
+                # East [i+1, j]
+                J[k] = nid[i+1, j]
+                V[k] = inv_dR^twoFT -(half*inv_dR / G.R1D[i])
+
+                # West [i-1, j]
+                J[k+1] = nid[i-1, j]
+                V[k+1] = inv_dR^twoFT +(half*inv_dR / G.R1D[i])
+
+                # North [i, j+1]
+                J[k+2] = nid[i, j+1]
+                V[k+2] = inv_dZ^twoFT
+
+                # South [i, j-1]
+                J[k+3] = nid[i, j-1]
+                V[k+3] = inv_dZ^twoFT
+
+                # Center [i, j]
+                J[k+4] = nid[i, j]
+                V[k+4] = -twoFT*(inv_dR^twoFT + inv_dZ^twoFT)
+
+                k += 5
+            end
+        end
+
+        return DiscretizedOperator((NR,NZ), I, J, V)
+    end
+end
+
+
 
 """
     construct_∇𝐃∇_operator!(RP::RAPID{FT}) where {FT<:AbstractFloat}

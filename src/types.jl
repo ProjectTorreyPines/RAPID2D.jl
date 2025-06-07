@@ -401,7 +401,7 @@ Fields include various matrices for solving different parts of the model.
     # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
 
     # Operator for magnetic field solver
-    A_GS::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))  # Grad-Shafranov operator
+    ΔGS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Grad-Shafranov operator
 
     # RHS vectors for electron continuity equation
     RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
