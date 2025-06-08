@@ -22,7 +22,7 @@ using RAPID2D
         BR = zeros(FT, NR, NZ)
         BZ = zeros(FT, NR, NZ)
 
-        calculate_B_from_ψ!(RP.G, ψ, BR, BZ)
+        calculate_B_from_ψ!(G, ψ, BR, BZ)
 
         @test all(abs.(BR) .< 1e-14)
         @test all(abs.(BZ) .< 1e-14)
