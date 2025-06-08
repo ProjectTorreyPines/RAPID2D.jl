@@ -230,14 +230,16 @@ Contains the plasma state variables including density, temperature, and velocity
     lnΛ::Matrix{FT} = zeros(FT, dims)   # Coulomb logarithm
     ν_ei::Matrix{FT} = zeros(FT, dims) # Electron-ion collision frequency [1/s]
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
+    ν_ei_eff::Matrix{FT} = zeros(FT, dims) # Effective electron-ion collision frequency [1/s]
+    ν_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
+    ν_mom::Matrix{FT} = zeros(FT, dims) # Electron momentum transfer rate [1/s]
+    ν_tot::Matrix{FT} = zeros(FT, dims) # Total collision frequency (en + ei) [1/s]
+
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
     Zeff::Matrix{FT} = ones(FT, dims) # Effective ion charge
-
     # Current densities
     Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
-
-    ν_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
 
     # Power sources/sinks - using new struct-based approach
     ePowers::ElectronHeatingPowers{FT} = ElectronHeatingPowers{FT}(dims)
