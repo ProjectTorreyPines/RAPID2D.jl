@@ -18,26 +18,28 @@ export update_transport_quantities!,
 Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
 """
 function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    tot_coll_freq = zeros(FT, size(RP.G.R2D))
 
     # Calculate momentum transfer reaction rate coefficient and collision frequency
     if RP.flags.Atomic_Collision
         RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
-        @. tot_coll_freq += RP.plasma.n_H2_gas * RRC_mom
+        RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
+        @. RP.plasma.ν_mom = RP.plasma.n_H2_gas * RRC_mom
+        @. RP.plasma.ν_iz = RP.plasma.n_H2_gas * RRC_iz
     end
 
     # Calculate total collision frequency
     if RP.flags.Coulomb_Collision
         update_coulomb_collision_parameters!(RP)
-        @. tot_coll_freq += RP.plasma.ν_ei
     end
+
+    @. RP.plasma.ν_tot = RP.plasma.ν_mom + RP.plasma.ν_iz + RP.plasma.ν_ei_eff
 
     # Calculate parallel diffusion coefficient based on collision frequency
     # Thermal velocity
     vthe = @. sqrt(RP.plasma.Te_eV * RP.config.ee / RP.config.me)
 
     # Collision-based diffusion coefficient (D = vth²/(2ν))
-    Dpara_coll_1 = @. 0.5 * vthe * vthe / tot_coll_freq
+    Dpara_coll_1 = @. 0.5 * vthe^2 / RP.plasma.ν_tot
 
     # Field line mixing length-based diffusion coefficient
     Dpara_coll_2 = zeros(FT, size(RP.plasma.Te_eV))
