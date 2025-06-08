@@ -32,14 +32,14 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         update_coulomb_collision_parameters!(RP)
     end
 
-    @. RP.plasma.ν_tot = RP.plasma.ν_en_mom + RP.plasma.ν_en_iz + RP.plasma.ν_ei_eff
+    ν_tot = @. RP.plasma.ν_en_mom + RP.plasma.ν_en_iz + RP.plasma.ν_ei_eff
 
     # Calculate parallel diffusion coefficient based on collision frequency
     # Thermal velocity
     vthe = @. sqrt(RP.plasma.Te_eV * RP.config.ee / RP.config.me)
 
     # Collision-based diffusion coefficient (D = vth²/(2ν))
-    Dpara_coll_1 = @. 0.5 * vthe^2 / RP.plasma.ν_tot
+    Dpara_coll_1 = @. 0.5 * vthe^2 / ν_tot
 
     # Field line mixing length-based diffusion coefficient
     Dpara_coll_2 = zeros(FT, size(RP.plasma.Te_eV))

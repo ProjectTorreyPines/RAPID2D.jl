@@ -233,7 +233,6 @@ Contains the plasma state variables including density, temperature, and velocity
     ν_ei_eff::Matrix{FT} = zeros(FT, dims) # Effective electron-ion collision frequency [1/s]
     ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
     ν_en_mom::Matrix{FT} = zeros(FT, dims) # Electron momentum transfer rate [1/s]
-    ν_tot::Matrix{FT} = zeros(FT, dims) # Total collision frequency (en + ei) [1/s]
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 

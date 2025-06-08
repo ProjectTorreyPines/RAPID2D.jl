@@ -74,6 +74,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         pla = RP.plasma
         F = RP.fields
 
+        # Define sum of collision frequencies of ionization and momentum reactions
+        ν_iz_mom = @. pla.ν_en_iz + pla.ν_en_mom
+
         # Always use backward Euler for ue_para (θu=1.0) for better saturation
         # but keep the formula structure compatible with variable θ_imp
         # θu = RP.flags.Implicit_weight
@@ -105,11 +108,12 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
                 accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
             end
 
-            # #4: collision drag force  (1-θ)*[-(ν_tot)*ue_para]
-            @. accel_para_tilde += (one_FT - θu) * (-pla.ν_tot * pla.ue_para)
+
+            # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom)*ue_para]
+            @. accel_para_tilde += (one_FT - θu) * (-ν_iz_mom * pla.ue_para)
 
             # Add collision frequency to diagonal elements using spdiagm
-            OP.A_LHS += @views spdiagm(θu * dt * pla.ν_tot[:])
+            OP.A_LHS += @views spdiagm(θu * dt * ν_iz_mom[:])
 
             # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
             @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
@@ -130,9 +134,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             end
         else
 
-            inv_factor = @. one_FT / (one_FT + θu * pla.ν_tot * dt)
+            inv_factor = @. one_FT / (one_FT + θu * ν_iz_mom * dt)
             @. pla.ue_para = inv_factor*(
-                                    pla.ue_para * (one_FT-(one_FT-θu)*dt*pla.ν_tot)
+                                    pla.ue_para * (one_FT-(one_FT-θu)*dt*ν_iz_mom)
                                     + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
                                 )
 
