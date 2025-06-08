@@ -66,9 +66,9 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     eRRC_mom = get_electron_RRC(RP, :Momentum)
     eRRC_Hα = get_electron_RRC(RP, :Halpha)
 
-    snap0D.ν_iz = sum(@. pla.n_H2_gas * eRRC_iz  * Ne2D) / total_Ne
-    snap0D.ν_mom = sum(@. pla.n_H2_gas * eRRC_mom  * Ne2D) / total_Ne
-    snap0D.ν_Hα = sum(@. pla.n_H2_gas * eRRC_Hα * Ne2D) / total_Ne
+    snap0D.ν_en_iz = sum(@. pla.n_H2_gas * eRRC_iz  * Ne2D) / total_Ne
+    snap0D.ν_en_mom = sum(@. pla.n_H2_gas * eRRC_mom  * Ne2D) / total_Ne
+    snap0D.ν_en_Hα = sum(@. pla.n_H2_gas * eRRC_Hα * Ne2D) / total_Ne
     snap0D.ν_ei = sum(@. pla.ν_ei * pla.ne *  inVol2D) / total_Ne
 
 
@@ -280,9 +280,9 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
         eRRC_iz = get_electron_RRC(RP, :Ionization)
         eRRC_Halpha = get_electron_RRC(RP, :Halpha)
 
-        @. snap2D.ν_mom = pla.n_H2_gas * eRRC_mom
-        @. snap2D.ν_iz = pla.n_H2_gas * eRRC_iz
-        @. snap2D.ν_Hα = pla.n_H2_gas * eRRC_Halpha
+        @. snap2D.ν_en_mom = pla.n_H2_gas * eRRC_mom
+        @. snap2D.ν_en_iz = pla.n_H2_gas * eRRC_iz
+        @. snap2D.ν_en_Hα = pla.n_H2_gas * eRRC_Halpha
     end
 
     if RP.flags.Coulomb_Collision

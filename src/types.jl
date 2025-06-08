@@ -231,8 +231,8 @@ Contains the plasma state variables including density, temperature, and velocity
     ν_ei::Matrix{FT} = zeros(FT, dims) # Electron-ion collision frequency [1/s]
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
     ν_ei_eff::Matrix{FT} = zeros(FT, dims) # Effective electron-ion collision frequency [1/s]
-    ν_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
-    ν_mom::Matrix{FT} = zeros(FT, dims) # Electron momentum transfer rate [1/s]
+    ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
+    ν_en_mom::Matrix{FT} = zeros(FT, dims) # Electron momentum transfer rate [1/s]
     ν_tot::Matrix{FT} = zeros(FT, dims) # Total collision frequency (en + ei) [1/s]
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
@@ -394,7 +394,7 @@ Fields include various matrices for solving different parts of the model.
 
     # Operators for solving continuity equations
     ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
-    ν_iz ::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization [1/s]
+    ν_en_iz ::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization [1/s]
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]

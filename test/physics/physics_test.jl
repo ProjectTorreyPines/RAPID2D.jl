@@ -128,11 +128,11 @@ end
     op = RP.operators
 
     # Calculate source terms
-    calculate_ν_iz!(RP)
+    calculate_ν_en_iz!(RP)
 
     # Test source term calculation
-    @test !all(RP.plasma.ν_iz .== 0.0)  # Should have non-zero source terms
-    @test all(RP.plasma.ν_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)  # Zero outside wall
+    @test !all(RP.plasma.ν_en_iz .== 0.0)  # Should have non-zero source terms
+    @test all(RP.plasma.ν_en_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)  # Zero outside wall
 
     # Test diffusion term calculation (will be zero initially since ne is uniform inside wall)
     @test all( compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.inWall_deepInWall_nids] .== 0.0)  # Zero inside wall
@@ -559,7 +559,7 @@ end
         _set_initial_conditions!(RP, ini_n, 1e-4, 1e-4)
         RP.plasma.Te_eV .= 0.1
         RAPID2D.run_simulation!(RP);
-        @test all(RP.plasma.ν_iz .== 0.0)
+        @test all(RP.plasma.ν_en_iz .== 0.0)
         @test all(RP.operators.neRHS_src .== 0.0)
         @test ini_n == RP.plasma.ne
     end

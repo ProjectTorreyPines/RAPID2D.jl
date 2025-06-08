@@ -58,7 +58,7 @@ function RAPID2D.plot_snaps0D(snaps0D; kwargs...)
               ylabel="⟨Ti⟩ (eV)", label="Ion temperature",
               linewidth=2))
 
-	p = plot(times_ms,  [s.ν_iz for s in snaps0D],
+	p = plot(times_ms,  [s.ν_en_iz for s in snaps0D],
 			  ylabel="⟨νiz⟩ (s⁻¹)", label="Ionization rate",
 			  linewidth=2)
 	plot!(p, times_ms, [s.eLoss_rate for s in snaps0D],

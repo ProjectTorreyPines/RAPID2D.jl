@@ -23,8 +23,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     if RP.flags.Atomic_Collision
         RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
         RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-        @. RP.plasma.ν_mom = RP.plasma.n_H2_gas * RRC_mom
-        @. RP.plasma.ν_iz = RP.plasma.n_H2_gas * RRC_iz
+        @. RP.plasma.ν_en_mom = RP.plasma.n_H2_gas * RRC_mom
+        @. RP.plasma.ν_en_iz = RP.plasma.n_H2_gas * RRC_iz
     end
 
     # Calculate total collision frequency
@@ -32,7 +32,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         update_coulomb_collision_parameters!(RP)
     end
 
-    @. RP.plasma.ν_tot = RP.plasma.ν_mom + RP.plasma.ν_iz + RP.plasma.ν_ei_eff
+    @. RP.plasma.ν_tot = RP.plasma.ν_en_mom + RP.plasma.ν_en_iz + RP.plasma.ν_ei_eff
 
     # Calculate parallel diffusion coefficient based on collision frequency
     # Thermal velocity

@@ -43,9 +43,9 @@ Contains volume-averaged quantities
     n_H2_gas_min::FT = zero(FT)     # Minimum H2 density
 
     # Collision frequencies
-    ν_iz::FT = zero(FT)            # Average ionization frequency [1/s]
-    ν_mom::FT = zero(FT)           # Average momentum transfer frequency [1/s]
-    ν_Hα::FT = zero(FT)            # Hα emission frequency [1/s]
+    ν_en_iz::FT = zero(FT)            # Average ionization frequency [1/s]
+    ν_en_mom::FT = zero(FT)           # Average momentum transfer frequency [1/s]
+    ν_en_Hα::FT = zero(FT)            # Hα emission frequency [1/s]
     ν_ei::FT = zero(FT)            # Electron-ion coulomb collision frequency [1/s]
 
 
@@ -177,9 +177,9 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     n_H2_gas::Matrix{FT} = zeros(FT, dims_RZ)       # H2 neutral density
 
     # Collision frequencies
-    ν_iz::Matrix{FT} = zeros(FT, dims_RZ)            # Average ionization frequency [1/s]
-    ν_mom::Matrix{FT} = zeros(FT, dims_RZ)           # Average momentum transfer frequency [1/s]
-    ν_Hα::Matrix{FT} = zeros(FT, dims_RZ)            # Hα emission frequency [1/s]
+    ν_en_iz::Matrix{FT} = zeros(FT, dims_RZ)            # Average ionization frequency [1/s]
+    ν_en_mom::Matrix{FT} = zeros(FT, dims_RZ)           # Average momentum transfer frequency [1/s]
+    ν_en_Hα::Matrix{FT} = zeros(FT, dims_RZ)            # Hα emission frequency [1/s]
     ν_ei::Matrix{FT} = zeros(FT, dims_RZ)            # Electron-ion coulomb collision frequency [1/s]
 
 
