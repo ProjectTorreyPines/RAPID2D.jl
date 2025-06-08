@@ -119,10 +119,11 @@ end
 	RP.plasma.Te_eV .= 10.0 # Set initial electron temperature
 
 	for _ in 1:100
+        update_transport_quantities!(RP)
 		update_ue_para!(RP)
 	end
 
-	@test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -382634.21437302034
+	@test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -382634.23090761126
 
     op = RP.operators
 
