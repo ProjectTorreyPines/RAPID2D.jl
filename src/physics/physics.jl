@@ -68,44 +68,11 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     elseif RP.flags.ud_method == "Xsec"
         # Full cross section model with collisions
-        qe = -RP.config.constants.ee
-        me = RP.config.constants.me
+        @unpack qe, me = RP.config.constants
         dt = RP.dt
 
         pla = RP.plasma
         F = RP.fields
-
-        # allocate arrays
-        tot_coll_freq = zeros(FT, size(pla.ue_para))
-        mom_eff_nu_ei = zeros(FT, size(pla.ue_para))
-
-        if RP.flags.Atomic_Collision
-            # Get reaction rate coefficients for both ionization and momentum transfer
-            RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-            RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
-
-            # Calculate collision frequency from neutrals
-            @. tot_coll_freq += pla.n_H2_gas * (RRC_mom + RRC_iz)
-        end
-
-        # Add Coulomb collisions if enabled
-        if RP.flags.Coulomb_Collision
-            if RP.flags.Spitzer_Resistivity
-                @. mom_eff_nu_ei = pla.sptz_fac * pla.ν_ei
-            else
-                @. mom_eff_nu_ei = pla.ν_ei
-            end
-            @. tot_coll_freq += mom_eff_nu_ei
-        end
-
-        # Ensure no NaN values in collision frequency
-        if(any(isnan.(tot_coll_freq)))
-            @warn "NaN values in collision frequency detected. Replacing with zero."
-            # Replace NaN values with zero
-            tot_coll_freq[isnan.(tot_coll_freq)] .= zero_FT
-            # replace!(tot_coll_freq, NaN => zero_FT)
-        end
-
 
         # Always use backward Euler for ue_para (θu=1.0) for better saturation
         # but keep the formula structure compatible with variable θ_imp
@@ -114,7 +81,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
         if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei = mom_eff_nu_ei * (pla.ui_para - (one_FT - θu) * pla.ue_para)
+            @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one_FT - θu) * pla.ue_para)
         end
 
         # Advance ue_para using implicit or explicit method
@@ -139,13 +106,13 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             end
 
             # #4: collision drag force  (1-θ)*[-(ν_tot)*ue_para]
-            @. accel_para_tilde += (one_FT - θu) * (-tot_coll_freq * pla.ue_para)
+            @. accel_para_tilde += (one_FT - θu) * (-pla.ν_tot * pla.ue_para)
 
             # Add collision frequency to diagonal elements using spdiagm
-            OP.A_LHS += @views spdiagm(θu * dt * tot_coll_freq[:])
+            OP.A_LHS += @views spdiagm(θu * dt * pla.ν_tot[:])
 
             # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
-            @. accel_para_tilde += (mom_eff_nu_ei * pla.ui_para)
+            @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
 
             # #6: turbulent Diffusive term by ExB mixing
             if RP.flags.Include_ud_diffu_term
@@ -163,10 +130,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             end
         else
 
-            inv_factor = @. one_FT / (one_FT + θu * tot_coll_freq * dt)
+            inv_factor = @. one_FT / (one_FT + θu * pla.ν_tot * dt)
             @. pla.ue_para = inv_factor*(
-                                    pla.ue_para * (one_FT-(one_FT-θu)*dt*tot_coll_freq)
-                                    + dt * (qe * F.E_para_tot / me + mom_eff_nu_ei * pla.ui_para)
+                                    pla.ue_para * (one_FT-(one_FT-θu)*dt*pla.ν_tot)
+                                    + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
                                 )
 
             # Add pressure and convection terms in the same way as MATLAB
@@ -183,7 +150,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
         # Complete the Rue_ei calculation with second part (n+1 step contribution)
         if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei += mom_eff_nu_ei * (-θu * pla.ue_para)
+            @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
         else
         error("Unknown electron drift velocity method: $(RP.flags.ud_method)")
