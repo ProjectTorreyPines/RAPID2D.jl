@@ -1171,3 +1171,216 @@ function solve_Ampere_equation!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
     end # @timeit
 end
+
+"""
+    solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
+                                                        tolerance=1e-3,
+                                                        max_iter=10,
+                                                        relaxation_w=0.5) where {FT}
+
+Solve coupled electron momentum and Ampère equations with coil interactions using Picard iteration.
+
+Solves the coupled system:
+- Electron parallel momentum:
+    - Au ≡ [ 𝐈 + Δt*θimp*(νe_eff + 𝐮⋅∇)]
+    - Au * ue∥⁽ⁿ⁺¹⁾ = ue∥⁽ⁿ⁾ + Δt*ã∥⁽ⁿ⁾ - (qe*bϕ²/me*R)*ψ_self⁽ⁿ⁺¹⁾
+- Implicit Ampere's equation:
+    - [Au*ΔGS - μ₀*ne*qe²*bϕ²/me]*ψ_self⁽ⁿ⁺¹⁾ = -μ₀R² J̃ϕ⁽ⁿ⁾
+- Coil circuit equations: V = Ic*Rc + Lc(dI/dt) + mutual coupling (coils+plasma)
+
+The electromagnetic induction coupling creates strong nonlinearity requiring iterative solution.
+
+# Arguments
+- `tolerance`: Convergence tolerance for Picard iteration (default: 1e-3)
+- `max_iter`: Maximum iterations (default: 10)
+- `relaxation_w`: Boundary relaxation weight (default: 0.5)
+
+# Updates
+Modifies `RP.plasma.ue_para`, `RP.fields.ψ_self`, `RP.fields.Eϕ_self`, and magnetic fields.
+"""
+function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
+                                                    tolerance::FT=1e-3,
+                                                    max_iter::Int=10,
+                                                    relaxation_w::FT=0.5) where {FT<:AbstractFloat}
+
+    # Aliases for readability
+    pla = RP.plasma
+    F = RP.fields
+    OP = RP.operators
+    G = RP.G
+    flags = RP.flags
+    dt = RP.dt
+
+    # Physical constants
+    @unpack ee, me, μ0, qe = RP.config.constants
+
+    # Store initial values for convergence checking
+    ue_para_old = copy(pla.ue_para)
+    ψ_self_old = copy(F.ψ_self)
+
+    θimp = FT(1.0); # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
+
+    # Factor for EM drive contribution
+    # derived from [E_para_EM = -qe/me * (ψ^(n+1) - ψ^(n))/(R*Δt)  = -facEM * ((ψ^(n+1) - ψ^(n)))/Δt]
+    facEM = (qe/me) * (F.bϕ ./ G.R2D)
+
+    # 1. calculate accel_para_tilde using the information at the current time step
+    accel_para_tilde = zeros(FT, G.NR, G.NZ) # Initialize acceleration field
+
+    # pressure gradient contribution: [-∇∥(ne*Te)/(me*ne)]
+    if RP.flags.Include_ud_pressure_term
+        accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
+    end
+
+    # convection contribution:  (1-θimp)*[-(𝐮⋅∇)u∥]
+    if RP.flags.Include_ud_convec_term
+        accel_para_tilde .+= (one(FT) - θimp) * calculate_electron_acceleration_by_convection(RP)
+    end
+
+    # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
+    if flags.E_para_self_ES
+        @. accel_para_tilde += qe/me * (F.E_para_ext + F.E_para_self_ES)
+    else
+        @. accel_para_tilde += qe/me * (F.E_para_ext)
+    end
+
+    # Effective electron collision frequency
+    νe_eff = pla.ν_en_mom + pla.ν_en_iz + pla.ν_ei_eff
+
+    @. accel_para_tilde += ( facEM / dt * F.ψ_self
+                            - (one(FT)-θimp) * νe_eff * pla.ue_para
+                            + pla.ν_ei_eff * pla.ui_para
+                            )
+
+
+    # 2. Define Au matrix for the electron parallel momentum equation
+    # Au ≡ [ 𝐈 + Δt*θimp*(νe_eff + 𝐮⋅∇)]
+    Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
+    Au .= OP.II + spdiagm(@views dt * θimp * νe_eff[:])
+    if flags.Include_ud_convec_term
+        Au .+= dt * θimp * OP.𝐮∇
+    end
+    Au_X_ui_para = Au * pla.ui_para
+
+    # Jϕ_tilde is the part of prediction of Jϕ at the next time step, using the current information
+    Jϕ_tilde = @. (pla.ne * qe * (pla.ue_para + dt * accel_para_tilde)
+                    + pla.ni * (ee * pla.Zeff) * Au_X_ui_para
+                    ) * F.bϕ
+
+
+    # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
+    if RP.flags.Coulomb_Collision
+        @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θimp) * pla.ue_para)
+    end
+
+    # Toroidal current density Jϕ @ t=(n-th step)
+    Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee*pla.Zeff) * pla.ui_para) * F.bϕ
+
+
+
+    # Initial (quadratic) guess of future ψ_self @ t=(n+1)-th step
+    new_ψ_self_k = @. F.ψ_self - dt*G.R2D * (FT(2.0)*F.Eϕ_self - F.Eϕ_self_prev)
+
+    # Prepare Picard iteration for coupled system
+    F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
+    old_ψ_self = copy(F.ψ_self) # Store old ψ_self for convergence checking
+
+
+    ue_para_k = zeros(FT, G.NR, G.NZ) # Initialize ue_para for iterationo
+    new_ψ_self_kp1 = zeros(FT, G.NR, G.NZ) # Initialize next ψ_self for iteration
+    RHS = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS for efficiency
+    Jϕ_pla_k = zeros(FT, G.NR, G.NZ) # Initialize Jϕ for iteration
+
+
+
+    # Define implicit LHS matrix for the coupled Ampere equation
+    # A_imp_ampere ≡ [Au*ΔGS - μ₀*ne*qe²*bϕ²/me]
+    induc_shielding_term = @. μ0 * pla.ne * qe^2 * F.bϕ^2/ me
+    induc_shielding_term[G.BDY_idx] .= 0.0 # For dirichlet condition of A_imp_ampere
+    A_imp_ampere = (Au * OP.ΔGS) - spdiagm(@views induc_shielding_term[:])
+
+    iter = 1
+    converged = false
+    while (true)
+        # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
+        @. RHS = pla.ue_para + dt * accel_para_tilde - facEM * new_ψ_self_k
+        ue_para_k .= Au \ RHS # Solve for ue_para at (k)-th step
+        @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
+
+
+        if !isnothing(RP.coils)
+            @warn "Coil currents are not yet implemented in this function. Skipping coil current update." maxlog=1
+        else
+            new_coil_I_k = 0
+        end
+
+        # Step #2: Update Boundary psi by both plasma and coils currents using Green's function
+        new_ψ_self_kp1_at_BDY = (G.Green_inWall2bdy * Jϕ_pla_k[G.nodes.in_wall_nids]) * G.dR * G.dZ
+
+        if !isnothing(RP.coils)
+            @warn "Coil currents are not yet implemented in this function. Skipping coil current update." maxlog=1
+            new_ψ_self_kp1_at_BDY .+= G.Green_coil2bdy * new_coil_I_k
+        end
+
+        #  update (k+1)-th boudary psi with some relaxation
+        @views new_ψ_self_kp1_at_BDY .= (  relaxation_w * new_ψ_self_kp1_at_BDY
+                                        + (one(FT) - relaxation_w) * new_ψ_self_k[G.BDY_idx]
+                                        )
+
+        # Step #3: Set RHS of the implicit Ampere equation
+        @. RHS = -μ0 * G.R2D * Jϕ_tilde
+        if !isnothing(RP.coils)
+            @warn "Coil currents are not yet implemented in this function. Skipping coil current update." maxlog=1
+            # inside_Jϕ_coil_k = obj.coils.Convert_Icoils_to_Jphi_inside_RP_domain(obj, new_coil_I_k);
+            @. RHS[G.BDY_idx] .+= -μ0 * G.R2D * inside_Jϕ_coil_k;
+        end
+        RHS[G.BDY_idx] .= new_ψ_self_kp1_at_BDY # Set RHS at boundary nodes
+
+        # Step #4: Solve the implicit Ampere equation
+        new_ψ_self_kp1 = A_imp_ampere \ RHS
+
+        # Step #5: Check if ψ solution is converged
+        convergence_rate = norm(new_ψ_self_kp1 - new_ψ_self_k) / norm(new_ψ_self_k)
+        if ( convergence_rate < tolerance )
+            # println("  ψ_self converged after $iter iterations! convergence_rate: $convergence_rate")
+            converged = true
+            break
+        elseif iter >= max_iter
+            converged = false
+            # println("  Warning: Picard iteration did not converge after $max_iter iterations")
+            # println("  Final change: $(norm(new_ψ_self_kp1 - new_ψ_self_k)/norm(new_ψ_self_k))")
+            break
+        else
+            new_ψ_self_k .= new_ψ_self_kp1 # Update for next iteration
+            iter += 1
+        end
+    end
+
+    # 7. Final updates of electromagnetic fields
+    @. F.ψ_self = new_ψ_self_kp1
+
+    # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
+    @. F.Eϕ_self = -( F.ψ_self - old_ψ_self) / (G.R2D * dt)
+
+    # Update parallel electron velocity: ue_para = (ψ_self - ψ_self_old)/(R*Δt) + ue_para_k
+    @. RHS = pla.ue_para + dt * accel_para_tilde - facEM * F.ψ_self
+    pla.ue_para = Au \ RHS # Solve for ue_para at (k)-th step
+
+    # Complete the Rue_ei calculation with second part (n+1 step contribution)
+    if RP.flags.Coulomb_Collision
+        @. pla.Rue_ei += pla.ν_ei_eff * (-θimp * pla.ue_para)
+    end
+
+    @. pla.Jϕ = pla.ne * qe * pla.ue_para * F.bϕ
+
+    # Update coil currents
+    if !isnothing(RP.coils)
+        @warn "Coil currents are not yet implemented in this function. Skipping coil current update." maxlog=1
+        # RP.coils.I = new_coil_I_k
+    end
+
+    # Update magnetic fields from ψ_self
+    calculate_B_from_ψ!(G, F.ψ_self, F.BR_self, F.BZ_self)
+
+    return RP
+end
