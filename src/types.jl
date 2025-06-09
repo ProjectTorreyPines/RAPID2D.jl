@@ -620,6 +620,7 @@ mutable struct GridGeometry{FT<:AbstractFloat}
 
     # Green's function tables
     Green_inWall2bdy::Matrix{FT} # Green's function from in-wall nodes to boundary nodes
+    Green_coil2bdy::Matrix{FT} # Green's function from coils (including wall segments) to boundary nodes
 
     # Node information
     nodes::NodeState{FT}     # Information about grid nodes
@@ -643,6 +644,7 @@ mutable struct GridGeometry{FT<:AbstractFloat}
         device_inVolume = FT(0.0)
 
         Green_inWall2bdy = zeros(0, 0) # Empty matrix for now
+        Green_coil2bdy = zeros(0, 0) # Empty matrix for now
         return new{FT}(
             NR, NZ,
             R1D, Z1D, R2D, Z2D,
@@ -650,6 +652,7 @@ mutable struct GridGeometry{FT<:AbstractFloat}
             Jacob, inv_Jacob, inVol2D,
             BDY_idx,
             Green_inWall2bdy,
+            Green_coil2bdy,
             nodes, cell_state,
             device_inVolume
         )
