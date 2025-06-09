@@ -719,6 +719,8 @@ mutable struct RAPID{FT<:AbstractFloat}
     AW_snap0D::AdiosFileWrapper    # Wrapped AdiosFile for 0D snapshots
     AW_snap2D::AdiosFileWrapper    # Wrapped AdiosFile for 2D snapshots
 
+    coils::Nothing # Placeholder for coil data, to be defined later
+
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
         # Get grid dimensions
@@ -754,6 +756,8 @@ mutable struct RAPID{FT<:AbstractFloat}
         AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
         AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
+        coils = nothing # Placeholder for coil data, to be defined later
+
         # Create and return new instance
         return new{FT}(
             G, wall, WallGeometry{FT}(), damping_func,
@@ -763,7 +767,8 @@ mutable struct RAPID{FT<:AbstractFloat}
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
             prev_n, tElap, diagnostics,
             flf,
-            AW_snap0D, AW_snap2D
+            AW_snap0D, AW_snap2D,
+            coils
         )
     end
 end
