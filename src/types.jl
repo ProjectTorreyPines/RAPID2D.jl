@@ -280,6 +280,7 @@ Fields include components of the magnetic and electric fields.
     BZ_self::Matrix{FT} = zeros(FT, dims)       # Self-generated vertical magnetic field [T]
     ψ_self::Matrix{FT} = zeros(FT, dims)      # Self-generated magnetic flux [Wb/rad]
     Eϕ_self::Matrix{FT} = zeros(FT, dims)       # Self-generated toroidal electric field [V/m]
+    Eϕ_self_prev::Matrix{FT} = zeros(FT, dims)   # Previous self-generated toroidal electric field [V/m]
     Epol_self::Matrix{FT} = zeros(FT, dims)       # Self-generated poloidal electric field [V/m]
     E_para_self_ES::Matrix{FT} = zeros(FT, dims) # Electrostatic self-generated parallel electric field [V/m]
     E_para_self_EM::Matrix{FT} = zeros(FT, dims) # Electromagnetic self-generated parallel electric field [V/m]
