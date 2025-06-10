@@ -15,6 +15,11 @@ function add_coil!(coil_system::CoilSystem{FT}, coil::Coil{FT}) where FT
     if coil.is_powered
         coil_system.n_powered += 1
         push!(coil_system.powered_indices, coil_system.n_total)
+
+        if coil.is_controllable
+            coil_system.n_controllable += 1
+            push!(coil_system.controllable_indices, coil_system.n_total)
+        end
     else
         push!(coil_system.passive_indices, coil_system.n_total)
     end
@@ -39,6 +44,15 @@ Return vector of passive coils/conductors only.
 """
 function get_passive_coils(coil_system::CoilSystem{FT}) where FT
     return coil_system.coils[coil_system.passive_indices]
+end
+
+"""
+    get_controllable_coils(coil_system::CoilSystem{FT}) where FT
+
+Return vector of controllable coils only.
+"""
+function get_controllable_coils(coil_system::CoilSystem{FT}) where FT
+    return coil_system.coils[coil_system.controllable_indices]
 end
 
 """
@@ -120,6 +134,23 @@ function update_all_voltages!(coil_system::CoilSystem{FT}, new_voltages::Vector{
 end
 
 """
+    update_controllable_voltages!(coil_system::CoilSystem{FT}, new_voltages::Vector{FT}) where FT
+
+Update external voltages for controllable coils only.
+Length of `new_voltages` must match number of controllable coils.
+"""
+function update_controllable_voltages!(coil_system::CoilSystem{FT}, new_voltages::Vector{FT}) where FT
+    if length(new_voltages) != coil_system.n_controllable
+        error("Length of new_voltages ($(length(new_voltages))) must match number of controllable coils ($(coil_system.n_controllable))")
+    end
+
+    for (i, coil_idx) in enumerate(coil_system.controllable_indices)
+        coil_system.coils[coil_idx].voltage_ext = new_voltages[i]
+    end
+    return nothing
+end
+
+"""
     get_coil_positions(coil_system::CoilSystem{FT}) where FT
 
 Return R and Z coordinates of all coils as separate vectors.
@@ -168,6 +199,7 @@ end
 """
     create_coil_from_parameters(r::FT, z::FT, area::FT, name::String, is_powered::Bool,
                                μ0::FT, cu_resistivity::FT;
+                               is_controllable=is_powered,
                                max_voltage=nothing, max_current=nothing,
                                current=zero(FT), voltage_ext=zero(FT)) where FT
 
@@ -175,13 +207,14 @@ Create a coil with calculated resistance and self-inductance.
 """
 function create_coil_from_parameters(r::FT, z::FT, area::FT, name::String, is_powered::Bool,
                                    μ0::FT, cu_resistivity::FT;
+                                   is_controllable=is_powered,
                                    max_voltage=nothing, max_current=nothing,
                                    current=zero(FT), voltage_ext=zero(FT)) where FT
     position = (r=r, z=z)
     resistance = calculate_coil_resistance(area, r, cu_resistivity)
     self_inductance = calculate_self_inductance(area, r, μ0)
 
-    return Coil(position, area, resistance, self_inductance, is_powered, name,
+    return Coil(position, area, resistance, self_inductance, is_powered, is_controllable, name,
                 max_voltage, max_current, current, voltage_ext)
 end
 
@@ -204,6 +237,15 @@ function get_powered_currents(coil_system::CoilSystem{FT}) where FT
 end
 
 """
+    get_controllable_currents(coil_system::CoilSystem{FT}) where FT
+
+Return currents of controllable coils only as a vector.
+"""
+function get_controllable_currents(coil_system::CoilSystem{FT}) where FT
+    return [coil_system.coils[idx].current for idx in coil_system.controllable_indices]
+end
+
+"""
     get_all_voltages(coil_system::CoilSystem{FT}) where FT
 
 Return external voltages of all coils as a vector at t=0.
@@ -221,6 +263,16 @@ For time-dependent voltages, use get_powered_voltages_at_time(coil_system, t) in
 """
 function get_powered_voltages(coil_system::CoilSystem{FT}) where FT
     return get_powered_voltages_at_time(coil_system, zero(FT))
+end
+
+"""
+    get_controllable_voltages(coil_system::CoilSystem{FT}) where FT
+
+Return external voltages of controllable coils only as a vector at t=0.
+For time-dependent voltages, use get_controllable_voltages_at_time(coil_system, t) instead.
+"""
+function get_controllable_voltages(coil_system::CoilSystem{FT}) where FT
+    return get_controllable_voltages_at_time(coil_system, zero(FT))
 end
 
 """
@@ -250,6 +302,22 @@ function set_powered_currents!(coil_system::CoilSystem{FT}, currents::Vector{FT}
     end
 
     for (i, coil_idx) in enumerate(coil_system.powered_indices)
+        coil_system.coils[coil_idx].current = currents[i]
+    end
+    return nothing
+end
+
+"""
+    set_controllable_currents!(coil_system::CoilSystem{FT}, currents::Vector{FT}) where FT
+
+Set currents for controllable coils only. Length of `currents` must match number of controllable coils.
+"""
+function set_controllable_currents!(coil_system::CoilSystem{FT}, currents::Vector{FT}) where FT
+    if length(currents) != coil_system.n_controllable
+        error("Length of currents ($(length(currents))) must match number of controllable coils ($(coil_system.n_controllable))")
+    end
+
+    for (i, coil_idx) in enumerate(coil_system.controllable_indices)
         coil_system.coils[coil_idx].current = currents[i]
     end
     return nothing
@@ -349,6 +417,15 @@ Return external voltages of powered coils only as a vector at time t.
 """
 function get_powered_voltages_at_time(coil_system::CoilSystem{FT}, t::FT) where FT
     return [get_coil_voltage_at_time(coil_system.coils[idx], t) for idx in coil_system.powered_indices]
+end
+
+"""
+    get_controllable_voltages_at_time(coil_system::CoilSystem{FT}, t::FT) where FT
+
+Return external voltages of controllable coils only as a vector at time t.
+"""
+function get_controllable_voltages_at_time(coil_system::CoilSystem{FT}, t::FT) where FT
+    return [get_coil_voltage_at_time(coil_system.coils[idx], t) for idx in coil_system.controllable_indices]
 end
 
 """

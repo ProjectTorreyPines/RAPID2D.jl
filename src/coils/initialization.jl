@@ -24,7 +24,9 @@ function initialize_four_wall_system!(coil_system::CoilSystem{FT}, n_total::Int)
     empty!(coil_system.coils)
     coil_system.n_total = 0
     coil_system.n_powered = 0
+    coil_system.n_controllable = 0
     empty!(coil_system.powered_indices)
+    empty!(coil_system.controllable_indices)
     empty!(coil_system.passive_indices)
 
     # Right wall (outer radial)
@@ -109,7 +111,9 @@ function initialize_single_wall_system!(coil_system::CoilSystem{FT}, n_total::In
     empty!(coil_system.coils)
     coil_system.n_total = 0
     coil_system.n_powered = 0
+    coil_system.n_controllable = 0
     empty!(coil_system.powered_indices)
+    empty!(coil_system.controllable_indices)
     empty!(coil_system.passive_indices)
 
     # Outer radial wall only
@@ -166,9 +170,11 @@ function add_control_coils!(coil_system::CoilSystem{FT}, coil_specs::Vector{<:Na
 
         max_voltage = haskey(spec, :max_voltage) ? FT(spec.max_voltage) : nothing
         max_current = haskey(spec, :max_current) ? FT(spec.max_current) : nothing
+        is_controllable = haskey(spec, :is_controllable) ? spec.is_controllable : true  # Default to controllable for control coils
 
         coil = create_coil_from_parameters(r, z, area, name, true,
                                          coil_system.μ0, coil_system.cu_resistivity,
+                                         is_controllable=is_controllable,
                                          max_voltage=max_voltage, max_current=max_current)
         add_coil!(coil_system, coil)
     end

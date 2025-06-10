@@ -37,5 +37,10 @@ else
     include("reactions/RRCs_test.jl")
     include("reactions/electron_Xsec_test.jl")
 
+    include("coils/coils_basic_test.jl")
+    include("coils/coils_operations_test.jl")
+    include("coils/coils_voltage_functions_test.jl")
+    include("coils/coils_initialization_test.jl")
+
     include("physics/physics_test.jl")
 end
