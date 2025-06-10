@@ -510,3 +510,90 @@ function Base.isapprox(snap1::Snapshot2D{<:AbstractFloat}, snap2::Snapshot2D{<:A
     end
     return true
 end
+
+"""
+    getproperty(sv::Vector{<:Snapshot0D}, sym::Symbol)
+
+Custom property access for Vector{Snapshot0D} to enable convenient field extraction.
+Allows syntax like `snaps0D.time_s` to extract all time_s values from the vector.
+
+# Examples
+```julia
+times = diagnostics.snaps0D.time_s      # Extract all time values
+densities = diagnostics.snaps0D.ne      # Extract all electron densities
+temps = diagnostics.snaps0D.Te_eV       # Extract all temperatures
+```
+
+Note: Regular vector operations (indexing, slicing) remain unchanged.
+"""
+function Base.getproperty(sv::Vector{<:Snapshot0D{<:AbstractFloat}}, sym::Symbol)
+    # First check if this is a Vector field - delegate to original behavior
+    if hasfield(Vector, sym)
+        return getfield(sv, sym)
+    end
+
+    # Handle empty vector case
+    if isempty(sv)
+        throw(BoundsError("Cannot access property of empty snapshot vector"))
+    end
+
+    # Check if it's a valid Snapshot0D field
+    if hasfield(typeof(sv[1]), sym)
+        return [getfield(s, sym) for s in sv]
+    end
+
+    # If not a snapshot field, throw error
+    throw(ArgumentError("Vector{Snapshot0D} has no property $sym"))
+end
+
+"""
+    getproperty(sv::Vector{<:Snapshot2D}, sym::Symbol)
+
+Custom property access for Vector{Snapshot2D} to enable convenient field extraction.
+Allows syntax like `snaps2D.ne` to extract all density matrices from the vector.
+
+# Examples
+```julia
+ne_matrices = diagnostics.snaps2D.ne      # Extract all density matrices
+temp_matrices = diagnostics.snaps2D.Te_eV # Extract all temperature matrices
+```
+
+Note: Regular vector operations (indexing, slicing) remain unchanged.
+"""
+function Base.getproperty(sv::Vector{<:Snapshot2D{FT}}, sym::Symbol) where {FT <: AbstractFloat}
+    # First check if this is a Vector field - delegate to original behavior
+    if hasfield(Vector, sym)
+        return getfield(sv, sym)
+    end
+
+    # Handle empty vector case
+    if isempty(sv)
+        throw(BoundsError("Cannot access property of empty snapshot vector"))
+    end
+
+    # Check if it's a valid Snapshot2D field
+    if hasfield(Snapshot2D, sym)
+        if fieldtype(Snapshot2D, sym) <: AbstractArray
+            Ntt = length(sv)
+            result_shape = (sv[1].dims_RZ..., Ntt)
+
+            D = length(result_shape)
+            result = Array{FT, D}(undef, result_shape)
+            if Ntt == 1
+                @views result .= getfield(sv[1], sym)
+            else
+                # Copy data from each step into the result array
+                for i in 1:Ntt
+                    selectdim(result, D, i) .= getfield(sv[i], sym)
+                end
+            end
+
+            return result
+        else
+            return [getfield(s, sym) for s in sv]
+        end
+    end
+
+    # If not a snapshot field, throw error
+    throw(ArgumentError("Vector{Snapshot2D} has no property $sym"))
+end
