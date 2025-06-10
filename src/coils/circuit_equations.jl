@@ -39,7 +39,7 @@ function calculate_mutual_inductance_matrix!(csys::CoilSystem{FT}) where FT<:Abs
                                              R_positions, Z_positions, ones(FT, N))
 
     # Convert to mutual inductance: LM = 2π * ψ
-    csys.mutual_inductance = 2π * ψ_matrix
+    csys.mutual_inductance = FT(2π) * ψ_matrix
 
     # Set diagonal elements to self-inductance values
     for i in 1:N
@@ -142,4 +142,170 @@ Return the full mutual inductance matrix as a copy.
 """
 function get_coil_coupling_matrix(csys::CoilSystem{FT}) where FT<:AbstractFloat
     return copy(csys.mutual_inductance)
+end
+
+# =============================================================================
+# Current Distribution Functions
+# =============================================================================
+
+"""
+    distribute_coil_currents_to_Jϕ!(
+        Jϕ::Matrix{FT},
+        csys::CoilSystem{FT},
+        grid::GridGeometry{FT};
+        coil_mask::Union{Nothing, Vector{Bool}} = nothing
+    ) where FT
+
+Distribute coil currents to toroidal current density on the 2D grid using bilinear interpolation.
+
+This function distributes point coil currents to the 2D grid using bilinear interpolation,
+which spreads each coil's current to the four surrounding grid nodes based on their distances.
+
+# Arguments
+- `Jϕ::Matrix{FT}`: Pre-allocated matrix for toroidal current density [A/m²] (modified in-place)
+- `csys::CoilSystem{FT}`: Coil system containing coil positions
+- `grid::GridGeometry{FT}`: Grid geometry containing grid spacing and coordinates
+- `coil_mask::Union{Nothing, Vector{Bool}}`: Optional mask specifying which coils to include
+
+# Notes
+- Only processes coils that are inside the grid domain
+- Current density units are [A/m²]
+
+"""
+function distribute_coil_currents_to_Jϕ!(
+    Jϕ::Matrix{FT},
+    csys::CoilSystem{FT},
+    grid::GridGeometry{FT};
+    coil_mask::Union{Nothing, Vector{Bool}} = nothing
+    # currents::Vector{FT} = csys.coils[1:csys.n_total].current
+) where FT<:AbstractFloat
+
+    @assert size(Jϕ) == (grid.NR, grid.NZ) "Jϕ matrix size must match grid dimensions"
+    # @assert length(currents) == csys.n_total "Number of currents must match number of coils"
+
+    # Clear the output matrix
+    fill!(Jϕ, zero(FT))
+
+    # Determine which coils to process
+    if coil_mask === nothing
+        # Use all coils that are inside the domain
+        coil_indices = csys.inside_domain_indices
+    else
+        @assert length(coil_mask) == csys.n_total "Coil mask length must match number of coils"
+        # Use only masked coils that are also inside domain
+        coil_indices = [i for i in csys.inside_domain_indices if coil_mask[i]]
+    end
+
+    # Early return if no coils to process
+    if isempty(coil_indices)
+        return Jϕ
+    end
+
+    # Pre-compute grid parameters for efficiency
+    inv_dR = one(FT) / grid.dR
+    inv_dZ = one(FT) / grid.dZ
+    inv_dA = inv_dR * inv_dZ  # Inverse cell area
+
+    R_min = grid.R1D[1]
+    Z_min = grid.Z1D[1]
+
+    # Process each coil
+    for coil_idx in coil_indices
+        coil = csys.coils[coil_idx]
+        current = coil.current
+
+        # Skip if current is zero
+        if abs(current) < eps(FT)
+            continue
+        end
+
+        # Find grid cell indices (1-based)
+        # floor(...) + 1 converts from 0-based to 1-based indexing
+        # Ensure indices are within bounds
+        rid = clamp(floor(Int, (coil.position.r - R_min) * inv_dR) + 1, 1, grid.NR - 1)
+        zid = clamp(floor(Int, (coil.position.z - Z_min) * inv_dZ) + 1, 1, grid.NZ - 1)
+
+        # Calculate fractional positions within the cell
+        mr = (coil.position.r - grid.R1D[rid]) * inv_dR
+        mz = (coil.position.z - grid.Z1D[zid]) * inv_dZ
+
+        # Distribute current to 4 corner nodes using bilinear interpolation
+        # Bottom-left node [rid, zid]
+        Jϕ[rid, zid] += (one(FT) - mr) * (one(FT) - mz) * current * inv_dA
+        # Bottom-right node [rid+1, zid]
+        Jϕ[rid+1, zid] += mr * (one(FT) - mz) * current * inv_dA
+        # Top-left node [rid, zid+1]
+        Jϕ[rid, zid+1] += (one(FT) - mr) * mz * current * inv_dA
+        # Top-right node [rid+1, zid+1]
+        Jϕ[rid+1, zid+1] += mr * mz * current * inv_dA
+    end
+
+    return Jϕ
+end
+
+"""
+    distribute_coil_currents_to_Jϕ(
+        csys::CoilSystem{FT},
+        grid::GridGeometry{FT};
+        coil_mask::Union{Nothing, Vector{Bool}} = nothing
+    ) where FT
+
+Distribute coil currents to toroidal current density (allocating version).
+
+This is a convenience wrapper that allocates the output matrix and calls the in-place version.
+
+# Arguments
+- `csys::CoilSystem{FT}`: Coil system containing coil positions
+- `grid::GridGeometry{FT}`: Grid geometry containing grid spacing and coordinates
+- `coil_mask::Union{Nothing, Vector{Bool}}`: Optional mask specifying which coils to include
+
+# Returns
+- `Matrix{FT}`: Toroidal current density distribution [A/m²]
+"""
+function distribute_coil_currents_to_Jϕ(
+    csys::CoilSystem{FT},
+    grid::GridGeometry{FT};
+    coil_mask::Union{Nothing, Vector{Bool}} = nothing
+) where FT<:AbstractFloat
+
+    Jϕ = zeros(FT, grid.NR, grid.NZ)
+    distribute_coil_currents_to_Jϕ!(Jϕ, csys, grid; coil_mask)
+    return Jϕ
+end
+
+"""
+    determine_coils_inside_grid!(csys::CoilSystem{FT}, grid::GridGeometry{FT}) where FT
+
+Update the `inside_domain_indices` field of the coil system based on grid boundaries.
+
+This function determines which coils are positioned within the computational grid
+and updates the coil system's `inside_domain_indices` field.
+
+# Arguments
+- `csys::CoilSystem{FT}`: Coil system to update (modified in-place)
+- `grid::GridGeometry{FT}`: Grid geometry defining the grid boundaries
+
+# Notes
+- A coil is considered inside if: R_min ≤ R ≤ R_max and Z_min ≤ Z ≤ Z_max
+- Coils exactly on the boundary are considered inside
+- This function modifies the coil system in-place
+"""
+function determine_coils_inside_grid!(csys::CoilSystem{FT}, grid::GridGeometry{FT}) where FT<:AbstractFloat
+    # Clear existing indices
+    empty!(csys.inside_domain_indices)
+
+    # Grid boundaries
+    R_min = grid.R1D[1]
+    R_max = grid.R1D[end]
+    Z_min = grid.Z1D[1]
+    Z_max = grid.Z1D[end]
+
+    # Check each coil
+    for (i, coil) in enumerate(csys.coils)
+        if R_min ≤ coil.position.r ≤ R_max && Z_min ≤ coil.position.z ≤ Z_max
+            push!(csys.inside_domain_indices, i)
+        end
+    end
+
+    return csys
 end

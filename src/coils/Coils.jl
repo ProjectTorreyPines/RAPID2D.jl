@@ -20,6 +20,9 @@ export get_coil_voltage_at_time, set_coil_voltage_function!
 export get_all_voltages_at_time, get_powered_voltages_at_time, get_controllable_voltages_at_time
 export create_sinusoidal_voltage, create_linear_voltage_ramp, create_step_voltage, create_piecewise_linear_voltage
 export evaluate_voltage_ext
+# Current distribution functions
+export distribute_coil_currents_to_Jϕ!, distribute_coil_currents_to_Jϕ
+export determine_coils_inside_grid!
 
 # Include source files
 include("types.jl")
