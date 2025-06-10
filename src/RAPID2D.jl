@@ -59,6 +59,9 @@ include("plotting.jl")
 include("io/io.jl")
 include("io/adios_io.jl")
 
+# Include coil-related functionality
+include("coils/Coils.jl")
+
 # Include utility functions
 include("utils/grid.jl")  # Grid-related utility functions
 include("utils/field_line_following.jl")
