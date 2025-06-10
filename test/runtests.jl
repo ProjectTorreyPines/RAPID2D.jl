@@ -25,6 +25,7 @@ else
     end
 
     include("utils/utils_test.jl")
+    include("utils/green_function_test.jl")
 
     include("diagnostics/snapshots_test.jl")
 
