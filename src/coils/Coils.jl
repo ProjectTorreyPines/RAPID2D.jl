@@ -13,6 +13,9 @@ export add_control_coils!, initialize_example_tokamak_coils!
 # New functions for current and voltage access
 export get_all_currents, get_powered_currents, get_controllable_currents, get_all_voltages, get_powered_voltages, get_controllable_voltages
 export set_all_currents!, set_powered_currents!, set_controllable_currents!, set_coil_current!, get_coil_current
+# New functions for mutual inductance and circuit matrices
+export calculate_mutual_inductance_matrix!, calculate_circuit_matrices!, update_coil_system_matrices!
+export get_mutual_inductance, get_coil_coupling_matrix
 export get_coil_voltage_at_time, set_coil_voltage_function!
 export get_all_voltages_at_time, get_powered_voltages_at_time, get_controllable_voltages_at_time
 export create_sinusoidal_voltage, create_linear_voltage_ramp, create_step_voltage, create_piecewise_linear_voltage
@@ -22,4 +25,4 @@ export evaluate_voltage_ext
 include("types.jl")
 include("core_functions.jl")
 include("initialization.jl")
-
+include("circuit_equations.jl")
