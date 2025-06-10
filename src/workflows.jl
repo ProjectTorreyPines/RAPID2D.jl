@@ -76,9 +76,9 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
 
         # For high current: update electromagnetic fields using Ampere's law
         if RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
-            if RP.flags.E_para_self_EM && RP.flags.ud_evolve && RP.flags.ud_method == "Xsec" && RP.step % RP.flags.Ampere_nstep == 0
+            if RP.flags.E_para_self_EM && RP.flags.ud_evolve && RP.flags.ud_method == "Xsec"
                 # Solve the coupled drift velocity and magnetic field equations
-                @timeit RAPID_TIMER "coupled_ud_GS" solve_coupled_ud_GS_equations!(RP)
+                @timeit RAPID_TIMER "solve_coupled_momentum_Ampere_equations_with_coils!" solve_coupled_momentum_Ampere_equations_with_coils!(RP)
             else
                 # Update drift velocity separately
                 if RP.flags.ud_evolve
@@ -86,7 +86,7 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
                 end
 
                 # Solve the Grad-Shafranov equation for the magnetic field
-                @timeit RAPID_TIMER "grad_shafranov" solve_Ampere_equation!(RP)
+                @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP)
             end
         else
             # For low current: only update drift velocity
