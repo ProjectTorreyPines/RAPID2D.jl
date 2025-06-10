@@ -139,8 +139,8 @@ mutable struct CoilSystem{FT <: AbstractFloat}
 
         # Initialize matrices (will be computed later)
         mutual_inductance = zeros(FT, n_total, n_total)
-        A_circuit = zeros(FT, n_powered, n_powered)
-        inv_A_circuit = zeros(FT, n_powered, n_powered)
+        A_circuit = zeros(FT, n_total, n_total)
+        inv_A_circuit = zeros(FT, n_total, n_total)
 
         # Initialize Green function matrices (sizes to be determined)
         Green_coils2bdy = Matrix{FT}(undef, 0, 0)
