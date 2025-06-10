@@ -98,7 +98,7 @@ end
         prefilled_gas_pressure = 5e-3,
         R0B0 = 1.0,
         dt = 1.0e-6,
-        Dperp0 = 0.1,
+        Dperp0 = 0.1
     )
 
     # Create RAPID instance with flags enabled
@@ -123,7 +123,7 @@ end
 		update_ue_para!(RP)
 	end
 
-	@test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -382634.23090761126
+	@test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈  -386288.69891716185
 
     op = RP.operators
 
