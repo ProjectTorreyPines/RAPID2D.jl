@@ -78,11 +78,11 @@ function calculate_circuit_matrices!(csys::CoilSystem{FT}) where FT<:AbstractFlo
     end
 
     # Start with the mutual inductance matrix
-    csys.A_circuit .= csys.mutual_inductance
+    csys.A_circuit = copy(csys.mutual_inductance)
 
     # Add resistance terms to diagonal: A = Inductance + θimp*Δt*Resistive
     for i in 1:N
-        csys.A_circuit[i, i] += θimp * Δt * csys.coils[i].resistance
+        csys.A_circuit[i, i] += csys.θimp * csys.Δt * csys.coils[i].resistance
     end
 
     # Calculate inverse matrix for efficient solving
