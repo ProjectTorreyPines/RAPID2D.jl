@@ -4,7 +4,7 @@
 using LinearAlgebra
 
 """
-    initialize_four_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT
+    initialize_four_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT<:AbstractFloat
 
 Initialize a four-wall vessel configuration with wall segments.
 This is ported from the MATLAB "4 walls" configuration.
@@ -13,7 +13,7 @@ This is ported from the MATLAB "4 walls" configuration.
 - `coil_system`: CoilSystem to populate
 - `n_total`: Total number of wall segments (must be divisible by 4)
 """
-function initialize_four_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT
+function initialize_four_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT<:AbstractFloat
     if n_total % 4 != 0
         error("n_total must be divisible by 4 for four-wall configuration")
     end
@@ -101,12 +101,12 @@ function initialize_four_wall_system!(coil_system::CoilSystem{FT}, n_total::Int)
 end
 
 """
-    initialize_single_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT
+    initialize_single_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT<:AbstractFloat
 
 Initialize a single outer radial wall configuration.
 This is ported from the commented "out radial wall only" configuration in MATLAB.
 """
-function initialize_single_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT
+function initialize_single_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT<:AbstractFloat
     # Clear existing coils
     empty!(coil_system.coils)
     coil_system.n_total = 0
@@ -137,7 +137,7 @@ function initialize_single_wall_system!(coil_system::CoilSystem{FT}, n_total::In
 end
 
 """
-    add_control_coils!(coil_system::CoilSystem{FT}, coil_specs::Vector{<:NamedTuple}) where FT
+    add_control_coils!(coil_system::CoilSystem{FT}, coil_specs::Vector{<:NamedTuple}) where FT<:AbstractFloat
 
 Add powered control coils to the system.
 
@@ -161,7 +161,7 @@ pf_coils = [
 add_control_coils!(coil_system, pf_coils)
 ```
 """
-function add_control_coils!(coil_system::CoilSystem{FT}, coil_specs::Vector{<:NamedTuple}) where FT
+function add_control_coils!(coil_system::CoilSystem{FT}, coil_specs::Vector{<:NamedTuple}) where FT<:AbstractFloat
     for spec in coil_specs
         r = FT(spec.r)
         z = FT(spec.z)
@@ -183,12 +183,12 @@ function add_control_coils!(coil_system::CoilSystem{FT}, coil_specs::Vector{<:Na
 end
 
 """
-    initialize_example_tokamak_coils!(coil_system::CoilSystem{FT}) where FT
+    initialize_example_tokamak_coils!(coil_system::CoilSystem{FT}) where FT<:AbstractFloat
 
 Initialize an example tokamak coil configuration with both control coils and vessel walls.
 This creates a realistic setup for testing.
 """
-function initialize_example_tokamak_coils!(coil_system::CoilSystem{FT}) where FT
+function initialize_example_tokamak_coils!(coil_system::CoilSystem{FT}) where FT<:AbstractFloat
     # First add vessel walls (4-wall configuration with 40 segments total)
     initialize_four_wall_system!(coil_system, 40)
 
