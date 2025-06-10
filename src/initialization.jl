@@ -238,7 +238,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     NZ = RP.G.NZ > 0 ? RP.G.NZ : 100 # Default if not already set
 
     # Set domain boundaries
-    R_max = isnothing(RP.config.R_max) ? FT(2.2) : RP.config.R_max
+    R_max = isnothing(RP.config.R_max) ? FT(2.4) : RP.config.R_max
     R_min = isnothing(RP.config.R_min) ? FT(0.8) : RP.config.R_min
     Z_max = isnothing(RP.config.Z_max) ? FT(1.2) : RP.config.Z_max
     Z_min = isnothing(RP.config.Z_min) ? FT(-1.2) : RP.config.Z_min
