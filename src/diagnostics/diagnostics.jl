@@ -62,14 +62,20 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     snap0D.n_H2_gas_min = minimum(pla.n_H2_gas)
 
     # Electron collision frequencies
-    eRRC_iz = get_electron_RRC(RP, :Ionization)
-    eRRC_mom = get_electron_RRC(RP, :Momentum)
-    eRRC_Hα = get_electron_RRC(RP, :Halpha)
+    if RP.flags.Atomic_Collision
+        eRRC_iz = get_electron_RRC(RP, :Ionization)
+        eRRC_mom = get_electron_RRC(RP, :Momentum)
+        eRRC_Hα = get_electron_RRC(RP, :Halpha)
 
-    snap0D.ν_en_iz = sum(@. pla.n_H2_gas * eRRC_iz  * Ne2D) / total_Ne
-    snap0D.ν_en_mom = sum(@. pla.n_H2_gas * eRRC_mom  * Ne2D) / total_Ne
-    snap0D.ν_en_Hα = sum(@. pla.n_H2_gas * eRRC_Hα * Ne2D) / total_Ne
-    snap0D.ν_ei = sum(@. pla.ν_ei * pla.ne *  inVol2D) / total_Ne
+        snap0D.ν_en_iz = sum(@. pla.n_H2_gas * eRRC_iz  * Ne2D) / total_Ne
+        snap0D.ν_en_mom = sum(@. pla.n_H2_gas * eRRC_mom  * Ne2D) / total_Ne
+        snap0D.ν_en_Hα = sum(@. pla.n_H2_gas * eRRC_Hα * Ne2D) / total_Ne
+    end
+
+    if RP.flags.Coulomb_Collision
+        # Coulomb collision frequency
+        snap0D.ν_ei = sum(@. pla.ν_ei * Ne2D) / total_Ne
+    end
 
 
     # CFL conditions (if adaptive timestepping is not used)
