@@ -1,6 +1,17 @@
 using Test
 using RAPID2D
 
+function include_tests_in_dir(dir::String)
+    @assert isdir(dir) "Directory does not exist: $dir"
+
+    test_files = filter(f -> endswith(f, "_test.jl"), readdir(dir))
+    for file in sort(test_files)  # sort for deterministic order
+        filepath = joinpath(dir, file)
+        @info "Running test file: $filepath"
+        include(filepath)
+    end
+end
+
 if !isempty(ARGS) && !(length(ARGS) == 1 && ARGS[1] == "")
     println(ARGS)
     for testfile in ARGS
@@ -24,24 +35,15 @@ else
         @warn "Skipping ADIOS I/O tests on Windows due to known compatibility issues"
     end
 
-    include("utils/utils_test.jl")
-    include("utils/green_function_test.jl")
+    include_tests_in_dir("utils")
+    include_tests_in_dir("diagnostics")
+    include_tests_in_dir("numerics")
+    include_tests_in_dir("reactions")
+    include_tests_in_dir("coils")
 
     include("diagnostics/snapshots_test.jl")
 
     include("fields/calculate_B_fields_test.jl")
-
-    include("numerics/numerics_test.jl")
-    include("numerics/operators_test.jl")
-    include("numerics/discretized_operator_test.jl")
-
-    include("reactions/RRCs_test.jl")
-    include("reactions/electron_Xsec_test.jl")
-
-    include("coils/coils_basic_test.jl")
-    include("coils/coils_operations_test.jl")
-    include("coils/coils_voltage_functions_test.jl")
-    include("coils/coils_initialization_test.jl")
 
     include("physics/physics_test.jl")
 end
