@@ -137,4 +137,31 @@ using RAPID2D
         @test coil.resistance ≈ calculate_coil_resistance(area, 2.0, resistivity)
         @test coil.self_inductance ≈ calculate_self_inductance(area, 2.0, μ0)
     end
+
+    @testset "Vector Property Access" begin
+        # Test getproperty and setproperty! for Vector{Coil}
+        coils = [
+            Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0, 100.0, 200.0),
+            Coil((r=2.5, z=-0.5), 0.01, 0.001, 1e-6, true, false, "PF2", 800.0, 40000.0, 150.0, 300.0),
+            Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall", nothing, nothing, -50.0, 0.0)
+        ]
+
+        # Test getproperty
+        @test coils.current == [100.0, 150.0, -50.0]
+        @test coils.voltage_ext == [200.0, 300.0, 0.0]
+        @test length(coils.name) == 3
+        @test coils.name == ["PF1", "PF2", "wall"]
+
+        # Test setproperty! with vector
+        coils.current = [1000.0, 2000.0, -100.0]
+        @test coils.current == [1000.0, 2000.0, -100.0]
+
+        # Test setproperty! with scalar
+        coils.voltage_ext = 500.0
+        @test all(v == 500.0 for v in coils.voltage_ext)
+
+        # Test error handling
+        @test_throws DimensionMismatch coils.current = [1.0, 2.0]  # Wrong size
+        @test_throws ArgumentError coils.area = [0.1, 0.2, 0.3]    # Immutable field
+    end
 end

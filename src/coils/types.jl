@@ -114,6 +114,72 @@ function Base.getproperty(coils::Vector{<:Coil{<:AbstractFloat}}, sym::Symbol)
 end
 
 """
+    Base.setproperty!(coils::Vector{<:Coil}, sym::Symbol, values)
+
+Enable convenient property setting for vectors of coils.
+
+Allows setting coil properties directly on vectors:
+- `coils.current = [100.0, 200.0, 300.0]` sets individual coil currents
+- `coils.voltage_ext = 500.0` sets all coils to the same voltage
+- `coils.voltage_ext = [100.0, 200.0, 300.0]` sets individual voltages
+
+# Arguments
+- `coils::Vector{<:Coil}`: Vector of coils to modify
+- `sym::Symbol`: Property name to set
+- `values`: Either a single value (applied to all coils) or a vector of values (one per coil)
+
+# Examples
+```julia
+# Set all coil currents individually
+coils.current = [1000.0, 2000.0, 3000.0]
+
+# Set all coils to the same voltage
+coils.voltage_ext = 500.0
+
+# Set individual voltages
+coils.voltage_ext = [100.0, 200.0, 300.0]
+```
+"""
+function Base.setproperty!(coils::Vector{<:Coil{<:AbstractFloat}}, sym::Symbol, values)
+    # Handle empty vector case
+    if isempty(coils)
+        throw(BoundsError("Cannot set property on empty coil vector"))
+    end
+
+    # Check if it's a valid mutable Coil field
+    if !hasfield(typeof(coils[1]), sym)
+        throw(ArgumentError("Vector{Coil} has no property $sym"))
+    end
+
+    # Check if the field is mutable (not in the immutable section)
+    # The mutable fields in Coil are: current, voltage_ext
+    mutable_fields = (:current, :voltage_ext)
+    if sym ∉ mutable_fields
+        throw(ArgumentError("Property $sym is not mutable. Only $(mutable_fields) can be set."))
+    end
+
+    # Handle setting values
+    if values isa AbstractVector
+        # Vector of values - must match coil count
+        if length(values) != length(coils)
+            throw(DimensionMismatch("Value vector length ($(length(values))) must match coil count ($(length(coils)))"))
+        end
+
+        # Set individual values
+        for (i, coil) in enumerate(coils)
+            setfield!(coil, sym, values[i])
+        end
+    else
+        # Single value - apply to all coils
+        for coil in coils
+            setfield!(coil, sym, values)
+        end
+    end
+
+    return values
+end
+
+"""
     CoilSystem{FT <: AbstractFloat}
 
 Manages a collection of coils and their electromagnetic interactions.
