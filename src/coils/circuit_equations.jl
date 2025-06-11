@@ -153,7 +153,8 @@ end
         Jϕ::Matrix{FT},
         csys::CoilSystem{FT},
         grid::GridGeometry{FT};
-        coil_mask::Union{Nothing, Vector{Bool}} = nothing
+        coil_mask::Union{Nothing, Vector{Bool}} = nothing,
+        currents::Union{Nothing, Vector{FT}} = nothing
     ) where FT
 
 Distribute coil currents to toroidal current density on the 2D grid using bilinear interpolation.
@@ -166,6 +167,7 @@ which spreads each coil's current to the four surrounding grid nodes based on th
 - `csys::CoilSystem{FT}`: Coil system containing coil positions
 - `grid::GridGeometry{FT}`: Grid geometry containing grid spacing and coordinates
 - `coil_mask::Union{Nothing, Vector{Bool}}`: Optional mask specifying which coils to include
+- `currents::Union{Nothing, Vector{FT}}`: Optional external currents. If nothing, uses csys.coils[i].current
 
 # Notes
 - Only processes coils that are inside the grid domain
@@ -176,12 +178,14 @@ function distribute_coil_currents_to_Jϕ!(
     Jϕ::Matrix{FT},
     csys::CoilSystem{FT},
     grid::GridGeometry{FT};
-    coil_mask::Union{Nothing, Vector{Bool}} = nothing
-    # currents::Vector{FT} = csys.coils[1:csys.n_total].current
+    coil_mask::Union{Nothing, Vector{Bool}} = nothing,
+    currents::Union{Nothing, Vector{FT}} = nothing
 ) where FT<:AbstractFloat
 
     @assert size(Jϕ) == (grid.NR, grid.NZ) "Jϕ matrix size must match grid dimensions"
-    # @assert length(currents) == csys.n_total "Number of currents must match number of coils"
+    if currents !== nothing
+        @assert length(currents) == csys.n_total "Number of currents must match number of coils"
+    end
 
     # Clear the output matrix
     fill!(Jϕ, zero(FT))
@@ -212,7 +216,8 @@ function distribute_coil_currents_to_Jϕ!(
     # Process each coil
     for coil_idx in coil_indices
         coil = csys.coils[coil_idx]
-        current = coil.current
+        # Use external currents if provided, otherwise use coil's current
+        current = currents === nothing ? coil.current : currents[coil_idx]
 
         # Skip if current is zero
         if abs(current) < eps(FT)
@@ -247,7 +252,8 @@ end
     distribute_coil_currents_to_Jϕ(
         csys::CoilSystem{FT},
         grid::GridGeometry{FT};
-        coil_mask::Union{Nothing, Vector{Bool}} = nothing
+        coil_mask::Union{Nothing, Vector{Bool}} = nothing,
+        currents::Union{Nothing, Vector{FT}} = nothing
     ) where FT
 
 Distribute coil currents to toroidal current density (allocating version).
@@ -258,6 +264,7 @@ This is a convenience wrapper that allocates the output matrix and calls the in-
 - `csys::CoilSystem{FT}`: Coil system containing coil positions
 - `grid::GridGeometry{FT}`: Grid geometry containing grid spacing and coordinates
 - `coil_mask::Union{Nothing, Vector{Bool}}`: Optional mask specifying which coils to include
+- `currents::Union{Nothing, Vector{FT}}`: Optional external currents. If nothing, uses csys.coils[i].current
 
 # Returns
 - `Matrix{FT}`: Toroidal current density distribution [A/m²]
@@ -265,11 +272,12 @@ This is a convenience wrapper that allocates the output matrix and calls the in-
 function distribute_coil_currents_to_Jϕ(
     csys::CoilSystem{FT},
     grid::GridGeometry{FT};
-    coil_mask::Union{Nothing, Vector{Bool}} = nothing
+    coil_mask::Union{Nothing, Vector{Bool}} = nothing,
+    currents::Union{Nothing, Vector{FT}} = nothing
 ) where FT<:AbstractFloat
 
     Jϕ = zeros(FT, grid.NR, grid.NZ)
-    distribute_coil_currents_to_Jϕ!(Jϕ, csys, grid; coil_mask)
+    distribute_coil_currents_to_Jϕ!(Jϕ, csys, grid; coil_mask, currents)
     return Jϕ
 end
 
