@@ -111,8 +111,8 @@ mutable struct CoilSystem{FT <: AbstractFloat}
     mutual_inductance::Matrix{FT}
 	Δt::FT
 	θimp::FT
-    A_circuit::Matrix{FT}
-    inv_A_circuit::Matrix{FT}
+    A_LR_circuit::Matrix{FT}
+    inv_A_LR_circuit::Matrix{FT}
 
     # Green function coupling matrices
     Green_coils2bdy::Matrix{FT}
@@ -154,8 +154,8 @@ mutable struct CoilSystem{FT <: AbstractFloat}
         mutual_inductance = zeros(FT, n_total, n_total)
 		Δt = FT(0.0)  # Time step for solving circuit equations, to be set later
 		θimp = FT(1.0) # Implicit factor for circuit equations (θimp=1.0 for implicit Euler)
-        A_circuit = zeros(FT, n_total, n_total)
-        inv_A_circuit = zeros(FT, n_total, n_total)
+        A_LR_circuit = zeros(FT, n_total, n_total)
+        inv_A_LR_circuit = zeros(FT, n_total, n_total)
 
         # Initialize Green function matrices (sizes to be determined)
         Green_coils2bdy = Matrix{FT}(undef, 0, 0)
@@ -166,7 +166,7 @@ mutable struct CoilSystem{FT <: AbstractFloat}
         inside_domain_indices = Int[]
 
         new{FT}(coils, n_total, n_powered, n_controllable, powered_indices, controllable_indices, passive_indices,
-                mutual_inductance, Δt, θimp, A_circuit, inv_A_circuit,
+                mutual_inductance, Δt, θimp, A_LR_circuit, inv_A_LR_circuit,
                 Green_coils2bdy, Green_grid2coils,
                 dGreen_dRg_grid2coils, dGreen_dZg_grid2coils,
                 inside_domain_indices, μ0, cu_resistivity)

@@ -219,6 +219,33 @@ function create_coil_from_parameters(r::FT, z::FT, area::FT, name::String, is_po
 end
 
 """
+    get_all_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+
+Return resistances of all coils as a vector.
+"""
+function get_all_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+    return [coil.resistance for coil in csys.coils]
+end
+
+"""
+    get_powered_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+
+Return resistances of powered coils only as a vector.
+"""
+function get_powered_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+    return [csys.coils[idx].resistance for idx in csys.powered_indices]
+end
+
+"""
+    get_controllable_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+
+Return resistances of controllable coils only as a vector.
+"""
+function get_controllable_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+    return [csys.coils[idx].resistance for idx in csys.controllable_indices]
+end
+
+"""
     get_all_currents(csys::CoilSystem{FT}) where FT<:AbstractFloat
 
 Return currents of all coils as a vector.

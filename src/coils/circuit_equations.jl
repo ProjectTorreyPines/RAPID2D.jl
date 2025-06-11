@@ -52,12 +52,12 @@ end
 """
     calculate_circuit_matrices!(csys::CoilSystem{FT}, dt::FT) where FT<:AbstractFloat
 
-Calculate the circuit matrices A_circuit and inv_A_circuit for time-stepping.
+Calculate the circuit matrices A_LR_circuit and inv_A_LR_circuit for time-stepping.
 
 This function ports the MATLAB calculation:
 ```matlab
-obj.A_circuit = obj.LM_matrix + diag(input_dt*obj.res_R(:));
-obj.inv_A_circuit = inv(obj.A_circuit);
+obj.A_LR_circuit = obj.LM_matrix + diag(input_dt*obj.res_R(:));
+obj.inv_A_LR_circuit = inv(obj.A_LR_circuit);
 ```
 
 The circuit equation is: (L + R*dt) * I_new = L * I_old + dt * (V_ext - other_terms)
@@ -66,7 +66,7 @@ The circuit equation is: (L + R*dt) * I_new = L * I_old + dt * (V_ext - other_te
 - `csys::CoilSystem{FT}`: The coil system to update
 
 # Side effects
-- Updates `csys.A_circuit` and `csys.inv_A_circuit` matrices in-place
+- Updates `csys.A_LR_circuit` and `csys.inv_A_LR_circuit` matrices in-place
 
 # Notes
 - Mutual inductance matrix must be calculated first using `calculate_mutual_inductance_matrix!`
@@ -78,15 +78,15 @@ function calculate_circuit_matrices!(csys::CoilSystem{FT}) where FT<:AbstractFlo
     end
 
     # Start with the mutual inductance matrix
-    csys.A_circuit = copy(csys.mutual_inductance)
+    csys.A_LR_circuit = copy(csys.mutual_inductance)
 
     # Add resistance terms to diagonal: A = Inductance + θimp*Δt*Resistive
     for i in 1:N
-        csys.A_circuit[i, i] += csys.θimp * csys.Δt * csys.coils[i].resistance
+        csys.A_LR_circuit[i, i] += csys.θimp * csys.Δt * csys.coils[i].resistance
     end
 
     # Calculate inverse matrix for efficient solving
-    csys.inv_A_circuit = inv(csys.A_circuit)
+    csys.inv_A_LR_circuit = inv(csys.A_LR_circuit)
 
     return nothing
 end
@@ -308,4 +308,101 @@ function determine_coils_inside_grid!(csys::CoilSystem{FT}, grid::GridGeometry{F
     end
 
     return csys
+end
+
+# =============================================================================
+# Circuit Equation Time Evolution Solvers
+# =============================================================================
+
+"""
+    solve_LR_circuit_step!(csys::CoilSystem{FT}, t::FT) where FT
+
+Solve one time step of the circuit equation without plasma contribution.
+
+This function implements the MATLAB circuit equation:
+```matlab
+circuit_rhs = obj.coils.LM_matrix*obj.coils.I + obj.dt*obj.coils.LV_ext;
+new_coil_I_k = obj.coils.inv_A_LR_circuit*circuit_rhs;
+```
+
+# Arguments
+- `csys::CoilSystem{FT}`: The coil system with current state
+- `t::FT`: Current time for evaluating time-dependent voltages
+
+# Side effects
+- Updates the current field of all coils in the system
+
+# Notes
+- Assumes circuit matrices (A_LR_circuit, inv_A_LR_circuit) are already computed
+- Does not include plasma contributions (simplified circuit equation)
+"""
+function solve_LR_circuit_step!(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
+    if csys.n_total == 0
+        return nothing
+    end
+
+    # Get current voltages at time t
+    voltages = get_all_voltages_at_time(csys, t)
+
+    # Get current state
+    currents = get_all_currents(csys)
+    resistances = get_all_resistances(csys)
+
+    # Circuit equation: (L + R*dt) * I_new = L * I_old + dt * V_ext
+    circuit_rhs = csys.mutual_inductance * currents .+ csys.Δt * ( voltages - (one(FT) - csys.θimp) * resistances .* currents)
+
+    # Solve for new currents
+    new_currents = csys.inv_A_LR_circuit * circuit_rhs
+
+    # Update coil currents
+    set_all_currents!(csys, new_currents)
+
+    return nothing
+end
+
+
+"""
+    calculate_circuit_magnetic_energy(csys::CoilSystem{FT}) where FT
+
+Calculate the total magnetic energy stored in the circuit.
+
+Energy = 0.5 * I^T * L * I
+
+# Arguments
+- `csys::CoilSystem{FT}`: The coil system
+
+# Returns
+- `FT`: Total magnetic energy [J]
+"""
+function calculate_circuit_magnetic_energy(csys::CoilSystem{FT}) where FT<:AbstractFloat
+    if csys.n_total == 0
+        return zero(FT)
+    end
+
+    currents = get_all_currents(csys)
+    return FT(0.5) * dot(currents, csys.mutual_inductance * currents)
+end
+
+"""
+    calculate_power_dissipation(csys::CoilSystem{FT}) where FT
+
+Calculate the instantaneous power dissipation in all resistances.
+
+Power = I^T * R * I
+
+# Arguments
+- `csys::CoilSystem{FT}`: The coil system
+
+# Returns
+- `FT`: Total power dissipation [W]
+"""
+function calculate_power_dissipation(csys::CoilSystem{FT}) where FT<:AbstractFloat
+    if csys.n_total == 0
+        return zero(FT)
+    end
+
+    currents = get_all_currents(csys)
+    resistances = [coil.resistance for coil in csys.coils]
+
+    return sum(currents .^ 2 .* resistances)
 end

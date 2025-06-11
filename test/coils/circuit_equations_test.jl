@@ -58,23 +58,23 @@ using RAPID2D
         csys.Δt = 1e-5  # 10 microseconds
         calculate_circuit_matrices!(csys)
 
-        # Check that A_circuit matrix has correct dimensions
-        @test size(csys.A_circuit) == (2, 2)
-        @test size(csys.inv_A_circuit) == (2, 2)
+        # Check that A_LR_circuit matrix has correct dimensions
+        @test size(csys.A_LR_circuit) == (2, 2)
+        @test size(csys.inv_A_LR_circuit) == (2, 2)
 
-        # Check that A_circuit = L + R*dt
+        # Check that A_LR_circuit = L + R*dt
         expected_A11 = csys.mutual_inductance[1,1] + csys.Δt * coil1.resistance
         expected_A22 = csys.mutual_inductance[2,2] + csys.Δt * coil2.resistance
 
-        @test csys.A_circuit[1,1] ≈ expected_A11
-        @test csys.A_circuit[2,2] ≈ expected_A22
+        @test csys.A_LR_circuit[1,1] ≈ expected_A11
+        @test csys.A_LR_circuit[2,2] ≈ expected_A22
 
         # Off-diagonal elements should be same as mutual inductance
-        @test csys.A_circuit[1,2] ≈ csys.mutual_inductance[1,2]
-        @test csys.A_circuit[2,1] ≈ csys.mutual_inductance[2,1]
+        @test csys.A_LR_circuit[1,2] ≈ csys.mutual_inductance[1,2]
+        @test csys.A_LR_circuit[2,1] ≈ csys.mutual_inductance[2,1]
 
-        # Check that inv_A_circuit is actually the inverse
-        identity_check = csys.A_circuit * csys.inv_A_circuit
+        # Check that inv_A_LR_circuit is actually the inverse
+        identity_check = csys.A_LR_circuit * csys.inv_A_LR_circuit
         @test identity_check ≈ RAPID2D.LinearAlgebra.I(2) atol=1e-12
     end
 
@@ -95,16 +95,16 @@ using RAPID2D
 
         # Should have computed both mutual inductance and circuit matrices
         @test size(csys.mutual_inductance) == (2, 2)
-        @test size(csys.A_circuit) == (2, 2)
-        @test size(csys.inv_A_circuit) == (2, 2)
+        @test size(csys.A_LR_circuit) == (2, 2)
+        @test size(csys.inv_A_LR_circuit) == (2, 2)
 
         # Check that diagonal elements are correct
         @test csys.mutual_inductance[1,1] ≈ coil1.self_inductance
         @test csys.mutual_inductance[2,2] ≈ coil2.self_inductance
 
-        # Check that A_circuit = L + R*dt
-        @test csys.A_circuit[1,1] ≈ coil1.self_inductance + csys.Δt * coil1.resistance
-        @test csys.A_circuit[2,2] ≈ coil2.self_inductance + csys.Δt * coil2.resistance
+        # Check that A_LR_circuit = L + R*dt
+        @test csys.A_LR_circuit[1,1] ≈ coil1.self_inductance + csys.Δt * coil1.resistance
+        @test csys.A_LR_circuit[2,2] ≈ coil2.self_inductance + csys.Δt * coil2.resistance
     end
 
     @testset "Mutual Inductance Access Functions" begin

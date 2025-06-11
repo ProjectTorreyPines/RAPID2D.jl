@@ -11,6 +11,7 @@ export calculate_coil_resistance, calculate_self_inductance, create_coil_from_pa
 export initialize_four_wall_system!, initialize_single_wall_system!
 export add_control_coils!, initialize_example_tokamak_coils!
 # New functions for current and voltage access
+export get_all_resistances, get_powered_resistances, get_controllable_resistances
 export get_all_currents, get_powered_currents, get_controllable_currents, get_all_voltages, get_powered_voltages, get_controllable_voltages
 export set_all_currents!, set_powered_currents!, set_controllable_currents!, set_coil_current!, get_coil_current
 # New functions for mutual inductance and circuit matrices
@@ -23,6 +24,9 @@ export evaluate_voltage_ext
 # Current distribution functions
 export distribute_coil_currents_to_Jϕ!, distribute_coil_currents_to_Jϕ
 export determine_coils_inside_grid!
+# Circuit equation solvers
+export solve_LR_circuit_step!
+export calculate_circuit_magnetic_energy, calculate_power_dissipation
 
 # Include source files
 include("types.jl")
