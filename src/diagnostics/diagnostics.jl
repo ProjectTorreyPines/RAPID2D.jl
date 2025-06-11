@@ -139,7 +139,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     end
 
     # Coil currents (if present)
-    if hasfield(typeof(RP), :coils) && hasfield(typeof(RP.coils), :N) && RP.coils.N > 0
+    if RP.coil_system.n_total > 0
         if hasfield(typeof(snap0D), :I_coils) && snap0D.I_coils !== nothing
             snap0D.I_coils = RP.coils.I
         else

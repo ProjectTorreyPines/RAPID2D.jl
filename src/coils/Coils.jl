@@ -29,7 +29,6 @@ export solve_LR_circuit_step!
 export calculate_circuit_magnetic_energy, calculate_power_dissipation
 
 # Include source files
-include("types.jl")
-include("core_functions.jl")
-include("initialization.jl")
-include("circuit_equations.jl")
+# include("core_functions.jl")
+# include("initialization.jl")
+# include("circuit_equations.jl")

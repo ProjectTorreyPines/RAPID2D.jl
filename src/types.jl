@@ -9,6 +9,7 @@ import RAPID2D: PlasmaConstants
 include("diagnostics/types.jl")
 include("io/types.jl")
 include("utils/types.jl")
+include("coils/types.jl")
 
 
 # Abstract types for reaction rate coefficients for a specific species
@@ -716,7 +717,7 @@ mutable struct RAPID{FT<:AbstractFloat}
     AW_snap0D::AdiosFileWrapper    # Wrapped AdiosFile for 0D snapshots
     AW_snap2D::AdiosFileWrapper    # Wrapped AdiosFile for 2D snapshots
 
-    coils::Nothing # Placeholder for coil data, to be defined later
+    coil_system::CoilSystem{FT} # Placeholder for coil data, to be defined later
 
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
@@ -753,7 +754,7 @@ mutable struct RAPID{FT<:AbstractFloat}
         AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
         AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
-        coils = nothing # Placeholder for coil data, to be defined later
+        coil_system = CoilSystem{FT}()  # coil system placeholder
 
         # Create and return new instance
         return new{FT}(
@@ -765,7 +766,7 @@ mutable struct RAPID{FT<:AbstractFloat}
             prev_n, tElap, diagnostics,
             flf,
             AW_snap0D, AW_snap2D,
-            coils
+            coil_system
         )
     end
 end
