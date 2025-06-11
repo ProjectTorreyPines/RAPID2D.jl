@@ -547,6 +547,19 @@ function Base.getproperty(sv::Vector{<:Snapshot0D{<:AbstractFloat}}, sym::Symbol
 end
 
 """
+    Base.propertynames(sv::Vector{<:Snapshot0D})
+
+Enable tab completion for snapshot vector properties in REPL.
+Returns the field names of the Snapshot0D type for tab completion.
+"""
+function Base.propertynames(sv::Vector{<:Snapshot0D{<:AbstractFloat}})
+    if isempty(sv)
+        return ()  # Return empty tuple for empty vector
+    end
+    return propertynames(sv[1])  # Return field names of Snapshot0D type
+end
+
+"""
     getproperty(sv::Vector{<:Snapshot2D}, sym::Symbol)
 
 Custom property access for Vector{Snapshot2D} to enable convenient field extraction.
@@ -596,4 +609,17 @@ function Base.getproperty(sv::Vector{<:Snapshot2D{FT}}, sym::Symbol) where {FT <
 
     # If not a snapshot field, throw error
     throw(ArgumentError("Vector{Snapshot2D} has no property $sym"))
+end
+
+"""
+    Base.propertynames(sv::Vector{<:Snapshot2D})
+
+Enable tab completion for snapshot vector properties in REPL.
+Returns the field names of the Snapshot2D type for tab completion.
+"""
+function Base.propertynames(sv::Vector{<:Snapshot2D{<:AbstractFloat}})
+    if isempty(sv)
+        return ()  # Return empty tuple for empty vector
+    end
+    return propertynames(sv[1])  # Return field names of Snapshot2D type
 end
