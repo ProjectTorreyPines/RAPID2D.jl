@@ -30,8 +30,8 @@ function calculate_mutual_inductance_matrix!(csys::CoilSystem{FT}) where FT<:Abs
     end
 
     # Extract coil positions
-    R_positions = [coil.position.r for coil in csys.coils]
-    Z_positions = [coil.position.z for coil in csys.coils]
+    R_positions = [coil.location.r for coil in csys.coils]
+    Z_positions = [coil.location.z for coil in csys.coils]
 
     # Calculate mutual inductance using Green's function
     # Each element [i,j] is the flux at coil i due to unit current in coil j
@@ -222,12 +222,12 @@ function distribute_coil_currents_to_Jϕ!(
         # Find grid cell indices (1-based)
         # floor(...) + 1 converts from 0-based to 1-based indexing
         # Ensure indices are within bounds
-        rid = clamp(floor(Int, (coil.position.r - R_min) * inv_dR) + 1, 1, grid.NR - 1)
-        zid = clamp(floor(Int, (coil.position.z - Z_min) * inv_dZ) + 1, 1, grid.NZ - 1)
+        rid = clamp(floor(Int, (coil.location.r - R_min) * inv_dR) + 1, 1, grid.NR - 1)
+        zid = clamp(floor(Int, (coil.location.z - Z_min) * inv_dZ) + 1, 1, grid.NZ - 1)
 
         # Calculate fractional positions within the cell
-        mr = (coil.position.r - grid.R1D[rid]) * inv_dR
-        mz = (coil.position.z - grid.Z1D[zid]) * inv_dZ
+        mr = (coil.location.r - grid.R1D[rid]) * inv_dR
+        mz = (coil.location.z - grid.Z1D[zid]) * inv_dZ
 
         # Distribute current to 4 corner nodes using bilinear interpolation
         # Bottom-left node [rid, zid]
@@ -302,7 +302,7 @@ function determine_coils_inside_grid!(csys::CoilSystem{FT}, grid::GridGeometry{F
 
     # Check each coil
     for (i, coil) in enumerate(csys.coils)
-        if R_min ≤ coil.position.r ≤ R_max && Z_min ≤ coil.position.z ≤ Z_max
+        if R_min ≤ coil.location.r ≤ R_max && Z_min ≤ coil.location.z ≤ Z_max
             push!(csys.inside_domain_indices, i)
         end
     end

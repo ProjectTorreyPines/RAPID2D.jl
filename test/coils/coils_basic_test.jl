@@ -6,17 +6,17 @@ using RAPID2D
 
     @testset "Coil Constructor and Fields" begin
         # Test basic Coil construction
-        position = (r=2.5, z=0.0)
+        pos = (r=2.5, z=0.0)
         area = π * 0.02^2
         resistance = 0.001
         self_inductance = 1e-6
 
         # Test powered controllable coil
-        coil_powered = Coil(position, area, resistance, self_inductance,
+        coil_powered = Coil(pos, area, resistance, self_inductance,
                            true, true, "PF1", 1000.0, 50000.0, 100.0, 500.0)
 
-        @test coil_powered.position.r == 2.5
-        @test coil_powered.position.z == 0.0
+        @test coil_powered.location.r == 2.5
+        @test coil_powered.location.z == 0.0
         @test coil_powered.area == area
         @test coil_powered.resistance == resistance
         @test coil_powered.self_inductance == self_inductance
@@ -29,7 +29,7 @@ using RAPID2D
         @test coil_powered.voltage_ext == 500.0
 
         # Test passive coil
-        coil_passive = Coil(position, area, resistance, self_inductance,
+        coil_passive = Coil(pos, area, resistance, self_inductance,
                            false, false, "wall_1", nothing, nothing, -50.0, 0.0)
 
         @test coil_passive.is_powered == false
@@ -40,7 +40,7 @@ using RAPID2D
         @test coil_passive.voltage_ext == 0.0
 
         # Test powered but not controllable coil
-        coil_powered_nc = Coil(position, area, resistance, self_inductance,
+        coil_powered_nc = Coil(pos, area, resistance, self_inductance,
                               true, false, "heating_coil", 500.0, 10000.0)
 
         @test coil_powered_nc.is_powered == true
@@ -49,21 +49,21 @@ using RAPID2D
     end
 
     @testset "Coil Constructor Validation" begin
-        position = (r=2.5, z=0.0)
+        pos = (r=2.5, z=0.0)
         area = π * 0.02^2
         resistance = 0.001
         self_inductance = 1e-6
 
         # Test invalid area
-        @test_throws AssertionError Coil(position, -0.1, resistance, self_inductance,
+        @test_throws AssertionError Coil(pos, -0.1, resistance, self_inductance,
                                          true, true, "test", 1000.0, 50000.0)
 
         # Test invalid resistance
-        @test_throws AssertionError Coil(position, area, -0.1, self_inductance,
+        @test_throws AssertionError Coil(pos, area, -0.1, self_inductance,
                                          true, true, "test", 1000.0, 50000.0)
 
         # Test invalid self-inductance
-        @test_throws AssertionError Coil(position, area, resistance, -1e-6,
+        @test_throws AssertionError Coil(pos, area, resistance, -1e-6,
                                          true, true, "test", 1000.0, 50000.0)
 
         # Test invalid R coordinate
@@ -72,30 +72,9 @@ using RAPID2D
                                          true, true, "test", 1000.0, 50000.0)
 
         # Test controllable coil must be powered
-        @test_throws AssertionError Coil(position, area, resistance, self_inductance,
+        @test_throws AssertionError Coil(pos, area, resistance, self_inductance,
                                          false, true, "test", nothing, nothing)
     end
-
-    @testset "Backward Compatibility Constructor" begin
-        position = (r=2.0, z=1.0)
-        area = 0.01
-        resistance = 0.002
-        self_inductance = 2e-6
-
-        # Test constructor without is_controllable (should default to is_powered)
-        coil_powered = Coil(position, area, resistance, self_inductance,
-                           true, "test_powered", 800.0, 40000.0)
-
-        @test coil_powered.is_powered == true
-        @test coil_powered.is_controllable == true  # Should default to is_powered
-
-        coil_passive = Coil(position, area, resistance, self_inductance,
-                           false, "test_passive")
-
-        @test coil_passive.is_powered == false
-        @test coil_passive.is_controllable == false  # Should default to is_powered
-    end
-
     @testset "CoilSystem Constructor" begin
         # Test empty CoilSystem
         system_empty = CoilSystem{FT}()
@@ -147,8 +126,8 @@ using RAPID2D
                                           μ0, resistivity; is_controllable=false,
                                           max_voltage=800.0, max_current=30000.0)
 
-        @test coil.position.r == 2.0
-        @test coil.position.z == 1.0
+        @test coil.location.r == 2.0
+        @test coil.location.z == 1.0
         @test coil.area == area
         @test coil.name == "test_coil"
         @test coil.is_powered == true

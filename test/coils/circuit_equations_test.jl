@@ -164,7 +164,7 @@ end
 
         # Create a single coil at grid point (2.5, 2.5) - exactly between grid points
         coil = Coil{FT}(
-            position=(r=2.5, z=2.5),
+            location=(r=2.5, z=2.5),
             area=1.0, resistance=1.0, self_inductance=1.0,
             is_powered=true, is_controllable=true,
             name="test_coil"
@@ -211,7 +211,7 @@ end
 
         # Coil exactly at grid point (1.0, 1.0) - grid index [2,2]
         coil = Coil{FT}(
-            position=(r=1.0, z=1.0),
+            location=(r=1.0, z=1.0),
             area=1.0, resistance=1.0, self_inductance=1.0,
             is_powered=true, is_controllable=true,
             name="grid_point_coil"
@@ -245,14 +245,14 @@ end
 
         # Create two coils at different positions
         coil1 = Coil{FT}(
-            position=(r=1.5, z=1.5),  # Between grid points
+            location=(r=1.5, z=1.5),  # Between grid points
             area=1.0, resistance=1.0, self_inductance=1.0,
             is_powered=true, is_controllable=true,
             name="coil1"
         )
 
         coil2 = Coil{FT}(
-            position=(r=3.0, z=3.0),  # At grid point
+            location=(r=3.0, z=3.0),  # At grid point
             area=1.0, resistance=1.0, self_inductance=1.0,
             is_powered=true, is_controllable=true,
             name="coil2"
@@ -291,9 +291,9 @@ end
 
         # Create coils: inside, on boundary, and outside
         coils = [
-            Coil{FT}(position=(r=1.5, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="inside"),
-            Coil{FT}(position=(r=3.0, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="on_boundary"),
-            Coil{FT}(position=(r=4.0, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="outside")
+            Coil{FT}(location=(r=1.5, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="inside"),
+            Coil{FT}(location=(r=3.0, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="on_boundary"),
+            Coil{FT}(location=(r=4.0, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="outside")
         ]
 
         coil_system = CoilSystem{FT}(coils)
@@ -324,9 +324,9 @@ end
 
         # Create three coils inside domain
         coils = [
-            Coil{FT}(position=(r=1.0, z=1.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil1"),
-            Coil{FT}(position=(r=2.0, z=1.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil2"),
-            Coil{FT}(position=(r=1.0, z=2.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil3")
+            Coil{FT}(location=(r=1.0, z=1.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil1"),
+            Coil{FT}(location=(r=2.0, z=1.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil2"),
+            Coil{FT}(location=(r=1.0, z=2.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil3")
         ]
 
         coil_system = CoilSystem{FT}(coils)
@@ -356,7 +356,7 @@ end
         initialize_grid_geometry!(grid, (0.0, 3.0), (0.0, 3.0))
 
         coil = Coil{FT}(
-            position=(r=1.5, z=1.5),
+            location=(r=1.5, z=1.5),
             area=1.0, resistance=1.0, self_inductance=1.0,
             is_powered=true, is_controllable=true,
             name="test"
@@ -386,7 +386,7 @@ end
         initialize_grid_geometry!(grid, (0.0, 3.0), (0.0, 3.0))
 
         coil = Coil{FT}(
-            position=(r=1.5, z=1.5),
+            location=(r=1.5, z=1.5),
             area=1.0, resistance=1.0, self_inductance=1.0,
             is_powered=true, is_controllable=true,
             name="zero_current"
@@ -417,7 +417,7 @@ end
 
         # Same coil position (fractionally)
         coil = Coil{FT}(
-            position=(r=0.5, z=0.5),  # Relative position in fine grid
+            location=(r=0.5, z=0.5),  # Relative position in fine grid
             area=1.0, resistance=1.0, self_inductance=1.0,
             is_powered=true, is_controllable=true,
             name="test"
@@ -428,7 +428,7 @@ end
 
         # Scale coil position for coarse grid
         coil_coarse = Coil{FT}(
-            position=(r=1.5, z=1.5),  # Equivalent position in coarse grid
+            location=(r=1.5, z=1.5),  # Equivalent position in coarse grid
             area=1.0, resistance=1.0, self_inductance=1.0,
             is_powered=true, is_controllable=true,
             name="test"

@@ -45,7 +45,7 @@ using RAPID2D
         for coil in system.coils
             @test coil.is_powered == false
             @test coil.is_controllable == false
-            @test coil.position.r ≈ 2.01  # Outer wall radius
+            @test coil.location.r ≈ 2.01  # Outer wall radius
             @test startswith(coil.name, "wall_outer_")
         end
     end

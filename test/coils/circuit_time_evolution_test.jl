@@ -56,7 +56,7 @@ FT = Float64
 
 		coils = [
 			Coil{FT}(
-				position=(r=1.0, z=0.0),
+				location=(r=1.0, z=0.0),
 				area=π*0.1^2,
 				resistance=R,
 				self_inductance=L,
@@ -110,7 +110,7 @@ FT = Float64
 		# Create coils positioned to give desired mutual inductance
 		coils = [
 			Coil{FT}(
-				position=(r=1.0, z=0.0),
+				location=(r=1.0, z=0.0),
 				area=π*0.1^2,
 				resistance=R1,
 				self_inductance=L1,
@@ -120,7 +120,7 @@ FT = Float64
 				voltage_ext=10.0  # Only coil 1 has voltage
 			),
 			Coil{FT}(
-				position=(r=1.5, z=0.0),
+				location=(r=1.5, z=0.0),
 				area=π*0.1^2,
 				resistance=R2,
 				self_inductance=L2,
@@ -164,7 +164,7 @@ FT = Float64
 
 		coils = [
 			Coil{FT}(
-				position=(r=1.0, z=0.0),
+				location=(r=1.0, z=0.0),
 				area=π*0.1^2,
 				resistance=R,
 				self_inductance=L,
@@ -207,7 +207,7 @@ FT = Float64
 		# Create coils for coupled system
 		coils = [
 			Coil{FT}(
-				position=(r=1.0, z=0.0),
+				location=(r=1.0, z=0.0),
 				area=π*0.1^2,
 				resistance=R1,
 				self_inductance=L1,
@@ -217,7 +217,7 @@ FT = Float64
 				voltage_ext=V1
 			),
 			Coil{FT}(
-				position=(r=1.5, z=0.0),
+				location=(r=1.5, z=0.0),
 				area=π*0.1^2,
 				resistance=R2,
 				self_inductance=L2,
@@ -301,7 +301,7 @@ FT = Float64
 
 		coils = [
 			Coil{FT}(
-				position=(r=1.0, z=0.0),
+				location=(r=1.0, z=0.0),
 				area=π*0.1^2,
 				resistance=R1,
 				self_inductance=L1,
@@ -311,7 +311,7 @@ FT = Float64
 				voltage_ext=V1
 			),
 			Coil{FT}(
-				position=(r=1.5, z=0.0),
+				location=(r=1.5, z=0.0),
 				area=π*0.1^2,
 				resistance=R2,
 				self_inductance=L2,

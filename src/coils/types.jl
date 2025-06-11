@@ -7,7 +7,7 @@
 Represents a single toroidal current loop, which can be either a powered coil or a passive conductor.
 
 # Immutable Fields (geometry and electrical properties)
-- `position::NamedTuple{(:r, :z), Tuple{FT, FT}}`: Position in (R, Z) coordinates
+- `location::NamedTuple{(:r, :z), Tuple{FT, FT}}`: Position in (R, Z) coordinates
 - `area::FT`: Cross-sectional area of the conductor
 - `resistance::FT`: Electrical resistance
 - `self_inductance::FT`: Self-inductance
@@ -29,7 +29,7 @@ Represents a single toroidal current loop, which can be either a powered coil or
 """
 @kwdef mutable struct Coil{FT <: AbstractFloat}
     # Immutable properties
-    position::NamedTuple{(:r, :z), Tuple{FT, FT}} = (r=zero(FT), z=zero(FT))
+    location::NamedTuple{(:r, :z), Tuple{FT, FT}} = (r=zero(FT), z=zero(FT))
     area::FT = zero(FT)
     resistance::FT = zero(FT)
     self_inductance::FT = zero(FT)
@@ -42,26 +42,29 @@ Represents a single toroidal current loop, which can be either a powered coil or
     # Mutable state
     current::FT = zero(FT)
     voltage_ext::Union{FT, Function} = zero(FT)
+
+    # Inner constructor with validation
+    function Coil{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage=nothing, max_current=nothing, current=zero(FT), voltage_ext=zero(FT)) where {FT <: AbstractFloat}
+        @assert area > 0 "Coil area must be positive"
+        @assert resistance >= 0 "Coil resistance must be non-negative"
+        @assert self_inductance >= 0 "Self-inductance must be non-negative"
+        @assert location.r > 0 "R coordinate must be positive (toroidal geometry)"
+        @assert !is_controllable || is_powered "Controllable coils must be powered (is_powered=true)"
+
+        new{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage, max_current, current, voltage_ext)
+    end
 end
 
 # Constructor with positional arguments
-function Coil(position::NamedTuple{(:r, :z), Tuple{FT, FT}}, area::FT, resistance::FT,
+function Coil(location::NamedTuple{(:r, :z), Tuple{FT, FT}}, area::FT, resistance::FT,
               self_inductance::FT, is_powered::Bool, is_controllable::Bool, name::String,
               max_voltage::Union{FT, Nothing}=nothing,
               max_current::Union{FT, Nothing}=nothing,
               current::FT=zero(FT), voltage_ext=zero(FT)) where {FT <: AbstractFloat}
-
-    @assert area > 0 "Coil area must be positive"
-    @assert resistance >= 0 "Coil resistance must be non-negative"
-    @assert self_inductance >= 0 "Self-inductance must be non-negative"
-    @assert position.r > 0 "R coordinate must be positive (toroidal geometry)"
-    @assert !is_controllable || is_powered "Controllable coils must be powered (is_powered=true)"
-
-    return Coil{FT}(; position, area, resistance, self_inductance,
+    return Coil{FT}(; location, area, resistance, self_inductance,
                     is_powered, is_controllable, name,
                     max_voltage, max_current, current, voltage_ext)
 end
-
 
 """
     CoilSystem{FT <: AbstractFloat}

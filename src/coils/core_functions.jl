@@ -156,8 +156,8 @@ end
 Return R and Z coordinates of all coils as separate vectors.
 """
 function get_coil_positions(csys::CoilSystem{FT}) where FT<:AbstractFloat
-    R = [coil.position.r for coil in csys.coils]
-    Z = [coil.position.z for coil in csys.coils]
+    R = [coil.location.r for coil in csys.coils]
+    Z = [coil.location.z for coil in csys.coils]
     return R, Z
 end
 
@@ -168,8 +168,8 @@ Return R and Z coordinates of powered coils only.
 """
 function get_powered_coil_positions(csys::CoilSystem{FT}) where FT<:AbstractFloat
     powered_coils = get_powered_coils(csys)
-    R = [coil.position.r for coil in powered_coils]
-    Z = [coil.position.z for coil in powered_coils]
+    R = [coil.location.r for coil in powered_coils]
+    Z = [coil.location.z for coil in powered_coils]
     return R, Z
 end
 
@@ -210,11 +210,11 @@ function create_coil_from_parameters(r::FT, z::FT, area::FT, name::String, is_po
                                    is_controllable=is_powered,
                                    max_voltage=nothing, max_current=nothing,
                                    current=zero(FT), voltage_ext=zero(FT)) where FT<:AbstractFloat
-    position = (r=r, z=z)
+    location = (r=r, z=z)
     resistance = calculate_coil_resistance(area, r, cu_resistivity)
     self_inductance = calculate_self_inductance(area, r, μ0)
 
-    return Coil(position, area, resistance, self_inductance, is_powered, is_controllable, name,
+    return Coil(location, area, resistance, self_inductance, is_powered, is_controllable, name,
                 max_voltage, max_current, current, voltage_ext)
 end
 
