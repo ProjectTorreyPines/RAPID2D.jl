@@ -60,7 +60,6 @@ include("io/io.jl")
 include("io/adios_io.jl")
 
 # Include coil-related functionality
-include("coils/Coils.jl")
 include("coils/core_functions.jl")
 include("coils/initialization.jl")
 include("coils/circuit_equations.jl")

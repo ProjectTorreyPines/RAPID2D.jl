@@ -1,4 +1,13 @@
+# Circuit equations and electromagnetic calculations for coil systems
 using LinearAlgebra
+
+# Export circuit matrix and mutual inductance functions
+export calculate_mutual_inductance_matrix!, calculate_circuit_matrices!, update_coil_system_matrices!
+export get_mutual_inductance, get_coil_coupling_matrix
+export solve_LR_circuit_step!
+export calculate_circuit_magnetic_energy, calculate_power_dissipation
+export distribute_coil_currents_to_Jϕ!, distribute_coil_currents_to_Jϕ
+export determine_coils_inside_grid!
 
 # =============================================================================
 # Mutual Inductance Matrix and Circuit Matrix Calculations

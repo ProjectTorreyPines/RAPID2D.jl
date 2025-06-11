@@ -3,6 +3,10 @@
 
 using LinearAlgebra
 
+# Export initialization functions
+export initialize_four_wall_system!, initialize_single_wall_system!
+export add_control_coils!, initialize_example_tokamak_coils!
+
 """
     initialize_four_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT<:AbstractFloat
 

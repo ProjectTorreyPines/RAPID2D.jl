@@ -1,6 +1,9 @@
 # Coil and CoilSystem types for electromagnetic modeling
 # Ported from MATLAB c_Coils class
 
+# Export essential types
+export Coil, CoilSystem
+
 """
     Coil{FT <: AbstractFloat}
 

@@ -3,6 +3,19 @@
 
 using LinearAlgebra
 
+# Export core coil operations
+export add_coil!, get_powered_coils, get_passive_coils, get_controllable_coils
+export find_coil_by_name, set_coil_voltage!, get_coil_voltage, update_all_voltages!, update_controllable_voltages!
+export get_coil_positions, get_powered_coil_positions
+export calculate_coil_resistance, calculate_self_inductance, create_coil_from_parameters
+export get_all_resistances, get_powered_resistances, get_controllable_resistances
+export get_all_currents, get_powered_currents, get_controllable_currents, get_all_voltages, get_powered_voltages, get_controllable_voltages
+export set_all_currents!, set_powered_currents!, set_controllable_currents!, set_coil_current!, get_coil_current
+export get_coil_voltage_at_time, set_coil_voltage_function!
+export get_all_voltages_at_time, get_powered_voltages_at_time, get_controllable_voltages_at_time
+export create_sinusoidal_voltage, create_linear_voltage_ramp, create_step_voltage, create_piecewise_linear_voltage
+export evaluate_voltage_ext
+
 """
     add_coil!(csys::CoilSystem{FT}, coil::Coil{FT}) where FT<:AbstractFloat
 
