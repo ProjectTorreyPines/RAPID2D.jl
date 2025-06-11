@@ -369,6 +369,24 @@ function solve_LR_circuit_step!(csys::CoilSystem{FT}, t::FT) where FT<:AbstractF
 end
 
 
+function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
+    if csys.n_total == 0
+        return nothing
+    end
+
+        # Get current voltages at time t
+    voltages = get_all_voltages_at_time(csys, t)
+
+    # Get current state
+    currents = get_all_currents(csys)
+    resistances = get_all_resistances(csys)
+
+    # Right-hand side of LR circuit equation:
+    # L * I_old + dt * (V_ext - (1-θimp) * R * I)
+    return csys.mutual_inductance * currents .+ csys.Δt * ( voltages - (one(FT) - csys.θimp) * resistances .* currents)
+end
+
+
 """
     calculate_circuit_magnetic_energy(csys::CoilSystem{FT}) where FT
 
