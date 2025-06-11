@@ -67,6 +67,50 @@ function Coil(location::NamedTuple{(:r, :z), Tuple{FT, FT}}, area::FT, resistanc
 end
 
 """
+    Base.propertynames(coils::Vector{<:Coil})
+
+Enable tab completion for coil vector properties in REPL.
+Returns the field names of the Coil type for tab completion.
+"""
+function Base.propertynames(coils::Vector{<:Coil{<:AbstractFloat}})
+    if isempty(coils)
+        return ()  # Return empty tuple for empty vector
+    end
+    return propertynames(coils[1])  # Return field names of Coil type
+end
+
+"""
+    Base.getproperty(coils::Vector{<:Coil}, sym::Symbol)
+
+Enable convenient property access for vectors of coils.
+
+Allows accessing coil properties directly on vectors:
+- `coils.current` returns `[coil.current for coil in coils]`
+- `coils.location` returns `[coil.location for coil in coils]`
+
+Falls back to standard Vector behavior for Vector-specific fields.
+"""
+function Base.getproperty(coils::Vector{<:Coil{<:AbstractFloat}}, sym::Symbol)
+    # First check if this is a Vector field - delegate to original behavior
+    if hasfield(Vector, sym)
+        return getfield(coils, sym)
+    end
+
+    # Handle empty vector case
+    if isempty(coils)
+        throw(BoundsError("Cannot access property of empty coil vector"))
+    end
+
+    # Check if it's a valid Coil field
+    if hasfield(typeof(coils[1]), sym)
+        return [getfield(s, sym) for s in coils]
+    end
+
+    # If not a coil field, throw error
+    throw(ArgumentError("Vector{Coil} has no property $sym"))
+end
+
+"""
     CoilSystem{FT <: AbstractFloat}
 
 Manages a collection of coils and their electromagnetic interactions.
