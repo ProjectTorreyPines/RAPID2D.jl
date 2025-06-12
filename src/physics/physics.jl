@@ -26,7 +26,8 @@ export update_ue_para!,
        calculate_para_grad_of_scalar_F,
        calculate_grad_of_scalar_F,
        calculate_electron_acceleration_by_pressure,
-       calculate_electron_acceleration_by_convection
+       calculate_electron_acceleration_by_convection,
+       compute_global_toroidal_force_balance!
 
 """
     update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -1410,6 +1411,45 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
     # Update magnetic fields from ψ_self
     calculate_B_from_ψ!(G, F.ψ_self, F.BR_self, F.BZ_self)
+
+    return RP
+end
+
+"""
+    compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Calculate global toroidal force balance and update plasma mean JxB accelerations.
+This function computes the global JxB force effects on the plasma when closed flux surfaces exist.
+
+Based on the MATLAB implementation: Global_Toroidal_Force_Balance in c_RAPID.m
+"""
+function compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Check if we have closed flux surfaces
+    if !isempty(RP.flf.closed_surface_nids)
+
+        @unpack mi, me = RP.config.constants
+        nids = RP.flf.closed_surface_nids
+        pla = RP.plasma
+        F = RP.fields
+
+        # Calculate total plasma mass by integrating over volume
+        sum_plasma_mass = sum(@. (mi * pla.ni[nids] + me * pla.ne[nids]) * RP.G.inVol2D[nids] )
+        sum_JxB_R = sum( @. pla.Jϕ[nids] * F.BZ[nids] * RP.G.inVol2D[nids] )
+        sum_JxB_Z = sum( @. -pla.Jϕ[nids] * F.BR[nids] * RP.G.inVol2D[nids] )
+
+        # Calculate mean accelerations
+        if sum_plasma_mass > zero(FT)
+            pla.mean_aR_by_JxB[nids] .= sum_JxB_R / sum_plasma_mass
+            pla.mean_aZ_by_JxB[nids] .= sum_JxB_Z / sum_plasma_mass
+
+            # TODO: Is this explicit way stable? Should we use the mean_aR and mean_aZ implicitly in some functions?
+            pla.ueR[nids] .+= pla.mean_aR_by_JxB[nids] * RP.dt;
+            pla.ueZ[nids] .+= pla.mean_aZ_by_JxB[nids] * RP.dt;
+
+            pla.uiR[nids] .+= pla.mean_aR_by_JxB[nids] * RP.dt;
+            pla.uiZ[nids] .+= pla.mean_aZ_by_JxB[nids] * RP.dt;
+        end
+    end
 
     return RP
 end

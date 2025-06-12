@@ -122,8 +122,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     end
 
     if RP.flags.Global_Force_Balance
-        @warn "Not implemented yet: `Global_Force_Balance`"
-        # obj.Global_Toroidal_Force_Balance;
+        compute_global_toroidal_force_balance!(RP)
     end
 
     # update diffusion tensor (DRR,DRZ,DZZ) & (CTRR,CTRZ,CTZZ)

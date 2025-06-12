@@ -265,10 +265,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Ti_eV .= pla.Ti_eV
 
     # MHD accelerations
-    if hasfield(typeof(pla), :mean_aR_by_JxB)
-        snap2D.mean_aR_by_JxB .= pla.mean_aR_by_JxB
-        snap2D.mean_aZ_by_JxB .= pla.mean_aZ_by_JxB
-    end
+    snap2D.mean_aR_by_JxB .= pla.mean_aR_by_JxB
+    snap2D.mean_aZ_by_JxB .= pla.mean_aZ_by_JxB
 
     # Coulomb logarithm
     snap2D.lnΛ .= pla.lnΛ

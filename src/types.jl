@@ -222,6 +222,10 @@ Contains the plasma state variables including density, temperature, and velocity
     mean_ExB_R::Matrix{FT} = zeros(FT, dims) # Mean ExB drift R component [m/s]
     mean_ExB_Z::Matrix{FT} = zeros(FT, dims) # Mean ExB drift Z component [m/s]
 
+    # Global JxB force balance accelerations
+    mean_aR_by_JxB::Matrix{FT} = zeros(FT, dims) # Mean JxB acceleration R component [m/s²]
+    mean_aZ_by_JxB::Matrix{FT} = zeros(FT, dims) # Mean JxB acceleration Z component [m/s²]
+
     # Parameters for Self-E field effects
     nc_para::Matrix{FT} = zeros(FT, dims) # Parallel critical density [m^-3]
     nc_perp::Matrix{FT} = zeros(FT, dims) # Perpendicular critical density [m^-3]
