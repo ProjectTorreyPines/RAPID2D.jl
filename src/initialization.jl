@@ -42,8 +42,8 @@ function validate_config!(config::SimulationConfig{FT}) where {FT<:AbstractFloat
     end
 
     # Additional validation for parameter values
-    if !isnothing(config.prefilled_gas_pressure) && config.prefilled_gas_pressure <= 0
-        throw(ArgumentError("prefilled_gas_pressure must be positive"))
+    if !isnothing(config.prefilled_gas_pressure) && config.prefilled_gas_pressure < 0
+        throw(ArgumentError("prefilled_gas_pressure must be non-negative"))
     end
 
     if !isnothing(config.R_min) && !isnothing(config.R_max) && config.R_min >= config.R_max
