@@ -43,8 +43,8 @@ function advance_step_along_b_rz_plane(
     dl::FT,
     R::FT,
     Z::FT,
-    interp_BR::Interpolations.GriddedInterpolation,
-    interp_BZ::Interpolations.GriddedInterpolation
+    interp_BR::Interpolations.AbstractInterpolation,
+    interp_BZ::Interpolations.AbstractInterpolation
 ) where FT<:AbstractFloat
     half = FT(0.5)
     two_FT = FT(2.0)
@@ -466,10 +466,20 @@ function flf_analysis_field_lines_rz_plane!(RP::RAPID)
 end
 
 # Helper function to create 2D interpolation that matches MATLAB's griddedInterpolant behavior
-function my_interpolation(R1D, Z1D, data_2d)
-    itp = interpolate((R1D, Z1D), data_2d, Gridded(Linear()))
-    # itp = interpolate((R1D, Z1D), data_2d, Gridded(Cubic()))
-    # Add extrapolation with constant boundary values
-    # return extrapolate(itp, Flat())
+function my_interpolation(R1D::Vector{FT}, Z1D::Vector{FT}, data_2d::Matrix{FT}; method::Symbol=:cubic) where FT<:AbstractFloat
+    @assert method in (:nearst, :linear, :cubic) "Invalid interpolation method: $method"
+
+    if method == :nearst
+        bsp = BSpline(Constant())
+    elseif method == :linear
+        bsp = BSpline(Linear())
+    elseif method == :cubic
+        bsp = BSpline(Cubic())
+    end
+
+    r1d = range(R1D[1], stop=R1D[end], length=length(R1D))
+    z1d = range(Z1D[1], stop=Z1D[end], length=length(Z1D))
+
+    itp = scale(interpolate(data_2d, bsp), (r1d,z1d))
     return itp
 end
