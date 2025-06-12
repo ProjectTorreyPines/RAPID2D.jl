@@ -376,6 +376,7 @@ function flf_analysis_field_lines_rz_plane!(
 
 
     empty!(flf.closed_surface_nids)  # Clear previous results
+    fill!(flf.is_closed, false)  # Reset closed flags
 
     @inbounds for i in 1:NR, j in 1:NZ
         R0, Z0 = R1D[i], Z1D[j]
