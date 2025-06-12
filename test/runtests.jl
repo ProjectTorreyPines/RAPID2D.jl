@@ -31,12 +31,12 @@ if !isempty(ARGS) && !(length(ARGS) == 1 && ARGS[1] == "")
     end
 else
     # Always run unit tests first
-    # @info "Running unit tests..."
-    # if isdir("unit")
-    #     include_tests_in_dir("unit")
-    # else
-    #     @warn "Unit test directory not found"
-    # end
+    @info "Running unit tests..."
+    if isdir("unit")
+        include_tests_in_dir("unit")
+    else
+        @warn "Unit test directory not found"
+    end
 
     # Conditionally run regression tests
     run_regression = get(ENV, "RAPID_RUN_REGRESSION", "false") == "true"
