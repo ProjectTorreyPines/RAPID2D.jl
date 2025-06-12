@@ -66,14 +66,14 @@ function RAPID2D.plot_snaps0D(snaps0D; kwargs...)
 			  linewidth=2)
 	push!(p_vec, p)
 
-	push!(p_vec, plot(times_ms, [abs(s.Epara_tot) for s in snaps0D],
+	push!(p_vec, plot(times_ms, [s.Epara_tot for s in snaps0D],
 			  ylabel="|⟨E∥⟩| (V/m)", label="Parallel E-field",
 			  linewidth=2))
-	plot!(p_vec[end], times_ms, [abs(s.Epara_ext) for s in snaps0D],
+	plot!(p_vec[end], times_ms, [s.Epara_ext for s in snaps0D],
 			label="E_{ext}", linewidth=2)
-	plot!(p_vec[end], times_ms, [abs(s.Epara_self_ES) for s in snaps0D],
+	plot!(p_vec[end], times_ms, [s.Epara_self_ES for s in snaps0D],
 			label="E_{self}^{ES}", linewidth=2)
-	plot!(p_vec[end], times_ms, [abs(s.Epara_self_EM) for s in snaps0D],
+	plot!(p_vec[end], times_ms, [s.Epara_self_EM for s in snaps0D],
 			label="E_{self}^{EM}", linewidth=2)
 
 	push!(p_vec, plot(times_ms, [abs(s.ue_para) for s in snaps0D],
