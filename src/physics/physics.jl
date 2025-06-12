@@ -1306,6 +1306,11 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     induc_shielding_term[G.BDY_idx] .= 0.0 # For dirichlet condition of A_imp_ampere
     A_imp_ampere = (Au * OP.ΔGS) - spdiagm(@views induc_shielding_term[:])
 
+    # TODO: need to make it more efficient.. direct indexing is not efficient
+    for nid in G.BDY_idx
+        A_imp_ampere.matrix[nid, nid] = one(FT) # Dirichlet condition at boundary nodes
+    end
+
     iter = 1
     converged = false
     while (true)
