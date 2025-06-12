@@ -139,7 +139,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     end
 
     # Coil currents (if present)
-    if hasfield(typeof(RP), :coils) && hasfield(typeof(RP.coils), :N) && RP.coils.N > 0
+    if RP.coil_system.n_total > 0
         if hasfield(typeof(snap0D), :I_coils) && snap0D.I_coils !== nothing
             snap0D.I_coils = RP.coils.I
         else
@@ -265,10 +265,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Ti_eV .= pla.Ti_eV
 
     # MHD accelerations
-    if hasfield(typeof(pla), :mean_aR_by_JxB)
-        snap2D.mean_aR_by_JxB .= pla.mean_aR_by_JxB
-        snap2D.mean_aZ_by_JxB .= pla.mean_aZ_by_JxB
-    end
+    snap2D.mean_aR_by_JxB .= pla.mean_aR_by_JxB
+    snap2D.mean_aZ_by_JxB .= pla.mean_aZ_by_JxB
 
     # Coulomb logarithm
     snap2D.lnΛ .= pla.lnΛ

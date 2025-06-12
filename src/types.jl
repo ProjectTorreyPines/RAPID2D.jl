@@ -9,6 +9,7 @@ import RAPID2D: PlasmaConstants
 include("diagnostics/types.jl")
 include("io/types.jl")
 include("utils/types.jl")
+include("coils/types.jl")
 
 
 # Abstract types for reaction rate coefficients for a specific species
@@ -220,6 +221,10 @@ Contains the plasma state variables including density, temperature, and velocity
     # mean ExB transport
     mean_ExB_R::Matrix{FT} = zeros(FT, dims) # Mean ExB drift R component [m/s]
     mean_ExB_Z::Matrix{FT} = zeros(FT, dims) # Mean ExB drift Z component [m/s]
+
+    # Global JxB force balance accelerations
+    mean_aR_by_JxB::Matrix{FT} = zeros(FT, dims) # Mean JxB acceleration R component [m/s²]
+    mean_aZ_by_JxB::Matrix{FT} = zeros(FT, dims) # Mean JxB acceleration Z component [m/s²]
 
     # Parameters for Self-E field effects
     nc_para::Matrix{FT} = zeros(FT, dims) # Parallel critical density [m^-3]
@@ -620,7 +625,6 @@ mutable struct GridGeometry{FT<:AbstractFloat}
 
     # Green's function tables
     Green_inWall2bdy::Matrix{FT} # Green's function from in-wall nodes to boundary nodes
-    Green_coil2bdy::Matrix{FT} # Green's function from coils (including wall segments) to boundary nodes
 
     # Node information
     nodes::NodeState{FT}     # Information about grid nodes
@@ -644,7 +648,6 @@ mutable struct GridGeometry{FT<:AbstractFloat}
         device_inVolume = FT(0.0)
 
         Green_inWall2bdy = zeros(0, 0) # Empty matrix for now
-        Green_coil2bdy = zeros(0, 0) # Empty matrix for now
         return new{FT}(
             NR, NZ,
             R1D, Z1D, R2D, Z2D,
@@ -652,7 +655,6 @@ mutable struct GridGeometry{FT<:AbstractFloat}
             Jacob, inv_Jacob, inVol2D,
             BDY_idx,
             Green_inWall2bdy,
-            Green_coil2bdy,
             nodes, cell_state,
             device_inVolume
         )
@@ -719,7 +721,7 @@ mutable struct RAPID{FT<:AbstractFloat}
     AW_snap0D::AdiosFileWrapper    # Wrapped AdiosFile for 0D snapshots
     AW_snap2D::AdiosFileWrapper    # Wrapped AdiosFile for 2D snapshots
 
-    coils::Nothing # Placeholder for coil data, to be defined later
+    coil_system::CoilSystem{FT} # Placeholder for coil data, to be defined later
 
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
@@ -756,7 +758,7 @@ mutable struct RAPID{FT<:AbstractFloat}
         AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
         AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
-        coils = nothing # Placeholder for coil data, to be defined later
+        coil_system = CoilSystem{FT}()  # coil system placeholder
 
         # Create and return new instance
         return new{FT}(
@@ -768,7 +770,7 @@ mutable struct RAPID{FT<:AbstractFloat}
             prev_n, tElap, diagnostics,
             flf,
             AW_snap0D, AW_snap2D,
-            coils
+            coil_system
         )
     end
 end

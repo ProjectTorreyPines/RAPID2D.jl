@@ -26,7 +26,8 @@ export update_ue_para!,
        calculate_para_grad_of_scalar_F,
        calculate_grad_of_scalar_F,
        calculate_electron_acceleration_by_pressure,
-       calculate_electron_acceleration_by_convection
+       calculate_electron_acceleration_by_convection,
+       compute_global_toroidal_force_balance!
 
 """
     update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -1210,6 +1211,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     G = RP.G
     flags = RP.flags
     dt = RP.dt
+    csys = RP.coil_system
 
     # Physical constants
     @unpack ee, me, μ0, qe = RP.config.constants
@@ -1291,13 +1293,24 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     RHS = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS for efficiency
     Jϕ_pla_k = zeros(FT, G.NR, G.NZ) # Initialize Jϕ for iteration
 
-
+    # Prepare coil_system for current calculation
+    if (RP.dt != csys.Δt || θimp != csys.θimp)
+        # If the time step or implicit factor have changed, recalculate the coil system matrices
+        csys.Δt = RP.dt
+        csys.θimp = θimp
+        calculate_circuit_matrices!(csys)
+    end
 
     # Define implicit LHS matrix for the coupled Ampere equation
     # A_imp_ampere ≡ [Au*ΔGS - μ₀*ne*qe²*bϕ²/me]
     induc_shielding_term = @. μ0 * pla.ne * qe^2 * F.bϕ^2/ me
     induc_shielding_term[G.BDY_idx] .= 0.0 # For dirichlet condition of A_imp_ampere
     A_imp_ampere = (Au * OP.ΔGS) - spdiagm(@views induc_shielding_term[:])
+
+    # TODO: need to make it more efficient.. direct indexing is not efficient
+    for nid in G.BDY_idx
+        A_imp_ampere.matrix[nid, nid] = one(FT) # Dirichlet condition at boundary nodes
+    end
 
     iter = 1
     converged = false
@@ -1308,18 +1321,37 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
         @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
 
 
-        if !isnothing(RP.coils)
-            @warn "Coil currents are not yet implemented in this function. Skipping coil current update." maxlog=1
-        else
-            new_coil_I_k = 0
+        if csys.n_total > 0
+            Mcp_dIpla = 2π * csys.Green_grid2coils * (Jϕ_pla_k[:] .- Jphi_pla_0[:]) * G.dR * G.dZ
+
+            if flags.convec
+                # TODO: Is this part needed? Grid is not moving, so plasma movement should not affect coil currents?
+                Ipla = @. (θimp * Jphi_pla_k + (1 - θimp) * Jphi_pla_0) * dR * dZ
+                pla_displacement_R = pla.ueR * dt + 0.5 * pla.mean_aR_by_JxB * dt^2
+                pla_displacement_Z = pla.ueZ * dt + 0.5 * pla.mean_aZ_by_JxB * dt^2
+                # change rate of Mcp (mutual inductance between coils and plasma) due to plasma movement
+                Ipla_dMcp = 2π * (csys.dGreen_dRg_grid2coils * (Ipla[:] .* pla_displacement_R[:]) +
+                                csys.dGreen_dZg_grid2coils * (Ipla[:] .* pla_displacement_Z[:]))
+
+                # grad_Ipla_R, grad_Ipla_Z = Cal_grad_of_scalar_F(reshape(Ipla, size(R2D)))
+                # dIpla_by_conv = pla_displacement_R .* grad_Ipla_R + pla_displacement_Z .* grad_Ipla_Z
+                # Mcp_dIpla_by_conv = 2π * coils.G_grid2coil * dIpla_by_conv[:]
+                Mcp_dIpla_by_conv = 0
+            else
+                Ipla_dMcp = 0
+                Mcp_dIpla_by_conv = 0
+            end
+
+            coil_flux_change_by_plasma = Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
+
+            circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) - coil_flux_change_by_plasma
+            new_coils_I_k = csys.inv_A_LR_circuit * circuit_rhs  # valid if "dt" is constant
         end
 
         # Step #2: Update Boundary psi by both plasma and coils currents using Green's function
         new_ψ_self_kp1_at_BDY = (G.Green_inWall2bdy * Jϕ_pla_k[G.nodes.in_wall_nids]) * G.dR * G.dZ
-
-        if !isnothing(RP.coils)
-            @warn "Coil currents are not yet implemented in this function. Skipping coil current update." maxlog=1
-            new_ψ_self_kp1_at_BDY .+= G.Green_coil2bdy * new_coil_I_k
+        if csys.n_total > 0
+            new_ψ_self_kp1_at_BDY .+= csys.Green_coils2bdy * new_coils_I_k
         end
 
         #  update (k+1)-th boudary psi with some relaxation
@@ -1329,10 +1361,9 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
         # Step #3: Set RHS of the implicit Ampere equation
         @. RHS = -μ0 * G.R2D * Jϕ_tilde
-        if !isnothing(RP.coils)
-            @warn "Coil currents are not yet implemented in this function. Skipping coil current update." maxlog=1
-            # inside_Jϕ_coil_k = obj.coils.Convert_Icoils_to_Jphi_inside_RP_domain(obj, new_coil_I_k);
-            @. RHS[G.BDY_idx] .+= -μ0 * G.R2D * inside_Jϕ_coil_k;
+        if csys.n_total > 0
+            inside_Jϕ_coil_k = distribute_coil_currents_to_Jϕ(csys, RP.G; currents = new_coils_I_k)
+            @. RHS .+= -μ0 * G.R2D * inside_Jϕ_coil_k;
         end
         RHS[G.BDY_idx] .= new_ψ_self_kp1_at_BDY # Set RHS at boundary nodes
 
@@ -1374,13 +1405,51 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     @. pla.Jϕ = pla.ne * qe * pla.ue_para * F.bϕ
 
     # Update coil currents
-    if !isnothing(RP.coils)
-        @warn "Coil currents are not yet implemented in this function. Skipping coil current update." maxlog=1
-        # RP.coils.I = new_coil_I_k
+    if RP.coil_system.n_total > 0
+        set_all_currents!(csys, new_coils_I_k)
     end
 
     # Update magnetic fields from ψ_self
     calculate_B_from_ψ!(G, F.ψ_self, F.BR_self, F.BZ_self)
+
+    return RP
+end
+
+"""
+    compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Calculate global toroidal force balance and update plasma mean JxB accelerations.
+This function computes the global JxB force effects on the plasma when closed flux surfaces exist.
+
+Based on the MATLAB implementation: Global_Toroidal_Force_Balance in c_RAPID.m
+"""
+function compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    # Check if we have closed flux surfaces
+    if !isempty(RP.flf.closed_surface_nids)
+
+        @unpack mi, me = RP.config.constants
+        nids = RP.flf.closed_surface_nids
+        pla = RP.plasma
+        F = RP.fields
+
+        # Calculate total plasma mass by integrating over volume
+        sum_plasma_mass = sum(@. (mi * pla.ni[nids] + me * pla.ne[nids]) * RP.G.inVol2D[nids] )
+        sum_JxB_R = sum( @. pla.Jϕ[nids] * F.BZ[nids] * RP.G.inVol2D[nids] )
+        sum_JxB_Z = sum( @. -pla.Jϕ[nids] * F.BR[nids] * RP.G.inVol2D[nids] )
+
+        # Calculate mean accelerations
+        if sum_plasma_mass > zero(FT)
+            pla.mean_aR_by_JxB[nids] .= sum_JxB_R / sum_plasma_mass
+            pla.mean_aZ_by_JxB[nids] .= sum_JxB_Z / sum_plasma_mass
+
+            # TODO: Is this explicit way stable? Should we use the mean_aR and mean_aZ implicitly in some functions?
+            pla.ueR[nids] .+= pla.mean_aR_by_JxB[nids] * RP.dt;
+            pla.ueZ[nids] .+= pla.mean_aZ_by_JxB[nids] * RP.dt;
+
+            pla.uiR[nids] .+= pla.mean_aR_by_JxB[nids] * RP.dt;
+            pla.uiZ[nids] .+= pla.mean_aZ_by_JxB[nids] * RP.dt;
+        end
+    end
 
     return RP
 end

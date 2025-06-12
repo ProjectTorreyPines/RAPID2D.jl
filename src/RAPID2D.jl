@@ -59,9 +59,15 @@ include("plotting.jl")
 include("io/io.jl")
 include("io/adios_io.jl")
 
+# Include coil-related functionality
+include("coils/core_functions.jl")
+include("coils/initialization.jl")
+include("coils/circuit_equations.jl")
+
 # Include utility functions
 include("utils/grid.jl")  # Grid-related utility functions
 include("utils/field_line_following.jl")
+include("utils/green_function.jl")  # Green's function utilities
 include("utils/utils.jl")
 
 # Export types from various modules for convenience
