@@ -1,8 +1,8 @@
 using RAPID2D
 using Test
-using LinearAlgebra
-using Statistics
-using SimpleUnPack
+using RAPID2D.LinearAlgebra
+using RAPID2D.Statistics
+using RAPID2D.SimpleUnPack
 
 # Test basic physics module functionality
 @testset "Physics Module Basic Tests" begin

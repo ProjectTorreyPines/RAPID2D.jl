@@ -1,11 +1,11 @@
 using Test
-using HDF5
-using Interpolations
 using RAPID2D
+using RAPID2D.HDF5
+using RAPID2D.Interpolations
 
 @testset "Reaction Rate Coefficients" begin
     # Define paths to test data
-    RRC_data_dir = joinpath(dirname(dirname(@__DIR__)), "RRC_data")
+    RRC_data_dir = joinpath(dirname(dirname(dirname(@__DIR__))), "RRC_data")
     EoverP_Erg_file = joinpath(RRC_data_dir, "eRRCs_EoverP_Erg.h5")
     e_tud_file = joinpath(RRC_data_dir, "eRRCs_T_ud.h5")
     i_tud_file = joinpath(RRC_data_dir, "iRRCs_T_ud.h5")

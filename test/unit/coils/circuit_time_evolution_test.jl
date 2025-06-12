@@ -1,6 +1,6 @@
 using RAPID2D
 using Test
-using LinearAlgebra
+using RAPID2D.LinearAlgebra
 
 function simulate_circuit_evolution(csys::CoilSystem{FT}, t_span::Tuple{FT, FT},
                                    dt::FT; save_history::Bool=true) where FT<:AbstractFloat

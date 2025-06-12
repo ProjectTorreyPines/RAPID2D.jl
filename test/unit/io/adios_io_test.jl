@@ -1,6 +1,11 @@
 using RAPID2D
 using Test
 
+if Sys.iswindows()
+    @warn "Skipping ADIOS I/O tests on Windows due to known compatibility issues"
+    return
+end
+
 @testset "ADIOS I/O Round-trip Tests" begin
 
     @testset "Snapshot0D ADIOS Round-trip" begin

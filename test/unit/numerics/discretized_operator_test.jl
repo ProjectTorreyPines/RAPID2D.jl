@@ -1,8 +1,8 @@
 # Test suite for DiscretizedOperator arithmetic operations
 using Test
-using SparseArrays
 using RAPID2D
-using LinearAlgebra
+using RAPID2D.SparseArrays
+using RAPID2D.LinearAlgebra
 
 @testset "DiscretizedOperator" begin
     # Test setup: Create a small test grid and basic operators

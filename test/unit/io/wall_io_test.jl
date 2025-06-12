@@ -3,7 +3,7 @@ using RAPID2D
 
 @testset "Wall IO Tests" begin
     @testset "Wall Data Reading Tests" begin
-        test_dir = joinpath(@__DIR__, "..", "data", "wall")
+        test_dir = joinpath(@__DIR__, "../..", "data", "wall")
 
         @testset "read_wall_data_file - Valid Data" begin
             # Test reading a valid wall data file

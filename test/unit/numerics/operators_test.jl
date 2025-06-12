@@ -1,6 +1,6 @@
 using RAPID2D
-using LinearAlgebra
-using SparseArrays
+using RAPID2D.LinearAlgebra
+using RAPID2D.SparseArrays
 using Test
 
 

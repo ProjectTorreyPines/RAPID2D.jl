@@ -1,10 +1,10 @@
 # Performance benchmark comparing SparseMatrixCSC vs DiscretizedOperator operations
 using RAPID2D
 using BenchmarkTools
-using SparseArrays
-using Random
-using Printf
-using LinearAlgebra
+using RAPID2D.SparseArrays
+using RAPID2D.Random
+using RAPID2D.Printf
+using RAPID2D.LinearAlgebra
 
 """
     generate_test_sparse_matrix(n, sparsity_level, rng=Random.default_rng())

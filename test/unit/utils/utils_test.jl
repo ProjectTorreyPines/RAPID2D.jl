@@ -12,7 +12,7 @@ using RAPID2D
         rect_wall = WallGeometry{Float64}(wall_R, wall_Z)
 
         # Complex tokamak-shaped wall (data from valid_wall.dat)
-        test_dir = joinpath(@__DIR__, "..", "data", "wall")
+        test_dir = joinpath(@__DIR__, "../..", "data", "wall")
         wall_file = joinpath(test_dir, "valid_wall.dat")
 
         # Load data from valid_wall.dat file

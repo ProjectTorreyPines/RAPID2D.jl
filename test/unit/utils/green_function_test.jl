@@ -4,7 +4,7 @@ Test script for Green's function implementation
 
 using RAPID2D
 using Test
-using SpecialFunctions
+using RAPID2D.SpecialFunctions
 
 @testset "Green's Function Tests" begin
 

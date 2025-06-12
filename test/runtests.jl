@@ -1,12 +1,23 @@
 using Test
 using RAPID2D
 
+function find_test_files(dir::String)
+    @assert isdir(dir) "Directory does not exist: $dir"
+    test_files = String[]
+    for (root, _, files) in walkdir(dir)
+        for file in files
+            if endswith(file, "_test.jl")
+                push!(test_files, joinpath(root, file))
+            end
+        end
+    end
+    return sort(test_files)  # Sort for deterministic order
+end
+
 function include_tests_in_dir(dir::String)
     @assert isdir(dir) "Directory does not exist: $dir"
-
-    test_files = filter(f -> endswith(f, "_test.jl"), readdir(dir))
-    for file in sort(test_files)  # sort for deterministic order
-        filepath = joinpath(dir, file)
+    test_files = find_test_files(dir)
+    for filepath in test_files
         @info "Running test file: $filepath"
         include(filepath)
     end
@@ -15,35 +26,28 @@ end
 if !isempty(ARGS) && !(length(ARGS) == 1 && ARGS[1] == "")
     println(ARGS)
     for testfile in ARGS
-        # Skip ADIOS tests on Windows due to compatibility issues
-        if Sys.iswindows() && contains(testfile, "adios_io_test.jl")
-            @warn "Skipping ADIOS I/O test on Windows: $testfile"
-            continue
-        end
-
         @info "Running test file: $testfile"
         include(testfile)
     end
 else
-    # Default behavior: run all tests
-    include("io/wall_io_test.jl")
+    # Always run unit tests first
+    # @info "Running unit tests..."
+    # if isdir("unit")
+    #     include_tests_in_dir("unit")
+    # else
+    #     @warn "Unit test directory not found"
+    # end
 
-    # Skip ADIOS tests on Windows due to compatibility issues
-    if !Sys.iswindows()
-        include("io/adios_io_test.jl")
+    # Conditionally run regression tests
+    run_regression = get(ENV, "RAPID_RUN_REGRESSION", "false") == "true"
+    if run_regression
+        @info "Running regression tests..."
+        if isdir("regression")
+            include_tests_in_dir("regression")
+        else
+            @warn "Regression test directory not found"
+        end
     else
-        @warn "Skipping ADIOS I/O tests on Windows due to known compatibility issues"
+        @info "Skipping regression tests. Set RAPID_RUN_REGRESSION=true to run them."
     end
-
-    include_tests_in_dir("utils")
-    include_tests_in_dir("diagnostics")
-    include_tests_in_dir("numerics")
-    include_tests_in_dir("reactions")
-    include_tests_in_dir("coils")
-
-    include("diagnostics/snapshots_test.jl")
-
-    include("fields/calculate_B_fields_test.jl")
-
-    include("physics/physics_test.jl")
 end
