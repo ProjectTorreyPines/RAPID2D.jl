@@ -1,9 +1,12 @@
+__precompile__(false)
+
 """
 RAPID2DPlotsExt.jl - Plots.jl extension for RAPID2D.jl
 
 This extension provides plotting functionality for RAPID2D using Plots.jl.
 It includes recipes and convenience functions for visualizing simulation data.
 """
+
 module RAPID2DPlotsExt
 
 using RAPID2D
@@ -225,49 +228,87 @@ Create animation of 2D field evolution.
 - `field::Symbol`: Field to animate
 - `fps::Int`: Frames per second
 """
-function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D, field::Symbol; fps=5, filename="rapid2d_animation.mp4", kwargs...)
+function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D, field::Symbol; fps=5, filename="rapid2d_animation.mp4", headless=true, kwargs...)
 
     if isempty(snaps2D)
         error("No snapshot data available for animation")
     end
 
-    # Determine global color limits for consistency
-    all_data = [getfield(snap, field) for snap in snaps2D]
-    global_min = minimum(minimum.(all_data))
-    global_max = maximum(maximum.(all_data))
-
-    if field in [:ne, :ni] && global_min > 0
-        clims = (global_max * 1e-3, global_max)
-        colorscale = :log10
-    else
-        clims = (global_min, global_max)
-        colorscale = :linear
+    # Optionally set headless mode for animation
+    if headless
+        original_backend = Plots.backend()
+        original_gks = get(ENV, "GKSwstype", nothing)
+        Plots.gr(show=false)
+        ENV["GKSwstype"] = "nul"
     end
 
-    # Create animation
-    anim = @animate for (i, snap) in enumerate(snaps2D)
-        RAPID2D.plot_snaps2D(snap, R1D, Z1D, field; colorscale=colorscale,
-                   clims=clims, title="$(get_field_label(field)) at t = $(round(snap.time_s*1e3, digits=2)) ms",
-                   kwargs...)
-    end
+    try
+        # Determine global color limits for consistency
+        all_data = [getfield(snap, field) for snap in snaps2D]
+        global_min = minimum(minimum.(all_data))
+        global_max = maximum(maximum.(all_data))
 
-    return mp4(anim, filename, fps=fps)
+        if field in [:ne, :ni] && global_min > 0
+            clims = (global_max * 1e-3, global_max)
+            colorscale = :log10
+        else
+            clims = (global_min, global_max)
+            colorscale = :linear
+        end
+
+        # Create animation without displaying
+        anim = @animate for (i, snap) in enumerate(snaps2D)
+            RAPID2D.plot_snaps2D(snap, R1D, Z1D, field; colorscale=colorscale,
+                       clims=clims, title="$(get_field_label(field)) at t = $(round(snap.time_s*1e3, digits=2)) ms",
+                       kwargs...)
+        end every 1
+
+        return mp4(anim, filename, fps=fps)
+    finally
+        # Restore original settings if they were changed
+        if headless
+            Plots.backend(original_backend)
+            if original_gks === nothing
+                delete!(ENV, "GKSwstype")
+            else
+                ENV["GKSwstype"] = original_gks
+            end
+        end
+    end
 end
 
-function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D, fields::AbstractArray{Symbol}; fps=5, filename="rapid2d_animation.mp4", kwargs...)
+function RAPID2D.animate_snaps2D(snaps2D, R1D, Z1D, fields::AbstractArray{Symbol}; fps=5, filename="rapid2d_animation.mp4", headless=true, kwargs...)
 
     if isempty(snaps2D)
         error("No snapshot data available for animation")
     end
 
-    # Create animation
-    anim = @animate for (i, snap) in enumerate(snaps2D)
-        RAPID2D.plot_snaps2D(snap, R1D, Z1D, fields; size=(800,1200),dpi=151, kwargs...)
-        # Force exact size
-        # plot!(size=(801,1200))
+    # Optionally set headless mode for animation
+    if headless
+        original_backend = Plots.backend()
+        original_gks = get(ENV, "GKSwstype", nothing)
+        Plots.gr(show=false)
+        ENV["GKSwstype"] = "nul"
     end
 
-    return mp4(anim, filename, fps=fps)
+    try
+        # Create animation without displaying
+        anim = @animate for (i, snap) in enumerate(snaps2D)
+            RAPID2D.plot_snaps2D(snap, R1D, Z1D, fields; size=(800,1200), dpi=151, kwargs...)
+        end every 1
+
+        return mp4(anim, filename, fps=fps)
+    finally
+        # Restore original settings if they were changed
+        if headless
+            Plots.backend(original_backend)
+            if original_gks === nothing
+                delete!(ENV, "GKSwstype")
+            else
+                ENV["GKSwstype"] = original_gks
+            end
+        end
+    end
 end
 
 

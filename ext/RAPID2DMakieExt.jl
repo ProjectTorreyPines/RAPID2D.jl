@@ -1,9 +1,12 @@
+__precompile__(false)
+
 """
 RAPID2DMakieExt.jl - Makie.jl extension for RAPID2D.jl
 
 This extension provides high-performance plotting functionality for RAPID2D using Makie.jl.
 Offers better performance for large datasets and interactive visualization.
 """
+
 module RAPID2DMakieExt
 
 using RAPID2D
