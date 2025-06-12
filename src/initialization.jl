@@ -109,7 +109,6 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # update E,B fields
     update_external_fields!(RP)
-    update_self_fields!(RP)
     combine_external_and_self_fields!(RP)
 
     # Initialize plasma and transport

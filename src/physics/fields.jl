@@ -11,7 +11,6 @@ Contains functions related to electromagnetic field calculations, including:
 
 # Export public functions
 export update_external_fields!,
-       update_self_fields!,
        combine_external_and_self_fields!,
        calculate_magnetic_field_unit_vectors!,
        calculate_B_from_ψ!,
@@ -25,26 +24,6 @@ export calculate_external_fields_at_time
 using LinearAlgebra
 
 # Required imports for Green's function calculations
-
-"""
-    update_self_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-
-Update the self-consistent electromagnetic fields based on plasma current.
-"""
-function update_self_fields!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    # Placeholder implementation - will be filled in later
-    @warn "update_self_fields! not fully implemented yet"
-
-    F = RP.fields
-
-    # Just a dummy operation until proper implementation
-    F.BR_self .= zeros(FT, RP.G.NR, RP.G.NZ)
-    F.BZ_self .= zeros(FT, RP.G.NR, RP.G.NZ)
-
-    F.Eϕ_self .= zeros(FT, RP.G.NR, RP.G.NZ)
-
-    return RP
-end
 
 
 """
