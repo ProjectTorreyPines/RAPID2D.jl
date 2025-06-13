@@ -148,6 +148,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     J_para::Matrix{FT} = zeros(FT, dims_RZ)         # Parallel current
 
     # Magnetic flux
+    ψ::Matrix{FT} = zeros(FT, dims_RZ)            # Total poloidal flux
     ψ_ext::Matrix{FT} = zeros(FT, dims_RZ)        # External poloidal flux
     ψ_self::Matrix{FT} = zeros(FT, dims_RZ)       # Self-consistent poloidal flux
 
