@@ -320,8 +320,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
 
     pla.γ_shape_fac = min.(FT(1.0), 0.65*Bpol_norm)
 
-    # TODO: implement the following line, when closed surface is formed
-    # obj.gamma_coeff(obj.idx_closed_surface) = 0.0; % closed surface has no self-E effects
+    pla.γ_shape_fac[RP.flf.closed_surface_nids] .= 0.0 # closed surface has no self-E effects
 
     # =========================================================================
     # 2. Calculate critical densities

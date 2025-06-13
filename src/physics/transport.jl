@@ -44,9 +44,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Field line mixing length-based diffusion coefficient
     Dpara_coll_2 = zeros(FT, size(RP.plasma.Te_eV))
     Dpara_coll_2 = @. 0.5 * vthe * RP.transport.L_mixing * RP.fields.Btot / RP.fields.Bpol
-    if hasfield(typeof(RP), :idx_closed_surface)
-        Dpara_coll_2[RP.idx_closed_surface] .= typemax(FT) # Effectively infinity for closed surfaces
-    end
+    Dpara_coll_2[RP.flf.closed_surface_nids] .= typemax(FT) # Effectively infinity for closed surfaces
 
     # Use the minimum of the two diffusion coefficients
     Dpara_coll = min.(Dpara_coll_1, Dpara_coll_2)
