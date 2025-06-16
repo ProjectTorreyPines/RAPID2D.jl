@@ -27,7 +27,9 @@ export update_ue_para!,
        calculate_grad_of_scalar_F,
        calculate_electron_acceleration_by_pressure,
        calculate_electron_acceleration_by_convection,
-       compute_global_toroidal_force_balance!
+       compute_global_toroidal_force_balance!,
+       combine_Au_and_ΔGS_sparse_matrices,
+       solve_combined_momentum_Ampere_equations_with_coils!
 
 """
     update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
@@ -1415,6 +1417,337 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
     return RP
 end
+
+
+"""
+    combine_Au_and_ΔGS_sparse_matrices(RP::RAPID{FT}, Au::SparseMatrixCSC{FT,Int}, A_GS::SparseMatrixCSC{FT,Int}) where {FT<:AbstractFloat}
+
+Combine the electron parallel momentum operator and Grad–Shafranov operator into a single block sparse matrix for coupled solves.
+
+Constructs a 2×2 block matrix of size (2N×2N):
+
+    [ Au         diag(inductive_term);
+      diag(current_term)   A_GS        ]
+
+where:
+- `Au` is the electron parallel momentum operator.
+- `A_GS` is the Grad–Shafranov operator.
+- `inductive_term = (qe/me) * (bϕ ./ R2D)` couples poloidal flux changes into the momentum equation.
+- `current_term = μ0 * R2D * ne * qe * bϕ` couples plasma current into Ampère's equation.
+
+# Arguments
+- `RP::RAPID{FT}`: Simulation state, providing grid geometry and physical constants.
+- `Au::SparseMatrixCSC{FT,Int}`: Momentum operator matrix.
+- `A_GS::SparseMatrixCSC{FT,Int}`: Grad–Shafranov operator matrix.
+
+# Returns
+- `SparseMatrixCSC{FT,Int}`: Combined block sparse matrix of size (2N×2N), where N = RP.G.NR * RP.G.NZ.
+
+# Notes
+- Boundary conditions are enforced by zeroing coupling terms at boundary nodes.
+"""
+function combine_Au_and_ΔGS_sparse_matrices(RP::RAPID{FT}, Au::SparseMatrixCSC{FT}, A_GS::SparseMatrixCSC{FT}) where {FT<:AbstractFloat}
+    # Get dimensions
+    N = RP.G.NR * RP.G.NZ
+
+    # Physical constants
+    @unpack qe, me, μ0 = RP.config.constants
+
+    # Calculate coupling terms
+    inductive_term = @. qe * RP.fields.bϕ / (me * RP.G.R2D)
+    electron_current_term = @. μ0 * RP.G.R2D * RP.plasma.ne * qe * RP.fields.bϕ
+    # Zero out boundary terms for proper boundary conditions
+    electron_current_term[RP.G.BDY_idx] .= zero(FT)
+
+    # Count non-zero entries for efficient allocation
+    # Upper left: A_upara entries
+    # Lower right: A_GS entries
+    # Upper right: N diagonal entries (inductive coupling)
+    # Lower left: N diagonal entries (current coupling)
+    nnz_A_upara = nnz(Au)
+    nnz_A_GS = nnz(A_GS)
+    nnz_coupling = 2 * N  # Two diagonal blocks
+    total_nnz = nnz_A_upara + nnz_A_GS + nnz_coupling
+
+    # Pre-allocate arrays for sparse matrix construction
+    I_combined = zeros(Int, total_nnz)
+    J_combined = zeros(Int, total_nnz)
+    V_combined = zeros(FT, total_nnz)
+
+    idx = 1
+
+    # Upper left block: A_upara (rows 1:N, cols 1:N)
+    I_up, J_up, V_up = findnz(Au)
+    len_upara = length(I_up)
+    I_combined[idx:idx+len_upara-1] = I_up
+    J_combined[idx:idx+len_upara-1] = J_up
+    V_combined[idx:idx+len_upara-1] = V_up
+    idx += len_upara
+
+    # Lower right block: A_GS (rows N+1:2N, cols N+1:2N)
+    I_gs, J_gs, V_gs = findnz(A_GS)
+    len_gs = length(I_gs)
+    I_combined[idx:idx+len_gs-1] = I_gs .+ N  # Shift row indices
+    J_combined[idx:idx+len_gs-1] = J_gs .+ N  # Shift column indices
+    V_combined[idx:idx+len_gs-1] = V_gs
+    idx += len_gs
+
+    # Upper right block: inductive coupling (rows 1:N, cols N+1:2N)
+    # Diagonal matrix: (i,i) -> value inductive_term[i]
+    for i in 1:N
+        I_combined[idx] = i      # Row index
+        J_combined[idx] = i + N  # Column index (shifted to upper right block)
+        V_combined[idx] = inductive_term[i]
+        idx += 1
+    end
+
+    # Lower left block: current coupling (rows N+1:2N, cols 1:N)
+    # Diagonal matrix: (i,i) -> value electron_current_term[i]
+    for i in 1:N
+        I_combined[idx] = i + N  # Row index (shifted to lower left block)
+        J_combined[idx] = i      # Column index
+        V_combined[idx] = electron_current_term[i]
+        idx += 1
+    end
+
+    return sparse( I_combined, J_combined, V_combined, 2*N, 2*N)
+end
+
+"""
+    solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
+                                                         tolerance::FT=1e-3,
+                                                         max_iter::Int=10,
+                                                         relaxation_w::FT=0.5) where {FT<:AbstractFloat}
+
+Solve the coupled electron momentum and Ampère equations with coil interactions using a single block-sparse solver.
+
+This method:
+1. Assembles the combined block matrix via `combine_Au_and_ΔGS_sparse_matrices`.
+2. Constructs a unified linear system for `ue_para` and `ψ_self`.
+3. Performs Picard iteration to update:
+   - `RP.plasma.ue_para`
+   - `RP.fields.ψ_self`
+   - `RP.fields.Eϕ_self`
+   - External coil currents and resulting magnetic fields.
+
+# Arguments
+- `RP::RAPID{FT}`: Simulation state object, modified in place.
+- `tolerance::FT=1e-3`: Convergence tolerance for the Picard iteration.
+- `max_iter::Int=10`: Maximum number of Picard iterations.
+- `relaxation_w::FT=0.5`: Relaxation weight for boundary ψ updates.
+
+# Returns
+- `RP::RAPID{FT}`: The updated simulation object with new plasma and field values.
+"""
+function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
+                                                            tolerance::FT=1e-3,
+                                                            max_iter::Int=10,
+                                                            relaxation_w::FT=0.5) where {FT<:AbstractFloat}
+    @timeit RAPID_TIMER "solve_combined_momentum_Ampere_equations_with_coils!" begin
+    # Aliases for readability
+    pla = RP.plasma
+    F = RP.fields
+    OP = RP.operators
+    G = RP.G
+    flags = RP.flags
+    dt = RP.dt
+    csys = RP.coil_system
+
+    # Physical constants
+    @unpack ee, me, μ0, qe = RP.config.constants
+
+    # Store initial values for convergence checking
+    ue_para_old = copy(pla.ue_para)
+    ψ_self_old = copy(F.ψ_self)
+
+    θimp = FT(1.0); # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
+
+    # Factor for EM drive contribution
+    # derived from [E_para_EM = -qe/me * (ψ^(n+1) - ψ^(n))/(R*Δt)  = -facEM * ((ψ^(n+1) - ψ^(n)))/Δt]
+    facEM = (qe/me) * (F.bϕ ./ G.R2D)
+
+    # 1. calculate accel_para_tilde using the information at the current time step
+    accel_para_tilde = zeros(FT, G.NR, G.NZ) # Initialize acceleration field
+
+    # pressure gradient contribution: [-∇∥(ne*Te)/(me*ne)]
+    if RP.flags.Include_ud_pressure_term
+        accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
+    end
+
+    # convection contribution:  (1-θ)*[-(𝐮⋅∇)u∥]
+    if RP.flags.Include_ud_convec_term
+        accel_para_tilde .+= (one(FT) - θimp) * calculate_electron_acceleration_by_convection(RP)
+    end
+
+    # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
+    if flags.E_para_self_ES
+        @. accel_para_tilde += qe/me * (F.E_para_ext + F.E_para_self_ES)
+    else
+        @. accel_para_tilde += qe/me * (F.E_para_ext)
+    end
+
+    # Effective electron collision frequency
+    νe_eff = pla.ν_en_mom + pla.ν_en_iz + pla.ν_ei_eff
+
+    @. accel_para_tilde += ( facEM / dt * F.ψ_self
+                            - (one(FT)-θimp) * νe_eff * pla.ue_para
+                            + pla.ν_ei_eff * pla.ui_para
+                            )
+
+    A_u = OP.II + spdiagm(@views dt * θimp * νe_eff[:])
+    if flags.Include_ud_convec_term
+        update_𝐮∇_operator!(RP)
+        A_u += dt * θimp * (OP.𝐮∇.matrix)
+    end
+
+    # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
+    if RP.flags.Coulomb_Collision
+        @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θimp) * pla.ue_para)
+    end
+
+
+    # Toroidal current density Jϕ @ t=(n-th step)
+    Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee*pla.Zeff) * pla.ui_para) * F.bϕ
+
+
+    # 6. Initial guess for next time step ψ_self (quadratic extrapolation)
+    new_ψ_self_k = @. F.ψ_self - dt * G.R2D * (FT(2.0) * F.Eϕ_self - F.Eϕ_self_prev)
+
+
+   # Prepare Picard iteration for coupled system
+    F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
+    old_ψ_self = copy(F.ψ_self) # Store old ψ_self for convergence checking
+
+
+    ue_para_k = zeros(FT, G.NR, G.NZ) # Initialize ue_para for iterationo
+    ue_para_kp1 = zeros(FT, G.NR, G.NZ) # Initialize ue_para for iterationo
+    new_ψ_self_kp1 = zeros(FT, G.NR, G.NZ) # Initialize next ψ_self for iteration
+
+    RHS_u = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS related to u
+    RHS_ψ = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS relatedl to ψ
+    Jϕ_pla_k = zeros(FT, G.NR, G.NZ) # Initialize Jϕ for iteration
+
+    # Prepare coil_system for current calculation
+    if (RP.dt != csys.Δt || θimp != csys.θimp)
+        # If the time step or implicit factor have changed, recalculate the coil system matrices
+        csys.Δt = RP.dt
+        csys.θimp = θimp
+        calculate_circuit_matrices!(csys)
+    end
+
+    A_u_ψ = combine_Au_and_ΔGS_sparse_matrices(RP, A_u, OP.ΔGS.matrix)
+    @. RHS_u = pla.ue_para + dt * accel_para_tilde - facEM * new_ψ_self_k
+    @views ue_para_k[:] .= A_u \ RHS_u[:] # Solve for ue_para at (k)-th step
+
+    iter = 1
+    converged = false
+    while true
+        # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
+        @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
+
+
+        if csys.n_total > 0
+            Mcp_dIpla = 2π * csys.Green_grid2coils * (Jϕ_pla_k[:] .- Jϕ_pla_0[:]) * G.dR * G.dZ
+
+            if flags.convec
+                # TODO: Is this part needed? Grid is not moving, so plasma movement should not affect coil currents?
+                Ipla = @. (θimp * Jϕ_pla_k + (1 - θimp) * Jϕ_pla_0) * dR * dZ
+                pla_displacement_R = pla.ueR * dt + 0.5 * pla.mean_aR_by_JxB * dt^2
+                pla_displacement_Z = pla.ueZ * dt + 0.5 * pla.mean_aZ_by_JxB * dt^2
+                # change rate of Mcp (mutual inductance between coils and plasma) due to plasma movement
+                Ipla_dMcp = 2π * (csys.dGreen_dRg_grid2coils * (Ipla[:] .* pla_displacement_R[:]) +
+                                csys.dGreen_dZg_grid2coils * (Ipla[:] .* pla_displacement_Z[:]))
+
+                # grad_Ipla_R, grad_Ipla_Z = Cal_grad_of_scalar_F(reshape(Ipla, size(R2D)))
+                # dIpla_by_conv = pla_displacement_R .* grad_Ipla_R + pla_displacement_Z .* grad_Ipla_Z
+                # Mcp_dIpla_by_conv = 2π * coils.G_grid2coil * dIpla_by_conv[:]
+                Mcp_dIpla_by_conv = 0
+            else
+                Ipla_dMcp = 0
+                Mcp_dIpla_by_conv = 0
+            end
+
+            coil_flux_change_by_plasma = Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
+
+            circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) - coil_flux_change_by_plasma
+            new_coils_I_k = csys.inv_A_LR_circuit * circuit_rhs  # valid if "dt" is constant
+        end
+
+        # Step #2: Update Boundary psi by both plasma and coils currents using Green's function
+        new_ψ_self_kp1_at_BDY = (G.Green_inWall2bdy * Jϕ_pla_k[G.nodes.in_wall_nids]) * G.dR * G.dZ
+        if csys.n_total > 0
+            new_ψ_self_kp1_at_BDY .+= csys.Green_coils2bdy * new_coils_I_k
+        end
+
+        #  update (k+1)-th boudary psi with some relaxation
+        @views new_ψ_self_kp1_at_BDY .= (  relaxation_w * new_ψ_self_kp1_at_BDY
+                                        + (one(FT) - relaxation_w) * new_ψ_self_k[G.BDY_idx]
+                                        )
+
+        # Step #3: Set RHS of the implicit Ampere equation
+        @. RHS_u = pla.ue_para + dt * accel_para_tilde
+
+        @. RHS_ψ = -μ0 * G.R2D * pla.ni * ee * pla.Zeff * pla.ui_para  * F.bϕ
+        if csys.n_total > 0
+            inside_Jϕ_coil_k = distribute_coil_currents_to_Jϕ(csys, RP.G; currents = new_coils_I_k)
+            @. RHS_ψ += -μ0 * G.R2D * inside_Jϕ_coil_k;
+        end
+        RHS_ψ[G.BDY_idx] .= new_ψ_self_kp1_at_BDY
+
+        # Step #4: Solve the implicit Ampere equation
+        @views RHS_u_ψ = vcat(RHS_u[:], RHS_ψ[:])
+        sol = A_u_ψ \ RHS_u_ψ
+
+        @views ue_para_kp1[:] .= sol[1:G.NR*G.NZ]
+        @views new_ψ_self_kp1[:] .= sol[G.NR*G.NZ+1:end]
+
+
+
+        # Step #5: Check if ψ solution is converged
+        convergence_rate = norm(new_ψ_self_kp1 - new_ψ_self_k) / norm(new_ψ_self_k)
+        if ( convergence_rate < tolerance )
+            # println("  ψ_self converged after $iter iterations! convergence_rate: $convergence_rate")
+            converged = true
+            break
+        elseif iter >= max_iter
+            converged = false
+            println("  Warning: Picard iteration did not converge after $max_iter iterations at step=$(RP.step)")
+            println("  Final change: $(norm(new_ψ_self_kp1 - new_ψ_self_k)/norm(new_ψ_self_k))")
+            break
+        else
+            new_ψ_self_k .= new_ψ_self_kp1 # Update for next iteration
+            ue_para_k .= ue_para_kp1
+            iter += 1
+        end
+    end
+
+    # 7. Final updates of electromagnetic fields
+    F.ψ_self .= new_ψ_self_kp1
+    pla.ue_para .= ue_para_kp1
+
+    # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
+    @. F.Eϕ_self = -( F.ψ_self - old_ψ_self) / (G.R2D * dt)
+
+    # Complete the Rue_ei calculation with second part (n+1 step contribution)
+    if RP.flags.Coulomb_Collision
+        @. pla.Rue_ei += pla.ν_ei_eff * (-θimp * pla.ue_para)
+    end
+
+    @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Zeff) * pla.ui_para ) * F.bϕ
+
+    # Update coil currents
+    if RP.coil_system.n_total > 0
+        set_all_currents!(csys, new_coils_I_k)
+    end
+
+    # Update magnetic fields from ψ_self
+    calculate_B_from_ψ!(G, F.ψ_self, F.BR_self, F.BZ_self)
+
+    return RP
+    end # @timeit
+end
+
+
 
 """
     compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:AbstractFloat}
