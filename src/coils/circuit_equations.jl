@@ -58,6 +58,62 @@ function calculate_mutual_inductance_matrix!(csys::CoilSystem{FT}) where FT<:Abs
     return nothing
 end
 
+
+"""
+    calculate_Green_tables!(csys::CoilSystem{FT}, G::GridGeometry{FT}) where FT<:AbstractFloat
+
+Calculate Green's function tables for coil-(gridboundary) and grid-coil interactions.
+
+This function computes the Green's function values and derivatives needed for electromagnetic
+calculations between coils and the computational grid/boundary.
+
+# Arguments
+- `csys::CoilSystem{FT}`: Coil system containing coil locations and parameters
+- `G::GridGeometry{FT}`: Grid geometry with R, Z coordinates and boundary indices
+
+# Returns
+- `csys`: Modified coil system with populated Green's function tables
+
+# Side Effects
+Updates the following fields in `csys`:
+- `Green_coils2bdy`: Green's function from coils to boundary points
+- `Green_grid2coils`: Green's function from grid points to coils
+- `dGreen_dRg_grid2coils`: R-derivative of Green's function (grid to coils)
+- `dGreen_dZg_grid2coils`: Z-derivative of Green's function (grid to coils)
+"""
+function calculate_Green_tables!(csys::CoilSystem{FT}, G::GridGeometry{FT}) where FT<:AbstractFloat
+
+    if csys.n_total == 0
+        return csys
+    end
+
+    coils_R = [coil.location.r for coil in csys.coils]
+    coils_Z = [coil.location.z for coil in csys.coils]
+
+    BDY_R = G.R2D[G.BDY_idx]
+    BDY_Z = G.Z2D[G.BDY_idx]
+
+    csys.Green_coils2bdy  = calculate_ψ_by_green_function(
+        BDY_R, BDY_Z,
+        coils_R, coils_Z,
+        one(FT)
+    )
+
+    (csys.Green_grid2coils, derivatives) = @views calculate_ψ_by_green_function(
+        coils_R, coils_Z,
+        G.R2D[:], G.Z2D[:],
+        one(FT);
+        compute_derivatives = true
+    )
+
+    csys.dGreen_dRg_grid2coils = derivatives.dψ_dRsrc
+    csys.dGreen_dZg_grid2coils = derivatives.dψ_dZsrc
+
+    return csys
+end
+
+
+
 """
     calculate_circuit_matrices!(csys::CoilSystem{FT}, dt::FT) where FT<:AbstractFloat
 
@@ -84,6 +140,10 @@ function calculate_circuit_matrices!(csys::CoilSystem{FT}) where FT<:AbstractFlo
     N = csys.n_total
     if N == 0
         return nothing
+    end
+
+    if isempty(csys.mutual_inductance)
+        calculate_mutual_inductance_matrix!(csys)
     end
 
     # Start with the mutual inductance matrix
