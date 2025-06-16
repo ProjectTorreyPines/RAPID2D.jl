@@ -101,7 +101,6 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
             # #2: Advection term (1-θ)*[-(𝐮⋅∇)*ue_para]
             if RP.flags.Include_ud_convec_term
-                update_𝐮∇_operator!(RP)
                 accel_para_tilde .+= (one_FT - θu) * (-OP.𝐮∇ * pla.ue_para)
                 @. OP.A_LHS += θu * dt * OP.𝐮∇
             end
@@ -123,7 +122,6 @@ function update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
             # #6: turbulent Diffusive term by ExB mixing
             if RP.flags.Include_ud_diffu_term
-                update_∇𝐃∇_operator!(RP) # TODO: check if this is needed here
                 accel_para_tilde .+= (one_FT - θu) * (OP.∇𝐃∇ * pla.ue_para)
                 @. OP.A_LHS -= θu * dt * OP.∇𝐃∇
             end
@@ -665,12 +663,10 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFl
 
         if RP.flags.diffu
             # ∇⋅𝐃⋅∇n
-            update_∇𝐃∇_operator!(RP)
             op.RHS .+= compute_∇𝐃∇f_directly(RP, pla.ne)
         end
         if RP.flags.convec
             # -∇⋅(n 𝐮)
-            update_∇𝐮_operator!(RP)
             op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
         end
 
@@ -1262,7 +1258,6 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
     Au .= OP.II + spdiagm(@views dt * θimp * νe_eff[:])
     if flags.Include_ud_convec_term
-        update_𝐮∇_operator!(RP)
         Au .+= dt * θimp * OP.𝐮∇
     end
     Au_X_ui_para = Au * pla.ui_para
@@ -1596,7 +1591,6 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
     A_u = OP.II + spdiagm(@views dt * θimp * νe_eff[:])
     if flags.Include_ud_convec_term
-        update_𝐮∇_operator!(RP)
         A_u += dt * θimp * (OP.𝐮∇.matrix)
     end
 

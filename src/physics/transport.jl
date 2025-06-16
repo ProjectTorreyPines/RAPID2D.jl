@@ -126,6 +126,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # update diffusion tensor (DRR,DRZ,DZZ) & (CTRR,CTRZ,CTZZ)
     update_diffusion_tensor!(RP)
 
+    update_transport_related_operators!(RP)
 
     return RP
 end
@@ -170,6 +171,32 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     return RP
 end
+
+
+"""
+    update_transport_related_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Update transport-related sparse matrix operators (𝐮∇, ∇𝐮, ∇𝐃∇) based on current transport coefficients and velocity fields.
+"""
+function update_transport_related_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+    OP = RP.operators
+
+    if !isempty(OP.𝐮∇.k2csc)
+        update_𝐮∇_operator!(RP)
+    end
+
+    if !isempty(OP.∇𝐮.k2csc)
+        update_∇𝐮_operator!(RP)
+    end
+
+    if !isempty(OP.∇𝐃∇.k2csc)
+        update_∇𝐃∇_operator!(RP)
+    end
+
+    return RP
+end
+
 
 """
     calculate_particle_fluxes!(RP::RAPID{FT}) where {FT<:AbstractFloat}
