@@ -120,6 +120,8 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     initialize_diagnostics!(RP)
     initialize_snapshots_IO!(RP)
 
+    initialize_coil_system!(RP)
+
     # Set initial time
     RP.time_s = RP.t_start_s
     RP.step = 0

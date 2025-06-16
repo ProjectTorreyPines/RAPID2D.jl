@@ -6,6 +6,27 @@ using LinearAlgebra
 # Export initialization functions
 export initialize_four_wall_system!, initialize_single_wall_system!
 export add_control_coils!, initialize_example_tokamak_coils!
+export initialize_coil_system!
+
+
+function initialize_coil_system!(RP::RAPID{FT}) where FT<:AbstractFloat
+    # load_coil_data!(RP.coil_system, RP.config.Input_path, RP.config.device_Name)
+    # Initialize empty coil system
+
+    csys = RP.coil_system
+
+    if csys.n_total > 0
+        csys.Δt = RP.dt
+        csys.θimp = FT(1.0) # Fully implicit by default
+
+        calculate_mutual_inductance_matrix!(csys)
+        calculate_circuit_matrices!(csys)
+        calculate_Green_tables!(csys, RP.G)
+    end
+
+    return csys
+end
+
 
 """
     initialize_four_wall_system!(coil_system::CoilSystem{FT}, n_total::Int) where FT<:AbstractFloat
