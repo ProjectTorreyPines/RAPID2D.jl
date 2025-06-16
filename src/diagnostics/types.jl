@@ -80,6 +80,11 @@ Contains volume-averaged quantities
     J_cen_R::FT = zero(FT)          # Current center R
     J_cen_Z::FT = zero(FT)          # Current center Z
 
+    ueR::FT = zero(FT)            # Average electron velocity R component
+    ueZ::FT = zero(FT)            # Average electron velocity Z component
+    aR_by_JxB::FT = zero(FT)        # JxB acceleration R component
+    aZ_by_JxB::FT = zero(FT)        # JxB acceleration Z component
+
     # CFL conditions (for adaptive timestepping)
     CFL::Dict{Symbol, FT} = Dict{Symbol, FT}() # CFL terms
 

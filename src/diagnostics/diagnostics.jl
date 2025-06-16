@@ -97,7 +97,11 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     prev_snap0D = RP.diagnostics.snaps0D[max(1, RP.diagnostics.tid_0D-1)]
     prev_total_Ne = prev_snap0D.ne * RP.G.device_inVolume
     snap0D.eGrowth_rate = log(FT(1) + Ntracker.cum0D_Ne_src / prev_total_Ne) / RP.config.snap0D_Δt_s
-    snap0D.eLoss_rate = -log(FT(1) - Ntracker.cum0D_Ne_loss / prev_total_Ne) / RP.config.snap0D_Δt_s
+    try
+        snap0D.eLoss_rate = -log(FT(1) - Ntracker.cum0D_Ne_loss / prev_total_Ne) / RP.config.snap0D_Δt_s
+    catch
+        snap0D.eLoss_rate = -Inf
+    end
 
     # Alternative growth rates
     snap0D.growth_rate2 = snap0D.Ne_src_rate / total_Ne
@@ -126,11 +130,17 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     end
 
     # Plasma center tracking
-    snap0D.ne_cen_R = sum(@. pla.ne * RP.G.R2D) / sum(pla.ne)
-    snap0D.ne_cen_Z = sum(@. pla.ne * RP.G.Z2D) / sum(pla.ne)
+    snap0D.ne_cen_R = sum(@. RP.G.R2D * Ne2D) / total_Ne
+    snap0D.ne_cen_Z = sum(@. RP.G.Z2D * Ne2D) / total_Ne
 
-    snap0D.J_cen_R = sum(@. pla.Jϕ * RP.G.R2D) / sum(pla.Jϕ)
-    snap0D.J_cen_Z = sum(@. pla.Jϕ * RP.G.Z2D) / sum(pla.Jϕ)
+    snap0D.J_cen_R = sum(@. RP.G.R2D * pla.Jϕ * inVol2D) / sum(pla.Jϕ .* inVol2D)
+    snap0D.J_cen_Z = sum(@. RP.G.Z2D * pla.Jϕ * inVol2D) / sum(pla.Jϕ .* inVol2D)
+
+    snap0D.ueR = sum(@. pla.ueR * Ne2D) / total_Ne
+    snap0D.ueZ = sum(@. pla.ueZ * Ne2D) / total_Ne
+
+    snap0D.aR_by_JxB = sum(@. pla.mean_aR_by_JxB * Ne2D) / total_Ne
+    snap0D.aZ_by_JxB = sum(@. pla.mean_aZ_by_JxB * Ne2D) / total_Ne
 
     # Control system (if enabled)
     if hasfield(typeof(RP), :Flag) && hasfield(typeof(RP.Flag), :Control) && hasfield(typeof(RP.Flag.Control), :state) && RP.Flag.Control.state
