@@ -1429,7 +1429,7 @@ function compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:Abstra
     if !isempty(RP.flf.closed_surface_nids)
 
         @unpack mi, me = RP.config.constants
-        nids = RP.flf.closed_surface_nids
+        nids = vcat(RP.G.nodes.on_wall_nids, RP.G.nodes.in_wall_nids)
         pla = RP.plasma
         F = RP.fields
 
