@@ -7,7 +7,7 @@ using LinearAlgebra
 export add_coil!, get_powered_coils, get_passive_coils, get_controllable_coils
 export find_coil_by_name, set_coil_voltage!, get_coil_voltage, update_all_voltages!, update_controllable_voltages!
 export get_coil_positions, get_powered_coil_positions
-export calculate_coil_resistance, calculate_self_inductance, create_coil_from_parameters
+export calculate_coil_resistance, calculate_self_inductance, calculate_area_from_inductance, calculate_resistivity_from_resistance, create_coil_from_parameters
 export get_all_resistances, get_powered_resistances, get_controllable_resistances
 export get_all_currents, get_powered_currents, get_controllable_currents, get_all_voltages, get_powered_voltages, get_controllable_voltages
 export set_all_currents!, set_powered_currents!, set_controllable_currents!, set_coil_current!, get_coil_current
@@ -197,6 +197,20 @@ function calculate_coil_resistance(area::FT, major_radius::FT, resistivity::FT) 
 end
 
 """
+    calculate_resistivity_from_resistance(resistance::FT, area::FT, major_radius::FT) where FT<:AbstractFloat
+
+Calculate resistivity from given resistance, area, and major radius.
+This is the inverse of calculate_coil_resistance function.
+
+From R = ρ * L / A where L = 2π * major_radius, we get:
+ρ = R * A / L = R * A / (2π * major_radius)
+"""
+function calculate_resistivity_from_resistance(resistance::FT, area::FT, major_radius::FT) where FT<:AbstractFloat
+    path_length = 2π * major_radius
+    return resistance * area / path_length
+end
+
+"""
     calculate_self_inductance(area::FT, major_radius::FT, μ0::FT) where FT<:AbstractFloat
 
 Calculate self-inductance of a toroidal coil using Neumann's formula approximation.
@@ -210,8 +224,60 @@ function calculate_self_inductance(area::FT, major_radius::FT, μ0::FT) where FT
 end
 
 """
+    calculate_area_from_inductance(self_inductance::FT, major_radius::FT, μ0::FT;
+                                  rtol::FT = 1e-12, max_iter::Int = 100) where FT<:AbstractFloat
+
+Calculate coil area from given self-inductance using iterative Newton-Raphson method.
+This is the inverse of calculate_self_inductance function.
+"""
+function calculate_area_from_inductance(self_inductance::FT, major_radius::FT, μ0::FT;
+                                       rtol::FT = FT(1e-12), max_iter::Int = 100) where FT<:AbstractFloat
+    # Solve: L = μ₀ * R * (log(8*R/a) - 1.75) for coil_radius 'a'
+    # where L is self_inductance, R is major_radius
+
+    YY = one(FT)
+    target_value = self_inductance / (μ0 * major_radius)  # (log(8*R/a) - 2 + 0.25*YY)
+
+    # Initial guess for coil radius (reasonable starting point)
+    coil_radius = major_radius / 20  # Start with aspect ratio of 20:1
+
+    # Newton-Raphson iteration to solve: log(8*R/a) - 1.75 = target_value
+    # Let f(a) = log(8*R/a) - 1.75 - target_value = 0
+    # f'(a) = -1/a
+
+    for i in 1:max_iter
+        f_val = log(8 * major_radius / coil_radius) - 2 + 0.25 * YY - target_value
+
+        if abs(f_val) < rtol
+            break
+        end
+
+        # f'(a) = -1/a (derivative with respect to coil_radius)
+        df_da = -one(FT) / coil_radius
+
+        # Newton-Raphson update: a_new = a - f(a)/f'(a)
+        coil_radius_new = coil_radius - f_val / df_da
+
+        # Ensure positive radius
+        if coil_radius_new <= 0
+            coil_radius *= 0.5  # Halve the radius if we get negative
+        else
+            coil_radius = coil_radius_new
+        end
+
+        if i == max_iter
+            @warn "calculate_area_from_inductance did not converge after $max_iter iterations"
+        end
+    end
+
+    # Convert coil radius to area
+    area = π * coil_radius^2
+    return area
+end
+
+"""
     create_coil_from_parameters(r::FT, z::FT, area::FT, name::String, is_powered::Bool,
-                               μ0::FT, cu_resistivity::FT;
+                               μ0::FT, resistivity::FT;
                                is_controllable=is_powered,
                                max_voltage=nothing, max_current=nothing,
                                current=zero(FT), voltage_ext=zero(FT)) where FT<:AbstractFloat
@@ -219,12 +285,12 @@ end
 Create a coil with calculated resistance and self-inductance.
 """
 function create_coil_from_parameters(r::FT, z::FT, area::FT, name::String, is_powered::Bool,
-                                   μ0::FT, cu_resistivity::FT;
+                                   μ0::FT, resistivity::FT;
                                    is_controllable=is_powered,
                                    max_voltage=nothing, max_current=nothing,
                                    current=zero(FT), voltage_ext=zero(FT)) where FT<:AbstractFloat
     location = (r=r, z=z)
-    resistance = calculate_coil_resistance(area, r, cu_resistivity)
+    resistance = calculate_coil_resistance(area, r, resistivity)
     self_inductance = calculate_self_inductance(area, r, μ0)
 
     return Coil(location, area, resistance, self_inductance, is_powered, is_controllable, name,

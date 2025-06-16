@@ -164,4 +164,77 @@ using RAPID2D
         @test_throws DimensionMismatch coils.current = [1.0, 2.0]  # Wrong size
         @test_throws ArgumentError coils.area = [0.1, 0.2, 0.3]    # Immutable field
     end
+
+    @testset "Inductance-Area Relationship" begin
+        FT = Float64
+        μ0 = 1.25663706212e-6  # H/m
+
+        # Test parameters
+        major_radius = 2.5  # m
+        original_area = π * 0.05^2  # 5 cm radius coil
+
+        # Calculate inductance from area
+        calculated_inductance = calculate_self_inductance(original_area, major_radius, μ0)
+
+        # Calculate area back from inductance
+        recovered_area = calculate_area_from_inductance(calculated_inductance, major_radius, μ0)
+
+        # Test that we recover the original area within tolerance
+        relative_error = abs(recovered_area - original_area) / original_area
+        @test relative_error < 1e-10  # Very tight tolerance for round-trip calculation
+
+        # Test with different sizes
+        test_radii = [0.01, 0.03, 0.05, 0.1, 0.2]  # Various coil radii in meters
+
+        for coil_radius in test_radii
+            test_area = π * coil_radius^2
+            test_inductance = calculate_self_inductance(test_area, major_radius, μ0)
+            recovered_test_area = calculate_area_from_inductance(test_inductance, major_radius, μ0)
+
+            test_error = abs(recovered_test_area - test_area) / test_area
+            @test test_error < 1e-9  # Allow slightly looser tolerance for edge cases
+        end
+    end
+
+    @testset "Resistance-Resistivity Round-trip Calculation" begin
+        # Test the round-trip calculation: area, major_radius, resistivity -> resistance -> resistivity
+        copper_resistivity = 1.68e-8  # Ω⋅m (copper at room temperature)
+
+        # Test parameters
+        major_radius = 2.5  # m
+        original_area = π * 0.05^2  # 5 cm radius coil
+        original_resistivity = copper_resistivity
+
+        # Calculate resistance from area, major_radius, and resistivity
+        calculated_resistance = calculate_coil_resistance(original_area, major_radius, original_resistivity)
+
+        # Calculate resistivity back from resistance
+        recovered_resistivity = calculate_resistivity_from_resistance(calculated_resistance, original_area, major_radius)
+
+        # Test that we recover the original resistivity within tolerance
+        relative_error = abs(recovered_resistivity - original_resistivity) / original_resistivity
+        @test relative_error < 1e-15  # Very tight tolerance for simple calculation
+
+        # Test with different materials (resistivities)
+        test_resistivities = [1.59e-8, 1.68e-8, 2.44e-8, 9.71e-8, 1.0e-6]  # Silver, Copper, Gold, Platinum, Graphite
+
+        for test_resistivity in test_resistivities
+            test_resistance = calculate_coil_resistance(original_area, major_radius, test_resistivity)
+            recovered_test_resistivity = calculate_resistivity_from_resistance(test_resistance, original_area, major_radius)
+
+            test_error = abs(recovered_test_resistivity - test_resistivity) / test_resistivity
+            @test test_error < 1e-15  # Very tight tolerance for linear relationship
+        end
+
+        # Test with different coil sizes
+        test_areas = [π * r^2 for r in [0.01, 0.03, 0.05, 0.1, 0.2]]  # Various coil areas
+
+        for test_area in test_areas
+            test_resistance = calculate_coil_resistance(test_area, major_radius, copper_resistivity)
+            recovered_test_resistivity = calculate_resistivity_from_resistance(test_resistance, test_area, major_radius)
+
+            test_error = abs(recovered_test_resistivity - copper_resistivity) / copper_resistivity
+            @test test_error < 1e-15  # Very tight tolerance for linear relationship
+        end
+    end
 end
