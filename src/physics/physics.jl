@@ -1260,6 +1260,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
     Au .= OP.II + spdiagm(@views dt * θimp * νe_eff[:])
     if flags.Include_ud_convec_term
+        update_𝐮∇_operator!(RP)
         Au .+= dt * θimp * OP.𝐮∇
     end
     Au_X_ui_para = Au * pla.ui_para
@@ -1322,11 +1323,11 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
 
         if csys.n_total > 0
-            Mcp_dIpla = 2π * csys.Green_grid2coils * (Jϕ_pla_k[:] .- Jphi_pla_0[:]) * G.dR * G.dZ
+            Mcp_dIpla = 2π * csys.Green_grid2coils * (Jϕ_pla_k[:] .- Jϕ_pla_0[:]) * G.dR * G.dZ
 
             if flags.convec
                 # TODO: Is this part needed? Grid is not moving, so plasma movement should not affect coil currents?
-                Ipla = @. (θimp * Jphi_pla_k + (1 - θimp) * Jphi_pla_0) * dR * dZ
+                Ipla = @. (θimp * Jϕ_pla_k + (1 - θimp) * Jϕ_pla_0) * dR * dZ
                 pla_displacement_R = pla.ueR * dt + 0.5 * pla.mean_aR_by_JxB * dt^2
                 pla_displacement_Z = pla.ueZ * dt + 0.5 * pla.mean_aZ_by_JxB * dt^2
                 # change rate of Mcp (mutual inductance between coils and plasma) due to plasma movement
@@ -1378,8 +1379,8 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
             break
         elseif iter >= max_iter
             converged = false
-            # println("  Warning: Picard iteration did not converge after $max_iter iterations")
-            # println("  Final change: $(norm(new_ψ_self_kp1 - new_ψ_self_k)/norm(new_ψ_self_k))")
+            println("  Warning: Picard iteration did not converge after $max_iter iterations at step=$(RP.step)")
+            println("  Final change: $(norm(new_ψ_self_kp1 - new_ψ_self_k)/norm(new_ψ_self_k))")
             break
         else
             new_ψ_self_k .= new_ψ_self_kp1 # Update for next iteration
