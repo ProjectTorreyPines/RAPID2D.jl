@@ -122,6 +122,11 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
             update_Ti!(RP)
         end
 
+
+        if RP.flags.Global_Force_Balance
+            update_uMHD_by_global_JxB_force!(RP)
+        end
+
         # Electron temperature evolution if enabled
         if RP.flags.Te_evolve
             update_Te!(RP)

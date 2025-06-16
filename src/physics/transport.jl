@@ -107,6 +107,11 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             RP.plasma.ueZ .+= RP.plasma.diaMag_Z
         end
 
+        if RP.flags.Global_Force_Balance
+            RP.plasma.ueR .+= RP.plasma.uMHD_R
+            RP.plasma.ueZ .+= RP.plasma.uMHD_Z
+        end
+
         # Same for ion velocities
         RP.plasma.uiR .= RP.plasma.ui_para .* RP.fields.bR
         RP.plasma.uiϕ .= RP.plasma.ui_para .* RP.fields.bϕ
@@ -117,10 +122,11 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             RP.plasma.uiR .+= RP.plasma.mean_ExB_R
             RP.plasma.uiZ .+= RP.plasma.mean_ExB_Z
         end
-    end
 
-    if RP.flags.Global_Force_Balance
-        compute_global_toroidal_force_balance!(RP)
+        if RP.flags.Global_Force_Balance
+            RP.plasma.uiR .+= RP.plasma.uMHD_R
+            RP.plasma.uiZ .+= RP.plasma.uMHD_Z
+        end
     end
 
     # update diffusion tensor (DRR,DRZ,DZZ) & (CTRR,CTRZ,CTZZ)

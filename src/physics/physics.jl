@@ -27,7 +27,7 @@ export update_ue_para!,
        calculate_grad_of_scalar_F,
        calculate_electron_acceleration_by_pressure,
        calculate_electron_acceleration_by_convection,
-       compute_global_toroidal_force_balance!,
+       update_uMHD_by_global_JxB_force!,
        combine_Au_and_ΔGS_sparse_matrices,
        solve_combined_momentum_Ampere_equations_with_coils!
 
@@ -1744,14 +1744,25 @@ end
 
 
 """
-    compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_uMHD_by_global_JxB_force!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Calculate global toroidal force balance and update plasma mean JxB accelerations.
-This function computes the global JxB force effects on the plasma when closed flux surfaces exist.
+Update plasma MHD velocities using global JxB force balance.
 
-Based on the MATLAB implementation: Global_Toroidal_Force_Balance in c_RAPID.m
+This function computes the global toroidal force balance for closed flux surfaces
+and updates the plasma mean velocities by applying JxB accelerations. The method
+enforces momentum conservation across the entire plasma volume when magnetic
+confinement creates closed flux surfaces.
+
+# Physics
+- Calculates global JxB forces on the plasma
+- Applies momentum conservation constraints
+- Updates plasma mean velocities (uMHD) based on electromagnetic forces
+- Only active when closed flux surfaces are present
+
+# Arguments
+- `RP::RAPID{FT}`: RAPID simulation object containing plasma state and fields
 """
-function compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_uMHD_by_global_JxB_force!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Check if we have closed flux surfaces
     if !isempty(RP.flf.closed_surface_nids)
 
@@ -1771,11 +1782,8 @@ function compute_global_toroidal_force_balance!(RP::RAPID{FT}) where {FT<:Abstra
             pla.mean_aZ_by_JxB[nids] .= sum_JxB_Z / sum_plasma_mass
 
             # TODO: Is this explicit way stable? Should we use the mean_aR and mean_aZ implicitly in some functions?
-            pla.ueR[nids] .+= pla.mean_aR_by_JxB[nids] * RP.dt;
-            pla.ueZ[nids] .+= pla.mean_aZ_by_JxB[nids] * RP.dt;
-
-            pla.uiR[nids] .+= pla.mean_aR_by_JxB[nids] * RP.dt;
-            pla.uiZ[nids] .+= pla.mean_aZ_by_JxB[nids] * RP.dt;
+            pla.uMHD_R[nids] .+= pla.mean_aR_by_JxB[nids] * RP.dt;
+            pla.uMHD_Z[nids] .+= pla.mean_aZ_by_JxB[nids] * RP.dt;
         end
     end
 

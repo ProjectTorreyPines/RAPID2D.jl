@@ -218,6 +218,10 @@ Contains the plasma state variables including density, temperature, and velocity
     uiZ::Matrix{FT} = zeros(FT, dims)   # Ion Z velocity [m/s]
     uiϕ::Matrix{FT} = zeros(FT, dims)   # Ion ϕ velocity [m/s]
 
+    # perpendicular velocity induced by MHD force (JxB)
+    uMHD_R::Matrix{FT} = zeros(FT, dims)
+    uMHD_Z::Matrix{FT} = zeros(FT, dims)
+
     # mean ExB transport
     mean_ExB_R::Matrix{FT} = zeros(FT, dims) # Mean ExB drift R component [m/s]
     mean_ExB_Z::Matrix{FT} = zeros(FT, dims) # Mean ExB drift Z component [m/s]
