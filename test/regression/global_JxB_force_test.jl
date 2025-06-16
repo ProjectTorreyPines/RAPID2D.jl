@@ -2,10 +2,8 @@
 """
 Global JxB Force Test for RAPID2D.jl
 
-This script tests the global force balance functionality with plasma position control,
-validating the J×B force calculations and plasma centroid tracking against the original
-MATLAB implementation.
-
+Tests global force balance functionality with plasma position control,
+validating J×B force calculations and plasma centroid tracking.
 Based on test_force_balance.m from RAPID-2D MATLAB version.
 """
 
@@ -17,9 +15,6 @@ using Printf
 # Environment variable controls
 verbose = get(ENV, "RAPID_VERBOSE", "false") == "true"
 visualize = get(ENV, "RAPID_VISUALIZE", "false") == "true"
-
-verbose=true
-visualize=true
 
 
 # Only load Plots if visualization is requested
@@ -67,14 +62,12 @@ function run_global_force_test(; verbose=false, visualize=false)
 end
 
 function create_force_balance_config()
-    """Create configuration for global force balance testing based on MATLAB test_force_balance.m"""
+    """Create configuration for global force balance testing"""
 
     config = SimulationConfig{Float64}()
 
-    # Grid parameters (from MATLAB: R_NUM=50, Z_NUM=100)
-    config.NR = 50
-    config.NZ = 100
-	config.NR = 30
+    # Grid parameters (smaller grid for faster testing)
+    config.NR = 30
     config.NZ = 50
 
     # Physical parameters
@@ -82,11 +75,10 @@ function create_force_balance_config()
     config.R0B0 = 3.0  # Tesla⋅meter
 
     # Time parameters
-    config.dt = 2.5e-6         # dt =5e-6
-    config.snap0D_Δt_s = 5e-6   # snap1D_Interval_s = 10e-6
-    config.snap2D_Δt_s = 50e-6   # snap2D_Interval_s = 20e-6
-    config.t_end_s = 300e-6
-    # config.t_end_s = 2e-3   # snap2D_Interval_s = 2e-3
+    config.dt = 2.5e-6
+    config.snap0D_Δt_s = 5e-6
+    config.snap2D_Δt_s = 50e-6
+    config.t_end_s = 200e-6
 
     # Device parameters
     config.device_Name = "manual"
@@ -95,59 +87,37 @@ function create_force_balance_config()
 end
 
 function setup_force_balance_flags!(RP::RAPID)
-    """Set up simulation flags for global force balance testing based on MATLAB test_force_balance.m"""
+    """Set up simulation flags for global force balance testing"""
 
-    # Basic flags for force balance test (from MATLAB INPUT.Flag settings)
     RP.flags = SimulationFlags{Float64}(
-        Atomic_Collision = false,
-        Te_evolve = false,        # Te_evolve = 0
+        Atomic_Collision = true,
+        Te_evolve = false,
         Ti_evolve = false,
-        src = false,              # src = 0
-        convec = true,            # convec = 1
-        diffu = false,            # diffu = 0
-        ud_evolve = true,         # ud_evolve = 1
-        Include_ud_convec_term = true,   # Include_ud_convec_term = 1
+        src = false,
+        convec = true,
+        diffu = false,
+        ud_evolve = true,
+        Include_ud_convec_term = true,
         Include_ud_diffu_term = true,
         Include_ud_pressure_term = true,
-        Include_Te_convec_term = true,   # Include_Te_convec_term = 1
-        update_ni_independently = false,  # update_ni_independently = 1
-        Gas_evolve = false,       # Gas_evolve = 0
-        Ampere = true,            # Ampere = 1
-        E_para_self_ES = false,   # E_para_self_ES = 0
-        negative_n_correction = true     # neg_n_correction = 1
+        Include_Te_convec_term = true,
+        update_ni_independently = false,
+        Gas_evolve = false,
+        Ampere = true,
+        E_para_self_ES = false,
+        negative_n_correction = true,
+        mean_ExB = false,
+        turb_ExB_mixing = false,
+        Coulomb_Collision = true,
+        E_para_self_EM = true,
+        Implicit = true,
+        Damp_Transp_outWall = true,
+        Global_Force_Balance = true  # KEY FEATURE for this test
     )
 
-	RP.flags.mean_ExB = false
-	RP.flags.turb_ExB_mixing = false
-	RP.flags.E_para_self_ES = false
-
-	RP.flags.Atomic_Collision = true
-
-    # Additional flags specific to force balance testing
-    RP.flags.Coulomb_Collision = true           # Coulomb_Collision = 1
-    RP.flags.E_para_self_EM = true             # E_para_self_EM = 1
+    # Additional numerical parameters
     RP.flags.Ampere_Itor_threshold = 0.0
-    RP.flags.FLF_nstep = 10                    # FLF_nstep = 100
-    RP.flags.Implicit = true                   # Implicit = 1
-    RP.flags.Damp_Transp_outWall = true        # Damp_Transp_outWall = 1
-
-    # Global JxB Force - KEY FEATURE for this test
-    RP.flags.Global_Force_Balance = true       # Global_Force_Balance = 1
-    # RP.flags.Global_Force_Balance = false
-
-    # Additional MATLAB flags
-    # Xsec_with_ud_and_gFac = 1, ini_gFac = 0.3
-    # ud_method = "Xsec"
-    # Ionz_method = "Xsec"
-    # upwind = 1
-    # mean_ExB = 0
-    # turb_ExB_mixing = 0
-    # diaMag_drift = 0
-    # upara_or_uRphiZ = "upara"
-    # Ampere_nstep = 1
-    # Adapt_dt = 0
-    # Implicit_weight = 0.5
-
+    RP.flags.FLF_nstep = 10
 end
 
 function setup_magnetic_field!(RP::RAPID; verbose::Bool=false)
@@ -159,17 +129,13 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool=false)
     fill!(RP.fields.BR_ext, 0.0)
     fill!(RP.fields.BZ_ext, 0.0)
 
-    # Set Jacobian for toroidal geometry
+    # Set Jacobian and toroidal field: Bφ = R₀B₀/R
     @. RP.G.Jacob = RP.G.R2D
-
-    # Set toroidal field: Bφ = R₀B₀/R
     @. RP.fields.Bϕ = RP.config.R0B0 / RP.G.Jacob
 
-    # Update total field
+    # Update total field and unit vectors
     @. RP.fields.Bpol = sqrt(RP.fields.BR^2 + RP.fields.BZ^2)
     @. RP.fields.Btot = abs(RP.fields.Bϕ)
-
-    # Update unit vectors
     @. RP.fields.bR = RP.fields.BR / RP.fields.Btot
     @. RP.fields.bZ = RP.fields.BZ / RP.fields.Btot
     @. RP.fields.bϕ = RP.fields.Bϕ / RP.fields.Btot
@@ -187,16 +153,15 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool=false)
 end
 
 function setup_plasma!(RP::RAPID; verbose::Bool=false)
-    """Set up initial plasma density distribution based on MATLAB test_force_balance.m"""
+    """Set up initial plasma density distribution"""
 
-    # Plasma parameters (from MATLAB test_force_balance.m)
-    cenR = 1.3  # m (from MATLAB: cenR = 1.3)
-    cenZ = 0.1  # m (from MATLAB: cenZ = 0.0)
-    radius = 0.2  # m (from MATLAB: radius = 0.2)
+    # Plasma parameters
+    cenR = 1.3  # m
+    cenZ = 0.1  # m
+    radius = 0.2  # m
     n0 = 1e16  # m⁻³
 
-    # Create Gaussian plasma profile (from MATLAB)
-    # ini_n = 1e16*exp(-(((RP.R2D-cenR).^2 + (RP.Z2D-cenZ).^2) / (2 * radius^2)));
+    # Create Gaussian plasma profile
     ini_n = @. n0 * exp(-(((RP.G.R2D - cenR)^2 + (RP.G.Z2D - cenZ)^2) / (2 * radius^2)))
 
     # Apply spatial mask (only inside minor radius)
@@ -226,138 +191,308 @@ function setup_plasma!(RP::RAPID; verbose::Bool=false)
 end
 
 function analyze_force_balance_results(RP::RAPID; verbose::Bool=false, visualize::Bool=false)
-    """Analyze simulation results focusing on global force balance and plasma position control"""
+    """Analyze simulation results focusing on JxB force-driven plasma motion and wall interaction"""
 
     if verbose
         println("\n" * "=" ^ 60)
-        println("GLOBAL FORCE BALANCE ANALYSIS")
+        println("GLOBAL JxB FORCE ANALYSIS")
         println("=" ^ 60)
     end
 
-    # Extract time series data
-    times = RP.diagnostics.snaps0D.time_s
-    I_tor = RP.diagnostics.snaps0D.I_tor
+    # Extract time series data using getproperty overloading
+    snaps0D = RP.diagnostics.snaps0D
+    times = snaps0D.time_s
+    I_tor = snaps0D.I_tor
+    ne_cen_R = snaps0D.ne_cen_R
+    ne_cen_Z = snaps0D.ne_cen_Z
+    J_cen_R = snaps0D.J_cen_R
+    J_cen_Z = snaps0D.J_cen_Z
 
-    # Force balance specific analysis
-    # TODO: Add plasma centroid tracking (ne_cen_R, ne_cen_Z, J_cen_R, J_cen_Z)
-    # TODO: Add vertical field analysis (avg_BZ_ctrl)
-    # TODO: Add control system analysis if implemented
+    # JxB force and velocity data
+    avg_ueR = snaps0D.ueR
+    avg_ueZ = snaps0D.ueZ
+    avg_aR_by_JxB = snaps0D.aR_by_JxB
+    avg_aZ_by_JxB = snaps0D.aZ_by_JxB
 
-    # Circuit parameter analysis (similar to MATLAB)
-    RAPID2D.@unpack ee, me = RP.config.constants
+    # Total plasma density
+    total_ne = snaps0D.ne * RP.G.device_inVolume
+    max_ne = snaps0D.ne_max
 
-    # Estimate circuit parameters using MATLAB approach
-    # major_R = cenR; minor_r = radius; (from MATLAB)
-    major_R = 1.3  # m
-    minor_r = 0.2  # m
+    # Initial conditions (for reference)
+    initial_R = 1.3  # m (from setup_plasma!)
+    initial_Z = 0.1  # m
+    plasma_radius = 0.2  # m
+    wall_R_inner = minimum(RP.fitted_wall.R)
+    wall_R_outer = maximum(RP.fitted_wall.R)
 
-    # Loop voltage estimate
-    in_wall_nids = RP.G.nodes.in_wall_nids
-    LV_estimate = mean(RP.fields.LV_ext[in_wall_nids])
+    # Analyze plasma motion physics
+    dt = length(times) > 1 ? times[2] - times[1] : 1e-6
 
-    # Resistance estimate
-    R_estimate = LV_estimate / I_tor[end]
+    # 1. Plasma centroid motion analysis
+    displacement_R = ne_cen_R .- initial_R
+    displacement_Z = ne_cen_Z .- initial_Z
 
-    # Inductance estimate (from MATLAB: L_estimate = μ₀*major_R*(log(8*major_R/minor_r)-2+0.25*Y))
-    Y = 1.0  # Internal inductance factor
-    μ0 = 4π * 1e-7  # H/m
-    L_estimate = μ0 * major_R * (log(8 * major_R / minor_r) - 2 + 0.25 * Y)
+    # Calculate velocities from centroid positions using accurate numerical differentiation
+    velocity_R_from_pos = Float64[]
+    velocity_Z_from_pos = Float64[]
 
-    # L/R time constant
-    tau_LR = L_estimate / R_estimate
+    if length(times) > 1
+        for i in 1:length(times)
+            if i == 1
+                # Forward difference for first point
+                if length(times) > 1
+                    dt = times[2] - times[1]
+                    vel_R = (ne_cen_R[2] - ne_cen_R[1]) / dt
+                    vel_Z = (ne_cen_Z[2] - ne_cen_Z[1]) / dt
+                else
+                    vel_R = 0.0
+                    vel_Z = 0.0
+                end
+            elseif i == length(times)
+                # Backward difference for last point
+                dt = times[end] - times[end-1]
+                vel_R = (ne_cen_R[end] - ne_cen_R[end-1]) / dt
+                vel_Z = (ne_cen_Z[end] - ne_cen_Z[end-1]) / dt
+            else
+                # Central difference for middle points (more accurate)
+                dt = times[i+1] - times[i-1]
+                vel_R = (ne_cen_R[i+1] - ne_cen_R[i-1]) / dt
+                vel_Z = (ne_cen_Z[i+1] - ne_cen_Z[i-1]) / dt
+            end
 
-    if verbose
-        println("Force Balance Test Parameters:")
-        println(@sprintf("  Major radius: %.1f m", major_R))
-        println(@sprintf("  Minor radius: %.1f m", minor_r))
-        println(@sprintf("  Loop voltage: %.3f V", LV_estimate))
-        println(@sprintf("  Final current: %.3f A", I_tor[end]))
-        println(@sprintf("  Resistance: %.6f Ω", R_estimate))
-        println(@sprintf("  Inductance: %.6f μH", L_estimate * 1e6))
-        println(@sprintf("  L/R time: %.1f μs", tau_LR * 1e6))
+            push!(velocity_R_from_pos, vel_R)
+            push!(velocity_Z_from_pos, vel_Z)
+        end
     end
 
-    # Analytical solution for current evolution
-    I_sat_analytical = LV_estimate / R_estimate
-    I_analytical = @. I_sat_analytical * (1 - exp(-times / tau_LR))
+    # 2. Check consistency between acceleration, velocity, and position
+    # Compare measured velocity (avg_ueR) with velocity from position derivative
+    velocity_consistency_error = Float64[]
+    acceleration_consistency_error = Float64[]
+
+    # Velocity consistency: compare avg_ueR with numerical derivative of position
+    for i in eachindex(velocity_R_from_pos)
+        measured_vel = avg_ueR[i]
+        computed_vel = velocity_R_from_pos[i]
+
+        if abs(measured_vel) + abs(computed_vel) > 1e-10
+            error = abs(measured_vel - computed_vel) / abs(measured_vel)
+            push!(velocity_consistency_error, error)
+        end
+    end
+
+    # Acceleration-velocity consistency: v(t) ≈ v(t-dt) + a(t)*dt
+    if length(avg_aR_by_JxB) > 1 && length(avg_ueR) > 1
+        for i in 2:min(length(avg_aR_by_JxB), length(avg_ueR))
+            dt_local = times[i] - times[i-1]
+            expected_vel = avg_ueR[i-1] + avg_aR_by_JxB[i] * dt_local
+            actual_vel = avg_ueR[i]
+
+            if abs(expected_vel) + abs(actual_vel) > 1e-10
+                error = abs(expected_vel - actual_vel) / abs(actual_vel)
+                push!(acceleration_consistency_error, error)
+            end
+        end
+    end
+
+    # 3. Identify wall collision time
+    wall_collision_time = nothing
+    wall_collision_idx = nothing
+    density_drop_time = nothing
+    density_drop_idx = nothing
+
+    # Detect when plasma hits the wall (centroid reaches wall radius)
+    for i in eachindex(ne_cen_R)
+        if ne_cen_R[i] >= (wall_R_outer - plasma_radius) || ne_cen_R[i] <= (wall_R_inner + plasma_radius)
+            wall_collision_time = times[i]
+            wall_collision_idx = i
+            break
+        end
+    end
+
+    # Detect density drop (when total density drops to 95% of initial)
+    initial_density = total_ne[1]
+    for i in eachindex(total_ne)
+        if total_ne[i] < 0.95 * initial_density
+            density_drop_time = times[i]
+            density_drop_idx = i
+            break
+        end
+    end
+
+
+    # 4. Calculate expected collision time with linear acceleration model
+    expected_collision_time = nothing
+    if length(avg_aR_by_JxB) > 5
+        early_end_idx = min(length(avg_aR_by_JxB), wall_collision_idx !== nothing ? wall_collision_idx : length(avg_aR_by_JxB))
+        early_indices = 2:min(10, early_end_idx)
+
+        if length(early_indices) >= 3
+            early_times = times[early_indices]
+            early_accels = avg_aR_by_JxB[early_indices]
+            n = length(early_times)
+
+            # Linear regression: a(t) = a0 + k*t
+            sum_t = sum(early_times)
+            sum_t2 = sum(early_times.^2)
+            sum_a = sum(early_accels)
+            sum_at = sum(early_accels .* early_times)
+
+            k = (n * sum_at - sum_t * sum_a) / (n * sum_t2 - sum_t^2)
+            a0 = (sum_a - k * sum_t) / n
+
+            distance_to_wall = (wall_R_outer - plasma_radius/2) - initial_R
+
+            if k > 1e-10   # Linear acceleration model
+                # Solve: k*t³ + 3*a0*t² - 6*distance = 0 (Newton's method)
+                t_guess = sqrt(2 * distance_to_wall / max(mean(early_accels), 1e-10))
+
+                for iter in 1:10
+                    f = k * t_guess^3 + 3 * a0 * t_guess^2 - 6 * distance_to_wall
+                    df = 3 * k * t_guess^2 + 6 * a0 * t_guess
+                    if abs(df) < 1e-15 || abs(f) < 1e-12
+                        break
+                    end
+                    t_new = t_guess - f / df
+                    if abs(t_new - t_guess) < 1e-8 || t_new <= 0
+                        break
+                    end
+                    t_guess = t_new
+                end
+
+                if t_guess > 0 && t_guess < 10 * times[end]
+                    expected_collision_time = t_guess
+                end
+            elseif a0 > 0  # Constant acceleration fallback
+                expected_collision_time = sqrt(2 * distance_to_wall / a0)
+            end
+        else
+            # Simple constant acceleration estimate
+            early_accel = mean(avg_aR_by_JxB[2:min(5, length(avg_aR_by_JxB))])
+            distance_to_wall = (wall_R_outer - plasma_radius/2) - initial_R
+            if early_accel > 0
+                expected_collision_time = sqrt(2 * distance_to_wall / early_accel)
+            end
+        end
+    end
+
+    if verbose
+        println("Plasma Motion Analysis:")
+        println(@sprintf("  Initial position: R=%.2f m, Z=%.2f m", initial_R, initial_Z))
+        println(@sprintf("  Final centroid: R=%.3f m, Z=%.3f m", ne_cen_R[end], ne_cen_Z[end]))
+        println(@sprintf("  Max displacement: ΔR=%.3f m", maximum(abs.(displacement_R))))
+
+        if length(avg_aR_by_JxB) > 5
+            println(@sprintf("  Average early acceleration: %.1f m/s²", mean(avg_aR_by_JxB[2:min(5, length(avg_aR_by_JxB))])))
+        end
+
+        if !isempty(velocity_consistency_error)
+            println(@sprintf("  Velocity consistency error: %.1f%%", 100*mean(velocity_consistency_error)))
+        end
+
+        if wall_collision_time !== nothing
+            println(@sprintf("  Wall collision at: %.1f μs", wall_collision_time * 1e6))
+        end
+
+        if expected_collision_time !== nothing
+            println(@sprintf("  Expected collision time: %.1f μs", expected_collision_time * 1e6))
+        end
+
+        println(@sprintf("  Density retention: %.1f%%", 100*total_ne[end]/initial_density))
+    end
 
     # Create plots focusing on force balance aspects
     if visualize
-        create_force_balance_plots(RP, times, I_tor, I_analytical)
+        create_force_balance_plots(RP, times, ne_cen_R, ne_cen_Z, total_ne, avg_aR_by_JxB, wall_collision_time)
     end
 
-    # Calculate test metrics
-    if length(I_tor) == length(I_analytical)
-        relative_error = abs.(I_tor - I_analytical) ./ (I_analytical .+ 1e-10)
-        mean_error = mean(relative_error)
-        max_error = maximum(relative_error)
-
-        if verbose
-            println("\nCurrent Evolution Accuracy:")
-            println(@sprintf("  Mean relative error: %.2f%%", 100*mean_error))
-            println(@sprintf("  Max relative error: %.2f%%", 100*max_error))
-
-            # TODO: Add force balance specific validation
-            println("\nForce Balance Validation:")
-            println("  (Implementation pending)")
-
-            if mean_error < 0.05  # Slightly relaxed for force balance test
-                println("  ✓ PASS: Good agreement with expected behavior")
-            else
-                println("  ✗ FAIL: Poor agreement with expected behavior")
-            end
-        end
-
-        return (mean_error=mean_error, max_error=max_error, times=times, I_tor=I_tor, I_analytical=I_analytical,
-                major_R=major_R, minor_r=minor_r, tau_LR=tau_LR)
-    else
-        return nothing
-    end
+    # Return analysis results
+    return (; times, ne_cen_R, ne_cen_Z, displacement_R, displacement_Z, total_ne,
+             avg_ueR, avg_aR_by_JxB, velocity_consistency_error, acceleration_consistency_error,
+             wall_collision_time, density_drop_time, expected_collision_time, initial_density,
+             final_density_fraction = total_ne[end] / initial_density,
+             wall_R_outer, initial_R, plasma_radius, density_drop_idx)
 end
 
-function create_force_balance_plots(RP, times, I_sim, I_analytical)
-    """Create visualization plots for global force balance test results"""
+function create_force_balance_plots(RP, times, ne_cen_R, ne_cen_Z, total_ne, avg_aR_by_JxB, wall_collision_time)
+    """Create visualization plots for JxB force-driven plasma motion"""
 
-    # Current evolution plot
-    p1 = plot(times * 1e3, I_sim,
-              label="Simulation",
+    # Convert times to ms for plotting
+    times_ms = times * 1e3
+    wall_collision_ms = wall_collision_time !== nothing ? wall_collision_time * 1e3 : nothing
+
+    # 1. Plasma centroid trajectory
+    p1 = plot(times_ms, ne_cen_R,
+              label="Density centroid R",
               linewidth=2,
               xlabel="Time (ms)",
-              ylabel="Toroidal Current (A)",
-              title="Force Balance Test - Current Evolution",
-			  margin=7Plots.mm)
+              ylabel="Radial Position (m)",
+              title="Plasma Centroid Motion",
+              margin=7Plots.mm)
 
-    plot!(p1, times * 1e3, I_analytical,
-          label="Analytical",
-          linestyle=:dash,
+    plot!(p1, times_ms, ne_cen_Z,
+          label="Density centroid Z",
           linewidth=2)
 
-    # Error plot
-    if length(I_sim) == length(I_analytical)
-        error_percent = abs.(I_sim - I_analytical) ./ (I_analytical .+ 1e-10) * 100
-        p2 = plot(times * 1e3, error_percent,
-                  label="Relative Error",
-                  linewidth=2,
-                  xlabel="Time (ms)",
-                  ylabel="Error (%)",
-                  title="Current Evolution Error")
-    else
-        p2 = plot(title="Error analysis unavailable")
+    # Mark wall collision if detected
+    if wall_collision_ms !== nothing
+        vline!(p1, [wall_collision_ms],
+               label="Wall collision",
+               linestyle=:dash,
+               color=:red)
     end
 
-    # TODO: Add force balance specific plots
-    # - Plasma centroid position (R, Z) vs time
-    # - Vertical field vs time
-    # - Control system response (if implemented)
-    p3 = plot(title="Plasma Position Control\n(To be implemented)")
-    p4 = plot(title="Force Balance Analysis\n(To be implemented)")
+    # 2. Total density evolution
+    p2 = plot(times_ms, total_ne,
+              label="Total electron density",
+              linewidth=2,
+              xlabel="Time (ms)",
+              ylabel="Total ne (m⁻³)",
+              title="Plasma Density Loss",
+              yscale=:log10)
+
+    if wall_collision_ms !== nothing
+        vline!(p2, [wall_collision_ms],
+               label="Wall collision",
+               linestyle=:dash,
+               color=:red)
+    end
+
+    # 3. JxB force and acceleration
+    p3 = plot(times_ms, avg_aR_by_JxB,
+              label="Radial acceleration",
+              linewidth=2,
+              xlabel="Time (ms)",
+              ylabel="Acceleration (m/s²)",
+              title="JxB Force Acceleration")
+
+    # 4. Phase space plot (position vs velocity if possible)
+    if length(ne_cen_R) > 1
+        velocity_R = diff(ne_cen_R) ./ diff(times)
+        p4 = plot(ne_cen_R[1:end-1], velocity_R,
+                  label="Trajectory",
+                  linewidth=2,
+                  xlabel="Radial Position (m)",
+                  ylabel="Radial Velocity (m/s)",
+                  title="Phase Space (R vs vR)")
+
+        # Mark initial and final points
+        scatter!(p4, [ne_cen_R[1]], [velocity_R[1]],
+                label="Start", color=:green, markersize=6)
+        if length(velocity_R) > 1
+            scatter!(p4, [ne_cen_R[end-1]], [velocity_R[end]],
+                    label="End", color=:red, markersize=6)
+        end
+    else
+        p4 = plot(title="Phase Space\n(Insufficient data)")
+    end
 
     # Combined plot
-    plot_combined = plot(p1, p2, p3, p4, layout=(2,2), size=(1000, 800))
+    plot_combined = plot(p1, p2, p3, p4, layout=(2,2), size=(1200, 900))
 
     # Save plot
     timestamp = Dates.format(now(), "yyyy-mm-dd_HH_MM_SS")
-    filename = "force_balance_test_$(timestamp).png"
+    filename = "JxB_force_test_$(timestamp).png"
     savefig(plot_combined, filename)
 
     println("\nVisualization:")
@@ -366,10 +501,10 @@ function create_force_balance_plots(RP, times, I_sim, I_analytical)
     # Create animation if possible
     try
         animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
-                    [:ne,:ue_para,:Jϕ,:E_para_tot,:ueR, :ueZ, :mean_aR_by_JxB, :mean_aZ_by_JxB];
+                    [:ne,:ue_para,:Jϕ,:E_para_tot,:ueR, :ueZ];
 					wall=RP.fitted_wall,
-                    filename="force_balance_test_snaps2D_$(timestamp).mp4")
-        println("  ✓ Animation saved as: force_balance_test_snaps2D_$(timestamp).mp4")
+                    filename="JxB_force_test_snaps2D_$(timestamp).mp4")
+        println("  ✓ Animation saved as: JxB_force_test_snaps2D_$(timestamp).mp4")
     catch e
         println("  ⚠ Animation creation failed: $(e)")
     end
@@ -384,21 +519,122 @@ end
     # Analyze results and extract test metrics
     results = analyze_force_balance_results(RP; verbose, visualize)
 
-    # Test assertions
+    # Basic test assertions
     @test results !== nothing  # Should return valid results
+    @test length(results.times) > 1  # Should have multiple time points
+    @test length(results.ne_cen_R) == length(results.times)  # Consistent data arrays
 
-    # if results !== nothing
-    #     @test results.mean_error < 0.05  # Mean error should be less than 5% (relaxed for force balance)
-    #     @test results.max_error < 0.10   # Max error should be less than 10%
-    #     @test results.I_tor[end] > 0     # Final current should be positive
-    #     @test length(results.times) > 1  # Should have multiple time points
-    #     @test results.major_R ≈ 1.3     # Check plasma geometry matches MATLAB
-    #     @test results.minor_r ≈ 0.2     # Check plasma geometry matches MATLAB
+    if results !== nothing
+        # 1. Test plasma motion physics
+        @testset "Plasma Motion Physics" begin
+            # Plasma should move outward (away from initial position)
+            max_displacement = maximum(abs.(results.displacement_R))
+            @test max_displacement > 0.01  # Should move at least 1 cm
 
-    #     # Force balance specific tests (to be implemented when features are available)
-    #     # @test hasfield(typeof(RP.diagnostics.snaps0D), :ne_cen_R)  # Plasma centroid tracking
-    #     # @test hasfield(typeof(RP.diagnostics.snaps0D), :avg_BZ_ctrl)  # Vertical field control
-    # end
+            # Final position should be farther from center than initial
+            @test abs(results.ne_cen_R[end] - results.initial_R) > abs(results.displacement_R[1])
+
+            # Plasma motion should be primarily radial (outward) for this test case
+            radial_motion = abs(results.ne_cen_R[end] - results.ne_cen_R[1])
+            vertical_motion = abs(results.ne_cen_Z[end] - results.ne_cen_Z[1])
+            @test radial_motion > 0.5 * vertical_motion  # Predominantly radial motion
+        end
+
+        # 2. Test force and kinematics consistency
+        @testset "Force-Kinematics Consistency" begin
+            # Test velocity consistency (measured vs computed from position)
+            if !isempty(results.velocity_consistency_error)
+                mean_velocity_error = mean(results.velocity_consistency_error[2:results.density_drop_idx])
+                @test mean_velocity_error < 0.2  # Less than 20% error in velocity consistency
+            end
+
+            # Test acceleration-velocity consistency
+            if !isempty(results.acceleration_consistency_error)
+                mean_accel_error = mean(results.acceleration_consistency_error[2:results.density_drop_idx])
+                @test mean_accel_error < 0.3  # Less than 30% error (more tolerant for integration)
+            end
+
+            # Early phase should show positive outward acceleration
+            early_accel = results.avg_aR_by_JxB[2:min(5, length(results.avg_aR_by_JxB))]
+            @test mean(early_accel) > 0  # Outward acceleration
+        end
+
+        # 3. Test wall interaction and density loss
+        @testset "Wall Interaction" begin
+            # Density should decrease over time due to wall losses
+            @test results.total_ne[end] < results.total_ne[1]  # Density decreases
+
+            # Significant density loss should occur (plasma hits wall)
+            @test results.final_density_fraction < 0.8  # Less than 80% density remaining
+
+            # Wall collision should occur within reasonable time
+            if results.wall_collision_time !== nothing
+                @test results.wall_collision_time < maximum(results.times)  # Collision before end
+                @test results.wall_collision_time > 0  # Positive collision time
+            end
+
+            # Density drop should correlate with wall collision
+            if results.density_drop_time !== nothing && results.wall_collision_time !== nothing
+                time_diff = abs(results.density_drop_time - results.wall_collision_time)
+                simulation_duration = maximum(results.times) - minimum(results.times)
+                @test time_diff < 0.2 * simulation_duration  # Within 20% of simulation time
+            end
+        end
+
+        # 4. Test expected collision timing
+        @testset "Collision Timing" begin
+            if results.expected_collision_time !== nothing && results.wall_collision_time !== nothing
+                # Predicted and actual collision times should be reasonably close
+                timing_error = abs(results.expected_collision_time - results.wall_collision_time) / results.expected_collision_time
+                @test timing_error < 0.5  # Within 50% of expected time (ballistic estimate)
+            end
+        end
+
+        # 5. Test physical bounds and sanity checks
+        @testset "Physical Bounds" begin
+            # Centroid should stay within simulation domain
+            @test all(results.ne_cen_R .>= minimum(RP.G.R1D))
+            @test all(results.ne_cen_R .<= maximum(RP.G.R1D))
+            @test all(results.ne_cen_Z .>= minimum(RP.G.Z1D))
+            @test all(results.ne_cen_Z .<= maximum(RP.G.Z1D))
+
+            # Density should remain positive
+            @test all(results.total_ne .>= 0)
+
+            # No NaN or Inf values in key quantities
+            @test all(isfinite.(results.ne_cen_R))
+            @test all(isfinite.(results.ne_cen_Z))
+            @test all(isfinite.(results.total_ne))
+        end
+
+        # 6. Test simulation quality indicators
+        @testset "Simulation Quality" begin
+            # Should maintain reasonable plasma density for some time
+            initial_phase_end = min(length(results.total_ne), div(length(results.total_ne), 3))
+            early_density_retention = minimum(results.total_ne[1:initial_phase_end]) / results.total_ne[1]
+            @test early_density_retention > 0.5  # Keep >50% density in early phase
+
+            # Motion should be smooth (no large jumps in centroid position)
+            if length(results.ne_cen_R) > 2
+                position_jumps = abs.(diff(results.ne_cen_R))
+                max_jump = maximum(position_jumps)
+                average_motion = abs(results.ne_cen_R[end] - results.ne_cen_R[1]) / length(results.ne_cen_R)
+                @test max_jump < 10 * average_motion  # No jumps >10x average step
+            end
+        end
+
+        if verbose
+            println("\nTest Summary:")
+            println("  ✓ Max displacement: $(maximum(abs.(results.displacement_R))) m")
+            println("  ✓ Density retained: $(round(100*results.final_density_fraction, digits=1))%")
+            if results.wall_collision_time !== nothing
+                println("  ✓ Wall collision at $(round(results.wall_collision_time*1e6, digits=1)) μs")
+            end
+            if !isempty(results.velocity_consistency_error)
+                println("  ✓ Velocity error: $(round(100*mean(results.velocity_consistency_error), digits=1))%")
+            end
+        end
+    end
 end
 
 
@@ -411,15 +647,9 @@ if abspath(PROGRAM_FILE) == @__FILE__
         RP = run_global_force_test(verbose=true, visualize=true)
         results = analyze_force_balance_results(RP; verbose=true, visualize=true)
 
-        if results !== nothing && results.mean_error < 0.05
-            println("\n" * "=" ^ 60)
-            println("✓ GLOBAL FORCE BALANCE TEST COMPLETED SUCCESSFULLY")
-            println("=" ^ 60)
-        else
-            println("\n" * "=" ^ 60)
-            println("✗ GLOBAL FORCE BALANCE TEST FAILED - Poor accuracy")
-            println("=" ^ 60)
-        end
+        println("\n" * "=" ^ 60)
+        println("✓ GLOBAL FORCE BALANCE TEST COMPLETED")
+        println("=" ^ 60)
     catch e
         println("\n" * "=" ^ 60)
         println("✗ GLOBAL FORCE BALANCE TEST FAILED")
