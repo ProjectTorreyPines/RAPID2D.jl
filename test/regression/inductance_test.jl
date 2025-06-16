@@ -115,7 +115,7 @@ function setup_flags!(RP::RAPID)
     RP.flags.FLF_nstep = 100
     RP.flags.Implicit = true
     RP.flags.Damp_Transp_outWall = true
-    RP.flags.Global_Force_Balance = false  # Not needed for basic inductance test
+    RP.flags.Global_JxB_Force = false  # Not needed for basic inductance test
 
 end
 

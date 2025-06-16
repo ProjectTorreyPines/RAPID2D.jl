@@ -107,7 +107,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             RP.plasma.ueZ .+= RP.plasma.diaMag_Z
         end
 
-        if RP.flags.Global_Force_Balance
+        if RP.flags.Global_JxB_Force
             RP.plasma.ueR .+= RP.plasma.uMHD_R
             RP.plasma.ueZ .+= RP.plasma.uMHD_Z
         end
@@ -123,7 +123,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             RP.plasma.uiZ .+= RP.plasma.mean_ExB_Z
         end
 
-        if RP.flags.Global_Force_Balance
+        if RP.flags.Global_JxB_Force
             RP.plasma.uiR .+= RP.plasma.uMHD_R
             RP.plasma.uiZ .+= RP.plasma.uMHD_Z
         end

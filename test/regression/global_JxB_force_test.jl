@@ -112,7 +112,7 @@ function setup_force_balance_flags!(RP::RAPID)
         E_para_self_EM = true,
         Implicit = true,
         Damp_Transp_outWall = true,
-        Global_Force_Balance = true  # KEY FEATURE for this test
+        Global_JxB_Force = true  # KEY FEATURE for this test
     )
 
     # Additional numerical parameters

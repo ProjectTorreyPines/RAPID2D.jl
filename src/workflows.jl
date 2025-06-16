@@ -123,7 +123,7 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
         end
 
 
-        if RP.flags.Global_Force_Balance
+        if RP.flags.Global_JxB_Force
             update_uMHD_by_global_JxB_force!(RP)
         end
 

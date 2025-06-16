@@ -500,7 +500,7 @@ Contains boolean flags that control various aspects of the simulation.
     max_Te::FT = FT(500.0)                   # Maximum electron temperature (eV)
 
     # Global force balance
-    Global_Force_Balance::Bool = false        # Include global toroidal force balance
+    Global_JxB_Force::Bool = false        # Include global toroidal force balance
 
     # Control system
     Control::Dict{Symbol, Any} = Dict{Symbol, Any}(:state => false, :target_R => nothing)
