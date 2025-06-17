@@ -185,7 +185,7 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
                     treat_ion_outside_wall!(RP)
                 end
 
-                if mod(RP.step, RP.flags.FLF_nstep)==0
+                if RP.step==1 || mod(RP.step, RP.flags.FLF_nstep)==0
                     @timeit RAPID_TIMER "field_line_following" begin
                         flf_analysis_field_lines_rz_plane!(RP)
                         if !isempty(RP.flf.closed_surface_nids)
