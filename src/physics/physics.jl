@@ -1318,6 +1318,8 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
         A_imp_ampere.matrix[nid, nid] = one(FT) # Dirichlet condition at boundary nodes
     end
 
+    new_coils_I_k = zeros(FT, csys.n_total) # Initialize coil currents for iteration
+
     iter = 1
     converged = false
     while (true)
@@ -1332,7 +1334,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
             if flags.convec
                 # TODO: Is this part needed? Grid is not moving, so plasma movement should not affect coil currents?
-                Ipla = @. (θimp * Jϕ_pla_k + (1 - θimp) * Jϕ_pla_0) * dR * dZ
+                Ipla = @. (θimp * Jϕ_pla_k + (1 - θimp) * Jϕ_pla_0) * G.dR * G.dZ
                 pla_displacement_R = pla.ueR * dt + 0.5 * pla.mean_aR_by_JxB * dt^2
                 pla_displacement_Z = pla.ueZ * dt + 0.5 * pla.mean_aZ_by_JxB * dt^2
                 # change rate of Mcp (mutual inductance between coils and plasma) due to plasma movement
@@ -1348,7 +1350,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
                 Mcp_dIpla_by_conv = 0
             end
 
-            coil_flux_change_by_plasma = Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
+            coil_flux_change_by_plasma = @. Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
 
             circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) - coil_flux_change_by_plasma
             new_coils_I_k = csys.inv_A_LR_circuit * circuit_rhs  # valid if "dt" is constant
@@ -1556,6 +1558,9 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     dt = RP.dt
     csys = RP.coil_system
 
+
+    # TODO: diffusion term
+
     # Physical constants
     @unpack ee, me, μ0, qe = RP.config.constants
 
@@ -1625,6 +1630,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     ue_para_kp1 = zeros(FT, G.NR, G.NZ) # Initialize ue_para for iterationo
     new_ψ_self_kp1 = zeros(FT, G.NR, G.NZ) # Initialize next ψ_self for iteration
 
+    new_coils_I_k = zeros(FT, csys.n_total) # Initialize coil currents for iteration
+
     RHS_u = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS related to u
     RHS_ψ = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS relatedl to ψ
     Jϕ_pla_k = zeros(FT, G.NR, G.NZ) # Initialize Jϕ for iteration
@@ -1653,7 +1660,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
             if flags.convec
                 # TODO: Is this part needed? Grid is not moving, so plasma movement should not affect coil currents?
-                Ipla = @. (θimp * Jϕ_pla_k + (1 - θimp) * Jϕ_pla_0) * dR * dZ
+                Ipla = @. (θimp * Jϕ_pla_k + (1 - θimp) * Jϕ_pla_0) * G.dR * G.dZ
                 pla_displacement_R = pla.ueR * dt + 0.5 * pla.mean_aR_by_JxB * dt^2
                 pla_displacement_Z = pla.ueZ * dt + 0.5 * pla.mean_aZ_by_JxB * dt^2
                 # change rate of Mcp (mutual inductance between coils and plasma) due to plasma movement
@@ -1669,7 +1676,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
                 Mcp_dIpla_by_conv = 0
             end
 
-            coil_flux_change_by_plasma = Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
+            coil_flux_change_by_plasma = @. Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
 
             circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) - coil_flux_change_by_plasma
             new_coils_I_k = csys.inv_A_LR_circuit * circuit_rhs  # valid if "dt" is constant
