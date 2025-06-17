@@ -303,7 +303,7 @@ function create_inductance_plots(RP, times, I_sim, I_analytical)
     plot_combined = plot(p1, p2, layout=(2,1), size=(800, 600))
 
     # Save plot
-    timestamp = Dates.format(now(), "yyyy-mm-dd_HH:MM:SS")
+    timestamp = Dates.format(now(), "yyyy-mm-dd_HH_MM_SS")
     filename = "inductance_test_$(timestamp).png"
     savefig(plot_combined, filename)
 
