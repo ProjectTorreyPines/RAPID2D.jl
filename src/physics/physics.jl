@@ -1121,7 +1121,7 @@ It uses a smoothed parallel electron velocity field to improve numerical stabili
 2. Calculates the gradient of the smoothed velocity field
 3. Computes the convection term as -(ueR*∇ud_R + ueZ*∇ud_Z)
 """
-function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=0, flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
+function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=2, flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
     # alias
     cnst = RP.config.constants
 
