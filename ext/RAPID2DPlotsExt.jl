@@ -50,6 +50,10 @@ function RAPID2D.plot_snaps0D(snaps0D; kwargs...)
               ylabel="⟨ne⟩ (m⁻³)", label="Electron density",
               yscale=:log10, linewidth=2))
 
+    push!(p_vec, plot(times_ms, snaps0D.I_tor,
+              ylabel="⟨I_tor⟩ (A)", label="Toroidal current",
+              yscale=:log10, linewidth=2))
+
     push!(p_vec, plot(times_ms, [s.Te_eV for s in snaps0D],
               ylabel="⟨Te⟩ (eV)", label="Electron temperature",
               linewidth=2))
@@ -167,6 +171,9 @@ function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, field; colorscale=:auto, streaml
                 left_margin=2Plots.mm, right_margin=8Plots.mm,
                 top_margin=3Plots.mm, bottom_margin=3Plots.mm)
 
+    ψ = getfield(snap2D, :ψ)
+    contour!(p, R1D, Z1D, ψ', levels=range(extrema(ψ)...,11), color=:white)
+
     if colorscale == :log10
         if clims[1] <= 0
             new_clims = (min(1e-3, 1e-3*clims[2]), clims[2])  # Avoid log10 of zero or negative
@@ -179,7 +186,7 @@ function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, field; colorscale=:auto, streaml
 
     # Add wall if provided
     if wall !== nothing && hasfield(typeof(wall), :R) && hasfield(typeof(wall), :Z)
-        plot!(p, wall.R, wall.Z, color=:red, linewidth=2, label="Wall")
+        plot!(p, wall.R, wall.Z, color=:red, linewidth=2, label="")
     end
 
     # Add streamlines for magnetic field
