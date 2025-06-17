@@ -22,6 +22,7 @@ function initialize_coil_system!(RP::RAPID{FT}) where FT<:AbstractFloat
         calculate_mutual_inductance_matrix!(csys)
         calculate_circuit_matrices!(csys)
         calculate_Green_tables!(csys, RP.G)
+        determine_coils_inside_grid!(csys, RP.G)
     end
 
     return csys
