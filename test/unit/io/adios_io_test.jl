@@ -53,7 +53,7 @@ end
                 @test isequal(original_snap.CFL, restored_snap.CFL)
 
                 # Test array equality
-                @test isequal(original_snap.I_coils, restored_snap.I_coils)
+                @test isequal(original_snap.coils_I, restored_snap.coils_I)
             end
         end
 

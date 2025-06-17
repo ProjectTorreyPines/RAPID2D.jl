@@ -148,15 +148,10 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
         # Would need PID controller and control field calculations
     end
 
-    # Coil currents (if present)
     if RP.coil_system.n_total > 0
-        if hasfield(typeof(snap0D), :I_coils) && snap0D.I_coils !== nothing
-            snap0D.I_coils = RP.coils.I
-        else
-            @warn "Coil current storage not properly initialized" maxlog=10
-        end
+        snap0D.coils_I = RP.coil_system.coils.current
+        snap0D.coils_V_ext = RP.coil_system.coils.voltage_ext
     end
-
 
     return RP
 end

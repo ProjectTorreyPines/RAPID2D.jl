@@ -89,7 +89,8 @@ Contains volume-averaged quantities
     CFL::Dict{Symbol, FT} = Dict{Symbol, FT}() # CFL terms
 
     # Control system (optional)
-    I_coils::Union{Nothing, Matrix{FT}} = nothing    # Coil currents (N_coils × time)
+    coils_I::Union{Nothing, Vector{FT}} = nothing    # Coil currents (N_coils)
+    coils_V_ext::Union{Nothing, Vector{FT}} = nothing    # Coil external voltages (N_coils)
     pidFac::Union{Nothing, Vector{FT}} = nothing     # PID control factor
     BR_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BR
     BZ_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BZ
@@ -303,7 +304,7 @@ function Base.:(==)(snap1::Snapshot0D{<:AbstractFloat}, snap2::Snapshot0D{<:Abst
                 return false
             end
         elseif val1 isa Union{Nothing, AbstractArray} && val2 isa Union{Nothing, AbstractArray}
-            # Compare optional arrays (like I_coils, pidFac, etc.)
+            # Compare optional arrays (like coils_I, pidFac, etc.)
             if (val1 === nothing) != (val2 === nothing)
                 return false
             elseif val1 !== nothing && val2 !== nothing
