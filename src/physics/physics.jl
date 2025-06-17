@@ -1149,11 +1149,19 @@ function solve_Ampere_equation!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     OP = RP.operators
     F = RP.fields
     μ0 = RP.config.constants.μ0
+    csys = RP.coil_system
 
     @. OP.RHS = - μ0 * RP.G.R2D * pla.Jϕ
+    if csys.n_total > 0
+        inside_Jϕ_coil_k = distribute_coil_currents_to_Jϕ(csys, RP.G)
+        @. OP.RHS .+= -μ0 * RP.G.R2D * inside_Jϕ_coil_k;
+    end
 
     # Boudnary condition: calculate psi values at boundaries using the Green_inWall2bdy
     @views OP.RHS[RP.G.BDY_idx] .= (RP.G.Green_inWall2bdy * pla.Jϕ[RP.G.nodes.in_wall_nids]) * RP.G.dR * RP.G.dZ
+    if csys.n_total > 0
+        OP.RHS[RP.G.BDY_idx] .+= csys.Green_coils2bdy * csys.coils.current
+    end
 
     old_ψ_self = copy(F.ψ_self)
 
