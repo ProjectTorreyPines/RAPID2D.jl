@@ -17,14 +17,14 @@ Contains volume-averaged quantities
     ne_max::FT = zero(FT)          # Maximum electron density
     ue_para::FT = zero(FT)         # Average electron parallel velocity
     Te_eV::FT = zero(FT)           # Average electron temperature
-    𝒲e_eV::FT = zero(FT)          # Average electron energy (work)
+    Ke_eV::FT = zero(FT)           # Average electron kinetic energy
 
     # Ion quantities
     ni::FT = zero(FT)              # Average ion density
     ni_max::FT = zero(FT)          # Maximum ion density
     ui_para::FT = zero(FT)         # Average ion parallel velocity
     Ti_eV::FT = zero(FT)           # Average ion temperature
-    𝒲i_eV::FT = zero(FT)          # Average ion energy (work)
+    Ki_eV::FT = zero(FT)           # Average ion kinetic energy
 
     I_tor::FT = zero(FT)           # Toroidal current
 
@@ -97,8 +97,8 @@ Contains volume-averaged quantities
     loss_rate2::FT = zero(FT)       # Alternative loss rate
 
     # Magnetic field energies
-    𝒲_mag_plasma::FT = zero(FT)     # magnetic energy by plasma toroidal currents [J]
-    𝒲_mag_coils::FT = zero(FT)      # magnetic neergy by coils toroidal currents [J]
+    W_mag_plasma::FT = zero(FT)     # magnetic energy by plasma toroidal currents [J]
+    W_mag_coils::FT = zero(FT)      # magnetic neergy by coils toroidal currents [J]
     L_self_plasma::FT = zero(FT)   # Plasma self-inductance = 𝒲_magnetic_plasma / I_tor² [H]
 end
 
@@ -128,7 +128,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Electron properties
     Te_eV::Matrix{FT} = zeros(FT, dims_RZ)          # Electron temperature
-    𝒲e_eV::Matrix{FT} = zeros(FT, dims_RZ)        # Mean electron energy
+    Ke_eV::Matrix{FT} = zeros(FT, dims_RZ)        # Mean electron energy
     ueR::Matrix{FT} = zeros(FT, dims_RZ)            # Electron velocity R component
     ueϕ::Matrix{FT} = zeros(FT, dims_RZ)            # Electron velocity ϕ component
     ueZ::Matrix{FT} = zeros(FT, dims_RZ)            # Electron velocity Z component
@@ -167,7 +167,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     uiϕ::Matrix{FT} = zeros(FT, dims_RZ)            # Ion velocity ϕ component
     uiZ::Matrix{FT} = zeros(FT, dims_RZ)            # Ion velocity Z component
     Ti_eV::Matrix{FT} = zeros(FT, dims_RZ)          # Ion temperature
-    𝒲i_eV::Matrix{FT} = zeros(FT, dims_RZ)         # Mean ion energy
+    Ki_eV::Matrix{FT} = zeros(FT, dims_RZ)         # Mean ion energy
     Ni_src_rate::Matrix{FT} = zeros(FT, dims_RZ)    # Ion source rate
     Ni_loss_rate::Matrix{FT} = zeros(FT, dims_RZ)   # Ion loss rate
 
@@ -306,7 +306,7 @@ function Base.:(==)(snap1::Snapshot0D{<:AbstractFloat}, snap2::Snapshot0D{<:Abst
                 return false
             end
         elseif val1 isa Union{Nothing, AbstractArray} && val2 isa Union{Nothing, AbstractArray}
-            # Compare optional arrays (like coils_I, pidFac, etc.)
+            # Compare optional arrays (like coils_I,etc.)
             if (val1 === nothing) != (val2 === nothing)
                 return false
             elseif val1 !== nothing && val2 !== nothing

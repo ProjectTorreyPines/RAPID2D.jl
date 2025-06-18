@@ -51,7 +51,7 @@ for i in 1:5
     snap0D.Te_eV = 10.0 * (1 + 0.2 * cos(i))
     snap0D.Epara_tot = 1000.0 * exp(-i/10)
     snap0D.ue_para = 1e5 * (1 + 0.3 * sin(i))
-    snap0D.𝒲e_eV = 15.0 * (1 + 0.1 * i)
+    snap0D.Ke_eV = 15.0 * (1 + 0.1 * i)
     push!(RP.diagnostics.snaps0D, snap0D)
 
     # Create fake 2D data

@@ -35,14 +35,14 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     snap0D.ne_max = maximum(pla.ne)
     snap0D.ue_para = sum(@. pla.ue_para * Ne2D) / total_Ne
     snap0D.Te_eV = sum(@. pla.Te_eV * Ne2D) / total_Ne
-    snap0D.𝒲e_eV = sum(@. (1.5 * pla.Te_eV + (0.5 * me * pla.ue_para^2 )/ ee) * Ne2D) / total_Ne
+    snap0D.Ke_eV = sum(@. (1.5 * pla.Te_eV + (0.5 * me * pla.ue_para^2 )/ ee) * Ne2D) / total_Ne
 
     # Ion quantities
     snap0D.ni = total_Ni / RP.G.device_inVolume
     snap0D.ni_max = maximum(pla.ni)
     snap0D.ui_para = sum(@. pla.ui_para * Ni2D) / total_Ni
     snap0D.Ti_eV = sum(@. pla.Ti_eV * Ni2D) / total_Ni
-    snap0D.𝒲i_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para^2 ) / ee) * Ni2D) / total_Ni
+    snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para^2 ) / ee) * Ni2D) / total_Ni
 
     # Toroidal current
     snap0D.I_tor = sum( pla.Jϕ * RP.G.dR * RP.G.dZ)
@@ -152,8 +152,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     if RP.flags.Ampere
         F_plasma = solve_Ampere_equation(RP; plasma=true, coils=false)
         # 𝒲mag =(1/2)*∫Jϕ⋅Aϕ dV
-        snap0D.𝒲_mag_plasma = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
-        snap0D.L_self_plasma = 2.0 * snap0D.𝒲_mag_plasma / (snap0D.I_tor^2 + eps(FT))
+        snap0D.W_mag_plasma = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
+        snap0D.L_self_plasma = 2.0 * snap0D.W_mag_plasma / (snap0D.I_tor^2 + eps(FT))
     end
 
     if RP.coil_system.n_total > 0
@@ -162,7 +162,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
 
         snap0D.coils_I = coils.current
         snap0D.coils_V_ext = coils.voltage_ext
-        snap0D.𝒲_mag_coils = 0.5*coils.current'*csys.mutual_inductance*coils.current
+        snap0D.W_mag_coils = 0.5*coils.current'*csys.mutual_inductance*coils.current
     end
 
     return RP
@@ -293,8 +293,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.n_H2_gas .= pla.n_H2_gas
 
     # Calculate mean energies
-    @. snap2D.𝒲e_eV = 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
-    @. snap2D.𝒲i_eV = 1.5 * pla.Ti_eV + 0.5 * mi * pla.ui_para^2 / ee
+    @. snap2D.Ke_eV = 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
+    @. snap2D.Ki_eV = 1.5 * pla.Ti_eV + 0.5 * mi * pla.ui_para^2 / ee
 
     # Collision frequencies using RRC methods
     if RP.flags.Atomic_Collision
