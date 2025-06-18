@@ -48,7 +48,6 @@ This function represents the core time-stepping algorithm of RAPID2D.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing all simulation state
-- `dt::FT`: Time step size in seconds
 
 # Returns
 - `RP`: The updated RAPID object after advancement
@@ -59,7 +58,7 @@ This function represents the core time-stepping algorithm of RAPID2D.
 3. Energy transport (temperature evolution)
 4. Transport coefficient updates
 """
-function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
+function advance_timestep!(RP::RAPID{FT}) where FT<:AbstractFloat
     @timeit RAPID_TIMER "advance_timestep!" begin
 
         # Update vacuum fields from external sources
@@ -137,6 +136,9 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
             update_neutral_H2_gas_density!(RP)
         end
 
+        RP.step += 1
+        RP.time_s += RP.dt
+
         return RP
     end
 end
@@ -156,29 +158,31 @@ Handles time stepping, diagnostics output, and snapshot generation.
 function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
     @timeit RAPID_TIMER "run_simulation!" begin
         # Simulation parameters
-        dt = RP.dt
+        ini_dt = copy(RP.dt)
         t_end = RP.t_end_s
 
-        # Initial snapshots at t_start_s
-        @timeit RAPID_TIMER "initial_snapshots" begin
-            update_snaps0D!(RP)
-            update_snaps2D!(RP)
-
-            # Save initial snapshots at t_start_s
-            write_latest_snap0D!(RP)
-            write_latest_snap2D!(RP)
-        end
+        # Initialize step counter for special first-step handling
+        # Step -2: Calculate initial self-consistent state with tiny timestep, then reset to t_start_s
+        # Step 0+: Normal simulation progression
+        RP.step = -2
 
         # Main time loop
         @timeit RAPID_TIMER "main_time_loop" begin
-            while RP.time_s < t_end - 0.1*dt
+            while RP.time_s < t_end - 0.1*RP.dt
 
-                # Advance simulation one time step
-                advance_timestep!(RP, dt)
-
-                # Increment time
-                RP.time_s += dt
-                RP.step += 1
+                if RP.step == -2
+                    # Initial state calculation: use tiny timestep to compute all physics,
+                    # then reset time to t_start_s for proper initial snapshot timing
+                    RP.dt = 1e-6 * ini_dt     # set tiny dt
+                    RP.time_s = RP.t_start_s - 2 * RP.dt
+                    # advance twice for better accuracy
+                    advance_timestep!(RP)
+                    advance_timestep!(RP)
+                    RP.dt = ini_dt            # Reset to original dt
+                else
+                    # Normal time advancement
+                    advance_timestep!(RP)
+                end
 
                 treat_electron_outside_wall!(RP)
                 if RP.flags.update_ni_independently
