@@ -98,6 +98,11 @@ Contains volume-averaged quantities
     # Growth rates (alternative calculation)
     growth_rate2::FT = zero(FT)     # Alternative growth rate
     loss_rate2::FT = zero(FT)       # Alternative loss rate
+
+    # Magnetic field energies
+    𝒲_mag_plasma::FT = zero(FT)     # magnetic energy by plasma toroidal currents [J]
+    𝒲_mag_coils::FT = zero(FT)      # magnetic neergy by coils toroidal currents [J]
+    L_self_plasma::FT = zero(FT)   # Plasma self-inductance = 𝒲_magnetic_plasma / I_tor² [H]
 end
 
 """

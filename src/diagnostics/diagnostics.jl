@@ -148,9 +148,21 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
         # Would need PID controller and control field calculations
     end
 
+    # measure magnetic energies by toroidal currents
+    if RP.flags.Ampere
+        F_plasma = solve_Ampere_equation(RP; plasma=true, coils=false)
+        # 𝒲mag =(1/2)*∫Jϕ⋅Aϕ dV
+        snap0D.𝒲_mag_plasma = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
+        snap0D.L_self_plasma = 2.0 * snap0D.𝒲_mag_plasma / (snap0D.I_tor^2 + eps(FT))
+    end
+
     if RP.coil_system.n_total > 0
-        snap0D.coils_I = RP.coil_system.coils.current
-        snap0D.coils_V_ext = RP.coil_system.coils.voltage_ext
+        csys = RP.coil_system
+        coils = csys.coils
+
+        snap0D.coils_I = coils.current
+        snap0D.coils_V_ext = coils.voltage_ext
+        snap0D.𝒲_mag_coils = 0.5*coils.current'*csys.mutual_inductance*coils.current
     end
 
     return RP
