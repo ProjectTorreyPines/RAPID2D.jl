@@ -91,9 +91,6 @@ Contains volume-averaged quantities
     # Control system (optional)
     coils_I::Union{Nothing, Vector{FT}} = nothing    # Coil currents (N_coils)
     coils_V_ext::Union{Nothing, Vector{FT}} = nothing    # Coil external voltages (N_coils)
-    pidFac::Union{Nothing, Vector{FT}} = nothing     # PID control factor
-    BR_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BR
-    BZ_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BZ
 
     # Growth rates (alternative calculation)
     growth_rate2::FT = zero(FT)     # Alternative growth rate

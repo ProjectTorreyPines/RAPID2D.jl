@@ -325,14 +325,6 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Pi_atomic .= pla.iPowers.atomic
     snap2D.Pi_equi .= pla.iPowers.equi
 
-    # Control fields (if enabled)
-    if hasfield(typeof(RP), :flags) && hasfield(typeof(RP.flags), :Control) && hasfield(typeof(RP.flags.Control), :state) && RP.flags.Control.state
-        if snap2D.BR_ctrl !== nothing && snap2D.BZ_ctrl !== nothing
-            snap2D.BR_ctrl .= F.BR_ctrl
-            snap2D.BZ_ctrl .= F.BZ_ctrl
-        end
-    end
-
     return RP
 end
 
