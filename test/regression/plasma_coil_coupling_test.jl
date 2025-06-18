@@ -505,7 +505,7 @@ function analyze_coupling_results(RP::RAPID; verbose::Bool=false, visualize::Boo
 	snaps2D_time_s = RP.diagnostics.snaps2D.time_s
 	snaps2D_time_s = range(snaps2D_time_s[1], stop=snaps2D_time_s[end], length=length(snaps2D_time_s))
 	M_values = [(2π*RP.coil_system.Green_grid2coils*s.Jϕ[:]/sum(s.Jϕ))[1] for s in RP.diagnostics.snaps2D]
-	# M_values[1] = M_values[2] # Avoid zero M
+	M_values[1] = M_values[2] # Avoid zero M
 
 	itp_M = cubic_spline_interpolation(snaps2D_time_s, M_values)
 
@@ -530,6 +530,7 @@ function analyze_coupling_results(RP::RAPID; verbose::Bool=false, visualize::Boo
 	# Create time-varying plasma inductance (slight increase due to current profile changes)
 	L_plasma_values = L_plasma .* (1.0 .+ 0.1 .* (times ./ times[end]))  # 10% increase over time
 	L_plasma_values = RP.diagnostics.snaps0D.L_self_plasma
+	L_plasma_values[1] = L_plasma_values[2] # Avoid zero at t=0
 	itp_L_plasma = linear_interpolation(times, L_plasma_values)
 
 	I_coil_analytical_ML, I_plasma_analytical_ML =

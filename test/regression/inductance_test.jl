@@ -230,6 +230,7 @@ function analyze_results(RP::RAPID; verbose::Bool=false, visualize::Bool=false)
 	snap0D_time_s = RP.diagnostics.snaps0D.time_s
 	snap0D_time_s = range(snap0D_time_s[1], stop=snap0D_time_s[end], length=length(snap0D_time_s))
     L_values = RP.diagnostics.snaps0D.L_self_plasma
+    L_values[1] = L_values[2] # Avoid zero at t=0
     itp_L_self_plasma = cubic_spline_interpolation(snap0D_time_s, L_values)
 
     # L/R time constant
