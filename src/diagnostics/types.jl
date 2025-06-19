@@ -97,9 +97,15 @@ Contains volume-averaged quantities
     loss_rate2::FT = zero(FT)       # Alternative loss rate
 
     # Magnetic field energies
-    W_mag_plasma::FT = zero(FT)     # magnetic energy by plasma toroidal currents [J]
-    W_mag_coils::FT = zero(FT)      # magnetic neergy by coils toroidal currents [J]
-    L_self_plasma::FT = zero(FT)   # Plasma self-inductance = 𝒲_magnetic_plasma / I_tor² [H]
+    tot_W_mag_plasma::FT = zero(FT)     # magnetic energy by plasma toroidal currents [J]
+    tot_W_mag_coils::FT = zero(FT)      # magnetic neergy by coils toroidal currents [J]
+    self_inductance_plasma::FT = zero(FT)   # Plasma self-inductance = 𝒲_magnetic_plasma / I_tor² [H]
+    resistance_plasma::FT = zero(FT) # Plasma resistance = P_ohmic / I_tor² [Ohm]
+
+    # Ohmic dissipations
+    tot_P_input_coils::FT = zero(FT)  # Input power by coils [W]
+    tot_P_ohm_plasma::FT = zero(FT) # Ohmic dissipation by plasma [W]
+    tot_P_ohm_coils::FT = zero(FT)   # Ohmic dissipation by coils [W]
 end
 
 """
@@ -208,9 +214,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Pi_equi::Matrix{FT} = zeros(FT, dims_RZ)        # Equilibration power
     Pi_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total ion power
 
-    # Control fields (optional)
-    BR_ctrl::Union{Nothing, Matrix{FT}} = nothing # Control magnetic field BR
-    BZ_ctrl::Union{Nothing, Matrix{FT}} = nothing # Control magnetic field BZ
+    η_para::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel resistivity
 end
 
 """

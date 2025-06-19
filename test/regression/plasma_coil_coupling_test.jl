@@ -529,7 +529,7 @@ function analyze_coupling_results(RP::RAPID; verbose::Bool=false, visualize::Boo
 	# Calculate analytical solution with both time-varying M(t) and L₂(t)
 	# Create time-varying plasma inductance (slight increase due to current profile changes)
 	L_plasma_values = L_plasma .* (1.0 .+ 0.1 .* (times ./ times[end]))  # 10% increase over time
-	L_plasma_values = RP.diagnostics.snaps0D.L_self_plasma
+	L_plasma_values = RP.diagnostics.snaps0D.self_inductance_plasma
 	L_plasma_values[1] = L_plasma_values[2] # Avoid zero at t=0
 	itp_L_plasma = linear_interpolation(times, L_plasma_values)
 

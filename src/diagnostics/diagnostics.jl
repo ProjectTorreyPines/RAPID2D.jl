@@ -13,6 +13,7 @@ Updates the provided snap0D with current simulation state and volume-averaged qu
 function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:AbstractFloat}
 
     pla = RP.plasma
+    F = RP.fields
     inVol2D = RP.G.inVol2D  # alias for convenience
 
     @unpack ee, me, mi = RP.config.constants  # Unpack constants for convenience
@@ -48,13 +49,13 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     snap0D.I_tor = sum( pla.Jϕ * RP.G.dR * RP.G.dZ)
 
     # Electric fields (density-weighted averages)
-    snap0D.Epara_tot = sum(@. RP.fields.E_para_tot * Ne2D) / total_Ne
-    snap0D.Epara_ext = sum(@. RP.fields.E_para_ext * Ne2D) / total_Ne
-    snap0D.Epara_self_ES = sum(@. RP.fields.E_para_self_ES * Ne2D) / total_Ne
-    snap0D.Epara_self_EM = sum(@. RP.fields.E_para_self_EM * Ne2D) / total_Ne
+    snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
+    snap0D.Epara_ext = sum(@. F.E_para_ext * Ne2D) / total_Ne
+    snap0D.Epara_self_ES = sum(@. F.E_para_self_ES * Ne2D) / total_Ne
+    snap0D.Epara_self_EM = sum(@. F.E_para_self_EM * Ne2D) / total_Ne
 
     # Transport quantities
-    snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * RP.fields.Bpol / RP.fields.Btot * Ne2D) / total_Ne
+    snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * F.Bpol / F.Btot * Ne2D) / total_Ne
     snap0D.D_RZ = sum(@. sqrt(RP.transport.DRR^2 + RP.transport.DZZ^2) * Ne2D) / total_Ne
 
     # Gas quantities
@@ -151,9 +152,15 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     # measure magnetic energies by toroidal currents
     if RP.flags.Ampere
         F_plasma = solve_Ampere_equation(RP; plasma=true, coils=false)
-        # 𝒲mag =(1/2)*∫Jϕ⋅Aϕ dV
-        snap0D.W_mag_plasma = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
-        snap0D.L_self_plasma = 2.0 * snap0D.W_mag_plasma / (snap0D.I_tor^2 + eps(FT))
+
+        # magnetic energy by plasma [J]
+        # tot_W_mag_plasma =(1/2)*∫Jϕ⋅Aϕ dV
+        snap0D.tot_W_mag_plasma = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
+        snap0D.self_inductance_plasma = 2.0 * snap0D.tot_W_mag_plasma / (snap0D.I_tor^2 + eps(FT))
+
+        # Ohmic dissipation [W]
+        snap0D.tot_P_ohm_plasma = sum(@. pla.Jϕ / F.bϕ * F.E_para_tot * inVol2D)
+        snap0D.resistance_plasma = snap0D.tot_P_ohm_plasma / (snap0D.I_tor^2 + eps(FT))
     end
 
     if RP.coil_system.n_total > 0
@@ -162,7 +169,12 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
 
         snap0D.coils_I = coils.current
         snap0D.coils_V_ext = coils.voltage_ext
-        snap0D.W_mag_coils = 0.5*coils.current'*csys.mutual_inductance*coils.current
+
+        # magnetic energy by coils [J]
+        snap0D.tot_W_mag_coils = 0.5*coils.current'*csys.mutual_inductance*coils.current
+        # Ohmic coil dissipation [W]
+        snap0D.tot_P_input_coils = sum(@. coils.current * coils.voltage_ext)
+        snap0D.tot_P_ohm_coils = sum(@. coils.current^2 * coils.resistance)
     end
 
     return RP
@@ -324,6 +336,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Pi_tot .= pla.iPowers.tot
     snap2D.Pi_atomic .= pla.iPowers.atomic
     snap2D.Pi_equi .= pla.iPowers.equi
+
+    @. snap2D.η_para = F.E_para_tot / ( RP.plasma.Jϕ/F.bϕ)
 
     return RP
 end

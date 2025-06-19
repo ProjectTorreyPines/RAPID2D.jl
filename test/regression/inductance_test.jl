@@ -229,7 +229,7 @@ function analyze_results(RP::RAPID; verbose::Bool=false, visualize::Bool=false)
     # Estimate mutual inductance (geometric calculation)
 	snap0D_time_s = RP.diagnostics.snaps0D.time_s
 	snap0D_time_s = range(snap0D_time_s[1], stop=snap0D_time_s[end], length=length(snap0D_time_s))
-    L_values = RP.diagnostics.snaps0D.L_self_plasma
+    L_values = RP.diagnostics.snaps0D.self_inductance_plasma
     L_values[1] = L_values[2] # Avoid zero at t=0
     itp_L_self_plasma = cubic_spline_interpolation(snap0D_time_s, L_values)
 
@@ -347,7 +347,7 @@ function create_inductance_plots(RP, times, I_sim, I_analytical, I_analytical_ti
 
     # Inductance evolution plot
     snap0D_times = RP.diagnostics.snaps0D.time_s
-    L_values = RP.diagnostics.snaps0D.L_self_plasma
+    L_values = RP.diagnostics.snaps0D.self_inductance_plasma
 
     p3 = plot(snap0D_times * 1e3, L_values * 1e6,
               label="L_self_plasma(t)",
