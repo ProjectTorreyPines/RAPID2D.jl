@@ -317,7 +317,6 @@ Fields include components of the magnetic and electric fields.
     Eϕ::Matrix{FT} = zeros(FT, dims)            # Toroidal electric field [V/m]
 
     # Parallel electric field
-    E_para_ind::Matrix{FT} = zeros(FT, dims)    # Induced parallel electric field [V/m]
     E_para_tot::Matrix{FT} = zeros(FT, dims)    # Total parallel electric field [V/m]
 
     # Magnetic flux
