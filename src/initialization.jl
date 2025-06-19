@@ -765,6 +765,8 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:Abstract
     @. pla.ν_ei = ν_factor_Maxwellian * pla.Zeff^2 * pla.ni *
                         pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
 
+    @. pla.ν_ei[!isfinite(pla.ν_ei)] = zero(FT)
+
     Zeff = pla.Zeff
     @. pla.sptz_fac = (1+1.198*Zeff+0.222*Zeff^2)/(1+2.966*Zeff+0.753*Zeff^2);
     # Set Spitzer factor to 0.51 for Zeff=1
