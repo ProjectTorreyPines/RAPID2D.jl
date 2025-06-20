@@ -479,10 +479,9 @@ end
 		W_input = sum(snaps0D.tot_P_input_coils)*RP.config.snap0D_Δt_s
 		W_ohm_coil = sum(snaps0D.tot_P_ohm_coils)*RP.config.snap0D_Δt_s
 		W_ohm_plasma = sum(snaps0D.tot_P_ohm_plasma)*RP.config.snap0D_Δt_s
-		ΔW_mag_coils = snaps0D.tot_W_mag_coils[end] - snaps0D.tot_W_mag_coils[1]
-		ΔW_mag_plasma = snaps0D.tot_W_mag_plasma[end] - snaps0D.tot_W_mag_plasma[1]
+		ΔW_mag = snaps0D.tot_W_mag[end] - snaps0D.tot_W_mag[1]
 
-		ΔW = W_input - (W_ohm_coil + W_ohm_plasma + ΔW_mag_coils + ΔW_mag_plasma)  # should be close to zero
+		ΔW = W_input - (W_ohm_coil + W_ohm_plasma + ΔW_mag)  # should be close to zero
 		@test abs(ΔW) / abs(W_input) < 0.01  # within 1%
 	end
 end

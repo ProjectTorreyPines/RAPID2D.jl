@@ -150,17 +150,34 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     end
 
     # measure magnetic energies by toroidal currents
+    snap0D.tot_W_mag = zero(FT)
     if RP.flags.Ampere
         F_plasma = solve_Ampere_equation(RP; plasma=true, coils=false)
+        W_mag_by_plasma_without_coil =  0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
+        snap0D.self_inductance_plasma = 2.0 * W_mag_by_plasma_without_coil / (snap0D.I_tor^2 + eps(FT))
 
-        # magnetic energy by plasma [J]
-        # tot_W_mag_plasma =(1/2)*∫Jϕ⋅Aϕ dV
-        snap0D.tot_W_mag_plasma = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
-        snap0D.self_inductance_plasma = 2.0 * snap0D.tot_W_mag_plasma / (snap0D.I_tor^2 + eps(FT))
+        # plasma's contribution to magnetic energy [J]
+        # NOTE: must use total ψ_self by both plasma and coils
+        # tot_W_mag =(1/2)*∫Jϕ⋅Aϕ dV
+        snap0D.tot_W_mag += 0.5 * sum(@. RP.plasma.Jϕ * RP.fields.ψ_self / RP.G.R2D * RP.G.inVol2D)
 
         # Ohmic dissipation [W]
-        snap0D.tot_P_ohm_plasma = sum(@. pla.Jϕ / F.bϕ * F.E_para_tot * inVol2D)
-        snap0D.resistance_plasma = snap0D.tot_P_ohm_plasma / (snap0D.I_tor^2 + eps(FT))
+        ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom + pla.ν_en_iz
+        @unpack me, ee = RP.config.constants
+
+        σ_conductivity = @. pla.ne * ee^2 / (me * ν_eff)
+
+        valid_idx = findall(pla.ne .> 1e3 .&& ν_eff .> 0.0)
+
+        if isempty(valid_idx)
+            snap0D.η_resistivity = Inf
+            snap0D.resistance_plasma = Inf
+            snap0D.tot_P_ohm_plasma = 0.0
+        else
+            snap0D.η_resistivity = 1.0 / (sum(@views @. σ_conductivity[valid_idx] * Ne2D[valid_idx]) / total_Ne)
+            snap0D.resistance_plasma = 1.0/sum(@views @. σ_conductivity[valid_idx]*RP.G.dR * RP.G.dZ/ (2π * RP.G.R2D[valid_idx]))
+            snap0D.tot_P_ohm_plasma = snap0D.I_tor^2 * snap0D.resistance_plasma # P_ohm = I^2*R
+        end
     end
 
     if RP.coil_system.n_total > 0
@@ -171,7 +188,11 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
         snap0D.coils_V_ext = coils.voltage_ext
 
         # magnetic energy by coils [J]
-        snap0D.tot_W_mag_coils = 0.5*coils.current'*csys.mutual_inductance*coils.current
+        Φ_coils = ( csys.mutual_inductance*coils.current
+                    +2π*(csys.Green_grid2coils *pla.Jϕ[:])*RP.G.dR*RP.G.dZ
+                )
+        snap0D.tot_W_mag += 0.5*coils.current'*Φ_coils
+
         # Ohmic coil dissipation [W]
         snap0D.tot_P_input_coils = sum(@. coils.current * coils.voltage_ext)
         snap0D.tot_P_ohm_coils = sum(@. coils.current^2 * coils.resistance)
@@ -337,7 +358,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Pi_atomic .= pla.iPowers.atomic
     snap2D.Pi_equi .= pla.iPowers.equi
 
-    @. snap2D.η_para = F.E_para_tot / ( RP.plasma.Jϕ/F.bϕ)
+    ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom + pla.ν_en_iz
+    @. snap2D.η_resistivity = (me * ν_eff) / (pla.ne * ee^2)
 
     return RP
 end
@@ -467,4 +489,38 @@ function update_snaps2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     reset_Ntracker_cumulative_2D!(RP)
 
     return RP
+end
+
+function check_energy_conservation(snaps0D::Vector{Snapshot0D{FT}}) where FT
+    times = snaps0D.time_s
+
+    trapz = (P, t) -> sum(0.5*(P[2:end]+P[1:end-1]) .* diff(t))
+
+    W_input = trapz(snaps0D.tot_P_input_coils, times)
+    W_ohm_coil = trapz(snaps0D.tot_P_ohm_coils, times)
+    W_ohm_plasma = trapz(snaps0D.tot_P_ohm_plasma, times)
+
+    ΔW_mag = snaps0D.tot_W_mag[end] - snaps0D.tot_W_mag[1]
+
+    # Input = Losses + Stored Energy
+    energy_balance = W_input - (W_ohm_coil + W_ohm_plasma + ΔW_mag )
+
+    @printf("Energy Conservation Analysis:\n")
+    @printf("=================================\n")
+    @printf("Input energy (coils):    %12.7f J\n", W_input)
+    @printf("Magnetic energy change:  %12.7f J\n", ΔW_mag)
+    @printf("Coil ohmic losses:       %12.7f J\n", W_ohm_coil)
+    @printf("Plasma ohmic losses:     %12.7f J\n", W_ohm_plasma)
+    @printf("---------------------------------\n")
+    @printf("Energy balance:          %12.7f J (should be ≈ 0)\n", energy_balance)
+    @printf("Relative error:          %12.2f%%\n", abs(energy_balance/W_input)*100)
+
+    return (;
+         W_input,
+         W_ohm_coil,
+         W_ohm_plasma,
+         ΔW_mag,
+         energy_balance,
+         rel_error = abs(energy_balance/W_input)*100
+    )
 end
