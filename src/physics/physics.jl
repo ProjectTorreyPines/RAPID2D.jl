@@ -1321,10 +1321,8 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
 
 
-    # Initial guess for next time step ψ_self using linear extrapolation
-    # Extrapolate Eϕ_self from t=n and t=n-1 to estimate value at t=n+0.5
-    # Formula: Eϕ_self(n+0.5) ≈ 1.5*Eϕ_self(n) - 0.5*Eϕ_self(n-1)
-    new_ψ_self_k = @. F.ψ_self - dt * G.R2D * (FT(1.5) * F.Eϕ_self - FT(0.5) * F.Eϕ_self_prev)
+    # Initial (quadratic) guess of future ψ_self @ t=(n+1)-th step
+    new_ψ_self_k = @. F.ψ_self - dt*G.R2D * (FT(2.0)*F.Eϕ_self - F.Eϕ_self_prev)
 
     # Prepare Picard iteration for coupled system
     F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
@@ -1654,10 +1652,10 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     # Toroidal current density Jϕ @ t=(n-th step)
     Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee*pla.Zeff) * pla.ui_para) * F.bϕ
 
-    # 6. Initial guess for next time step ψ_self using linear extrapolation
-    # Extrapolate Eϕ_self from t=n and t=n-1 to estimate value at t=n+0.5
-    # Formula: Eϕ_self(n+0.5) ≈ 1.5*Eϕ_self(n) - 0.5*Eϕ_self(n-1)
-    new_ψ_self_k = @. F.ψ_self - dt * G.R2D * (FT(1.5) * F.Eϕ_self - FT(0.5) * F.Eϕ_self_prev)
+
+    # 6. Initial guess for next time step ψ_self (quadratic extrapolation)
+    new_ψ_self_k = @. F.ψ_self - dt * G.R2D * (FT(2.0) * F.Eϕ_self - F.Eϕ_self_prev)
+
 
    # Prepare Picard iteration for coupled system
     F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
