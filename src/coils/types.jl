@@ -69,6 +69,26 @@ function Coil(location::NamedTuple{(:r, :z), Tuple{FT, FT}}, area::FT, resistanc
                     max_voltage, max_current, current, voltage_ext)
 end
 
+function Base.getproperty(coil::Coil{FT}, sym::Symbol) where {FT<:AbstractFloat}
+    if hasfield(Coil, sym)
+        return getfield(coil, sym)
+    else
+        if sym === :τ_LR
+            # L/R time constant [s]
+            return FT(coil.self_inductance / coil.resistance)
+        else
+            throw(ArgumentError("Coil has no property $sym"))
+        end
+    end
+end
+
+"""
+Extend propertynames to include computed properties for tab completion
+"""
+function Base.propertynames(coil::Coil{FT}) where {FT<:AbstractFloat}
+    return (fieldnames(Coil)..., :τ_LR)
+end
+
 """
     Base.propertynames(coils::Vector{<:Coil})
 
@@ -104,9 +124,9 @@ function Base.getproperty(coils::Vector{<:Coil{<:AbstractFloat}}, sym::Symbol)
         throw(BoundsError("Cannot access property of empty coil vector"))
     end
 
-    # Check if it's a valid Coil field
-    if hasfield(typeof(coils[1]), sym)
-        return [getfield(s, sym) for s in coils]
+    # Check if it's a valid Coil property
+    if hasproperty(coils[1], sym)
+        return [getproperty(s, sym) for s in coils]
     end
 
     # If not a coil field, throw error
