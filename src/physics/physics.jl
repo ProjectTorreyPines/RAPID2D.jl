@@ -1135,7 +1135,7 @@ function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::In
 end
 
 """
-    solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true) where {FT<:AbstractFloat}
+    solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_self::Bool=true) where {FT<:AbstractFloat}
 
 Solve Ampère's equation (Grad-Shafranov equation) to update self-consistent magnetic fields.
 
@@ -1150,7 +1150,7 @@ Updates ψ_self, and optionally Eϕ_self.
 - `plasma::Bool=true`: Include plasma current density (Jϕ) in the source term
 - `coils::Bool=true`: Include external coil current contributions to the source term
 """
-function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true) where {FT<:AbstractFloat}
+function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_self::Bool=true) where {FT<:AbstractFloat}
     @timeit RAPID_TIMER "solve_Ampere_equation" begin
     # Alias for readability
     pla = RP.plasma
@@ -1188,7 +1188,7 @@ function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::
     # % calculate the magnetic field from the self-consistent ψ
     calculate_B_from_ψ!(RP.G, F.ψ_self, F.BR_self, F.BZ_self)
 
-    if RP.flags.E_para_self_EM
+    if update_Eϕ_self && RP.flags.E_para_self_EM
         @. F.Eϕ_self = - (F.ψ_self - old_ψ_self) / (RP.G.R2D * RP.flags.Ampere_nstep * RP.dt)
     end
 
