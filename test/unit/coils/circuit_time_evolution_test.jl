@@ -9,6 +9,7 @@ function simulate_circuit_evolution(csys::CoilSystem{FT}, t_span::Tuple{FT, FT},
     @assert dt > 0 "Time step must be positive"
 
     # Set time step in system
+	csys.time_s = t_start
     csys.Δt = dt
 
     # Ensure matrices are computed
@@ -23,17 +24,14 @@ function simulate_circuit_evolution(csys::CoilSystem{FT}, t_span::Tuple{FT, FT},
         current_history = zeros(FT, N_steps, csys.n_total)
     end
 
-    t = t_start
     for i in 1:N_steps
         if save_history
-            time_history[i] = t
+            time_history[i] = csys.time_s
             current_history[i, :] = get_all_currents(csys)
         end
 
-        # Solve one time step
-        solve_LR_circuit_step!(csys, t)
-
-        t += dt
+        # Advance one time step
+        advance_LR_circuit_step!(csys)
     end
 
     if save_history

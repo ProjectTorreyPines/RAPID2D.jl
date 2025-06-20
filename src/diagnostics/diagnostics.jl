@@ -185,7 +185,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
         coils = csys.coils
 
         snap0D.coils_I = coils.current
-        snap0D.coils_V_ext = coils.voltage_ext
+        snap0D.coils_V_ext = get_all_voltages_at_time(csys)
 
         # magnetic energy by coils [J]
         Φ_coils = ( csys.mutual_inductance*coils.current
@@ -194,7 +194,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
         snap0D.tot_W_mag += 0.5*coils.current'*Φ_coils
 
         # Ohmic coil dissipation [W]
-        snap0D.tot_P_input_coils = sum(@. coils.current * coils.voltage_ext)
+        snap0D.tot_P_input_coils = sum(coils.current .* get_all_voltages_at_time(csys))
         snap0D.tot_P_ohm_coils = sum(@. coils.current^2 * coils.resistance)
     end
 

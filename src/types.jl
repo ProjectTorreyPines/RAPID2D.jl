@@ -762,6 +762,7 @@ mutable struct RAPID{FT<:AbstractFloat}
         AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
         coil_system = CoilSystem{FT}()  # coil system placeholder
+        coil_system.time_s = config.t_start_s  # Initialize time for coil system
 
         # Create and return new instance
         return new{FT}(

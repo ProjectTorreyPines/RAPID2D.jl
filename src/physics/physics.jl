@@ -1451,6 +1451,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
     # Update coil currents
     if RP.coil_system.n_total > 0
+        csys.time_s += csys.Δt
         set_all_currents!(csys, new_coils_I_k)
     end
 
@@ -1784,6 +1785,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
     # Update coil currents
     if RP.coil_system.n_total > 0
+        csys.time_s += csys.Δt
         set_all_currents!(csys, new_coils_I_k)
     end
 

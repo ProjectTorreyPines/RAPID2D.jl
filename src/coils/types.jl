@@ -245,6 +245,7 @@ mutable struct CoilSystem{FT <: AbstractFloat}
 
     # System matrices for circuit equations
     mutual_inductance::Matrix{FT}
+    time_s::FT
 	Δt::FT
 	θimp::FT
     A_LR_circuit::Matrix{FT}
@@ -288,6 +289,7 @@ mutable struct CoilSystem{FT <: AbstractFloat}
 
         # Initialize matrices (will be computed later)
         mutual_inductance = zeros(FT, n_total, n_total)
+        time_s = FT(0.0) # Simulation time, to be set later
 		Δt = FT(0.0)  # Time step for solving circuit equations, to be set later
 		θimp = FT(1.0) # Implicit factor for circuit equations (θimp=1.0 for implicit Euler)
         A_LR_circuit = zeros(FT, n_total, n_total)
@@ -302,7 +304,7 @@ mutable struct CoilSystem{FT <: AbstractFloat}
         inside_domain_indices = Int[]
 
         new{FT}(coils, n_total, n_powered, n_controllable, powered_indices, controllable_indices, passive_indices,
-                mutual_inductance, Δt, θimp, A_LR_circuit, inv_A_LR_circuit,
+                mutual_inductance, time_s, Δt, θimp, A_LR_circuit, inv_A_LR_circuit,
                 Green_coils2bdy, Green_grid2coils,
                 dGreen_dRg_grid2coils, dGreen_dZg_grid2coils,
                 inside_domain_indices, μ0, cu_resistivity)
