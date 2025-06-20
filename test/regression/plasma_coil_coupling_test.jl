@@ -265,7 +265,6 @@ function setup_external_coil!(RP::RAPID; verbose::Bool=false)
     add_coil!(RP.coil_system, external_coil)
 
     # Update coil system matrices
-    RP.coil_system.Δt = RP.dt
 	initialize_coil_system!(RP)
 
     if verbose

@@ -445,6 +445,11 @@ end
 
 		initialize!(RP)
 
+		RP.plasma.ne .= 0.0
+		RP.plasma.ni .= 0.0
+		update_transport_quantities!(RP)
+
+
 		run_simulation!(RP)
 
 		M = RP.coil_system.mutual_inductance[1,2]

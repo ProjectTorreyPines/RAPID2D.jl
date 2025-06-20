@@ -50,7 +50,7 @@ function RAPID2D.plot_snaps0D(snaps0D; kwargs...)
               ylabel="⟨ne⟩ (m⁻³)", label="Electron density",
               yscale=:log10, linewidth=2))
 
-    push!(p_vec, plot(times_ms[2:end], snaps0D.I_tor[2:end],
+    push!(p_vec, plot(times_ms[2:end], abs.(snaps0D.I_tor[2:end]),
               ylabel="⟨I_tor⟩ (A)", label="Toroidal current",
               yscale=:log10, linewidth=2))
 

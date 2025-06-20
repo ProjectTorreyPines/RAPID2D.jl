@@ -1666,6 +1666,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     new_ψ_self_kp1 = zeros(FT, G.NR, G.NZ) # Initialize next ψ_self for iteration
 
     new_coils_I_k = zeros(FT, csys.n_total) # Initialize coil currents for iteration
+    coil_flux_change_by_plasma = zeros(FT, csys.n_total)
 
     RHS_u = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS related to u
     RHS_ψ = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS relatedl to ψ
@@ -1711,7 +1712,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
                 Mcp_dIpla_by_conv = 0
             end
 
-            coil_flux_change_by_plasma = @. Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
+            @. coil_flux_change_by_plasma = Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
 
             circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) - coil_flux_change_by_plasma
             new_coils_I_k = csys.inv_A_LR_circuit * circuit_rhs  # valid if "dt" is constant

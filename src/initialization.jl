@@ -157,6 +157,7 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT<:AbstractFloa
                            (RP.plasma.T_gas_eV * RP.config.ee) .*
                            ones(FT, RP.G.NR, RP.G.NZ)
 
+    # TODO: need to set plasma quantities outside? instead of here?
     # Initialize density and temperature
     initialize_density!(RP)
     initialize_temperature!(RP)
