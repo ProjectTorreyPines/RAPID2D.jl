@@ -144,6 +144,10 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Ne_src_rate::Matrix{FT} = zeros(FT, dims_RZ)    # Electron source rate
     Ne_loss_rate::Matrix{FT} = zeros(FT, dims_RZ)   # Electron loss rate
 
+    # Loop voltage
+    LV_ext::Matrix{FT} = zeros(FT, dims_RZ)          # External loop voltage (NR, NZ)
+    LV_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total loop voltage (NR, NZ)
+
     # Magnetic field
     BR::Matrix{FT} = zeros(FT, dims_RZ)             # Radial magnetic field
     BZ::Matrix{FT} = zeros(FT, dims_RZ)             # Vertical magnetic field

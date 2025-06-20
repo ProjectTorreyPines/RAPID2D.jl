@@ -275,6 +275,10 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Epol_self .= F.Epol_self
     snap2D.Eϕ_self .= F.Eϕ_self
 
+    # Loop voltages
+    snap2D.LV_ext .= F.LV_ext
+    @. snap2D.LV_tot = F.LV_ext + 2π*RP.G.R2D * F.Eϕ_self
+
     # Calculate ExB drift magnitude
     @. snap2D.mean_ExB_pol = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
 
