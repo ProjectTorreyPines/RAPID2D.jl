@@ -365,6 +365,13 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom + pla.ν_en_iz
     @. snap2D.η_resistivity = (me * ν_eff) / (pla.ne * ee^2)
 
+    # Handle near-zero density regions
+    near_zero_density_mask = pla.ne .< 1.0  # Find indices where density is effectively zero
+    snap2D.Te_eV[near_zero_density_mask] .= NaN
+    snap2D.ue_para[near_zero_density_mask] .= NaN
+    snap2D.Ke_eV[near_zero_density_mask] .= NaN
+
+
     return RP
 end
 
