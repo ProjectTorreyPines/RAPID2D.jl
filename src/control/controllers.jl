@@ -24,16 +24,16 @@ Create a generic controller using DiscretePID.
 - `Kp`: Proportional gain
 - `Ti`: Integral time constant [s] (typemax(FT) = no integral action)
 - `Td`: Derivative time constant [s] (zero(FT) = no derivative action)
-- `dt`: Time step [s] (zero(FT) = must be set later)
+- `dt`: Time step [s]
 - `umin, umax`: Control signal limits (typemin/typemax(FT) = no limits)
 """
 function create_controller(
 			target::FT,
+			dt::FT,
 			coils::Vector{Coil{FT}};
 			control_type::String="generic",
 			Kp::FT=FT(1.0), Ti::FT=typemax(FT), Td::FT=zero(FT),
-			dt::FT=zero(FT),
-			umin::FT=typemin(FT), umax::FT=typemax(FT)
+			umin::FT=typemin(FT), umax::FT=typemax(FT), pid_kwargs...
 		) where {FT<:AbstractFloat}
 
     # Convert PID parameters for DiscretePID
@@ -42,11 +42,12 @@ function create_controller(
         Ti = Ti,
         Td = Td,
         Ts = dt,
-        N = FT(8),         # Derivative filter
-        b = FT(1.0),       # Setpoint weighting
-        umin = umin,
-        umax = umax,
-        Tt = sqrt(2.0 * Td)  # Anti-windup time constant
+        pid_kwargs...
+        # N = FT(2),         # Derivative filter
+        # b = FT(1.0),       # Setpoint weighting
+        # umin = umin,
+        # umax = umax
+        # Tt = sqrt(2.0 * Td)  # Anti-windup time constant
     )
 
     return Controller{FT}(
@@ -108,7 +109,7 @@ function create_position_controller(target_position::FT,
                                    Kp=FT(1.0), Ti=FT(10.0), Td=FT(0.1),
                                    kwargs...) where {FT<:AbstractFloat}
 
-    return create_controller(target_position, coils;
+    return create_controller(target_position, dt, coils;
         control_type = "position",
         Kp = Kp, Ti = Ti, Td = Td,
         kwargs...

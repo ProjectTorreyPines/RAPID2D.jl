@@ -150,7 +150,7 @@ Handles time stepping, diagnostics output, and snapshot generation.
 # Returns
 - `RP`: The updated RAPID object after completion of the simulation
 """
-function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
+function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT}}=nothing) where FT<:AbstractFloat
     @timeit RAPID_TIMER "run_simulation!" begin
         # Simulation parameters
         dt = RP.dt
@@ -223,6 +223,10 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
                     end
                 end
 
+
+                if !isnothing(controller)
+                    update_controller!(RP, controller)
+                end
             end
         end
 
