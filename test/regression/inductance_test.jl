@@ -9,6 +9,7 @@ analytical solutions for a simple single-filament circuit model.
 
 using RAPID2D
 using RAPID2D.Statistics
+using RAPID2D.Interpolations
 using Test
 using Printf
 
@@ -225,6 +226,13 @@ function analyze_results(RP::RAPID; verbose::Bool=false, visualize::Bool=false)
     μ0 = 4π * 1e-7  # H/m
     L_estimate = μ0 * major_R * (log(8 * major_R / minor_r) - 2 + 0.25 * Y)
 
+    # Estimate mutual inductance (geometric calculation)
+	snap0D_time_s = RP.diagnostics.snaps0D.time_s
+	snap0D_time_s = range(snap0D_time_s[1], stop=snap0D_time_s[end], length=length(snap0D_time_s))
+    L_values = RP.diagnostics.snaps0D.self_inductance_plasma
+    L_values[1] = L_values[2] # Avoid zero at t=0
+    itp_L_self_plasma = cubic_spline_interpolation(snap0D_time_s, L_values)
+
     # L/R time constant
     tau_LR = L_estimate / R_estimate
 
@@ -237,40 +245,64 @@ function analyze_results(RP::RAPID; verbose::Bool=false, visualize::Bool=false)
         println(@sprintf("  L/R time: %.1f μs", tau_LR * 1e6))
     end
 
-    # Analytical solution
+    # Analytical solution (constant L approximation)
     I_sat_analytical = LV_estimate / R_estimate
     I_analytical = @. I_sat_analytical * (1 - exp(-times / tau_LR))
 
+    # More accurate analytical solution with time-varying inductance
+    I_analytical_timevar = calculate_time_varying_inductance_solution(times, LV_estimate, R_estimate, itp_L_self_plasma)
+
     # Create plots
     if visualize
-        create_inductance_plots(RP, times, I_tor, I_analytical)
+        create_inductance_plots(RP, times, I_tor, I_analytical, I_analytical_timevar)
     end
 
     # Calculate error metrics and return for testing
-    if length(I_tor) == length(I_analytical)
-        relative_error = abs.(I_tor - I_analytical) ./ (I_analytical .+ 1e-10)
+    if length(I_tor) == length(I_analytical) && length(I_tor) == length(I_analytical_timevar)
+        # Error vs constant L analytical solution
+        relative_error = abs.(I_tor - I_analytical) ./ (abs.(I_analytical) )
+        relative_error[.!isfinite.(relative_error)] .= 0.0  # Avoid NaN & Inf
         mean_error = mean(relative_error)
         max_error = maximum(relative_error)
 
+        # Error vs time-varying L analytical solution
+        relative_error_timevar = abs.(I_tor - I_analytical_timevar) ./ (abs.(I_analytical_timevar) )
+        relative_error_timevar[.!isfinite.(relative_error_timevar)] .= 0.0  # Avoid NaN & Inf
+        mean_error_timevar = mean(relative_error_timevar)
+        max_error_timevar = maximum(relative_error_timevar)
+
         if verbose
             println("\nAccuracy Assessment:")
+            println("  === vs Constant L Analytical ===")
             println(@sprintf("  Mean relative error: %.2f%%", 100*mean_error))
             println(@sprintf("  Max relative error: %.2f%%", 100*max_error))
 
+            println("  === vs Time-varying L Analytical ===")
+            println(@sprintf("  Mean relative error: %.2f%%", 100*mean_error_timevar))
+            println(@sprintf("  Max relative error: %.2f%%", 100*max_error_timevar))
+
             if mean_error < 0.03
-                println("  ✓ PASS: Good agreement with analytical solution")
+                println("  ✓ PASS: Good agreement with constant L analytical solution")
             else
-                println("  ✗ FAIL: Poor agreement with analytical solution")
+                println("  ✗ FAIL: Poor agreement with constant L analytical solution")
+            end
+
+            if mean_error_timevar < 0.025  # Slightly tighter tolerance for more accurate model
+                println("  ✓ PASS: Good agreement with time-varying L analytical solution")
+            else
+                println("  ✗ FAIL: Poor agreement with time-varying L analytical solution")
             end
         end
 
-        return (mean_error=mean_error, max_error=max_error, times=times, I_tor=I_tor, I_analytical=I_analytical)
+        return (mean_error=mean_error, max_error=max_error,
+                mean_error_timevar=mean_error_timevar, max_error_timevar=max_error_timevar,
+                times=times, I_tor=I_tor, I_analytical=I_analytical, I_analytical_timevar=I_analytical_timevar)
     else
         return nothing
     end
 end
 
-function create_inductance_plots(RP, times, I_sim, I_analytical)
+function create_inductance_plots(RP, times, I_sim, I_analytical, I_analytical_timevar)
     """Create visualization plots for inductance test results"""
 
     # Current evolution plot
@@ -282,38 +314,65 @@ function create_inductance_plots(RP, times, I_sim, I_analytical)
               title="L/R Circuit Response")
 
     plot!(p1, times * 1e3, I_analytical,
-          label="Analytical",
+          label="Analytical (const L)",
           linestyle=:dash,
           linewidth=2)
 
-    # Error plot
-    if length(I_sim) == length(I_analytical)
-        error_percent = abs.(I_sim - I_analytical) ./ (I_analytical .+ 1e-10) * 100
-        p2 = plot(times * 1e3, error_percent,
-                  label="Relative Error",
+    plot!(p1, times * 1e3, I_analytical_timevar,
+          label="Analytical (time-var L)",
+          linestyle=:dot,
+          linewidth=2,
+          color=:green)
+
+    # Error plots
+    if length(I_sim) == length(I_analytical) && length(I_sim) == length(I_analytical_timevar)
+        error_const_L = abs.(I_sim - I_analytical) ./ (abs.(I_analytical)) * 100
+        error_timevar_L = abs.(I_sim - I_analytical_timevar) ./ (abs.(I_analytical_timevar)) * 100
+
+        p2 = plot(times * 1e3, error_const_L,
+                  label="vs Const L",
                   linewidth=2,
                   xlabel="Time (ms)",
                   ylabel="Error (%)",
-                  title="Simulation Error")
+                  title="Simulation Errors")
+
+        plot!(p2, times * 1e3, error_timevar_L,
+              label="vs Time-var L",
+              linestyle=:dash,
+              linewidth=2,
+              color=:green)
     else
         p2 = plot(title="Error analysis unavailable")
     end
 
+    # Inductance evolution plot
+    snap0D_times = RP.diagnostics.snaps0D.time_s
+    L_values = RP.diagnostics.snaps0D.self_inductance_plasma
+
+    p3 = plot(snap0D_times * 1e3, L_values * 1e6,
+              label="L_self_plasma(t)",
+              linewidth=2,
+              xlabel="Time (ms)",
+              ylabel="Self-Inductance (μH)",
+              title="Time-Varying Plasma Inductance")
+
     # Combined plot
-    plot_combined = plot(p1, p2, layout=(2,1), size=(800, 600))
+    plot_combined = plot(p1, p2, p3, layout=(3,1), size=(800, 900))
 
     # Save plot
-    timestamp = Dates.format(now(), "yyyy-mm-dd_HH:MM:SS")
+    timestamp = Dates.format(now(), "yyyy-mm-dd_HH_MM_SS")
     filename = "inductance_test_$(timestamp).png"
-    savefig(plot_combined, filename)
+    full_path = joinpath(pwd(), filename)
+    savefig(plot_combined, full_path)
 
     println("\nVisualization:")
-    println("  ✓ Plot saved as: $(filename)")
+    println("  ✓ Plot saved as: $(full_path)")
 
     # Create animation if possible
     try
         animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
                     [:ne,:ue_para,:Jϕ,:E_para_tot];
+                    wall=RP.fitted_wall,
                     filename="inductance_test_snaps2D_$(timestamp).mp4")
         println("  ✓ Animation saved as: inductance_test_snaps2D_$(timestamp).mp4")
     catch e
@@ -321,6 +380,56 @@ function create_inductance_plots(RP, times, I_sim, I_analytical)
     end
 
     return plot_combined
+end
+
+function calculate_time_varying_inductance_solution(times, V, R, itp_L; I0=0.0)
+    """
+    Calculate analytical solution for RL circuit with time-varying inductance L(t)
+
+    Solves: L(t) * dI/dt + dL/dt * I + R * I = V
+
+    Using numerical integration with 4th-order Runge-Kutta method
+    """
+
+    dt = length(times) > 1 ? times[2] - times[1] : 1e-6
+    I_solution = zeros(length(times))
+    I_solution[1] = I0
+
+    for i in 2:length(times)
+        t_prev = times[i-1]
+        t_curr = times[i]
+        I_prev = I_solution[i-1]
+
+        # Define the ODE: dI/dt = (V - R*I - dL/dt*I) / L(t)
+        function ode_func(t, I)
+            L_t = itp_L(t)
+
+            # Calculate dL/dt numerically
+            dt_small = 1e-8
+            if t + dt_small <= times[end]
+                dL_dt = (itp_L(t + dt_small) - L_t) / dt_small
+            else
+                dL_dt = (L_t - itp_L(t - dt_small)) / dt_small
+            end
+
+            # dI/dt = (V - R*I - dL/dt*I) / L(t)
+            if L_t > 0
+                return (V - R*I - dL_dt*I) / L_t
+            else
+                return 0.0
+            end
+        end
+
+        # 4th-order Runge-Kutta integration
+        k1 = ode_func(t_prev, I_prev)
+        k2 = ode_func(t_prev + dt/2, I_prev + dt*k1/2)
+        k3 = ode_func(t_prev + dt/2, I_prev + dt*k2/2)
+        k4 = ode_func(t_curr, I_prev + dt*k3)
+
+        I_solution[i] = I_prev + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+    end
+
+    return I_solution
 end
 
 @testset "RAPID2D.jl Basic Inductance Test" begin

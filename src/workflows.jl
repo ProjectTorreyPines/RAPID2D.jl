@@ -69,8 +69,10 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
 
         # Current calculations
         @timeit RAPID_TIMER "current_calculation" begin
-            # Calculate the current density based on electron drift velocity
-            RP.plasma.Jϕ .= (-RP.config.ee) .* RP.plasma.ne .* RP.plasma.ue_para .* RP.fields.bϕ
+            pla = RP.plasma
+            F = RP.fields
+            @unpack qe, ee = RP.config.constants
+            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Zeff) * pla.ui_para ) * F.bϕ
             I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
         end
 
@@ -103,25 +105,20 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
 
         # Ion dynamics
         if RP.flags.update_ni_independently
-            # Update ion drift velocity
-            update_ui_para!(RP)
-
             # Solve ion continuity equation
             solve_ion_continuity_equation!(RP)
-
-            # Update ion temperature if needed
-            update_Ti!(RP)
         else
-            # Update ion drift velocity
-            update_ui_para!(RP)
-
             # Set ion density from electron density with charge neutrality
             RP.plasma.ni .= RP.plasma.ne ./ RP.plasma.Zeff
-
-            # Update ion temperature if needed
-            update_Ti!(RP)
         end
 
+        if RP.flags.ud_evolve
+            update_ui_para!(RP)
+        end
+
+        if RP.flags.Ti_evolve
+            update_Ti!(RP)
+        end
 
         if RP.flags.Global_JxB_Force
             update_uMHD_by_global_JxB_force!(RP)
@@ -153,7 +150,7 @@ Handles time stepping, diagnostics output, and snapshot generation.
 # Returns
 - `RP`: The updated RAPID object after completion of the simulation
 """
-function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
+function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT}}=nothing) where FT<:AbstractFloat
     @timeit RAPID_TIMER "run_simulation!" begin
         # Simulation parameters
         dt = RP.dt
@@ -188,9 +185,9 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
                 if RP.step==1 || mod(RP.step, RP.flags.FLF_nstep)==0
                     @timeit RAPID_TIMER "field_line_following" begin
                         flf_analysis_field_lines_rz_plane!(RP)
-                        if !isempty(RP.flf.closed_surface_nids)
-                            RP.flags.FLF_nstep=1;
-                        end
+                        # if !isempty(RP.flf.closed_surface_nids)
+                        #     RP.flags.FLF_nstep=1;
+                        # end
                     end
                 end
 
@@ -226,6 +223,10 @@ function run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
                     end
                 end
 
+
+                if !isnothing(controller)
+                    update_controller!(RP, controller)
+                end
             end
         end
 

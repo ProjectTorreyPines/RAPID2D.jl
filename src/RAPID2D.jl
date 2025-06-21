@@ -45,6 +45,12 @@ include("physics/transport.jl")
 # Include the physics models
 include("physics/physics.jl")
 
+# Include control system modules
+include("control/types.jl")
+include("control/controllers.jl")
+include("control/interface.jl")
+include("control/initialization.jl")
+
 # Include the cross-section models
 include("reactions/electron_Xsec.jl")
 include("reactions/reaction_rate_coefficients.jl")

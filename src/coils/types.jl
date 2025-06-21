@@ -69,6 +69,26 @@ function Coil(location::NamedTuple{(:r, :z), Tuple{FT, FT}}, area::FT, resistanc
                     max_voltage, max_current, current, voltage_ext)
 end
 
+function Base.getproperty(coil::Coil{FT}, sym::Symbol) where {FT<:AbstractFloat}
+    if hasfield(Coil, sym)
+        return getfield(coil, sym)
+    else
+        if sym === :τ_LR
+            # L/R time constant [s]
+            return FT(coil.self_inductance / coil.resistance)
+        else
+            throw(ArgumentError("Coil has no property $sym"))
+        end
+    end
+end
+
+"""
+Extend propertynames to include computed properties for tab completion
+"""
+function Base.propertynames(coil::Coil{FT}) where {FT<:AbstractFloat}
+    return (fieldnames(Coil)..., :τ_LR)
+end
+
 """
     Base.propertynames(coils::Vector{<:Coil})
 
@@ -104,9 +124,9 @@ function Base.getproperty(coils::Vector{<:Coil{<:AbstractFloat}}, sym::Symbol)
         throw(BoundsError("Cannot access property of empty coil vector"))
     end
 
-    # Check if it's a valid Coil field
-    if hasfield(typeof(coils[1]), sym)
-        return [getfield(s, sym) for s in coils]
+    # Check if it's a valid Coil property
+    if hasproperty(coils[1], sym)
+        return [getproperty(s, sym) for s in coils]
     end
 
     # If not a coil field, throw error
@@ -225,6 +245,7 @@ mutable struct CoilSystem{FT <: AbstractFloat}
 
     # System matrices for circuit equations
     mutual_inductance::Matrix{FT}
+    time_s::FT
 	Δt::FT
 	θimp::FT
     A_LR_circuit::Matrix{FT}
@@ -268,6 +289,7 @@ mutable struct CoilSystem{FT <: AbstractFloat}
 
         # Initialize matrices (will be computed later)
         mutual_inductance = zeros(FT, n_total, n_total)
+        time_s = FT(0.0) # Simulation time, to be set later
 		Δt = FT(0.0)  # Time step for solving circuit equations, to be set later
 		θimp = FT(1.0) # Implicit factor for circuit equations (θimp=1.0 for implicit Euler)
         A_LR_circuit = zeros(FT, n_total, n_total)
@@ -282,7 +304,7 @@ mutable struct CoilSystem{FT <: AbstractFloat}
         inside_domain_indices = Int[]
 
         new{FT}(coils, n_total, n_powered, n_controllable, powered_indices, controllable_indices, passive_indices,
-                mutual_inductance, Δt, θimp, A_LR_circuit, inv_A_LR_circuit,
+                mutual_inductance, time_s, Δt, θimp, A_LR_circuit, inv_A_LR_circuit,
                 Green_coils2bdy, Green_grid2coils,
                 dGreen_dRg_grid2coils, dGreen_dZg_grid2coils,
                 inside_domain_indices, μ0, cu_resistivity)

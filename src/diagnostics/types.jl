@@ -17,14 +17,14 @@ Contains volume-averaged quantities
     ne_max::FT = zero(FT)          # Maximum electron density
     ue_para::FT = zero(FT)         # Average electron parallel velocity
     Te_eV::FT = zero(FT)           # Average electron temperature
-    𝒲e_eV::FT = zero(FT)          # Average electron energy (work)
+    Ke_eV::FT = zero(FT)           # Average electron kinetic energy
 
     # Ion quantities
     ni::FT = zero(FT)              # Average ion density
     ni_max::FT = zero(FT)          # Maximum ion density
     ui_para::FT = zero(FT)         # Average ion parallel velocity
     Ti_eV::FT = zero(FT)           # Average ion temperature
-    𝒲i_eV::FT = zero(FT)          # Average ion energy (work)
+    Ki_eV::FT = zero(FT)           # Average ion kinetic energy
 
     I_tor::FT = zero(FT)           # Toroidal current
 
@@ -89,14 +89,24 @@ Contains volume-averaged quantities
     CFL::Dict{Symbol, FT} = Dict{Symbol, FT}() # CFL terms
 
     # Control system (optional)
-    I_coils::Union{Nothing, Matrix{FT}} = nothing    # Coil currents (N_coils × time)
-    pidFac::Union{Nothing, Vector{FT}} = nothing     # PID control factor
-    BR_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BR
-    BZ_ctrl::Union{Nothing, Vector{FT}} = nothing # Control field BZ
+    coils_I::Union{Nothing, Vector{FT}} = nothing    # Coil currents (N_coils)
+    coils_V_ext::Union{Nothing, Vector{FT}} = nothing    # Coil external voltages (N_coils)
 
     # Growth rates (alternative calculation)
     growth_rate2::FT = zero(FT)     # Alternative growth rate
     loss_rate2::FT = zero(FT)       # Alternative loss rate
+
+    # Magnetic field energies
+    tot_W_mag::FT = zero(FT)     # magnetic energy by both plasma and coils
+    self_inductance_plasma::FT = zero(FT)   # Plasma self-inductance = 𝒲_magnetic_plasma / I_tor² [H]
+    resistance_plasma::FT = zero(FT) # Plasma resistance = P_ohmic / I_tor² [Ohm]
+
+    η_resistivity::FT = zero(FT) # Average resistivity [Ohm*m]
+
+    # Ohmic dissipations
+    tot_P_input_coils::FT = zero(FT)  # Input power by coils [W]
+    tot_P_ohm_plasma::FT = zero(FT) # Ohmic dissipation by plasma [W]
+    tot_P_ohm_coils::FT = zero(FT)   # Ohmic dissipation by coils [W]
 end
 
 """
@@ -125,7 +135,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Electron properties
     Te_eV::Matrix{FT} = zeros(FT, dims_RZ)          # Electron temperature
-    𝒲e_eV::Matrix{FT} = zeros(FT, dims_RZ)        # Mean electron energy
+    Ke_eV::Matrix{FT} = zeros(FT, dims_RZ)        # Mean electron energy
     ueR::Matrix{FT} = zeros(FT, dims_RZ)            # Electron velocity R component
     ueϕ::Matrix{FT} = zeros(FT, dims_RZ)            # Electron velocity ϕ component
     ueZ::Matrix{FT} = zeros(FT, dims_RZ)            # Electron velocity Z component
@@ -133,6 +143,10 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     # Source/loss rates (2D)
     Ne_src_rate::Matrix{FT} = zeros(FT, dims_RZ)    # Electron source rate
     Ne_loss_rate::Matrix{FT} = zeros(FT, dims_RZ)   # Electron loss rate
+
+    # Loop voltage
+    LV_ext::Matrix{FT} = zeros(FT, dims_RZ)          # External loop voltage (NR, NZ)
+    LV_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total loop voltage (NR, NZ)
 
     # Magnetic field
     BR::Matrix{FT} = zeros(FT, dims_RZ)             # Radial magnetic field
@@ -164,7 +178,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     uiϕ::Matrix{FT} = zeros(FT, dims_RZ)            # Ion velocity ϕ component
     uiZ::Matrix{FT} = zeros(FT, dims_RZ)            # Ion velocity Z component
     Ti_eV::Matrix{FT} = zeros(FT, dims_RZ)          # Ion temperature
-    𝒲i_eV::Matrix{FT} = zeros(FT, dims_RZ)         # Mean ion energy
+    Ki_eV::Matrix{FT} = zeros(FT, dims_RZ)         # Mean ion energy
     Ni_src_rate::Matrix{FT} = zeros(FT, dims_RZ)    # Ion source rate
     Ni_loss_rate::Matrix{FT} = zeros(FT, dims_RZ)   # Ion loss rate
 
@@ -205,9 +219,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Pi_equi::Matrix{FT} = zeros(FT, dims_RZ)        # Equilibration power
     Pi_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total ion power
 
-    # Control fields (optional)
-    BR_ctrl::Union{Nothing, Matrix{FT}} = nothing # Control magnetic field BR
-    BZ_ctrl::Union{Nothing, Matrix{FT}} = nothing # Control magnetic field BZ
+    η_resistivity::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel resistivity
 end
 
 """
@@ -303,7 +315,7 @@ function Base.:(==)(snap1::Snapshot0D{<:AbstractFloat}, snap2::Snapshot0D{<:Abst
                 return false
             end
         elseif val1 isa Union{Nothing, AbstractArray} && val2 isa Union{Nothing, AbstractArray}
-            # Compare optional arrays (like I_coils, pidFac, etc.)
+            # Compare optional arrays (like coils_I,etc.)
             if (val1 === nothing) != (val2 === nothing)
                 return false
             elseif val1 !== nothing && val2 !== nothing

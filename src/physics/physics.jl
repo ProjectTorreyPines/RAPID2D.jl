@@ -1135,31 +1135,48 @@ function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::In
 end
 
 """
-    solve_Ampere_equation!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_self::Bool=true) where {FT<:AbstractFloat}
 
 Solve Ampère's equation (Grad-Shafranov equation) to update self-consistent magnetic fields.
 
 Solves: ΔGS * ψ = - μ₀R²Jϕ with boundary conditions from Green's function.
-Updates ψ_self, BR_self, BZ_self, and optionally Eϕ_self.
+Updates ψ_self, and optionally Eϕ_self.
+
+# Arguments
+- `RP::RAPID{FT}`: RAPID simulation object containing plasma, grid, and operators
+- `F::Fields{FT}`: Fields object to update (defaults to `RP.fields`)
+
+# Keyword Arguments
+- `plasma::Bool=true`: Include plasma current density (Jϕ) in the source term
+- `coils::Bool=true`: Include external coil current contributions to the source term
 """
-function solve_Ampere_equation!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_self::Bool=true) where {FT<:AbstractFloat}
     @timeit RAPID_TIMER "solve_Ampere_equation" begin
     # Alias for readability
     pla = RP.plasma
     OP = RP.operators
-    F = RP.fields
     μ0 = RP.config.constants.μ0
     csys = RP.coil_system
 
-    @. OP.RHS = - μ0 * RP.G.R2D * pla.Jϕ
-    if csys.n_total > 0
+    if plasma
+        @. OP.RHS = - μ0 * RP.G.R2D * pla.Jϕ
+    else
+        @. OP.RHS = zero(FT)
+    end
+
+    if coils && csys.n_total > 0
         inside_Jϕ_coil_k = distribute_coil_currents_to_Jϕ(csys, RP.G)
         @. OP.RHS .+= -μ0 * RP.G.R2D * inside_Jϕ_coil_k;
     end
 
     # Boudnary condition: calculate psi values at boundaries using the Green_inWall2bdy
-    @views OP.RHS[RP.G.BDY_idx] .= (RP.G.Green_inWall2bdy * pla.Jϕ[RP.G.nodes.in_wall_nids]) * RP.G.dR * RP.G.dZ
-    if csys.n_total > 0
+    if plasma
+        @views OP.RHS[RP.G.BDY_idx] .= (RP.G.Green_inWall2bdy * pla.Jϕ[RP.G.nodes.in_wall_nids]) * RP.G.dR * RP.G.dZ
+    else
+        OP.RHS[RP.G.BDY_idx] .= zero(FT)
+    end
+
+    if coils && csys.n_total > 0
         OP.RHS[RP.G.BDY_idx] .+= csys.Green_coils2bdy * csys.coils.current
     end
 
@@ -1171,12 +1188,30 @@ function solve_Ampere_equation!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # % calculate the magnetic field from the self-consistent ψ
     calculate_B_from_ψ!(RP.G, F.ψ_self, F.BR_self, F.BZ_self)
 
-    if RP.flags.E_para_self_EM
+    if update_Eϕ_self && RP.flags.E_para_self_EM
         @. F.Eϕ_self = - (F.ψ_self - old_ψ_self) / (RP.G.R2D * RP.flags.Ampere_nstep * RP.dt)
     end
 
     return RP
     end # @timeit
+end
+
+
+"""
+    solve_Ampere_equation(RP::RAPID{FT}; plasma::Bool=true, coils::Bool=true) where {FT<:AbstractFloat}
+
+Non-mutating version of `solve_Ampere_equation!` that returns a new Fields object.
+
+Creates a new `Fields{FT}` object and solves Ampère's equation without modifying
+the original fields in the RAPID object.
+
+# See Also
+- [`solve_Ampere_equation!`](@ref): In-place version that modifies the RAPID object
+"""
+function solve_Ampere_equation(RP::RAPID{FT}; plasma::Bool=true, coils::Bool=true) where {FT<:AbstractFloat}
+    F = Fields{FT}(RP.G.NR, RP.G.NZ)
+    solve_Ampere_equation!(RP, F; plasma, coils)
+    return F
 end
 
 """
@@ -1284,10 +1319,11 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     # Toroidal current density Jϕ @ t=(n-th step)
     Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee*pla.Zeff) * pla.ui_para) * F.bϕ
 
-
-
-    # Initial (quadratic) guess of future ψ_self @ t=(n+1)-th step
-    new_ψ_self_k = @. F.ψ_self - dt*G.R2D * (FT(2.0)*F.Eϕ_self - F.Eϕ_self_prev)
+    # 6. Initial guess for ψ_self using θ-implicit scheme with extrapolated Eϕ_self
+    # Predict Eϕ_self(n+1) by linear extrapolation: 2*E(n) - E(n-1)
+    Eϕ_self_np1_pred = @. FT(2.0) * F.Eϕ_self - FT(1.0) * F.Eϕ_self_prev
+    # Apply θ-weighting: (1-θ)*E(n) + θ*E(n+1_predicted)
+    new_ψ_self_k = @. F.ψ_self - dt * G.R2D * ((one(FT) - θimp) * F.Eϕ_self + θimp * Eϕ_self_np1_pred)
 
     # Prepare Picard iteration for coupled system
     F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
@@ -1414,6 +1450,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
     # Update coil currents
     if RP.coil_system.n_total > 0
+        csys.time_s += csys.Δt
         set_all_currents!(csys, new_coils_I_k)
     end
 
@@ -1617,9 +1654,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee*pla.Zeff) * pla.ui_para) * F.bϕ
 
 
-    # 6. Initial guess for next time step ψ_self (quadratic extrapolation)
-    new_ψ_self_k = @. F.ψ_self - dt * G.R2D * (FT(2.0) * F.Eϕ_self - F.Eϕ_self_prev)
-
+    # 6. Initial guess for ψ_self using θ-implicit scheme with extrapolated Eϕ_self
+    # Predict Eϕ_self(n+1) by linear extrapolation: 2*E(n) - E(n-1)
+    Eϕ_self_np1_pred = @. FT(2.0) * F.Eϕ_self - FT(1.0) * F.Eϕ_self_prev
+    # Apply θ-weighting: (1-θ)*E(n) + θ*E(n+1_predicted)
+    new_ψ_self_k = @. F.ψ_self - dt * G.R2D * ((one(FT) - θimp) * F.Eϕ_self + θimp * Eϕ_self_np1_pred)
 
    # Prepare Picard iteration for coupled system
     F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
@@ -1631,6 +1670,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     new_ψ_self_kp1 = zeros(FT, G.NR, G.NZ) # Initialize next ψ_self for iteration
 
     new_coils_I_k = zeros(FT, csys.n_total) # Initialize coil currents for iteration
+    coil_flux_change_by_plasma = zeros(FT, csys.n_total)
 
     RHS_u = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS related to u
     RHS_ψ = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS relatedl to ψ
@@ -1676,7 +1716,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
                 Mcp_dIpla_by_conv = 0
             end
 
-            coil_flux_change_by_plasma = @. Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
+            @. coil_flux_change_by_plasma = Mcp_dIpla + Ipla_dMcp + Mcp_dIpla_by_conv
 
             circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) - coil_flux_change_by_plasma
             new_coils_I_k = csys.inv_A_LR_circuit * circuit_rhs  # valid if "dt" is constant
@@ -1746,6 +1786,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
     # Update coil currents
     if RP.coil_system.n_total > 0
+        csys.time_s += csys.Δt
         set_all_currents!(csys, new_coils_I_k)
     end
 

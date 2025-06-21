@@ -157,6 +157,7 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT<:AbstractFloa
                            (RP.plasma.T_gas_eV * RP.config.ee) .*
                            ones(FT, RP.G.NR, RP.G.NZ)
 
+    # TODO: need to set plasma quantities outside? instead of here?
     # Initialize density and temperature
     initialize_density!(RP)
     initialize_temperature!(RP)
@@ -764,6 +765,8 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:Abstract
     ν_factor_Maxwellian = FT(1.863033936542749e-40)  # sqrt(2)*ee^4/(12π^(1.5)*ϵ0^2*sqrt(me))
     @. pla.ν_ei = ν_factor_Maxwellian * pla.Zeff^2 * pla.ni *
                         pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
+
+    @. pla.ν_ei[!isfinite(pla.ν_ei)] = zero(FT)
 
     Zeff = pla.Zeff
     @. pla.sptz_fac = (1+1.198*Zeff+0.222*Zeff^2)/(1+2.966*Zeff+0.753*Zeff^2);

@@ -4,7 +4,7 @@ using LinearAlgebra
 # Export circuit matrix and mutual inductance functions
 export calculate_mutual_inductance_matrix!, calculate_circuit_matrices!, update_coil_system_matrices!
 export get_mutual_inductance, get_coil_coupling_matrix
-export solve_LR_circuit_step!
+export advance_LR_circuit_step!
 export calculate_circuit_magnetic_energy, calculate_power_dissipation
 export distribute_coil_currents_to_Jϕ!, distribute_coil_currents_to_Jϕ
 export determine_coils_inside_grid!
@@ -392,9 +392,9 @@ end
 # =============================================================================
 
 """
-    solve_LR_circuit_step!(csys::CoilSystem{FT}, t::FT) where FT
+    advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT) where FT
 
-Solve one time step of the circuit equation without plasma contribution.
+Advance one time step of the circuit equation without plasma contribution.
 
 This function implements the MATLAB circuit equation:
 ```matlab
@@ -413,13 +413,13 @@ new_coil_I_k = obj.coils.inv_A_LR_circuit*circuit_rhs;
 - Assumes circuit matrices (A_LR_circuit, inv_A_LR_circuit) are already computed
 - Does not include plasma contributions (simplified circuit equation)
 """
-function solve_LR_circuit_step!(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
+function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT=csys.time_s) where FT<:AbstractFloat
     if csys.n_total == 0
         return nothing
     end
 
-    # Get current voltages at time t
-    voltages = get_all_voltages_at_time(csys, t)
+    # Get current voltages at (t + 0.5 * csys.Δt)
+    voltages = get_all_voltages_at_time(csys, t + 0.5 * csys.Δt)
 
     # Get current state
     currents = get_all_currents(csys)
@@ -434,17 +434,18 @@ function solve_LR_circuit_step!(csys::CoilSystem{FT}, t::FT) where FT<:AbstractF
     # Update coil currents
     set_all_currents!(csys, new_currents)
 
+    csys.time_s += csys.Δt  # Advance time
     return nothing
 end
 
 
-function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
+function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT=csys.time_s) where FT<:AbstractFloat
     if csys.n_total == 0
         return nothing
     end
 
-        # Get current voltages at time t
-    voltages = get_all_voltages_at_time(csys, t)
+        # Get current voltages at time (t + 0.5 * csys.Δt)
+    voltages = get_all_voltages_at_time(csys, t + 0.5 * csys.Δt)
 
     # Get current state
     currents = get_all_currents(csys)

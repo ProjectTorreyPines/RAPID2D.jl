@@ -274,21 +274,21 @@ end
             snap2 = Snapshot0D{Float64}()
 
             # Test with nothing arrays (default)
-            @test snap1.I_coils === nothing
-            @test snap2.I_coils === nothing
+            @test snap1.coils_I === nothing
+            @test snap2.coils_I === nothing
             @test snap1 == snap2
             @test isequal(snap1, snap2)
 
             # Test with populated arrays
-            snap1.I_coils = [1.0 2.0; 3.0 4.0]
-            snap2.I_coils = [1.0 2.0; 3.0 4.0]
+            snap1.coils_I = [1.0, 2.0, 3.0, 4.0]
+            snap2.coils_I = [1.0, 2.0, 3.0, 4.0]
 
             @test snap1 == snap2
             @test isequal(snap1, snap2)
             @test isapprox(snap1, snap2)
 
             # Test one nothing, one array
-            snap2.I_coils = nothing
+            snap2.coils_I = nothing
             @test !(snap1 == snap2)
             @test !isequal(snap1, snap2)
             @test !isapprox(snap1, snap2)

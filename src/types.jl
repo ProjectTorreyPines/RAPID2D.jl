@@ -317,7 +317,6 @@ Fields include components of the magnetic and electric fields.
     Eϕ::Matrix{FT} = zeros(FT, dims)            # Toroidal electric field [V/m]
 
     # Parallel electric field
-    E_para_ind::Matrix{FT} = zeros(FT, dims)    # Induced parallel electric field [V/m]
     E_para_tot::Matrix{FT} = zeros(FT, dims)    # Total parallel electric field [V/m]
 
     # Magnetic flux
@@ -763,6 +762,7 @@ mutable struct RAPID{FT<:AbstractFloat}
         AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 
         coil_system = CoilSystem{FT}()  # coil system placeholder
+        coil_system.time_s = config.t_start_s  # Initialize time for coil system
 
         # Create and return new instance
         return new{FT}(

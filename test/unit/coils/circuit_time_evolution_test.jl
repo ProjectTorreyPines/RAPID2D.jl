@@ -9,6 +9,7 @@ function simulate_circuit_evolution(csys::CoilSystem{FT}, t_span::Tuple{FT, FT},
     @assert dt > 0 "Time step must be positive"
 
     # Set time step in system
+	csys.time_s = t_start
     csys.Δt = dt
 
     # Ensure matrices are computed
@@ -23,17 +24,14 @@ function simulate_circuit_evolution(csys::CoilSystem{FT}, t_span::Tuple{FT, FT},
         current_history = zeros(FT, N_steps, csys.n_total)
     end
 
-    t = t_start
     for i in 1:N_steps
         if save_history
-            time_history[i] = t
+            time_history[i] = csys.time_s
             current_history[i, :] = get_all_currents(csys)
         end
 
-        # Solve one time step
-        solve_LR_circuit_step!(csys, t)
-
-        t += dt
+        # Advance one time step
+        advance_LR_circuit_step!(csys)
     end
 
     if save_history
@@ -41,6 +39,40 @@ function simulate_circuit_evolution(csys::CoilSystem{FT}, t_span::Tuple{FT, FT},
     else
         return nothing
     end
+end
+
+# Calculate analytical solution for comparison
+function analytical_coupled_LR_solution(t, L1, L2, M, R1, R2, V1, V2)
+	# System: L * dI/dt + R * I = V
+	# Transform to: dI/dt = -L⁻¹R * I + L⁻¹V
+	# Solution: I(t) = I_steady + c1*v1*exp(λ1*t) + c2*v2*exp(λ2*t)
+
+	L_matrix = [L1 M; M L2]
+	R_matrix = [R1 0.0; 0.0 R2]
+	V_vector = [V1; V2]
+
+	# System matrix A = -L⁻¹R
+	A_sys = -L_matrix \ R_matrix
+
+	# Eigenvalues and eigenvectors of system matrix
+	eigenvals, eigenvecs = eigen(A_sys)
+	λ1, λ2 = eigenvals[1], eigenvals[2]
+	v1, v2 = eigenvecs[:, 1], eigenvecs[:, 2]
+
+	# Steady state solution: I_steady = R⁻¹ * V
+	I_steady = R_matrix \ V_vector
+
+	# Initial conditions: I(0) = 0, so I_steady + c1*v1 + c2*v2 = 0
+	# This gives us: c1*v1 + c2*v2 = -I_steady
+	# We need to solve the 2x2 system: [v1 v2] * [c1; c2] = -I_steady
+	coeff_matrix = [v1 v2]
+	coeffs = coeff_matrix \ (-I_steady)
+	c1, c2 = coeffs[1], coeffs[2]
+
+	# Solution at time t
+	I_t = I_steady + c1 * v1 * exp(λ1 * t) + c2 * v2 * exp(λ2 * t)
+
+	return I_t[1], I_t[2]
 end
 
 FT = Float64
@@ -241,39 +273,7 @@ FT = Float64
 
 		result = simulate_circuit_evolution(csys, (0.0, t_end), dt)
 
-		# Calculate analytical solution for comparison
-		function analytical_coupled_solution(t, L1, L2, M, R1, R2, V1, V2)
-			# System: L * dI/dt + R * I = V
-			# Transform to: dI/dt = -L⁻¹R * I + L⁻¹V
-			# Solution: I(t) = I_steady + c1*v1*exp(λ1*t) + c2*v2*exp(λ2*t)
 
-			L_matrix = [L1 M; M L2]
-			R_matrix = [R1 0.0; 0.0 R2]
-			V_vector = [V1; V2]
-
-			# System matrix A = -L⁻¹R
-			A_sys = -L_matrix \ R_matrix
-
-			# Eigenvalues and eigenvectors of system matrix
-			eigenvals, eigenvecs = eigen(A_sys)
-			λ1, λ2 = eigenvals[1], eigenvals[2]
-			v1, v2 = eigenvecs[:, 1], eigenvecs[:, 2]
-
-			# Steady state solution: I_steady = R⁻¹ * V
-			I_steady = R_matrix \ V_vector
-
-			# Initial conditions: I(0) = 0, so I_steady + c1*v1 + c2*v2 = 0
-			# This gives us: c1*v1 + c2*v2 = -I_steady
-			# We need to solve the 2x2 system: [v1 v2] * [c1; c2] = -I_steady
-			coeff_matrix = [v1 v2]
-			coeffs = coeff_matrix \ (-I_steady)
-			c1, c2 = coeffs[1], coeffs[2]
-
-			# Solution at time t
-			I_t = I_steady + c1 * v1 * exp(λ1 * t) + c2 * v2 * exp(λ2 * t)
-
-			return I_t[1], I_t[2]
-		end
 
 		# Calculate analytical solution at all time points
 		time_points = result.time_history
@@ -281,7 +281,7 @@ FT = Float64
 		I2_analytical = zeros(length(time_points))
 
 		for (i, t) in enumerate(time_points)
-			I1_analytical[i], I2_analytical[i] = analytical_coupled_solution(
+			I1_analytical[i], I2_analytical[i] = analytical_coupled_LR_solution(
 				t, L1, L2, M, R1, R2, V1, V2)
 		end
 
@@ -371,5 +371,120 @@ FT = Float64
 
 		@test calculate_circuit_magnetic_energy(csys) ≈ 0.0
 		@test calculate_power_dissipation(csys) ≈ 0.0
+	end
+end
+
+@testset "RAPID's coils evolution without plasma" begin
+
+    config = SimulationConfig{FT}(
+		NR = 30, NZ =50,
+		prefilled_gas_pressure = 0.0,
+		R0B0 = 2.5,
+		device_Name = "manual",
+		dt = 20e-6,
+		snap0D_Δt_s = 20e-6,
+		snap2D_Δt_s = 500e-6,
+		t_end_s = 5e-3,
+	)
+
+	flags = SimulationFlags{FT}(
+		Gas_evolve = false,
+		Ampere = true,
+		Ampere_Itor_threshold = 0.0
+	)
+	@testset "Two Coupled Coils - Analytical Comparison" begin
+		# Test coupled coils system against analytical solution
+		# Circuit equations: L₁(dI₁/dt) + M(dI₂/dt) + R₁I₁ = V₁
+		#                   L₂(dI₂/dt) + M(dI₁/dt) + R₂I₂ = V₂
+
+		RP = RAPID(config)
+		RP.flags = flags
+
+		coil_area = π * (0.01)^2
+		resistivity = 1e8*1.68e-8
+
+		μ0 = 4π * 1e-7
+
+		coil_location1 = (r=1.0, z=0.0)
+		coil_location2 = (r=1.5, z=0.0)
+
+		coil_resistance1 = calculate_coil_resistance(coil_location1.r, coil_area, resistivity)
+		coil_resistance2 = calculate_coil_resistance(coil_location2.r, coil_area, resistivity)
+
+		coil_L_self_1 = calculate_self_inductance(coil_area, coil_location1.r, μ0)
+		coil_L_self_2 = calculate_self_inductance(coil_area, coil_location2.r, μ0)
+
+        # Create coils for coupled system
+        coils = [
+            Coil{FT}(
+                location=coil_location1,
+                area=coil_area,
+                resistance=coil_resistance1,
+                self_inductance=coil_L_self_1,
+                is_powered=true,
+                name="coil1",
+                current=0.0,
+                voltage_ext=10.0
+            ),
+            Coil{FT}(
+                location=coil_location2,
+                area=coil_area,
+                resistance=coil_resistance2,
+                self_inductance=coil_L_self_2,
+                is_powered=true,
+                name="coil2",
+                current=0.0,
+                voltage_ext=0.0
+            )
+        ]
+
+		add_coil!(RP.coil_system, coils[1])
+		add_coil!(RP.coil_system, coils[2])
+
+		initialize!(RP)
+
+		RP.plasma.ne .= 0.0
+		RP.plasma.ni .= 0.0
+		update_transport_quantities!(RP)
+
+
+		run_simulation!(RP)
+
+		M = RP.coil_system.mutual_inductance[1,2]
+		L1 = coils[1].self_inductance
+		L2 = coils[2].self_inductance
+		# Verify coupling coefficient is physical (k < 1)
+		@test M / sqrt(L1 * L2) < 1.0  # Coupling coefficient must be less than 1
+
+		# Calculate analytical solution at all time points
+		time_points = RP.diagnostics.snaps0D.time_s
+		I1_analytical = zeros(length(time_points))
+		I2_analytical = zeros(length(time_points))
+
+		for (i, t) in enumerate(time_points)
+			I1_analytical[i], I2_analytical[i] = analytical_coupled_LR_solution(
+				t, coils[1].self_inductance, coils[2].self_inductance,
+				RP.coil_system.mutual_inductance[1,2],
+				coils[1].resistance, coils[2].resistance,
+				coils[1].voltage_ext, coils[2].voltage_ext)
+		end
+
+		# Compare numerical and analytical solutions
+		I1_numerical = getindex.(RP.diagnostics.snaps0D.coils_I, 1)
+		I2_numerical = getindex.(RP.diagnostics.snaps0D.coils_I, 2)
+
+		@test isapprox(I1_numerical, I1_analytical, rtol=1e-2)
+		@test isapprox(I2_numerical, I2_analytical, rtol=1e-2)
+
+
+		# Test energy conservation
+		snaps0D = RP.diagnostics.snaps0D
+		W_input = sum(snaps0D.tot_P_input_coils)*RP.config.snap0D_Δt_s
+		W_ohm_coil = sum(snaps0D.tot_P_ohm_coils)*RP.config.snap0D_Δt_s
+		W_ohm_plasma = sum(snaps0D.tot_P_ohm_plasma)*RP.config.snap0D_Δt_s
+		ΔW_mag = snaps0D.tot_W_mag[end] - snaps0D.tot_W_mag[1]
+
+		ΔW = W_input - (W_ohm_coil + W_ohm_plasma + ΔW_mag)  # should be close to zero
+		@test abs(ΔW) / abs(W_input) < 0.01  # within 1%
 	end
 end

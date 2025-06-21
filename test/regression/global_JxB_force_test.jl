@@ -77,8 +77,8 @@ function create_force_balance_config()
     # Time parameters
     config.dt = 2.5e-6
     config.snap0D_Δt_s = 5e-6
-    config.snap2D_Δt_s = 50e-6
-    config.t_end_s = 200e-6
+    config.snap2D_Δt_s = 20e-6
+    config.t_end_s = 150e-6
 
     # Device parameters
     config.device_Name = "manual"
@@ -492,7 +492,7 @@ function create_force_balance_plots(RP, times, ne_cen_R, ne_cen_Z, total_ne, avg
 
     # Save plot
     timestamp = Dates.format(now(), "yyyy-mm-dd_HH_MM_SS")
-    filename = "JxB_force_test_$(timestamp).png"
+    filename = joinpath(pwd(), "JxB_force_test_$(timestamp).png")
     savefig(plot_combined, filename)
 
     println("\nVisualization:")

@@ -13,6 +13,7 @@ Updates the provided snap0D with current simulation state and volume-averaged qu
 function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:AbstractFloat}
 
     pla = RP.plasma
+    F = RP.fields
     inVol2D = RP.G.inVol2D  # alias for convenience
 
     @unpack ee, me, mi = RP.config.constants  # Unpack constants for convenience
@@ -35,26 +36,26 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     snap0D.ne_max = maximum(pla.ne)
     snap0D.ue_para = sum(@. pla.ue_para * Ne2D) / total_Ne
     snap0D.Te_eV = sum(@. pla.Te_eV * Ne2D) / total_Ne
-    snap0D.𝒲e_eV = sum(@. (1.5 * pla.Te_eV + (0.5 * me * pla.ue_para^2 )/ ee) * Ne2D) / total_Ne
+    snap0D.Ke_eV = sum(@. (1.5 * pla.Te_eV + (0.5 * me * pla.ue_para^2 )/ ee) * Ne2D) / total_Ne
 
     # Ion quantities
     snap0D.ni = total_Ni / RP.G.device_inVolume
     snap0D.ni_max = maximum(pla.ni)
     snap0D.ui_para = sum(@. pla.ui_para * Ni2D) / total_Ni
     snap0D.Ti_eV = sum(@. pla.Ti_eV * Ni2D) / total_Ni
-    snap0D.𝒲i_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para^2 ) / ee) * Ni2D) / total_Ni
+    snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para^2 ) / ee) * Ni2D) / total_Ni
 
     # Toroidal current
     snap0D.I_tor = sum( pla.Jϕ * RP.G.dR * RP.G.dZ)
 
     # Electric fields (density-weighted averages)
-    snap0D.Epara_tot = sum(@. RP.fields.E_para_tot * Ne2D) / total_Ne
-    snap0D.Epara_ext = sum(@. RP.fields.E_para_ext * Ne2D) / total_Ne
-    snap0D.Epara_self_ES = sum(@. RP.fields.E_para_self_ES * Ne2D) / total_Ne
-    snap0D.Epara_self_EM = sum(@. RP.fields.E_para_self_EM * Ne2D) / total_Ne
+    snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
+    snap0D.Epara_ext = sum(@. F.E_para_ext * Ne2D) / total_Ne
+    snap0D.Epara_self_ES = sum(@. F.E_para_self_ES * Ne2D) / total_Ne
+    snap0D.Epara_self_EM = sum(@. F.E_para_self_EM * Ne2D) / total_Ne
 
     # Transport quantities
-    snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * RP.fields.Bpol / RP.fields.Btot * Ne2D) / total_Ne
+    snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * F.Bpol / F.Btot * Ne2D) / total_Ne
     snap0D.D_RZ = sum(@. sqrt(RP.transport.DRR^2 + RP.transport.DZZ^2) * Ne2D) / total_Ne
 
     # Gas quantities
@@ -148,15 +149,54 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
         # Would need PID controller and control field calculations
     end
 
-    # Coil currents (if present)
-    if RP.coil_system.n_total > 0
-        if hasfield(typeof(snap0D), :I_coils) && snap0D.I_coils !== nothing
-            snap0D.I_coils = RP.coils.I
+    # measure magnetic energies by toroidal currents
+    snap0D.tot_W_mag = zero(FT)
+    if RP.flags.Ampere
+        F_plasma = solve_Ampere_equation(RP; plasma=true, coils=false)
+        W_mag_by_plasma_without_coil =  0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
+        snap0D.self_inductance_plasma = 2.0 * W_mag_by_plasma_without_coil / (snap0D.I_tor^2 + eps(FT))
+
+        # plasma's contribution to magnetic energy [J]
+        # NOTE: must use total ψ_self by both plasma and coils
+        # tot_W_mag =(1/2)*∫Jϕ⋅Aϕ dV
+        snap0D.tot_W_mag += 0.5 * sum(@. RP.plasma.Jϕ * RP.fields.ψ_self / RP.G.R2D * RP.G.inVol2D)
+
+        # Ohmic dissipation [W]
+        ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom + pla.ν_en_iz
+        @unpack me, ee = RP.config.constants
+
+        σ_conductivity = @. pla.ne * ee^2 / (me * ν_eff)
+
+        valid_idx = findall(pla.ne .> 1e3 .&& ν_eff .> 0.0)
+
+        if isempty(valid_idx)
+            snap0D.η_resistivity = Inf
+            snap0D.resistance_plasma = Inf
+            snap0D.tot_P_ohm_plasma = 0.0
         else
-            @warn "Coil current storage not properly initialized" maxlog=10
+            snap0D.η_resistivity = 1.0 / (sum(@views @. σ_conductivity[valid_idx] * Ne2D[valid_idx]) / total_Ne)
+            snap0D.resistance_plasma = 1.0/sum(@views @. σ_conductivity[valid_idx]*RP.G.dR * RP.G.dZ/ (2π * RP.G.R2D[valid_idx]))
+            snap0D.tot_P_ohm_plasma = snap0D.I_tor^2 * snap0D.resistance_plasma # P_ohm = I^2*R
         end
     end
 
+    if RP.coil_system.n_total > 0
+        csys = RP.coil_system
+        coils = csys.coils
+
+        snap0D.coils_I = coils.current
+        snap0D.coils_V_ext = get_all_voltages_at_time(csys)
+
+        # magnetic energy by coils [J]
+        Φ_coils = ( csys.mutual_inductance*coils.current
+                    +2π*(csys.Green_grid2coils *pla.Jϕ[:])*RP.G.dR*RP.G.dZ
+                )
+        snap0D.tot_W_mag += 0.5*coils.current'*Φ_coils
+
+        # Ohmic coil dissipation [W]
+        snap0D.tot_P_input_coils = sum(coils.current .* get_all_voltages_at_time(csys))
+        snap0D.tot_P_ohm_coils = sum(@. coils.current^2 * coils.resistance)
+    end
 
     return RP
 end
@@ -235,6 +275,10 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Epol_self .= F.Epol_self
     snap2D.Eϕ_self .= F.Eϕ_self
 
+    # Loop voltages
+    snap2D.LV_ext .= F.LV_ext
+    @. snap2D.LV_tot = F.LV_ext + 2π*RP.G.R2D * F.Eϕ_self
+
     # Calculate ExB drift magnitude
     @. snap2D.mean_ExB_pol = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
 
@@ -286,8 +330,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.n_H2_gas .= pla.n_H2_gas
 
     # Calculate mean energies
-    @. snap2D.𝒲e_eV = 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
-    @. snap2D.𝒲i_eV = 1.5 * pla.Ti_eV + 0.5 * mi * pla.ui_para^2 / ee
+    @. snap2D.Ke_eV = 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
+    @. snap2D.Ki_eV = 1.5 * pla.Ti_eV + 0.5 * mi * pla.ui_para^2 / ee
 
     # Collision frequencies using RRC methods
     if RP.flags.Atomic_Collision
@@ -318,13 +362,15 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     snap2D.Pi_atomic .= pla.iPowers.atomic
     snap2D.Pi_equi .= pla.iPowers.equi
 
-    # Control fields (if enabled)
-    if hasfield(typeof(RP), :flags) && hasfield(typeof(RP.flags), :Control) && hasfield(typeof(RP.flags.Control), :state) && RP.flags.Control.state
-        if snap2D.BR_ctrl !== nothing && snap2D.BZ_ctrl !== nothing
-            snap2D.BR_ctrl .= F.BR_ctrl
-            snap2D.BZ_ctrl .= F.BZ_ctrl
-        end
-    end
+    ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom + pla.ν_en_iz
+    @. snap2D.η_resistivity = (me * ν_eff) / (pla.ne * ee^2)
+
+    # Handle near-zero density regions
+    near_zero_density_mask = pla.ne .< 1.0  # Find indices where density is effectively zero
+    snap2D.Te_eV[near_zero_density_mask] .= NaN
+    snap2D.ue_para[near_zero_density_mask] .= NaN
+    snap2D.Ke_eV[near_zero_density_mask] .= NaN
+
 
     return RP
 end
@@ -454,4 +500,38 @@ function update_snaps2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     reset_Ntracker_cumulative_2D!(RP)
 
     return RP
+end
+
+function check_energy_conservation(snaps0D::Vector{Snapshot0D{FT}}) where FT
+    times = snaps0D.time_s
+
+    trapz = (P, t) -> sum(0.5*(P[2:end]+P[1:end-1]) .* diff(t))
+
+    W_input = trapz(snaps0D.tot_P_input_coils, times)
+    W_ohm_coil = trapz(snaps0D.tot_P_ohm_coils, times)
+    W_ohm_plasma = trapz(snaps0D.tot_P_ohm_plasma, times)
+
+    ΔW_mag = snaps0D.tot_W_mag[end] - snaps0D.tot_W_mag[1]
+
+    # Input = Losses + Stored Energy
+    energy_balance = W_input - (W_ohm_coil + W_ohm_plasma + ΔW_mag )
+
+    @printf("Energy Conservation Analysis:\n")
+    @printf("=================================\n")
+    @printf("Input energy (coils):    %12.7f J\n", W_input)
+    @printf("Magnetic energy change:  %12.7f J\n", ΔW_mag)
+    @printf("Coil ohmic losses:       %12.7f J\n", W_ohm_coil)
+    @printf("Plasma ohmic losses:     %12.7f J\n", W_ohm_plasma)
+    @printf("---------------------------------\n")
+    @printf("Energy balance:          %12.7f J (should be ≈ 0)\n", energy_balance)
+    @printf("Relative error:          %12.2f%%\n", abs(energy_balance/W_input)*100)
+
+    return (;
+         W_input,
+         W_ohm_coil,
+         W_ohm_plasma,
+         ΔW_mag,
+         energy_balance,
+         rel_error = abs(energy_balance/W_input)*100
+    )
 end

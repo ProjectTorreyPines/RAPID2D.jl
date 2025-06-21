@@ -512,7 +512,7 @@ end
 Return external voltages of all coils as a vector at time t.
 For constant voltages, returns the constant value. For time-dependent voltages, evaluates at time t.
 """
-function get_all_voltages_at_time(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
+function get_all_voltages_at_time(csys::CoilSystem{FT}, t::FT=csys.time_s) where FT<:AbstractFloat
     return [get_coil_voltage_at_time(coil, t) for coil in csys.coils]
 end
 

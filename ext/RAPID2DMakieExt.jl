@@ -165,8 +165,8 @@ function RAPID2D.plot_comparison(snaps0D_1, snaps0D_2;
 
     # Energy comparison
     ax4 = Axis(fig[2, 2], ylabel="⟨𝒲e⟩ (eV)", xlabel="Time (ms)")
-    lines!(ax4, times_1, [s.𝒲e_eV for s in snaps0D_1], linewidth=2, label=labels[1])
-    lines!(ax4, times_2, [s.𝒲e_eV for s in snaps0D_2], linewidth=2, linestyle=:dash, label=labels[2])
+    lines!(ax4, times_1, [s.Ke_eV for s in snaps0D_1], linewidth=2, label=labels[1])
+    lines!(ax4, times_2, [s.Ke_eV for s in snaps0D_2], linewidth=2, linestyle=:dash, label=labels[2])
 
     return fig
 end
