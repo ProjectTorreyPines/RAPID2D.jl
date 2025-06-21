@@ -14,17 +14,8 @@ Returns the total toroidal current in Amperes.
 """
 function extract_plasma_current(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Calculate toroidal current: Itor = ∫∫ Jϕ * dR * dZ
-    Itor = FT(0.0)
 
-    for i in 1:RP.G.nR
-        for j in 1:RP.G.nZ
-            if RP.G.inVol2D[i, j]  # Only inside plasma volume
-                Itor += RP.plasma.Jϕ[i, j] * RP.G.dR * RP.G.dZ
-            end
-        end
-    end
-
-    return Itor
+    return sum(RP.plasma.Jϕ) * RP.G.dR * RP.G.dZ
 end
 
 """
