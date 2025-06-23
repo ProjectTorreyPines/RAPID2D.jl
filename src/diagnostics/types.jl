@@ -556,7 +556,9 @@ function Base.getproperty(sv::Vector{<:Snapshot0D{<:AbstractFloat}}, sym::Symbol
     end
 
     # Check if it's a valid Snapshot0D field
-    if hasfield(typeof(sv[1]), sym)
+    if sym === :coils_I || sym === :coils_V_ext
+        return reduce(hcat, [getfield(s, sym) for s in sv])  # Extract in a matrix form
+    elseif hasfield(typeof(sv[1]), sym)
         return [getfield(s, sym) for s in sv]
     end
 
