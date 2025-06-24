@@ -1241,7 +1241,7 @@ The electromagnetic induction coupling creates strong nonlinearity requiring ite
 Modifies `RP.plasma.ue_para`, `RP.fields.ψ_self`, `RP.fields.Eϕ_self`, and magnetic fields.
 """
 function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
-                                                    tolerance::FT=1e-3,
+                                                    tolerance::FT=1e-6,
                                                     max_iter::Int=10,
                                                     relaxation_w::FT=0.5) where {FT<:AbstractFloat}
 
@@ -1582,7 +1582,7 @@ This method:
 - `RP::RAPID{FT}`: The updated simulation object with new plasma and field values.
 """
 function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
-                                                            tolerance::FT=1e-3,
+                                                            tolerance::FT=1e-6,
                                                             max_iter::Int=10,
                                                             relaxation_w::FT=0.5) where {FT<:AbstractFloat}
     @timeit RAPID_TIMER "solve_combined_momentum_Ampere_equations_with_coils!" begin
