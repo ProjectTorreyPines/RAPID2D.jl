@@ -96,13 +96,13 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         set_RZ_B_E_from_file!(RP)
     end
 
-    # Initialize damping function
-    RP.damping_func = cal_damping_function_outside_wall(RP,
-                                                         RP.G.R1D, RP.G.Z1D,
-                                                         RP.wall.R, RP.wall.Z)
-
     # Set up grid and wall information
     setup_grid_state_and_volumes_with_wall!(RP)
+
+    # calculate damping function using fitted_wall
+    RP.damping_func = cal_damping_function_outside_wall(RP,
+                                                        RP.G.R1D, RP.G.Z1D,
+                                                        RP.fitted_wall.R, RP.fitted_wall.Z)
 
     # Initialize reaction rate coefficients
     initialize_RRCs!(RP)
