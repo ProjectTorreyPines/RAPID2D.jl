@@ -745,8 +745,9 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
     # Set electron density to zero outside the wall
     RP.plasma.ne[on_out_wall_nids] .= 0.0
 
-    # Set electron temperature to room temperature outside the wall
-    RP.plasma.Te_eV[on_out_wall_nids] .= RP.config.constants.room_T_eV
+    # Damp out electron temperature outside the wall
+    out_wall_nids = RP.G.nodes.out_wall_nids
+    @. RP.plasma.Te_eV[out_wall_nids] *= RP.damping_func[out_wall_nids]
 
     # Correct negative densities if enabled
     if RP.flags.negative_n_correction
@@ -819,7 +820,8 @@ function treat_ion_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
     RP.plasma.ni[on_out_wall_nids] .= 0.0
 
     # Set electron temperature to room temperature outside the wall
-    RP.plasma.Ti_eV[on_out_wall_nids] .= RP.config.constants.room_T_eV
+    out_wall_nids = RP.G.nodes.out_wall_nids
+    @. RP.plasma.Ti_eV[out_wall_nids] *= RP.damping_func[out_wall_nids]
 
     # Correct negative densities if enabled
     if RP.flags.negative_n_correction
