@@ -18,13 +18,14 @@ export update_transport_quantities!,
 Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
 """
 function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    pla = RP.plasma
 
     # Calculate momentum transfer reaction rate coefficient and collision frequency
     if RP.flags.Atomic_Collision
         RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
         RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-        @. RP.plasma.ν_en_mom = RP.plasma.n_H2_gas * RRC_mom
-        @. RP.plasma.ν_en_iz = RP.plasma.n_H2_gas * RRC_iz
+        @. pla.ν_en_mom = pla.n_H2_gas * RRC_mom
+        @. pla.ν_en_iz = pla.n_H2_gas * RRC_iz
     end
 
     # Calculate total collision frequency
@@ -32,11 +33,11 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         update_coulomb_collision_parameters!(RP)
     end
 
-    ν_tot = @. RP.plasma.ν_en_mom + RP.plasma.ν_en_iz + RP.plasma.ν_ei_eff
+    ν_tot = @. pla.ν_en_mom + pla.ν_en_iz + pla.ν_ei_eff
 
     # Calculate parallel diffusion coefficient based on collision frequency
     # Thermal velocity
-    vthe = @. sqrt(RP.plasma.Te_eV * RP.config.ee / RP.config.me)
+    vthe = @. sqrt(pla.Te_eV * RP.config.ee / RP.config.me)
 
     # Collision-based diffusion coefficient (D = vth²/(3ν))
     # NOTE: factor 1/3 is used to consider the diffusion with 3D isotropic collision
@@ -45,8 +46,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Flux-limiter scheme to prevent excessive diffusion
     if RP.flags.limit_flux.state
-        ne_SM = smooth_data_2D(RP.plasma.ne; num_SM=2, weighting=RP.G.inVol2D)
-        Lne_para = abs.(RP.plasma.ne ./ calculate_para_grad_of_scalar_F(RP,ne_SM)) # gradient-scale length
+        ne_SM = smooth_data_2D(pla.ne; num_SM=2, weighting=RP.G.inVol2D)
+        Lne_para = abs.(pla.ne ./ calculate_para_grad_of_scalar_F(RP,ne_SM)) # gradient-scale length
         Lne_para[isnan.(Lne_para)] .= zero(FT)
         Dmax_para = RP.flags.limit_flux.factor * vthe .* Lne_para
 
@@ -57,7 +58,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @. RP.transport.Dpara = RP.transport.Dpara0 + Dpara_coll
 
     # Calculate perpendicular diffusion using Bohm diffusivity
-    Dperp_bohm = @. abs((1/16) * RP.plasma.Te_eV / RP.fields.Bϕ)
+    Dperp_bohm = @. abs((1/16) * pla.Te_eV / RP.fields.Bϕ)
     @. RP.transport.Dperp = RP.transport.Dperp0 + Dperp_bohm
 
     extrapolate_field_to_boundary_nodes!(RP.G, RP.transport.Dpara)
@@ -67,12 +68,12 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     if RP.flags.Damp_Transp_outWall
         @. RP.transport.Dpara *= RP.damping_func
         @. RP.transport.Dperp *= RP.damping_func
-        @. RP.plasma.ue_para *= RP.damping_func
+        @. pla.ue_para *= RP.damping_func
 
-        @. RP.plasma.mean_ExB_R *= RP.damping_func
-        @. RP.plasma.mean_ExB_Z *= RP.damping_func
+        @. pla.mean_ExB_R *= RP.damping_func
+        @. pla.mean_ExB_Z *= RP.damping_func
 
-        @. RP.plasma.ui_para *= RP.damping_func
+        @. pla.ui_para *= RP.damping_func
     end
 
     # Convert parallel velocities to R,Z components if needed
@@ -84,50 +85,50 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
             # A simplified diamagnetic drift is implemented here
             # In the full implementation, we'd calculate grad_n and grad_T accurately
             n_min = FT(1.0e6)  # Minimum density to avoid division by zero
-            n_safe = copy(RP.plasma.ne)
+            n_safe = copy(pla.ne)
             n_safe[n_safe .< n_min] .= n_min
 
             # Simple approximation of diamagnetic drift
             # In the real implementation, we'd use cal_grad_of_scalar_F
-            RP.plasma.diaMag_R .= zeros(FT, size(RP.plasma.ne))
-            RP.plasma.diaMag_Z .= zeros(FT, size(RP.plasma.ne))
+            pla.diaMag_R .= zeros(FT, size(pla.ne))
+            pla.diaMag_Z .= zeros(FT, size(pla.ne))
         end
 
         # Update velocity components
-        RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
-        RP.plasma.ueϕ .= RP.plasma.ue_para .* RP.fields.bϕ
-        RP.plasma.ueZ .= RP.plasma.ue_para .* RP.fields.bZ
+        pla.ueR .= pla.ue_para .* RP.fields.bR
+        pla.ueϕ .= pla.ue_para .* RP.fields.bϕ
+        pla.ueZ .= pla.ue_para .* RP.fields.bZ
 
         # Add ExB and diamagnetic drifts if enabled
         if RP.flags.mean_ExB
-            RP.plasma.ueR .+= RP.plasma.mean_ExB_R
-            RP.plasma.ueZ .+= RP.plasma.mean_ExB_Z
+            pla.ueR .+= pla.mean_ExB_R
+            pla.ueZ .+= pla.mean_ExB_Z
         end
 
         if RP.flags.diaMag_drift
-            RP.plasma.ueR .+= RP.plasma.diaMag_R
-            RP.plasma.ueZ .+= RP.plasma.diaMag_Z
+            pla.ueR .+= pla.diaMag_R
+            pla.ueZ .+= pla.diaMag_Z
         end
 
         if RP.flags.Global_JxB_Force
-            RP.plasma.ueR .+= RP.plasma.uMHD_R
-            RP.plasma.ueZ .+= RP.plasma.uMHD_Z
+            pla.ueR .+= pla.uMHD_R
+            pla.ueZ .+= pla.uMHD_Z
         end
 
         # Same for ion velocities
-        RP.plasma.uiR .= RP.plasma.ui_para .* RP.fields.bR
-        RP.plasma.uiϕ .= RP.plasma.ui_para .* RP.fields.bϕ
-        RP.plasma.uiZ .= RP.plasma.ui_para .* RP.fields.bZ
+        pla.uiR .= pla.ui_para .* RP.fields.bR
+        pla.uiϕ .= pla.ui_para .* RP.fields.bϕ
+        pla.uiZ .= pla.ui_para .* RP.fields.bZ
 
         # Add ExB drift for ions too if enabled
         if RP.flags.mean_ExB
-            RP.plasma.uiR .+= RP.plasma.mean_ExB_R
-            RP.plasma.uiZ .+= RP.plasma.mean_ExB_Z
+            pla.uiR .+= pla.mean_ExB_R
+            pla.uiZ .+= pla.mean_ExB_Z
         end
 
         if RP.flags.Global_JxB_Force
-            RP.plasma.uiR .+= RP.plasma.uMHD_R
-            RP.plasma.uiZ .+= RP.plasma.uMHD_Z
+            pla.uiR .+= pla.uMHD_R
+            pla.uiZ .+= pla.uMHD_Z
         end
     end
 
