@@ -1080,7 +1080,7 @@ This uses a smoothed density field to improve numerical stability.
 """
 function calculate_electron_acceleration_by_pressure(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
     # alias
-    cnst = RP.config.constants
+    @unpack ee, me = RP.config.constants
 
     # Smooth the density field to reduce numerical noise (skip if num_SM is 0)
     n_SM = smooth_data_2D(RP.plasma.ne; num_SM, weighting=RP.G.Jacob)
@@ -1092,8 +1092,14 @@ function calculate_electron_acceleration_by_pressure(RP::RAPID{FT}; num_SM::Int=
     para_grad_Te_eV = calculate_para_grad_of_scalar_F(RP, RP.plasma.Te_eV )
 
     # Combine both terms for total pressure gradient acceleration
-    accel_by_pressure = @. (- para_grad_ln_n * RP.plasma.Te_eV * cnst.ee / cnst.me
-                            - para_grad_Te_eV * cnst.ee / cnst.me)
+    accel_by_pressure = @. (- para_grad_ln_n * RP.plasma.Te_eV * ee / me
+                            - para_grad_Te_eV * ee / me)
+
+    if RP.flags.limit_acceleration.state
+        factor = RP.flags.limit_acceleration.factor
+        min_max_accel = factor.*extrema(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ./ RP.dt
+        clamp!(accel_by_pressure, min_max_accel...)
+    end
 
     # Handle any NaN or Inf values that might arise
     accel_by_pressure[.!isfinite.(accel_by_pressure)] .= zero(FT)
@@ -1124,14 +1130,18 @@ It uses a smoothed parallel electron velocity field to improve numerical stabili
 3. Computes the convection term as -(ueR*∇ud_R + ueZ*∇ud_Z)
 """
 function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=2, flag_upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
-    # alias
-    cnst = RP.config.constants
 
     # Smooth the density field to reduce numerical noise (skip if num_SM is 0)
     ue_para_SM = smooth_data_2D(RP.plasma.ue_para; num_SM, weighting=RP.G.Jacob)
 
     ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, ue_para_SM; upwind=flag_upwind)
     accel_by_convection = @. -(RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
+
+    if RP.flags.limit_acceleration.state
+        factor = RP.flags.limit_acceleration.factor
+        min_max_accel = factor.*extrema(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ./ RP.dt
+        clamp!(accel_by_convection, min_max_accel...)
+    end
 
     return accel_by_convection
 end

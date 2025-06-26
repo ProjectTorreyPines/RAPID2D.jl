@@ -487,6 +487,12 @@ Contains boolean flags that control various aspects of the simulation.
     evolve_Te_inWall_only::Bool = false       # Only evolve Te inside wall
     Damp_Transp_outWall::Bool = true          # Damp transport outside wall
 
+    # artificial limiters to avoid numerical instabilities
+    limit_acceleration::NamedTuple = (
+        state = true,                         # Enable acceleration limiting
+        factor = 0.5                          # Limiting factor (accel < factor*max(u_para))
+    )
+
     # Numerical settings
     Ampere_nstep::Int = 10                    # Steps between Ampere's law updates
     FLF_nstep::Int = 10                       # Steps between field line following updates
