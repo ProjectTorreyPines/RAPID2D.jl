@@ -38,19 +38,10 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Thermal velocity
     vthe = @. sqrt(RP.plasma.Te_eV * RP.config.ee / RP.config.me)
 
-    # Collision-based diffusion coefficient (D = vth²/(2ν))
-    Dpara_coll_1 = @. 0.5 * vthe^2 / ν_tot
-
-    # Field line mixing length-based diffusion coefficient
-    Dpara_coll_2 = zeros(FT, size(RP.plasma.Te_eV))
-    Dpara_coll_2 = @. 0.5 * vthe * RP.transport.L_mixing * RP.fields.Btot / RP.fields.Bpol
-    Dpara_coll_2[RP.flf.closed_surface_nids] .= typemax(FT) # Effectively infinity for closed surfaces
-
-    # Use the minimum of the two diffusion coefficients
-    Dpara_coll = min.(Dpara_coll_1, Dpara_coll_2)
+    # Collision-based diffusion coefficient (D = vth²/(3ν))
+    # NOTE: factor 1/3 is used to consider the diffusion with 3D isotropic collision
+    Dpara_coll = @. vthe^2 / (ν_tot * FT(3.0))
     Dpara_coll[.!isfinite.(Dpara_coll)] .= zero(FT)
-    Dpara_coll[RP.G.nodes.on_out_wall_nids] .= zero(FT)
-
 
     # Flux-limiter scheme to prevent excessive diffusion
     if RP.flags.limit_flux.state
