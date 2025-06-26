@@ -1269,10 +1269,6 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
     # Physical constants
     @unpack ee, me, μ0, qe = RP.config.constants
 
-    # Store initial values for convergence checking
-    ue_para_old = copy(pla.ue_para)
-    ψ_self_old = copy(F.ψ_self)
-
     θimp = FT(1.0); # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
 
     # Factor for EM drive contribution
@@ -1612,10 +1608,6 @@ function solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
 
     # Physical constants
     @unpack ee, me, μ0, qe = RP.config.constants
-
-    # Store initial values for convergence checking
-    ue_para_old = copy(pla.ue_para)
-    ψ_self_old = copy(F.ψ_self)
 
     θimp = FT(1.0); # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
 
