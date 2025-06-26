@@ -163,11 +163,11 @@ function setup_plasma!(RP::RAPID; verbose::Bool=false)
 
     # Create Gaussian plasma profile
     ini_n = @. n0 * exp(-(((RP.G.R2D - cenR)^2 + (RP.G.Z2D - cenZ)^2) / (2 * radius^2)))
-
+	ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0  # Set out-wall nodes to zero density
     # Apply spatial mask (only inside minor radius)
     # mask = sqrt((RP.R2D-cenR).^2 + (RP.Z2D-cenZ).^2)<radius;
-    mask = @. sqrt((RP.G.R2D - cenR)^2 + (RP.G.Z2D - cenZ)^2) < radius
-    ini_n .*= mask
+    # mask = @. sqrt((RP.G.R2D - cenR)^2 + (RP.G.Z2D - cenZ)^2) < radius
+    # ini_n .*= mask
 
     # Set plasma densities
     @. RP.plasma.ne = ini_n
