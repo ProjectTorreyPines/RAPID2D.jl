@@ -728,7 +728,7 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:Abstract
     pla = RP.plasma
 
     # Constants needed for calculation
-    @unpack me, mi, mp, ee = RP.config.constants
+    @unpack me, mi, mp, ee, eps0 = RP.config.constants
 
     μ = mi / mp  # ion mass / proton mass
     me_over_mi = me / mi  # electron to ion mass ratio
@@ -766,7 +766,19 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:Abstract
     @. pla.ν_ei = ν_factor_Maxwellian * pla.Zeff^2 * pla.ni *
                         pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
 
+    # Another way (NRL formula):
+    # @. pla.ν_ei = 2.91e-6 * pla.ne*1e-6 *pla.lnΛ * pla.Te_eV^(-1.5)
+    @. pla.ν_ii = 4.80e-8 * pla.Zeff^4 * (mi/mp)^(-0.5) * pla.ni*1e-6 * pla.lnΛ * pla.Ti_eV^(-1.5)
+
+    # # From lecture note (CH2_Fundamentals) of Prof. Hong
+    # τ_ei = @.  (6.0 * sqrt(3.0)*π * eps0^2/ ee^4) * (sqrt(me)* (ee*pla.Te_eV)^(1.5)) / (pla.Zeff^4 * pla.ni * pla.lnΛ)
+    # τ_ii = @.  (3.0 * sqrt(6.0)*π * eps0^2/ ee^4) * (sqrt(mi)* (ee*pla.Ti_eV)^(1.5)) / (pla.Zeff^4 * pla.ni * pla.lnΛ)
+
+
+    # Handle non-finite values
     @. pla.ν_ei[!isfinite(pla.ν_ei)] = zero(FT)
+    @. pla.ν_ii[!isfinite(pla.ν_ii)] = zero(FT)
+
 
     Zeff = pla.Zeff
     @. pla.sptz_fac = (1+1.198*Zeff+0.222*Zeff^2)/(1+2.966*Zeff+0.753*Zeff^2);

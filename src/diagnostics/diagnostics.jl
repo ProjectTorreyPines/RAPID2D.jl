@@ -76,6 +76,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     if RP.flags.Coulomb_Collision
         # Coulomb collision frequency
         snap0D.ν_ei = sum(@. pla.ν_ei * Ne2D) / total_Ne
+        snap0D.ν_ei_eff = sum(@. pla.ν_ei_eff * Ne2D) / total_Ne
+        snap0D.ν_ii = sum(@. pla.ν_ii * Ni2D) / total_Ni
     end
 
 
@@ -346,6 +348,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
 
     if RP.flags.Coulomb_Collision
         snap2D.ν_ei .= pla.ν_ei
+        snap2D.ν_ei_eff .= pla.ν_ei_eff
+        snap2D.ν_ii .= pla.ν_ii
     end
 
     # Store electron power components
@@ -366,10 +370,10 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
     @. snap2D.η_resistivity = (me * ν_eff) / (pla.ne * ee^2)
 
     # Handle near-zero density regions
-    near_zero_density_mask = pla.ne .< 1.0  # Find indices where density is effectively zero
-    snap2D.Te_eV[near_zero_density_mask] .= NaN
-    snap2D.ue_para[near_zero_density_mask] .= NaN
-    snap2D.Ke_eV[near_zero_density_mask] .= NaN
+    # near_zero_density_mask = pla.ne .< 1.0  # Find indices where density is effectively zero
+    # snap2D.Te_eV[near_zero_density_mask] .= NaN
+    # snap2D.ue_para[near_zero_density_mask] .= NaN
+    # snap2D.Ke_eV[near_zero_density_mask] .= NaN
 
 
     return RP
