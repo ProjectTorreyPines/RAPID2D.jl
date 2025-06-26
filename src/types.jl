@@ -492,6 +492,10 @@ Contains boolean flags that control various aspects of the simulation.
         state = true,                         # Enable acceleration limiting
         factor = 0.5                          # Limiting factor (accel < factor*max(u_para))
     )
+    limit_flux::NamedTuple = (
+        state = true,                         # Enable flux limiting
+        factor = 0.25                          # Limiting factor (Deff = min(D_SH, factor*vth*Ln))
+    )
 
     # Numerical settings
     Ampere_nstep::Int = 10                    # Steps between Ampere's law updates

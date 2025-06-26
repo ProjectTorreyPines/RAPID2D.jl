@@ -51,6 +51,17 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     Dpara_coll[.!isfinite.(Dpara_coll)] .= zero(FT)
     Dpara_coll[RP.G.nodes.on_out_wall_nids] .= zero(FT)
 
+
+    # Flux-limiter scheme to prevent excessive diffusion
+    if RP.flags.limit_flux.state
+        ne_SM = smooth_data_2D(RP.plasma.ne; num_SM=2, weighting=RP.G.inVol2D)
+        Lne_para = abs.(RP.plasma.ne ./ calculate_para_grad_of_scalar_F(RP,ne_SM)) # gradient-scale length
+        Lne_para[isnan.(Lne_para)] .= zero(FT)
+        Dmax_para = RP.flags.limit_flux.factor * vthe .* Lne_para
+
+        Dpara_coll = min.(Dpara_coll, Dmax_para)
+    end
+
     # Combine base and collision diffusion
     @. RP.transport.Dpara = RP.transport.Dpara0 + Dpara_coll
 
