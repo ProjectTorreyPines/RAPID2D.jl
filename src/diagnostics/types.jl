@@ -203,8 +203,8 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     ν_en_mom::Matrix{FT} = zeros(FT, dims_RZ)       # Average momentum transfer frequency [1/s]
     ν_en_Hα::Matrix{FT} = zeros(FT, dims_RZ)        # Hα emission frequency [1/s]
     ν_ei::Matrix{FT} = zeros(FT, dims_RZ)           # Electron-ion coulomb collision frequency [1/s]
-    ν_ei_eff::FT = zero(FT)                         # effective electron-ion coulomb collision frequency [1/s]
-    ν_ii::FT = zero(FT)                             # Ion-ion coulomb collision frequency [1/s]
+    ν_ei_eff::Matrix{FT} = zeros(FT, dims_RZ)       # effective electron-ion coulomb collision frequency [1/s]
+    ν_ii::Matrix{FT} = zeros(FT, dims_RZ)           # Ion-ion coulomb collision frequency [1/s]
 
     # Electron Heating Powers
     Pe_diffu::Matrix{FT} = zeros(FT, dims_RZ)       # Diffusion power
