@@ -19,6 +19,7 @@ Update all transport-related quantities including diffusion coefficients, veloci
 """
 function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     pla = RP.plasma
+    tp = RP.transport
     @unpack mi, me, ee = RP.config.constants
 
     # Initialize Effective collision frequencies
@@ -51,19 +52,19 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     vp_i = @. sqrt(2.0*pla.Ti_eV * ee / mi)
 
     # Collision-based diffusion coefficient (D = vth²/(3ν))
-    De_para_coll = @. FT(0.5) * vp_e^2 / νe_eff
-    @. De_para_coll[isnan(De_para_coll)] = typemax(FT) # make NaN to Inf
+    tp.Dpara_e_coll = @. FT(0.5) * vp_e^2 / νe_eff
+    @. tp.Dpara_e_coll[isnan(tp.Dpara_e_coll)] = typemax(FT) # make NaN to Inf
 
-    Di_para_coll = @. FT(0.5) * vp_i^2 / νi_eff
-    @. Di_para_coll[isnan(Di_para_coll)] = typemax(FT) # make NaN to Inf
+    tp.Dpara_i_coll = @. FT(0.5) * vp_i^2 / νi_eff
+    @. tp.Dpara_i_coll[isnan(tp.Dpara_i_coll)] = typemax(FT) # make NaN to Inf
 
     # Ambipolar diffusion coefficient (Te+Ti)*(De*Di) /(Ti*De + Te*Di)
-    Dpara_amb = @. (pla.Te_eV + pla.Ti_eV) * De_para_coll * Di_para_coll / (pla.Ti_eV * De_para_coll + pla.Te_eV * Di_para_coll)
-    @. Dpara_amb[isnan(Dpara_amb)] = typemax(FT) # make NaN to Inf
+    tp.Dpara_amb = @. (pla.Te_eV + pla.Ti_eV) * tp.Dpara_e_coll * tp.Dpara_i_coll / (pla.Ti_eV * tp.Dpara_e_coll + pla.Te_eV * tp.Dpara_i_coll)
+    @. tp.Dpara_amb[isnan(tp.Dpara_amb)] = typemax(FT) # make NaN to Inf
 
     # Harmonic average of collision and ambipolar diffusion coefficients
-    De_para_eff = @. (De_para_coll * Dpara_amb) / (De_para_coll + Dpara_amb)
-    @. De_para_eff[isnan(De_para_eff)] = typemax(FT) # make NaN to Inf
+    tp.Dpara_e_eff = @. (tp.Dpara_e_coll * tp.Dpara_amb) / (tp.Dpara_e_coll + tp.Dpara_amb)
+    @. tp.Dpara_e_eff[isnan(tp.Dpara_e_eff)] = typemax(FT) # make NaN to Inf
 
     # Flux-limiter scheme to prevent excessive diffusion
     if RP.flags.limit_flux.state
@@ -72,7 +73,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         Lne_para = abs.(pla.ne ./ calculate_para_grad_of_scalar_F(RP,ne_SM)) # gradient-scale length
         @. Lne_para[!isfinite(Lne_para)] = zero(FT)
         De_max_para = RP.flags.limit_flux.factor * vp_e .* Lne_para
-        De_para_eff = min.(De_para_eff, De_max_para)
+        tp.Dpara_e_eff = min.(tp.Dpara_e_eff, De_max_para)
 
         # # Limit ion diffusivity
         # ni_SM = smooth_data_2D(pla.ni; num_SM=2, weighting=RP.G.inVol2D)
@@ -80,23 +81,23 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         # @. Lni_para[isnan(Lni_para)] = zero(FT)
         # Di_max_para = RP.flags.limit_flux.factor * vthi .* Lni_para
 
-        # Di_para_coll = min.(De_para_coll, Dpara_amb, Di_max_para)
+        # Dpara_i_coll = min.(Dpara_e_coll, Dpara_amb, Di_max_para)
     end
 
     # Combine base and collision diffusion
-    @. RP.transport.Dpara = RP.transport.Dpara0 + De_para_eff
+    @. tp.Dpara = tp.Dpara0 + tp.Dpara_e_eff
 
     # Calculate perpendicular diffusion using Bohm diffusivity
     Dperp_bohm = @. abs((1/16) * pla.Te_eV / RP.fields.Bϕ)
-    @. RP.transport.Dperp = RP.transport.Dperp0 + Dperp_bohm
+    @. tp.Dperp = tp.Dperp0 + Dperp_bohm
 
-    extrapolate_field_to_boundary_nodes!(RP.G, RP.transport.Dpara)
-    extrapolate_field_to_boundary_nodes!(RP.G, RP.transport.Dperp)
+    extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)
+    extrapolate_field_to_boundary_nodes!(RP.G, tp.Dperp)
 
     # Apply damping function outside wall if enabled
     if RP.flags.Damp_Transp_outWall
-        @. RP.transport.Dpara *= RP.damping_func
-        @. RP.transport.Dperp *= RP.damping_func
+        @. tp.Dpara *= RP.damping_func
+        @. tp.Dperp *= RP.damping_func
         @. pla.ue_para *= RP.damping_func
 
         @. pla.mean_ExB_R *= RP.damping_func

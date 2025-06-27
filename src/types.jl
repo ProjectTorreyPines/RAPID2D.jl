@@ -347,6 +347,12 @@ Fields include diffusion coefficients in different directions.
     Dpara0::FT = FT(1.0)            # Base parallel diffusion coefficient [m²/s]
     Dperp0::FT = FT(0.1)            # Base perpendicular diffusion coefficient [m²/s]
 
+    # Parallel diffusion coefficients
+    Dpara_e_coll::Matrix{FT} = zeros(FT, dims)  # Electron parallel diffusion coefficient due to collisions [m²/s]
+    Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # Ion parallel diffusion coefficient due to collisions [m²/s]
+    Dpara_amb::Matrix{FT} = zeros(FT, dims)  # Ambipolar diffusion coefficient [m²/s]
+    Dpara_e_eff::Matrix{FT} = zeros(FT, dims)  # Effective electron parallel diffusion coefficient [m²/s]
+
     # Spatially-varying diffusion coefficients
     Dpara::Matrix{FT} = zeros(FT, dims)  # Parallel diffusion coefficient [m²/s]
     Dperp::Matrix{FT} = zeros(FT, dims)  # Perpendicular diffusion coefficient [m²/s]
