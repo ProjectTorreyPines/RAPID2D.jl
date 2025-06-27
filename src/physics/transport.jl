@@ -19,6 +19,11 @@ Update all transport-related quantities including diffusion coefficients, veloci
 """
 function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     pla = RP.plasma
+    @unpack mi, me, ee = RP.config.constants
+
+    # Initialize Effective collision frequencies
+    νe_eff = zeros(FT, size(pla.ne))
+    νi_eff = zeros(FT, size(pla.ne))
 
     # Calculate momentum transfer reaction rate coefficient and collision frequency
     if RP.flags.Atomic_Collision
@@ -26,36 +31,60 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
         @. pla.ν_en_mom = pla.n_H2_gas * RRC_mom
         @. pla.ν_en_iz = pla.n_H2_gas * RRC_iz
+        @. νe_eff += pla.ν_en_mom + pla.ν_en_iz
+
+        iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
+        iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
+        @. νi_eff += pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
     end
 
     # Calculate total collision frequency
     if RP.flags.Coulomb_Collision
         update_coulomb_collision_parameters!(RP)
+        νe_eff .+= pla.ν_ei_eff
+        νi_eff .+= pla.ν_ii
     end
 
-    ν_tot = @. pla.ν_en_mom + pla.ν_en_iz + pla.ν_ei_eff
-
     # Calculate parallel diffusion coefficient based on collision frequency
-    # Thermal velocity
-    vthe = @. sqrt(pla.Te_eV * RP.config.ee / RP.config.me)
+    # NOTE: vp is the most probable velocity for Maxwellian distribution
+    vp_e = @. sqrt(2.0*pla.Te_eV * ee / me)
+    vp_i = @. sqrt(2.0*pla.Ti_eV * ee / mi)
 
     # Collision-based diffusion coefficient (D = vth²/(3ν))
-    # NOTE: factor 1/3 is used to consider the diffusion with 3D isotropic collision
-    Dpara_coll = @. vthe^2 / (ν_tot * FT(3.0))
-    Dpara_coll[.!isfinite.(Dpara_coll)] .= zero(FT)
+    De_para_coll = @. FT(0.5) * vp_e^2 / νe_eff
+    @. De_para_coll[isnan(De_para_coll)] = typemax(FT) # make NaN to Inf
+
+    Di_para_coll = @. FT(0.5) * vp_i^2 / νi_eff
+    @. Di_para_coll[isnan(Di_para_coll)] = typemax(FT) # make NaN to Inf
+
+    # Ambipolar diffusion coefficient (Te+Ti)*(De*Di) /(Ti*De + Te*Di)
+    Dpara_amb = @. (pla.Te_eV + pla.Ti_eV) * De_para_coll * Di_para_coll / (pla.Ti_eV * De_para_coll + pla.Te_eV * Di_para_coll)
+    @. Dpara_amb[isnan(Dpara_amb)] = typemax(FT) # make NaN to Inf
+
+    # Harmonic average of collision and ambipolar diffusion coefficients
+    De_para_eff = @. (De_para_coll * Dpara_amb) / (De_para_coll + Dpara_amb)
+    @. De_para_eff[isnan(De_para_eff)] = typemax(FT) # make NaN to Inf
 
     # Flux-limiter scheme to prevent excessive diffusion
     if RP.flags.limit_flux.state
+        # Limit electron diffusivity
         ne_SM = smooth_data_2D(pla.ne; num_SM=2, weighting=RP.G.inVol2D)
         Lne_para = abs.(pla.ne ./ calculate_para_grad_of_scalar_F(RP,ne_SM)) # gradient-scale length
-        Lne_para[isnan.(Lne_para)] .= zero(FT)
-        Dmax_para = RP.flags.limit_flux.factor * vthe .* Lne_para
+        @. Lne_para[!isfinite(Lne_para)] = zero(FT)
+        De_max_para = RP.flags.limit_flux.factor * vp_e .* Lne_para
+        De_para_eff = min.(De_para_eff, De_max_para)
 
-        Dpara_coll = min.(Dpara_coll, Dmax_para)
+        # # Limit ion diffusivity
+        # ni_SM = smooth_data_2D(pla.ni; num_SM=2, weighting=RP.G.inVol2D)
+        # Lni_para = abs.(pla.ni ./ calculate_para_grad_of_scalar_F(RP,ni_SM)) # gradient-scale length
+        # @. Lni_para[isnan(Lni_para)] = zero(FT)
+        # Di_max_para = RP.flags.limit_flux.factor * vthi .* Lni_para
+
+        # Di_para_coll = min.(De_para_coll, Dpara_amb, Di_max_para)
     end
 
     # Combine base and collision diffusion
-    @. RP.transport.Dpara = RP.transport.Dpara0 + Dpara_coll
+    @. RP.transport.Dpara = RP.transport.Dpara0 + De_para_eff
 
     # Calculate perpendicular diffusion using Bohm diffusivity
     Dperp_bohm = @. abs((1/16) * pla.Te_eV / RP.fields.Bϕ)
