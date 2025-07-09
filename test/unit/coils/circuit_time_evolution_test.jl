@@ -470,8 +470,8 @@ end
 		end
 
 		# Compare numerical and analytical solutions
-		I1_numerical = getindex.(RP.diagnostics.snaps0D.coils_I, 1)
-		I2_numerical = getindex.(RP.diagnostics.snaps0D.coils_I, 2)
+		I1_numerical = RP.diagnostics.snaps0D.coils_I[1,:]
+		I2_numerical = RP.diagnostics.snaps0D.coils_I[2,:]
 
 		@test isapprox(I1_numerical, I1_analytical, rtol=1e-2)
 		@test isapprox(I2_numerical, I2_analytical, rtol=1e-2)
