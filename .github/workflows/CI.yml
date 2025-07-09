@@ -68,38 +68,38 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
 
-  benchmark:
-    name: Run Benchmarks
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
+  # benchmark:
+  #   name: Run Benchmarks
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   needs: test
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1.x'
+  #     - uses: julia-actions/setup-julia@v2
+  #       with:
+  #         version: '1.x'
 
-      - uses: julia-actions/cache@v2
+  #     - uses: julia-actions/cache@v2
 
-      - uses: julia-actions/julia-buildpkg@v1
+  #     - uses: julia-actions/julia-buildpkg@v1
 
 
-      - name: Setup benchmark environment
-        run: |
-          cd benchmark
-          julia --project=. -e 'import Pkg; Pkg.develop(path=".."); Pkg.instantiate()'
+  #     - name: Setup benchmark environment
+  #       run: |
+  #         cd benchmark
+  #         julia --project=. -e 'import Pkg; Pkg.develop(path=".."); Pkg.instantiate()'
 
-      - name: Run benchmarks
-        working-directory: benchmark
-        run: |
-          julia --project=. -e '
-            include("discretized_operator_performance_test.jl");
-            main(; bench_seconds=1)' | tee results.txt
+  #     - name: Run benchmarks
+  #       working-directory: benchmark
+  #       run: |
+  #         julia --project=. -e '
+  #           include("discretized_operator_performance_test.jl");
+  #           main(; bench_seconds=1)' | tee results.txt
 
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-results-${{ github.sha }}
-          path: benchmark/results.txt
-          retention-days: 30
+  #     - name: Upload benchmark results
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: benchmark-results-${{ github.sha }}
+  #         path: benchmark/results.txt
+  #         retention-days: 30
