@@ -432,6 +432,7 @@ end
         src=false, diffu=false, convec=false, Ampere=false,
         E_para_self_ES=false, E_para_self_EM=false, Gas_evolve=false,
         update_ni_independently=false, Include_ud_convec_term=false,
+        Include_ud_diffu_term=false, Include_ud_pressure_term=false,
         Coulomb_Collision=false, negative_n_correction=false
     )
 
