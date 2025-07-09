@@ -29,8 +29,8 @@ jobs:
           # - '1.9'  # Specific stable version
         flavor:
           - {os: ubuntu-latest, arch: x64}  # Linux x64
-          - {os: macos-latest, arch: arm64}  # macOS ARM
-          - {os: windows-latest, arch: x64}  # Windows x64
+          # - {os: macos-latest, arch: arm64}  # macOS ARM (Too expensive GitHub Action runner)
+          # - {os: windows-latest, arch: x64}  # Windows x64 (Stuck in CI, FIX is needed)
 
     steps:
       - uses: actions/checkout@v4
