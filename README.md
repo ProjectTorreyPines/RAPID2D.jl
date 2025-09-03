@@ -6,7 +6,7 @@
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
-`RAPID2D` (Rapid Analysis of Plasma Initiation with Dynamics in 2D) is a fast, reduced two‑dimensional fluid model for simulating ohmic plasma initiation and early plasma dynamics in tokamaks. RAPID2D provides physics‑consistent density and temperature evolution in realistic electromagnetic configurations, enabling rapid scenario evaluation and optimization.
+`RAPID2D` (Rapid Analysis of Plasma Initiation with Dynamics in 2D) is a fast, reduced two‑dimensional fluid model for simulating plasma initiation in tokamaks. `RAPID2D` provides physics‑consistent density and temperature evolution in realistic electromagnetic configurations, enabling rapid scenario evaluation and optimization.
 
 <!-- CONTACT -->
 ## Contact
