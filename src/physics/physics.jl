@@ -770,6 +770,10 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
         end
     end
 
+    if !RP.flags.update_ni_independently
+        RP.plasma.ni .= RP.plasma.ne
+    end
+    
     return RP
     end # @timeit
 end
