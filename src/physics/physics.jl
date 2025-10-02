@@ -1097,8 +1097,8 @@ function calculate_electron_acceleration_by_pressure(RP::RAPID{FT}; num_SM::Int=
 
     if RP.flags.limit_acceleration.state
         factor = RP.flags.limit_acceleration.factor
-        min_max_accel = factor.*extrema(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ./ RP.dt
-        clamp!(accel_by_pressure, min_max_accel...)
+        max_abs_accel = factor.*maximum(abs.(RP.plasma.ue_para[RP.G.nodes.in_wall_nids])) ./ RP.dt
+        clamp!(accel_by_pressure, -max_abs_accel, +max_abs_accel)
     end
 
     # Handle any NaN or Inf values that might arise
