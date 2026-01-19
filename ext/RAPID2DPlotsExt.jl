@@ -11,6 +11,7 @@ module RAPID2DPlotsExt
 
 using RAPID2D
 using Plots
+using LaTeXStrings
 
 # Import types for function definitions
 import RAPID2D: Snapshot0D, Snapshot2D, RAPID, Diagnostics
@@ -32,70 +33,134 @@ run_simulation!(RP)
 plot_snaps0D(RP.diagnostics.snaps0D)
 ```
 """
-function RAPID2D.plot_snaps0D(snaps0D; kwargs...)
-    if isempty(snaps0D)
-        error("No snapshot data available for plotting")
+@recipe function plot_snaps0D(snaps0D::AbstractVector{<:Snapshot0D})
+    # Extract time series
+    times_ms = [s.time_s * 1e3 for s in snaps0D]
+
+    # Set layout
+    layout --> (4, 2)
+    size --> (1000, 1200)
+    plot_title --> "RAPID2D Time Evolution"
+    left_margin --> 5Plots.mm
+    right_margin --> 5Plots.mm
+    top_margin --> 5Plots.mm
+    bottom_margin --> 5Plots.mm
+
+    label_postfix = get(plotattributes, :label_postfix, "")
+    
+    # Panel 1: Electron density
+    @series begin
+        subplot := 1
+        ylabel := "⟨ne⟩ (m⁻³)"
+        title := "Electron density"
+        label := label_postfix
+        yscale := :log10
+        linewidth := 2
+        times_ms, [s.ne for s in snaps0D]
     end
 
+    # Panel 2: Toroidal current
+    @series begin
+        subplot := 2
+        ylabel := "⟨I_tor⟩ (A)"
+        title := "Toroidal current"
+        label := label_postfix
+        yscale := :log10
+        linewidth := 2
+        times_ms[2:end], abs.([s.I_tor for s in snaps0D][2:end])
+    end
 
-    # Extract time series
-    times_ms = [s.time_s * 1e3 for s in snaps0D]  # Convert to ms
+    # Panel 3: Electron temperature
+    @series begin
+        subplot := 3
+        ylabel := "⟨Te⟩ (eV)"
+        title := "Electron temperature" 
+        label := label_postfix
+        linewidth := 2
+        times_ms, [s.Te_eV for s in snaps0D]
+    end
 
+    # Panel 4: Electron energy
+    @series begin
+        subplot := 4
+        ylabel := "⟨We⟩ (eV)"
+        title := "Electron energy" 
+        label := label_postfix
+        linewidth := 2
+        times_ms, [s.Ke_eV for s in snaps0D]
+    end
 
-	p_vec = Plots.Plot[];
+    # Panel 5: Ion temperature
+    @series begin
+        subplot := 5
+        ylabel := "⟨Ti⟩ (eV)"
+        title := "Ion temperature"
+        label := label_postfix
+        linewidth := 2
+        times_ms, [s.Ti_eV for s in snaps0D]
+    end
 
+    # Panel 6: Ionization rate
+    @series begin
+        subplot := 6
+        ylabel := "⟨νiz⟩ (s⁻¹)"
+        title := "Ionization & Loss rate"
+        label := "Ionz." * label_postfix
+        linewidth := 2
+        times_ms, [s.ν_en_iz for s in snaps0D]
+    end
 
-    # Create multi-panel plot
-    push!(p_vec, plot(times_ms, [s.ne for s in snaps0D],
-              ylabel="⟨ne⟩ (m⁻³)", label="Electron density",
-              yscale=:log10, linewidth=2))
+    # Panel 6: Loss rate (same subplot)
+    @series begin
+        subplot := 6
+        label := "Loss" * label_postfix
+        linestyle := :dash
+        linewidth := 2
+        times_ms, [s.eLoss_rate for s in snaps0D]
+    end
 
-    push!(p_vec, plot(times_ms[2:end], abs.(snaps0D.I_tor[2:end]),
-              ylabel="⟨I_tor⟩ (A)", label="Toroidal current",
-              yscale=:log10, linewidth=2))
+    # Panel 7: Parallel E-field components
+    @series begin
+        subplot := 7
+        ylabel := "|⟨E∥⟩| (V/m)"
+        title := "Parallel E-field"
+        label := L"\mathrm{E_{tot}}" * label_postfix
+        linewidth := 2
+        times_ms, [s.Epara_tot for s in snaps0D]
+    end
 
-    push!(p_vec, plot(times_ms, [s.Te_eV for s in snaps0D],
-              ylabel="⟨Te⟩ (eV)", label="Electron temperature",
-              linewidth=2))
-	push!(p_vec, plot(times_ms, [s.Ke_eV for s in snaps0D],
-			  ylabel="⟨We⟩ (eV)", label="Electron energy",
-			  linewidth=2))
+    
+    @series begin
+        subplot := 7
+        label := L"\mathrm{E_{ext}}" * label_postfix
+        linewidth := 2
+        times_ms, [s.Epara_ext for s in snaps0D]
+    end
 
-	push!(p_vec, plot(times_ms, [s.Ti_eV for s in snaps0D],
-              ylabel="⟨Ti⟩ (eV)", label="Ion temperature",
-              linewidth=2))
+    @series begin
+        subplot := 7
+        label := L"\mathrm{E_{self}^{ES}}" * label_postfix
+        linewidth := 2
+        times_ms, [s.Epara_self_ES for s in snaps0D]
+    end
 
-	p = plot(times_ms,  [s.ν_en_iz for s in snaps0D],
-			  ylabel="⟨νiz⟩ (s⁻¹)", label="Ionization rate",
-			  linewidth=2)
-	plot!(p, times_ms, [s.eLoss_rate for s in snaps0D],
-			  label="loss rate", linestyle=:dash,
-			  linewidth=2)
-	push!(p_vec, p)
+    @series begin
+        subplot := 7
+        label := L"\mathrm{E_{self}^{EM}}" * label_postfix
+        linewidth := 2
+        times_ms, [s.Epara_self_EM for s in snaps0D]
+    end
 
-	push!(p_vec, plot(times_ms, [s.Epara_tot for s in snaps0D],
-			  ylabel="|⟨E∥⟩| (V/m)", label="Parallel E-field",
-			  linewidth=2))
-	plot!(p_vec[end], times_ms, [s.Epara_ext for s in snaps0D],
-			label="E_{ext}", linewidth=2)
-	plot!(p_vec[end], times_ms, [s.Epara_self_ES for s in snaps0D],
-			label="E_{self}^{ES}", linewidth=2)
-	plot!(p_vec[end], times_ms, [s.Epara_self_EM for s in snaps0D],
-			label="E_{self}^{EM}", linewidth=2)
-
-	push!(p_vec, plot(times_ms, [abs(s.ue_para) for s in snaps0D],
-			  ylabel="|⟨u∥⟩| (m/s)", label="Parallel velocity",
-			  xlabel="Time (ms)", linewidth=2))
-
-	ncols = 2
-	nrows = ceil(Int, length(p_vec) / ncols)
-
-
-    return plot(p_vec..., layout=(nrows, ncols), size=(1000, 1200),
-                plot_title="RAPID2D Time Evolution",
-                left_margin=5Plots.mm, right_margin=5Plots.mm,
-                top_margin=5Plots.mm, bottom_margin=5Plots.mm,
-                kwargs...)
+    # Panel 8: Parallel velocity
+    @series begin
+        subplot := 8
+        ylabel := "|⟨u∥⟩| (m/s)"
+        xlabel := "Time (ms)"
+        title := "Parallel velocity"
+        label := label_postfix
+        linewidth := 2
+        times_ms, [abs(s.ue_para) for s in snaps0D]
+    end
 end
 
 """

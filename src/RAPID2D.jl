@@ -133,6 +133,6 @@ end
 export create_rapid_object, initialize_simulation
 
 # Export plotting functions (actual implementations in extensions)
-export plot_snaps0D, plot_snaps2D, animate_snaps2D, plot_comparison
+export plot_snaps2D, animate_snaps2D, plot_comparison
 
 end # module RAPID2D
