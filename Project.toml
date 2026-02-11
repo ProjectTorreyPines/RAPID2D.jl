@@ -1,6 +1,6 @@
 name = "RAPID2D"
 uuid = "1cab822d-7ebb-468b-988d-b3e8a2bd3674"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["Min-Gu Yoo <mgyoo86@gmail.com>"]
 
 [deps]
