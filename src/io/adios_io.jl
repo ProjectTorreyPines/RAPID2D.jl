@@ -168,7 +168,11 @@ function _adios_put_recursive!(Afile::AdiosFile, data, data_name::AbstractString
 
         if field_type <: Union{AbstractString, Number, AbstractArray{<:Number}}
             # Direct write for primitive types and arrays
-            adios_put!(Afile, new_path, field_value)
+            if field_type <: Union{AbstractString, Number}
+                adios_put!(Afile, new_path, field_value; global_value=true)
+            else
+                adios_put!(Afile, new_path, field_value)
+            end
         elseif isstructtype(field_type)
             # Recursively traverse nested structs
             _adios_put_recursive!(Afile, field_value, new_path)
