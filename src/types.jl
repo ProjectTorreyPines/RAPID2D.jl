@@ -142,6 +142,7 @@ Contains the power terms for electron energy equation.
     # Power terms - all in W/m³
     tot::Matrix{FT} = zeros(FT, dims)        # Total power density
     drag::Matrix{FT} = zeros(FT, dims)       # Power from drag forces
+    ela::Matrix{FT} = zeros(FT, dims)        # Power lost to neutrals via elastic collisions
     conv::Matrix{FT} = zeros(FT, dims)       # Power from convective transport
     diffu::Matrix{FT} = zeros(FT, dims)      # Power from diffusive transport
     heat::Matrix{FT} = zeros(FT, dims)       # Power from heating (q)

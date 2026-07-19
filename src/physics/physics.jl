@@ -372,6 +372,7 @@ Update electron heating power components for electron energy equation.
 - Calculates all electron power sources and sinks:
   - Diffusion and convection powers (if enabled)
   - Collision drag power
+  - Elastic energy loss to neutrals (2me/M per momentum-transfer collision)
   - Heat generation from density gradients
   - Ionization, excitation, and dilution powers
   - Temperature equilibration power with ions
@@ -383,7 +384,10 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
     iz_erg_eV = FT(15.46)
 
     # TODO: Replace with actual average excitation energy
-    avg_exc_erg_eV = FT(12.0)  # Average excitation energy in eV (assumption)
+    # avg_exc_erg_eV = FT(12.0)  # Average excitation energy in eV (assumption)
+    # avg_exc_erg_eV = FT(13.0)  # Average excitation energy in eV (assumption)
+    # avg_exc_erg_eV = FT(10.0)  # Average excitation energy in eV (assumption)
+    avg_exc_erg_eV = FT(11.8)  # Average excitation energy in eV (assumption)
 
     # Extract physical constants
     @unpack ee, qe, me, mi = RP.config.constants
@@ -400,6 +404,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
     ePowers.conv .= zero_FT
     ePowers.heat .= zero_FT
     ePowers.drag .= zero_FT
+    ePowers.ela .= zero_FT
     ePowers.iz .= zero_FT
     ePowers.exc .= zero_FT
     ePowers.dilution .= zero_FT
@@ -454,6 +459,14 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
             + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
         )
 
+        # Elastic energy loss to neutrals: each momentum-transfer collision hands
+        # a fraction ~2me/M of the electron energy to the gas molecule. This is
+        # the dominant electron cooling channel below the ~9 eV excitation
+        # threshold; without it Te saturates ~20% above the kinetic (BD) value
+        # at low E/p and cool-downs stall above the true saturation point.
+        @. ePowers.ela = (FT(2.0) * me / mi) * pla.n_H2_gas * RRC_mom *
+                        FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
+
         # Get excitation rate coefficient
         RRC_exc = get_electron_RRC(RP, :Total_Excitation)
         # Excitation power (energy lost to excite particles)
@@ -486,7 +499,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
     # Calculate total power (sum of all components)
     @. ePowers.tot = (
             ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu
-            - ePowers.dilution - ePowers.iz - ePowers.exc - ePowers.equi
+            - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.exc - ePowers.equi
         )
 
     # # Zero out power values outside the wall
@@ -496,6 +509,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
         @views ePowers.diffu[on_out_wall_nids] .= zero_FT
         @views ePowers.conv[on_out_wall_nids] .= zero_FT
         @views ePowers.drag[on_out_wall_nids] .= zero_FT
+        @views ePowers.ela[on_out_wall_nids] .= zero_FT
         @views ePowers.dilution[on_out_wall_nids] .= zero_FT
         @views ePowers.iz[on_out_wall_nids] .= zero_FT
         @views ePowers.exc[on_out_wall_nids] .= zero_FT
