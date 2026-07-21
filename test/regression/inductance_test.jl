@@ -1,445 +1,350 @@
-#!/usr/bin/env julia
-"""
-Basic Inductance Test for RAPID2D.jl
+# Basic inductance regression scenario.
+#
+# A single plasma filament is driven by a toroidal loop voltage. Every transport and
+# atomic process is switched off, so the plasma behaves as a lumped L/R circuit and its
+# current response can be compared against an analytical solution. Two references are
+# used: a constant-inductance model, and one integrating the time-varying L(t) that the
+# 0D diagnostics report.
+#
+# ── Granularity ──────────────────────────────────────────────────────────────
+# ONE @testitem. The scenario is a ~8.6s end-to-end simulation whose single result
+# object feeds all 5 assertions, so the assertions stay nested inside one item. A
+# @testsnippet body is re-evaluated per testitem, so splitting would re-run the
+# simulation once per group for no isolation benefit.
+#
+# ── What lives where ─────────────────────────────────────────────────────────
+# The scenario — grid, timestep, flags, plasma, thresholds — is spelled out in the
+# @testitem body, because that is what the test is actually about. Only the
+# post-processing (error metrics, the analytical L(t) integration, plotting) is hidden
+# in the InductanceAnalysis snippet below; it is arithmetic on an already-finished run
+# and says nothing about the physics being exercised.
+#
+# `using Test` / `using RAPID2D` are auto-injected into every @testitem.
 
-This script tests the basic inductance calculations and validates them against
-analytical solutions for a simple single-filament circuit model.
-
-"""
-
-using RAPID2D
-using RAPID2D.Statistics
-using RAPID2D.FastInterpolations
-using Test
-using Printf
-
-# Environment variable controls
-verbose = get(ENV, "RAPID_VERBOSE", "false") == "true"
-visualize = get(ENV, "RAPID_VISUALIZE", "false") == "true"
-
-# Only load Plots if visualization is requested
-if visualize
+@testsnippet InductanceAnalysis begin
+    using RAPID2D.Statistics
+    using RAPID2D.FastInterpolations
+    using Printf
+    # Unconditional (was previously `using Plots` nested inside `if visualize`).
+    # Plots and Dates are declared in test/Project.toml.
     using Plots
     using Dates
+
+    # Compare the simulated toroidal current against analytical L/R solutions.
+    #
+    # `major_R` / `minor_r` are the plasma geometry [m]; they are REQUIRED kwargs so the
+    # inductance estimate stays tied to the filament the scenario actually created,
+    # rather than silently defaulting to a geometry the caller never chose.
+    function analyze_inductance(RP::RAPID; major_R::Real, minor_r::Real,
+                                verbose::Bool=false, visualize::Bool=false,
+                                outdir::AbstractString=mktempdir(; cleanup=false))
+        if verbose
+            println("\n" * "=" ^ 60)
+            println("INDUCTANCE ANALYSIS")
+            println("=" ^ 60)
+        end
+
+        # Extract time series data
+        times = RP.diagnostics.snaps0D.time_s
+        I_tor = RP.diagnostics.snaps0D.I_tor
+
+        RAPID2D.@unpack ee, me = RP.config.constants
+        # Resistance by Coulomb collision
+        ue_sat_by_Evac = @. -ee*RP.fields.Eϕ_ext/(me * RP.plasma.ν_ei_eff);
+        ue_sat_by_Evac[.!isfinite.(ue_sat_by_Evac)] .= 0.0  # Avoid NaN
+
+        # Estimate circuit parameters
+        in_wall_nids = RP.G.nodes.in_wall_nids
+        LV_estimate = mean(RP.fields.LV_ext[in_wall_nids])
+        R_estimate = LV_estimate./sum(-ee*RP.plasma.ne[in_wall_nids].*ue_sat_by_Evac[in_wall_nids]*RP.G.dR*RP.G.dZ);
+
+        # Inductance of a circular loop of major radius `major_R`, minor radius `minor_r`
+        Y = 1.0  # Internal inductance factor
+        μ0 = 4π * 1e-7  # H/m
+        L_estimate = μ0 * major_R * (log(8 * major_R / minor_r) - 2 + 0.25 * Y)
+
+        # Estimate mutual inductance (geometric calculation)
+        snap0D_time_s = RP.diagnostics.snaps0D.time_s
+        snap0D_time_s = range(snap0D_time_s[1], stop=snap0D_time_s[end], length=length(snap0D_time_s))
+        L_values = RP.diagnostics.snaps0D.self_inductance_plasma
+        L_values[1] = L_values[2] # Avoid zero at t=0
+        itp_L_self_plasma = cubic_interp(snap0D_time_s, L_values)
+
+        # L/R time constant
+        tau_LR = L_estimate / R_estimate
+
+        if verbose
+            println("Circuit Parameter Estimates:")
+            println(@sprintf("  Loop voltage: %.3f V", LV_estimate))
+            println(@sprintf("  Final current: %.3f A", I_tor[end]))
+            println(@sprintf("  Resistance: %.6f Ω", R_estimate))
+            println(@sprintf("  Inductance: %.6f μH", L_estimate * 1e6))
+            println(@sprintf("  L/R time: %.1f μs", tau_LR * 1e6))
+        end
+
+        # Analytical solution (constant L approximation)
+        I_sat_analytical = LV_estimate / R_estimate
+        I_analytical = @. I_sat_analytical * (1 - exp(-times / tau_LR))
+
+        # More accurate analytical solution with time-varying inductance
+        I_analytical_timevar = calculate_time_varying_inductance_solution(times, LV_estimate, R_estimate, itp_L_self_plasma)
+
+        # Create plots
+        if visualize
+            create_inductance_plots(RP, times, I_tor, I_analytical, I_analytical_timevar; outdir)
+        end
+
+        # Calculate error metrics and return for testing
+        if length(I_tor) == length(I_analytical) && length(I_tor) == length(I_analytical_timevar)
+            # Error vs constant L analytical solution
+            relative_error = abs.(I_tor - I_analytical) ./ (abs.(I_analytical) )
+            relative_error[.!isfinite.(relative_error)] .= 0.0  # Avoid NaN & Inf
+            mean_error = mean(relative_error)
+            max_error = maximum(relative_error)
+
+            # Error vs time-varying L analytical solution
+            relative_error_timevar = abs.(I_tor - I_analytical_timevar) ./ (abs.(I_analytical_timevar) )
+            relative_error_timevar[.!isfinite.(relative_error_timevar)] .= 0.0  # Avoid NaN & Inf
+            mean_error_timevar = mean(relative_error_timevar)
+            max_error_timevar = maximum(relative_error_timevar)
+
+            if verbose
+                println("\nAccuracy Assessment:")
+                println("  === vs Constant L Analytical ===")
+                println(@sprintf("  Mean relative error: %.2f%%", 100*mean_error))
+                println(@sprintf("  Max relative error: %.2f%%", 100*max_error))
+
+                println("  === vs Time-varying L Analytical ===")
+                println(@sprintf("  Mean relative error: %.2f%%", 100*mean_error_timevar))
+                println(@sprintf("  Max relative error: %.2f%%", 100*max_error_timevar))
+            end
+
+            return (mean_error=mean_error, max_error=max_error,
+                    mean_error_timevar=mean_error_timevar, max_error_timevar=max_error_timevar,
+                    times=times, I_tor=I_tor, I_analytical=I_analytical, I_analytical_timevar=I_analytical_timevar)
+        else
+            return nothing
+        end
+    end
+
+    # Create visualization plots for inductance test results.
+    #
+    # `outdir` MUST be a unique per-run directory: the original wrote
+    # `joinpath(pwd(), "inductance_test_$(timestamp).png")` with a second-resolution
+    # timestamp, which polluted the repository and let two runs finishing in the same
+    # second silently overwrite each other.
+    function create_inductance_plots(RP, times, I_sim, I_analytical, I_analytical_timevar;
+                                     outdir::AbstractString=mktempdir(; cleanup=false))
+        # Current evolution plot
+        p1 = plot(times * 1e3, I_sim,
+                  label="Simulation",
+                  linewidth=2,
+                  xlabel="Time (ms)",
+                  ylabel="Toroidal Current (A)",
+                  title="L/R Circuit Response")
+
+        plot!(p1, times * 1e3, I_analytical,
+              label="Analytical (const L)",
+              linestyle=:dash,
+              linewidth=2)
+
+        plot!(p1, times * 1e3, I_analytical_timevar,
+              label="Analytical (time-var L)",
+              linestyle=:dot,
+              linewidth=2,
+              color=:green)
+
+        # Error plots
+        if length(I_sim) == length(I_analytical) && length(I_sim) == length(I_analytical_timevar)
+            error_const_L = abs.(I_sim - I_analytical) ./ (abs.(I_analytical)) * 100
+            error_timevar_L = abs.(I_sim - I_analytical_timevar) ./ (abs.(I_analytical_timevar)) * 100
+
+            p2 = plot(times * 1e3, error_const_L,
+                      label="vs Const L",
+                      linewidth=2,
+                      xlabel="Time (ms)",
+                      ylabel="Error (%)",
+                      title="Simulation Errors")
+
+            plot!(p2, times * 1e3, error_timevar_L,
+                  label="vs Time-var L",
+                  linestyle=:dash,
+                  linewidth=2,
+                  color=:green)
+        else
+            p2 = plot(title="Error analysis unavailable")
+        end
+
+        # Inductance evolution plot
+        snap0D_times = RP.diagnostics.snaps0D.time_s
+        L_values = RP.diagnostics.snaps0D.self_inductance_plasma
+
+        p3 = plot(snap0D_times * 1e3, L_values * 1e6,
+                  label="L_self_plasma(t)",
+                  linewidth=2,
+                  xlabel="Time (ms)",
+                  ylabel="Self-Inductance (μH)",
+                  title="Time-Varying Plasma Inductance")
+
+        # Combined plot
+        plot_combined = plot(p1, p2, p3, layout=(3,1), size=(800, 900))
+
+        # Save plot into the caller-provided unique directory
+        timestamp = Dates.format(now(), "yyyy-mm-dd_HH_MM_SS")
+        full_path = joinpath(outdir, "inductance_test_$(timestamp).png")
+        savefig(plot_combined, full_path)
+        @info "Inductance test plot saved" path = full_path
+
+        # Create animation if possible
+        anim_path = joinpath(outdir, "inductance_test_snaps2D_$(timestamp).mp4")
+        try
+            animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
+                        [:ne,:ue_para,:Jϕ,:E_para_tot];
+                        wall=RP.fitted_wall,
+                        filename=anim_path)
+            @info "Inductance test animation saved" path = anim_path
+        catch e
+            @warn "Inductance test animation creation failed" exception = e
+        end
+
+        return plot_combined
+    end
+
+    # Calculate analytical solution for an RL circuit with time-varying inductance L(t)
+    #
+    # Solves: L(t) * dI/dt + dL/dt * I + R * I = V
+    # using numerical integration with a 4th-order Runge-Kutta method.
+    function calculate_time_varying_inductance_solution(times, V, R, itp_L; I0=0.0)
+        dt = length(times) > 1 ? times[2] - times[1] : 1e-6
+        I_solution = zeros(length(times))
+        I_solution[1] = I0
+
+        for i in 2:length(times)
+            t_prev = times[i-1]
+            t_curr = times[i]
+            I_prev = I_solution[i-1]
+
+            # Define the ODE: dI/dt = (V - R*I - dL/dt*I) / L(t)
+            function ode_func(t, I)
+                L_t = itp_L(t)
+
+                # Calculate dL/dt numerically
+                dt_small = 1e-8
+                if t + dt_small <= times[end]
+                    dL_dt = (itp_L(t + dt_small) - L_t) / dt_small
+                else
+                    dL_dt = (L_t - itp_L(t - dt_small)) / dt_small
+                end
+
+                # dI/dt = (V - R*I - dL/dt*I) / L(t)
+                if L_t > 0
+                    return (V - R*I - dL_dt*I) / L_t
+                else
+                    return 0.0
+                end
+            end
+
+            # 4th-order Runge-Kutta integration
+            k1 = ode_func(t_prev, I_prev)
+            k2 = ode_func(t_prev + dt/2, I_prev + dt*k1/2)
+            k3 = ode_func(t_prev + dt/2, I_prev + dt*k2/2)
+            k4 = ode_func(t_curr, I_prev + dt*k3)
+
+            I_solution[i] = I_prev + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+        end
+
+        return I_solution
+    end
 end
 
+@testitem "Basic Inductance" tags=[:regression] setup=[RegressionCommon, InductanceAnalysis] begin
+    # A single plasma filament driven by a toroidal loop voltage. Everything that is not
+    # L/R circuit physics is switched off, so the current response can be compared
+    # against an analytical L/R solution.
 
-function run_inductance_test(; verbose=false, visualize=false)
-    if verbose
-        println("=" ^ 60)
-        println("RAPID2D.jl Basic Inductance Test")
-        println("=" ^ 60)
-    end
+    verbose   = get(ENV, "RAPID_VERBOSE", "false") == "true"
+    visualize = get(ENV, "RAPID_VISUALIZE", "false") == "true"
 
-    # Create configuration
-    config = create_basic_config()
+    # Artifacts go to a fresh per-run directory, never into pwd(). cleanup=false so
+    # they outlive the process and remain inspectable; the path is reported by the
+    # @info inside create_inductance_plots.
+    outdir = visualize ? mktempdir(; cleanup=false) : tempname()
 
-    # Initialize RAPID simulation
-    if verbose
-        println("Initializing RAPID simulation...")
-    end
+    config = regression_config(;
+        NR = 30,
+        NZ = 50,
+        prefilled_gas_pressure = 0.0,   # vacuum: no neutrals, hence no atomic physics
+        R0B0 = 3.0,                     # T⋅m, pure toroidal field
+        dt = 25e-6,
+        t_end_s = 20e-3,                # ≫ L/R time, so the current reaches saturation
+        snap0D_Δt_s = 50e-6,            # every 2 steps -> 401 points to compare against
+        snap2D_Δt_s = 500e-6,
+    )
+
     RP = RAPID{Float64}(config)
 
-    # Set up flags
-    setup_flags!(RP)
-
-    # Initialize the simulation
-    initialize!(RP)
-
-    # Set up magnetic field and plasma after initialization
-    setup_magnetic_field!(RP; verbose)
-    setup_plasma!(RP; verbose)
-
-    # Set time parameters
-    RP.t_end_s = 20e-3
-
-    # Run simulation
-    if verbose
-        println("Running simulation...")
-    end
-    run_simulation!(RP)
-
-    # Return RP for testing
-    return RP
-end
-
-function create_basic_config()
-    """Create basic configuration for inductance testing"""
-
-    config = SimulationConfig{Float64}()
-
-    # Grid parameters
-    config.NR = 30
-    config.NZ = 50
-
-    # Physical parameters
-    config.prefilled_gas_pressure = 0.0  # Pa
-    config.R0B0 = 3.0  # Tesla⋅meter
-
-    config.dt = 25e-6
-    config.snap0D_Δt_s = 50e-6
-    config.snap2D_Δt_s = 500e-6
-
-    # Device parameters
-    config.device_Name = "manual"
-
-    return config
-end
-
-function setup_flags!(RP::RAPID)
-    """Set up simulation flags for inductance testing"""
-
-    # Basic flags for inductance test
+    # ── The physics under test ───────────────────────────────────────────────
+    # Ampère's law evolves the current, ud_evolve accelerates the electrons along B, and
+    # E_para_self_EM (set below) supplies the inductive back-EMF that opposes it. Those
+    # three together ARE the L/R circuit. Everything else is off so that nothing else can
+    # move current or particles around.
     RP.flags = SimulationFlags{Float64}(
-        Atomic_Collision = false,
-        Te_evolve = false,
+        Ampere = true,                        # <- magnetic field update: the physics under test
+        ud_evolve = true,                     # <- parallel electron acceleration drives I_tor
+        negative_n_correction = true,
+
+        # Everything below is deliberately disabled: with these on, the plasma would
+        # no longer be a fixed lumped circuit element.
+        Atomic_Collision = false,             # no ionization/losses -> density is frozen
+        Te_evolve = false,                    # isothermal
         Ti_evolve = false,
-        src = false,
-        convec = false,
-        diffu = false,
-        ud_evolve = true,
-        Include_ud_convec_term = false,
+        src = false,                          # no particle sources
+        convec = false,                       # no transport: the filament must not move
+        diffu = false,                        #   or spread, or L(t) would drift
+        Gas_evolve = false,
+        update_ni_independently = false,
+        Include_ud_convec_term = false,       # momentum equation reduced to dU/dt = -eE/m - νU
         Include_ud_diffu_term = false,
         Include_ud_pressure_term = false,
         Include_Te_convec_term = false,
-        update_ni_independently = false,
-        Gas_evolve = false,
-        Ampere = true,
-        E_para_self_ES = false,
-        negative_n_correction = true
+        E_para_self_ES = false,               # electrostatic self-field is NOT the effect studied
     )
 
-    # Additional flags for inductance testing
-    RP.flags.Coulomb_Collision = true
-    RP.flags.E_para_self_EM = true
-    RP.flags.Ampere_Itor_threshold = 0.0
+    RP.flags.Coulomb_Collision = true         # the only resistivity source -> the "R" in L/R
+    RP.flags.E_para_self_EM = true            # inductive back-EMF: the effect being measured
+    RP.flags.Ampere_Itor_threshold = 0.0      # apply Ampère from the very first amp
     RP.flags.FLF_nstep = 100
     RP.flags.Implicit = true
     RP.flags.Damp_Transp_outWall = true
-    RP.flags.Global_JxB_Force = false  # Not needed for basic inductance test
+    RP.flags.Global_JxB_Force = false         # not needed for basic inductance test
 
-end
+    initialize!(RP)
 
-function setup_magnetic_field!(RP::RAPID; verbose::Bool=false)
-    """Set up pure toroidal magnetic field configuration"""
+    # Pure toroidal field plus a loop voltage. E0 > 0 is what drives the circuit.
+    setup_toroidal_field!(RP; E0 = 0.3, verbose)
 
-    # Zero poloidal field components (pure toroidal field)
-    fill!(RP.fields.BR, 0.0)
-    fill!(RP.fields.BZ, 0.0)
-    fill!(RP.fields.BR_ext, 0.0)
-    fill!(RP.fields.BZ_ext, 0.0)
+    # ── Initial plasma: one uniform top-hat filament ─────────────────────────
+    # Exactly zero outside the minor radius, uniform Te/Ti, at rest. The same geometry
+    # feeds the analytical inductance estimate below, so it is named once here.
+    filament_R  = 1.5    # major radius of the current filament [m]
+    filament_a  = 0.3    # minor radius [m]
+    filament_n0 = 1e16   # uniform density inside the filament [m⁻³]
 
-    # Set Jacobian for toroidal geometry
-    @. RP.G.Jacob = RP.G.R2D
+    ini_n = tophat_blob(RP.G; cenR=filament_R, radius=filament_a, n0=filament_n0)
+    RP.plasma.ne .= ini_n
+    RP.plasma.ni .= ini_n
 
-    # Set toroidal field: Bφ = R₀B₀/R
-    @. RP.fields.Bϕ = RP.config.R0B0 / RP.G.Jacob
-
-    # Update total field
-    @. RP.fields.Bpol = sqrt(RP.fields.BR^2 + RP.fields.BZ^2)
-    @. RP.fields.Btot = abs(RP.fields.Bϕ)
-
-    # Update unit vectors
-    @. RP.fields.bR = RP.fields.BR / RP.fields.Btot
-    @. RP.fields.bZ = RP.fields.BZ / RP.fields.Btot
-    @. RP.fields.bϕ = RP.fields.Bϕ / RP.fields.Btot
-
-    # Set up electric field
-    E0 = 0.3  # V/m
-    @. RP.fields.Eϕ = E0 * mean(RP.G.R1D) / RP.G.Jacob
-    @. RP.fields.Eϕ_ext = RP.fields.Eϕ
-    @. RP.fields.E_para_ext = RP.fields.Eϕ * RP.fields.bϕ
-
-    if verbose
-        println("  ✓ Magnetic field configuration set")
-        println("    Pure toroidal field with R₀B₀ = $(RP.config.R0B0) T⋅m")
-    end
-end
-
-function setup_plasma!(RP::RAPID; verbose::Bool=false)
-    """Set up initial plasma density distribution"""
-
-    # Plasma parameters (similar to MATLAB test)
-    cenR = mean(RP.G.R1D)  # Center R
-    cenZ = mean(RP.G.Z1D)  # Center Z
-    cenR = 1.5  # m
-    cenZ = 0.0  # m
-    radius = 0.3  # m
-    n0 = 1e16  # m⁻³
-
-    # Create Gaussian plasma profile
-    # ini_n = @. n0 * exp(-(((RP.G.R2D - cenR)^2 + (RP.G.Z2D - cenZ)^2) / (2 * radius^2)))
-    ini_n = n0 * ones(size(RP.G.R2D))  # Initialize with zeros
-
-    # Apply spatial mask (only inside minor radius)
-    mask = @. sqrt((RP.G.R2D - cenR)^2 + (RP.G.Z2D - cenZ)^2) < radius
-    ini_n .*= mask
-
-    # Set plasma densities
-    @. RP.plasma.ne = ini_n
-    @. RP.plasma.ni = ini_n
-
-    # Set temperatures
-    fill!(RP.plasma.Te_eV, 10.0)  # eV
-    fill!(RP.plasma.Ti_eV, 0.03)  # eV (room temperature)
-
-    # Zero initial velocities
-    fill!(RP.plasma.ue_para, 0.0)
+    fill!(RP.plasma.Te_eV, 10.0)      # eV
+    fill!(RP.plasma.Ti_eV, 0.03)      # eV (room temperature)
+    fill!(RP.plasma.ue_para, 0.0)     # start from zero current
     fill!(RP.plasma.ui_para, 0.0)
 
-    if verbose
-        println("  ✓ Initial plasma configuration set")
-        println("    Center: R=$(cenR)m, Z=$(cenZ)m")
-        println("    Radius: $(radius)m")
-        println("    Peak density: $(n0/1e16) × 10¹⁶ m⁻³")
-    end
-end
+    run_simulation!(RP)
 
-function analyze_results(RP::RAPID; verbose::Bool=false, visualize::Bool=false)
-    """Analyze simulation results and compare with analytical solution"""
+    # Compare I_tor(t) against the constant-L and time-varying-L analytical solutions.
+    results = analyze_inductance(RP; major_R=filament_R, minor_r=filament_a,
+                                 verbose, visualize, outdir)
 
-    if verbose
-        println("\n" * "=" ^ 60)
-        println("INDUCTANCE ANALYSIS")
-        println("=" ^ 60)
-    end
-
-    # Extract time series data
-    times = RP.diagnostics.snaps0D.time_s
-    I_tor = RP.diagnostics.snaps0D.I_tor
-
-    RAPID2D.@unpack ee, me = RP.config.constants
-    # Resistance by Coulomb collision
-    ue_sat_by_Evac = @. -ee*RP.fields.Eϕ_ext/(me * RP.plasma.ν_ei_eff);
-    ue_sat_by_Evac[.!isfinite.(ue_sat_by_Evac)] .= 0.0  # Avoid NaN
-
-    # Estimate circuit parameters
-    in_wall_nids = RP.G.nodes.in_wall_nids
-    LV_estimate = mean(RP.fields.LV_ext[in_wall_nids])
-    R_estimate = LV_estimate./sum(-ee*RP.plasma.ne[in_wall_nids].*ue_sat_by_Evac[in_wall_nids]*RP.G.dR*RP.G.dZ);
-
-    # Plasma geometry for inductance estimate
-    major_R = 1.5  # m
-    minor_r = 0.3  # m
-    Y = 1.0  # Internal inductance factor
-
-    μ0 = 4π * 1e-7  # H/m
-    L_estimate = μ0 * major_R * (log(8 * major_R / minor_r) - 2 + 0.25 * Y)
-
-    # Estimate mutual inductance (geometric calculation)
-	snap0D_time_s = RP.diagnostics.snaps0D.time_s
-	snap0D_time_s = range(snap0D_time_s[1], stop=snap0D_time_s[end], length=length(snap0D_time_s))
-    L_values = RP.diagnostics.snaps0D.self_inductance_plasma
-    L_values[1] = L_values[2] # Avoid zero at t=0
-    itp_L_self_plasma = cubic_interp(snap0D_time_s, L_values)
-
-    # L/R time constant
-    tau_LR = L_estimate / R_estimate
-
-    if verbose
-        println("Circuit Parameter Estimates:")
-        println(@sprintf("  Loop voltage: %.3f V", LV_estimate))
-        println(@sprintf("  Final current: %.3f A", I_tor[end]))
-        println(@sprintf("  Resistance: %.6f Ω", R_estimate))
-        println(@sprintf("  Inductance: %.6f μH", L_estimate * 1e6))
-        println(@sprintf("  L/R time: %.1f μs", tau_LR * 1e6))
-    end
-
-    # Analytical solution (constant L approximation)
-    I_sat_analytical = LV_estimate / R_estimate
-    I_analytical = @. I_sat_analytical * (1 - exp(-times / tau_LR))
-
-    # More accurate analytical solution with time-varying inductance
-    I_analytical_timevar = calculate_time_varying_inductance_solution(times, LV_estimate, R_estimate, itp_L_self_plasma)
-
-    # Create plots
-    if visualize
-        create_inductance_plots(RP, times, I_tor, I_analytical, I_analytical_timevar)
-    end
-
-    # Calculate error metrics and return for testing
-    if length(I_tor) == length(I_analytical) && length(I_tor) == length(I_analytical_timevar)
-        # Error vs constant L analytical solution
-        relative_error = abs.(I_tor - I_analytical) ./ (abs.(I_analytical) )
-        relative_error[.!isfinite.(relative_error)] .= 0.0  # Avoid NaN & Inf
-        mean_error = mean(relative_error)
-        max_error = maximum(relative_error)
-
-        # Error vs time-varying L analytical solution
-        relative_error_timevar = abs.(I_tor - I_analytical_timevar) ./ (abs.(I_analytical_timevar) )
-        relative_error_timevar[.!isfinite.(relative_error_timevar)] .= 0.0  # Avoid NaN & Inf
-        mean_error_timevar = mean(relative_error_timevar)
-        max_error_timevar = maximum(relative_error_timevar)
-
-        if verbose
-            println("\nAccuracy Assessment:")
-            println("  === vs Constant L Analytical ===")
-            println(@sprintf("  Mean relative error: %.2f%%", 100*mean_error))
-            println(@sprintf("  Max relative error: %.2f%%", 100*max_error))
-
-            println("  === vs Time-varying L Analytical ===")
-            println(@sprintf("  Mean relative error: %.2f%%", 100*mean_error_timevar))
-            println(@sprintf("  Max relative error: %.2f%%", 100*max_error_timevar))
-
-            if mean_error < 0.03
-                println("  ✓ PASS: Good agreement with constant L analytical solution")
-            else
-                println("  ✗ FAIL: Poor agreement with constant L analytical solution")
-            end
-
-            if mean_error_timevar < 0.025  # Slightly tighter tolerance for more accurate model
-                println("  ✓ PASS: Good agreement with time-varying L analytical solution")
-            else
-                println("  ✗ FAIL: Poor agreement with time-varying L analytical solution")
-            end
-        end
-
-        return (mean_error=mean_error, max_error=max_error,
-                mean_error_timevar=mean_error_timevar, max_error_timevar=max_error_timevar,
-                times=times, I_tor=I_tor, I_analytical=I_analytical, I_analytical_timevar=I_analytical_timevar)
-    else
-        return nothing
-    end
-end
-
-function create_inductance_plots(RP, times, I_sim, I_analytical, I_analytical_timevar)
-    """Create visualization plots for inductance test results"""
-
-    # Current evolution plot
-    p1 = plot(times * 1e3, I_sim,
-              label="Simulation",
-              linewidth=2,
-              xlabel="Time (ms)",
-              ylabel="Toroidal Current (A)",
-              title="L/R Circuit Response")
-
-    plot!(p1, times * 1e3, I_analytical,
-          label="Analytical (const L)",
-          linestyle=:dash,
-          linewidth=2)
-
-    plot!(p1, times * 1e3, I_analytical_timevar,
-          label="Analytical (time-var L)",
-          linestyle=:dot,
-          linewidth=2,
-          color=:green)
-
-    # Error plots
-    if length(I_sim) == length(I_analytical) && length(I_sim) == length(I_analytical_timevar)
-        error_const_L = abs.(I_sim - I_analytical) ./ (abs.(I_analytical)) * 100
-        error_timevar_L = abs.(I_sim - I_analytical_timevar) ./ (abs.(I_analytical_timevar)) * 100
-
-        p2 = plot(times * 1e3, error_const_L,
-                  label="vs Const L",
-                  linewidth=2,
-                  xlabel="Time (ms)",
-                  ylabel="Error (%)",
-                  title="Simulation Errors")
-
-        plot!(p2, times * 1e3, error_timevar_L,
-              label="vs Time-var L",
-              linestyle=:dash,
-              linewidth=2,
-              color=:green)
-    else
-        p2 = plot(title="Error analysis unavailable")
-    end
-
-    # Inductance evolution plot
-    snap0D_times = RP.diagnostics.snaps0D.time_s
-    L_values = RP.diagnostics.snaps0D.self_inductance_plasma
-
-    p3 = plot(snap0D_times * 1e3, L_values * 1e6,
-              label="L_self_plasma(t)",
-              linewidth=2,
-              xlabel="Time (ms)",
-              ylabel="Self-Inductance (μH)",
-              title="Time-Varying Plasma Inductance")
-
-    # Combined plot
-    plot_combined = plot(p1, p2, p3, layout=(3,1), size=(800, 900))
-
-    # Save plot
-    timestamp = Dates.format(now(), "yyyy-mm-dd_HH_MM_SS")
-    filename = "inductance_test_$(timestamp).png"
-    full_path = joinpath(pwd(), filename)
-    savefig(plot_combined, full_path)
-
-    println("\nVisualization:")
-    println("  ✓ Plot saved as: $(full_path)")
-
-    # Create animation if possible
-    try
-        animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
-                    [:ne,:ue_para,:Jϕ,:E_para_tot];
-                    wall=RP.fitted_wall,
-                    filename="inductance_test_snaps2D_$(timestamp).mp4")
-        println("  ✓ Animation saved as: inductance_test_snaps2D_$(timestamp).mp4")
-    catch e
-        println("  ⚠ Animation creation failed: $(e)")
-    end
-
-    return plot_combined
-end
-
-function calculate_time_varying_inductance_solution(times, V, R, itp_L; I0=0.0)
-    """
-    Calculate analytical solution for RL circuit with time-varying inductance L(t)
-
-    Solves: L(t) * dI/dt + dL/dt * I + R * I = V
-
-    Using numerical integration with 4th-order Runge-Kutta method
-    """
-
-    dt = length(times) > 1 ? times[2] - times[1] : 1e-6
-    I_solution = zeros(length(times))
-    I_solution[1] = I0
-
-    for i in 2:length(times)
-        t_prev = times[i-1]
-        t_curr = times[i]
-        I_prev = I_solution[i-1]
-
-        # Define the ODE: dI/dt = (V - R*I - dL/dt*I) / L(t)
-        function ode_func(t, I)
-            L_t = itp_L(t)
-
-            # Calculate dL/dt numerically
-            dt_small = 1e-8
-            if t + dt_small <= times[end]
-                dL_dt = (itp_L(t + dt_small) - L_t) / dt_small
-            else
-                dL_dt = (L_t - itp_L(t - dt_small)) / dt_small
-            end
-
-            # dI/dt = (V - R*I - dL/dt*I) / L(t)
-            if L_t > 0
-                return (V - R*I - dL_dt*I) / L_t
-            else
-                return 0.0
-            end
-        end
-
-        # 4th-order Runge-Kutta integration
-        k1 = ode_func(t_prev, I_prev)
-        k2 = ode_func(t_prev + dt/2, I_prev + dt*k1/2)
-        k3 = ode_func(t_prev + dt/2, I_prev + dt*k2/2)
-        k4 = ode_func(t_curr, I_prev + dt*k3)
-
-        I_solution[i] = I_prev + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
-    end
-
-    return I_solution
-end
-
-@testset "RAPID2D.jl Basic Inductance Test" begin
-    # Run the inductance test
-    RP = run_inductance_test(verbose=verbose, visualize=visualize)
-
-    # Analyze results and extract test metrics
-    results = analyze_results(RP; verbose, visualize)
-
-    # Test assertions
     @test results !== nothing  # Should return valid results
 
     if results !== nothing
@@ -447,33 +352,5 @@ end
         @test results.max_error < 0.05   # Max error should be less than 5%
         @test results.I_tor[end] > 0     # Final current should be positive
         @test length(results.times) > 1  # Should have multiple time points
-    end
-end
-
-
-
-# Main execution (when run directly as a script)
-if abspath(PROGRAM_FILE) == @__FILE__
-    println("Starting RAPID2D.jl Basic Inductance Test...")
-
-    try
-        RP = run_inductance_test(verbose=true, visualize=true)
-        results = analyze_results(RP; verbose=true, visualize=true)
-
-        if results !== nothing && results.mean_error < 0.03
-            println("\n" * "=" ^ 60)
-            println("✓ INDUCTANCE TEST COMPLETED SUCCESSFULLY")
-            println("=" ^ 60)
-        else
-            println("\n" * "=" ^ 60)
-            println("✗ INDUCTANCE TEST FAILED - Poor accuracy")
-            println("=" ^ 60)
-        end
-    catch e
-        println("\n" * "=" ^ 60)
-        println("✗ INDUCTANCE TEST FAILED")
-        println("Error: $(e)")
-        println("=" ^ 60)
-        rethrow(e)
     end
 end

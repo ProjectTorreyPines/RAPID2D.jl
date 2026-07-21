@@ -1,4 +1,17 @@
+snaps2D.*mp4
 **/Manifest.toml
 *COPILOT*
 coverage/
 *.cov
+
+# Transient shadow tree built by test/runtests_parallel.jl (ReTestItems parallel runner).
+# Created and removed within a single run; only survives a hard kill. PID-suffixed so
+# concurrent runs in one checkout cannot clobber each other.
+/_partest_shadow_*/
+
+# Simulation artifacts. SimulationConfig.Output_path defaults to a RELATIVE "./output",
+# and TestItemRunner cd's into each test file's directory, so stray runs can drop these
+# anywhere under test/. Fixtures point at mktempdir(); this is the backstop.
+test/**/output/
+test/output/
+test/*.png

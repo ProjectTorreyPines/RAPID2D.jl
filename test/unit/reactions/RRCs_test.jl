@@ -1,14 +1,33 @@
-using Test
-using RAPID2D
-using RAPID2D.HDF5
-using RAPID2D.FastInterpolations
+# Reaction-rate-coefficient tables (RRC_EoverP_Erg / RRC_T_ud) and their containers.
+#
+# Split into TWO @testitems:
+#   "Reaction Rate Coefficients"  — read-only HDF5 opens + container construction, fast.
+#   "Sample RRC Calculation"      — builds a full RAPID object via create_rapid_object,
+#                                   a materially heavier fixture, so it gets its own
+#                                   module rather than riding along with the cheap blocks.
+# Both share the RRC data-file paths through @testsnippet RRCDataFiles.
+#
+# NOTE: the previous header carried `using RAPID2D.FastInterpolations`, which nothing
+# in this file references — `rrc.itp(x, y)` dispatches on the object's type and needs
+# no import. Dropped, matching the green_function_test.jl precedent. `RAPID2D.HDF5`
+# is still needed, but only by the first testitem, so it is declared there.
 
-@testset "Reaction Rate Coefficients" begin
-    # Define paths to test data
-    RRC_data_dir = joinpath(dirname(dirname(dirname(@__DIR__))), "RRC_data")
+@testsnippet RRCDataFiles begin
+    # RRC tables ship with the package, so ask the package where it lives.
+    #
+    # This previously walked up with dirname(dirname(dirname(@__DIR__))), which was doubly
+    # fragile: it silently encodes this file's depth in the tree, and a @testsnippet body
+    # is evaluated wherever its consumer is, not where it is written — under the
+    # ReTestItems path (test/runtests_parallel.jl) snippets are re-emitted into a single
+    # file at the shadow-tree root, where that walk lands somewhere else entirely.
+    RRC_data_dir = joinpath(pkgdir(RAPID2D), "RRC_data")
     EoverP_Erg_file = joinpath(RRC_data_dir, "eRRCs_EoverP_Erg.h5")
     e_tud_file = joinpath(RRC_data_dir, "eRRCs_T_ud.h5")
     i_tud_file = joinpath(RRC_data_dir, "iRRCs_T_ud.h5")
+end
+
+@testitem "Reaction Rate Coefficients" setup=[RRCDataFiles] begin
+    using RAPID2D.HDF5
 
     @testset "File Access" begin
         # Test that files exist
@@ -142,54 +161,6 @@ using RAPID2D.FastInterpolations
         @test size(i_rrcs.Elastic.raw_data, 2) == length(i_rrcs.Elastic.ud_para)
     end
 
-    @testset "Sample RRC Calculation" begin
-        # Create mock RAPID model for testing get_electron_RRC and get_H2_ion_RRC
-        # This is a simplified version for testing only
-
-        # Create minimal RAPID struct for testing
-        FT = Float64
-
-        # Create mock RAPID struct
-		config =  RAPID2D.SimulationConfig{Float64}()
-		config.prefilled_gas_pressure = 4e-3;
-		config.R0B0 = 1.5*1.8;
-
-		mock_RP = create_rapid_object(; config=config);
-
-        # Load RRCs
-        eRRCs = Electron_RRCs(EoverP_Erg_file, e_tud_file)
-        iRRCs = H2_Ion_RRCs(i_tud_file)
-
-		mock_RP.plasma.Te_eV .= 10.0
-
-        # Test get_electron_RRC function - make sure it runs without errors
-        # and returns expected size
-        RRC_iz = get_electron_RRC(mock_RP, eRRCs, :Ionization)
-        @test size(RRC_iz) == size(mock_RP.G.R2D)
-        @test !any(isnan.(RRC_iz))
-
-        RRC_Hα = get_electron_RRC(mock_RP, eRRCs, :Halpha)
-        @test size(RRC_Hα) == size(mock_RP.G.R2D)
-        @test !any(isnan.(RRC_Hα))
-
-        # Test convenience dispatch
-        RRC_Hα2 = get_electron_RRC(mock_RP, :Halpha)
-        @test RRC_Hα == RRC_Hα2
-
-        # Test get_H2_ion_RRC function - make sure it runs without errors
-        # and returns expected size
-        RRC_elastic = get_H2_ion_RRC(mock_RP, iRRCs, :Elastic)
-        @test size(RRC_elastic) == size(mock_RP.G.R2D)
-        @test !any(isnan.(RRC_elastic))
-
-        # Test convenience dispatch
-        RRC_elastic2 = get_H2_ion_RRC(mock_RP, :Elastic)
-        @test RRC_elastic == RRC_elastic2
-
-        # Test error handling for non-existent reactions
-        @test_throws ArgumentError get_electron_RRC(mock_RP, eRRCs, :NonExistentReaction)
-        @test_throws ArgumentError get_H2_ion_RRC(mock_RP, iRRCs, :NonExistentReaction)
-    end
     @testset "RRC_T_ud_gFac placeholder" begin
         T_eV = [1.0, 2.0, 3.0]
         ud_para = [1, 2, 3]*1e6
@@ -199,4 +170,53 @@ using RAPID2D.FastInterpolations
 
         mock_RRC_T_ud_gFac = RRC_T_ud_gFac(T_eV, ud_para, gFac, raw_data)
     end
+end
+
+@testitem "Sample RRC Calculation" setup=[RRCDataFiles] begin
+    # Create mock RAPID model for testing get_electron_RRC and get_H2_ion_RRC
+    # This is a simplified version for testing only
+
+    # Create minimal RAPID struct for testing
+    FT = Float64
+
+    # Create mock RAPID struct
+    config =  RAPID2D.SimulationConfig{Float64}()
+    config.prefilled_gas_pressure = 4e-3;
+    config.R0B0 = 1.5*1.8;
+
+    mock_RP = create_rapid_object(; config=config);
+
+    # Load RRCs
+    eRRCs = Electron_RRCs(EoverP_Erg_file, e_tud_file)
+    iRRCs = H2_Ion_RRCs(i_tud_file)
+
+    mock_RP.plasma.Te_eV .= 10.0
+
+    # Test get_electron_RRC function - make sure it runs without errors
+    # and returns expected size
+    RRC_iz = get_electron_RRC(mock_RP, eRRCs, :Ionization)
+    @test size(RRC_iz) == size(mock_RP.G.R2D)
+    @test !any(isnan.(RRC_iz))
+
+    RRC_Hα = get_electron_RRC(mock_RP, eRRCs, :Halpha)
+    @test size(RRC_Hα) == size(mock_RP.G.R2D)
+    @test !any(isnan.(RRC_Hα))
+
+    # Test convenience dispatch
+    RRC_Hα2 = get_electron_RRC(mock_RP, :Halpha)
+    @test RRC_Hα == RRC_Hα2
+
+    # Test get_H2_ion_RRC function - make sure it runs without errors
+    # and returns expected size
+    RRC_elastic = get_H2_ion_RRC(mock_RP, iRRCs, :Elastic)
+    @test size(RRC_elastic) == size(mock_RP.G.R2D)
+    @test !any(isnan.(RRC_elastic))
+
+    # Test convenience dispatch
+    RRC_elastic2 = get_H2_ion_RRC(mock_RP, :Elastic)
+    @test RRC_elastic == RRC_elastic2
+
+    # Test error handling for non-existent reactions
+    @test_throws ArgumentError get_electron_RRC(mock_RP, eRRCs, :NonExistentReaction)
+    @test_throws ArgumentError get_H2_ion_RRC(mock_RP, iRRCs, :NonExistentReaction)
 end

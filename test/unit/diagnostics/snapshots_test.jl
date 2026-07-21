@@ -1,8 +1,17 @@
-using RAPID2D
-using Test
+# Snapshot0D / Snapshot2D diagnostics containers and their equality operators.
+#
+# Two @testitems, one per original top-level @testset — both are fast (~0.9s and ~1.0s)
+# and neither shares a fixture with the other: every leaf builds its own Snapshot0D/2D,
+# so there is no @testsnippet here.
+#
+# NOTE on nesting: several inner @testset names repeat across the file — "Type
+# Consistency" appears three times and "Basic Equality" twice. They are deliberately
+# left as NESTED @testsets rather than promoted to their own @testitems, because
+# @testitem names must be globally unique across the suite while nested @testset names
+# only need to be unique within their parent. The two top-level names below are
+# distinct and descriptive.
 
-
-@testset "Snapshot Diagnostics Tests" begin
+@testitem "Snapshot Diagnostics" begin
 
     @testset "Memory Safety: Reference vs Copy" begin
         # This is the most critical test - ensures data integrity
@@ -180,7 +189,7 @@ using Test
 end
 
 
-@testset "Snapshot Equality Operators" begin
+@testitem "Snapshot Equality Operators" begin
 
     @testset "Snapshot0D Equality Tests" begin
         # Basic equality tests

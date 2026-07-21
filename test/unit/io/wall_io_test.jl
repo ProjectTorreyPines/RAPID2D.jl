@@ -1,9 +1,18 @@
-using Test
-using RAPID2D
+# Wall geometry file readers (read_wall_data_file / read_device_wall_data!).
+#
+# Grouped into a single @testitem: all four blocks are fast (~0.2s total). The one
+# shared binding is `test_dir`, which has exactly one consumer now that the file is
+# a single testitem — a @testsnippet for it would be pure indirection, so it stays
+# inline. It is anchored on pkgdir(RAPID2D) rather than @__DIR__ so it does not depend
+# on the file's location or on the process working directory.
+#
+# NOTE: the "Fewer Points" block declares `local wall` OUTSIDE the @test_logs block
+# and asserts on it afterwards. That is scope-sensitive: the declaration, the
+# @test_logs assignment and the follow-up @tests must stay in one contiguous scope.
 
-@testset "Wall IO Tests" begin
+@testitem "Wall IO" begin
     @testset "Wall Data Reading Tests" begin
-        test_dir = joinpath(@__DIR__, "../..", "data", "wall")
+        test_dir = joinpath(pkgdir(RAPID2D), "test", "data", "wall")
 
         @testset "read_wall_data_file - Valid Data" begin
             # Test reading a valid wall data file

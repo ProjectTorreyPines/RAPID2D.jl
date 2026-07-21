@@ -1,7 +1,4 @@
-using Test
-using RAPID2D
-
-@testset "Coils Basic Types and Constructors" begin
+@testitem "Coils Basic Types and Constructors" setup=[CoilFactories] begin
     FT = Float64
 
     @testset "Coil Constructor and Fields" begin
@@ -89,9 +86,10 @@ using RAPID2D
         @test system_empty.cu_resistivity ≈ 1.68e-8
 
         # Test CoilSystem with coils
-        coil1 = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
-        coil2 = Coil((r=2.5, z=-0.5), 0.01, 0.001, 1e-6, true, false, "heating", 500.0, 10000.0)
-        coil3 = Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall", nothing, nothing)
+        coil1 = pf_coil("PF1")
+        coil2 = pf_coil("heating"; z=-0.5, is_controllable=false,
+                        max_voltage=500.0, max_current=10000.0)
+        coil3 = wall_coil("wall")
 
         coils = [coil1, coil2, coil3]
         system = CoilSystem{FT}(coils)
@@ -141,9 +139,10 @@ using RAPID2D
     @testset "Vector Property Access" begin
         # Test getproperty and setproperty! for Vector{Coil}
         coils = [
-            Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0, 100.0, 200.0),
-            Coil((r=2.5, z=-0.5), 0.01, 0.001, 1e-6, true, false, "PF2", 800.0, 40000.0, 150.0, 300.0),
-            Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall", nothing, nothing, -50.0, 0.0)
+            pf_coil("PF1"; current=100.0, voltage_ext=200.0),
+            pf_coil("PF2"; z=-0.5, is_controllable=false, max_voltage=800.0,
+                    max_current=40000.0, current=150.0, voltage_ext=300.0),
+            wall_coil("wall"; current=-50.0)
         ]
 
         # Test getproperty

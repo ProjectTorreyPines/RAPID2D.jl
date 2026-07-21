@@ -1,7 +1,4 @@
-using Test
-using RAPID2D
-
-@testset "Time-dependent Voltage Functions" begin
+@testitem "Time-dependent Voltage Functions" setup=[CoilFactories] begin
     FT = Float64
 
     @testset "Voltage Function Evaluation" begin
@@ -20,8 +17,7 @@ using RAPID2D
     end
 
     @testset "Individual Coil Time-dependent Voltage" begin
-        coil_constant = Coil((r=2.0, z=0.0), 0.01, 0.001, 1e-6, true, true, "constant",
-                            1000.0, 50000.0, 0.0, 750.0)
+        coil_constant = pf_coil("constant"; r=2.0, z=0.0, voltage_ext=750.0)
 
         # Test constant voltage at different times
         @test get_coil_voltage_at_time(coil_constant, 0.0) == 750.0
@@ -30,16 +26,14 @@ using RAPID2D
 
         # Test function voltage
         ramp_func = t -> 200.0 * t + 100.0
-        coil_function = Coil((r=2.0, z=0.0), 0.01, 0.001, 1e-6, true, true, "function",
-                            1000.0, 50000.0, 0.0, ramp_func)
+        coil_function = pf_coil("function"; r=2.0, z=0.0, voltage_ext=ramp_func)
 
         @test get_coil_voltage_at_time(coil_function, 0.0) == 100.0
         @test get_coil_voltage_at_time(coil_function, 1.0) == 300.0
         @test get_coil_voltage_at_time(coil_function, 2.5) == 600.0
 
         # Test passive coil (should always return 0)
-        passive_coil = Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "passive",
-                           nothing, nothing, 0.0, 0.0)
+        passive_coil = wall_coil("passive")
         @test get_coil_voltage_at_time(passive_coil, 0.0) == 0.0
         @test get_coil_voltage_at_time(passive_coil, 10.0) == 0.0
     end
@@ -48,15 +42,12 @@ using RAPID2D
         system = CoilSystem{FT}()
 
         # Add coils with different voltage types
-        coil1 = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "constant_coil",
-                    1000.0, 50000.0, 0.0, 400.0)
+        coil1 = pf_coil("constant_coil"; voltage_ext=400.0)
 
         ramp_func = t -> 100.0 * t
-        coil2 = Coil((r=2.5, z=-0.5), 0.01, 0.001, 1e-6, true, false, "ramp_coil",
-                    1000.0, 50000.0, 0.0, ramp_func)
+        coil2 = pf_coil("ramp_coil"; z=-0.5, is_controllable=false, voltage_ext=ramp_func)
 
-        passive_coil = Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall",
-                           nothing, nothing, 0.0, 0.0)
+        passive_coil = wall_coil("wall")
 
         add_coil!(system, coil1)
         add_coil!(system, coil2)
@@ -91,10 +82,8 @@ using RAPID2D
     @testset "Setting Voltage Functions" begin
         system = CoilSystem{FT}()
 
-        coil = Coil((r=2.5, z=0.0), 0.01, 0.001, 1e-6, true, true, "test_coil",
-                   1000.0, 50000.0, 0.0, 200.0)
-        passive_coil = Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall",
-                           nothing, nothing, 0.0, 0.0)
+        coil = pf_coil("test_coil"; z=0.0, voltage_ext=200.0)
+        passive_coil = wall_coil("wall")
 
         add_coil!(system, coil)
         add_coil!(system, passive_coil)
@@ -149,8 +138,7 @@ using RAPID2D
         system = CoilSystem{FT}()
 
         func_voltage = t -> 100.0 * t
-        coil = Coil((r=2.5, z=0.0), 0.01, 0.001, 1e-6, true, true, "func_coil",
-                   1000.0, 50000.0, 0.0, func_voltage)
+        coil = pf_coil("func_coil"; z=0.0, voltage_ext=func_voltage)
 
         add_coil!(system, coil)
 

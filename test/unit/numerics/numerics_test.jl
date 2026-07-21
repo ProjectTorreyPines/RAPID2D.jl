@@ -1,20 +1,15 @@
-using Test
-using RAPID2D
+# Scalar-field gradient helpers and the 2D smoothing kernel.
+#
+# Two @testitems, one per original top-level @testset. Both build a full RAPID
+# object on a 100x200 grid and mutate it, so they are genuine separate scenarios
+# rather than cheap sibling assertions. The shared SimulationConfig factory lives
+# in setup_numerics.jl. `using Test` / `using RAPID2D` are auto-injected.
 
-@testset "Gradient Calculation Tests" begin
+@testitem "Gradient Calculation Tests" setup=[NumericsFixtures] begin
 
     FT = Float64
     # Create simulation configuration
-    config = SimulationConfig{FT}(
-        NR=100, NZ=200,
-        R_min=0.8, R_max=2.2,
-        Z_min=-1.2, Z_max=1.2,
-        dt=1e-6, t_end_s=10e-6,
-        R0B0=1.0,
-        prefilled_gas_pressure=5e-3,
-        wall_R=[1.0, 2.0, 2.0, 1.0],
-        wall_Z=[-1.0, -1.0, 1.0, 1.0]
-    )
+    config = walled_box_config(FT)
 
     # Create RAPID object
     RP = RAPID{FT}(config)
@@ -65,20 +60,11 @@ end
 
 
 
-@testset "smooth_data_2D" begin
+@testitem "smooth_data_2D" setup=[NumericsFixtures] begin
 
     FT = Float64
     # Create simulation configuration
-    config = SimulationConfig{FT}(
-        NR=100, NZ=200,
-        R_min=0.8, R_max=2.2,
-        Z_min=-1.2, Z_max=1.2,
-        dt=1e-6, t_end_s=10e-6,
-        R0B0=1.0,
-        prefilled_gas_pressure=5e-3,
-        wall_R=[1.0, 2.0, 2.0, 1.0],
-        wall_Z=[-1.0, -1.0, 1.0, 1.0]
-    )
+    config = walled_box_config(FT)
 
     # Create RAPID object
     RP = RAPID{FT}(config)
@@ -95,6 +81,13 @@ end
         ff[i, j] =  exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
     end
 
+    # ORDERING IS LOAD-BEARING — DO NOT SPLIT THESE TWO BLOCKS INTO SEPARATE
+    # @testitems. `ff` is shared and MUTATED: the "without weighting" block ends
+    # with an in-place `smooth_data_2D!(ff; num_SM=3)`, so the "with weighting"
+    # block deliberately starts from the ALREADY-SMOOTHED field. Splitting them
+    # would hand the second block a pristine Gaussian instead and silently change
+    # what is being asserted. Keeping both as nested @testsets inside one
+    # @testitem preserves the original sequential semantics exactly.
     @testset "smooth_data_2D without weighting" begin
         # No smoothing
         num_SM = 0
@@ -113,7 +106,12 @@ end
     end
 
     @testset "smooth_data_2D with weighting" begin
-        weighting = RP.G.Jacob
+        # `copy` is REQUIRED: `RP.G.Jacob` is a live field of the grid, and the
+        # "test with zero weighting" section below mutates `weighting` IN PLACE
+        # (`weighting[1, 1:3] .= 0.0`). Binding it directly, as this test used to,
+        # aliased and silently corrupted the RAPID object's own Jacobian — harmless
+        # only because it happened to be the last thing the file did.
+        weighting = copy(RP.G.Jacob)
         # No smoothing
         num_SM = 0
         ff_SM = RAPID2D.smooth_data_2D(ff; num_SM, weighting)
