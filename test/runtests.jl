@@ -7,8 +7,9 @@
 #     cc-julia-test-runner . physics               # name or filename contains "physics"
 #     cc-julia-test-runner . "re:^Coils .* Vector" # regex over name or filename
 #
-# Tags: :regression → RAPID_RUN_REGRESSION=true, :broken → RAPID_RUN_BROKEN=true
-#       (:broken tests are blocked on src/control/ defects).
+# Tags: :regression → RAPID_RUN_REGRESSION=true, :broken → RAPID_RUN_BROKEN=true.
+#       Nothing is tagged :broken at present; the gate is kept for tests that are
+#       knowingly blocked on a defect elsewhere.
 # RETESTITEMS_NWORKERS=N (N>0) runs the suite through ReTestItems on N workers
 # instead; see test/runtests_parallel.jl.
 
@@ -31,7 +32,6 @@ else
 
     if isempty(PATTERNS)
         WANT_REGRESSION || @info "Skipping :regression testitems. Set RAPID_RUN_REGRESSION=true to run them."
-        WANT_BROKEN || @info "Skipping :broken testitems (blocked on src/control/ defects). Set RAPID_RUN_BROKEN=true to run them."
     end
 
     # NB: the PACKAGE ROOT, not test/.

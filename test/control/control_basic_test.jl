@@ -1,32 +1,10 @@
 # Tests for the modular control system: Controller, ControllerSet, coil-system
 # integration, and the measurement-extraction interface functions.
 #
-# EVERY @testitem HERE IS TAGGED :broken AND IS EXPECTED TO FAIL — opt in with
-# RAPID_RUN_BROKEN=true (see test/runtests.jl). They fail because src/control/ is
-# broken, not the tests. Fixing it belongs on a separate branch; once fixed, drop the
-# `tags=[:broken]` below.
-#
-# ── VERIFIED src/control/ DEFECTS BLOCKING THESE TESTS ───────────────────────
-# 1. controllers.jl:30 — `create_controller` is defined with THREE positionals,
-#    `(target, dt, coils; ...)`, while its own docstring (:10) advertises TWO,
-#    `(target, coils; ..., dt=...)`. Every call site here follows the docstring
-#    → MethodError.
-# 2. controllers.jl:83 — `create_current_controller` calls `create_controller` with
-#    2 positionals, not matching the 3-positional definition → MethodError.
-# 3. controllers.jl:112 — `create_position_controller` passes `dt`, which is undefined
-#    in that scope → UndefVarError.
-# 4. controllers.jl:36 — `umin`/`umax` are accepted but never forwarded to
-#    `DiscretePID` (the forwarding at :48-49 is commented out), so the
-#    `controller.pid.umin`/`.umax` assertions and "Controller Limits" cannot pass.
-#
-# "Control Coil Finding" and "Control Interface Functions" touch only
-# `find_coils_by_name` / `hasmethod` and may pass on their own; they are tagged :broken
-# anyway so the file can be un-gated in one move.
-#
 # DiscretePIDs is reached through the package (`using RAPID2D.DiscretePIDs`): it is not
 # a direct dependency of test/Project.toml.
 
-@testitem "Control Controller Creation" tags=[:broken] begin
+@testitem "Control Controller Creation" begin
     using RAPID2D.DiscretePIDs
 
     area = π * 0.02^2  # 2cm radius coil
@@ -98,7 +76,7 @@ end
 # ORDERING DEPENDENCY: "Target Setting" → "Controller Reset" → "Control Signal
 # Computation" share the SAME `controller` and thread PID integrator state through it,
 # so they must stay fused in one item. "Control Signal Application" shares `test_coils`.
-@testitem "Control Controller Management" tags=[:broken] begin
+@testitem "Control Controller Management" begin
     area = π * 0.02^2
     resistance = 0.001
     self_inductance = 1e-6
@@ -165,7 +143,7 @@ end
     end
 end
 
-@testitem "Control ControllerSet" tags=[:broken] begin
+@testitem "Control ControllerSet" begin
     @testset "ControllerSet Creation" begin
         controller_set = ControllerSet{Float64}()
 
@@ -210,7 +188,7 @@ end
     end
 end
 
-@testitem "Control Coil Finding" tags=[:broken] begin
+@testitem "Control Coil Finding" begin
     area = π * 0.02^2
     resistance = 0.001
     self_inductance = 1e-6
@@ -265,7 +243,7 @@ end
     end
 end
 
-@testitem "Control Coil System Integration" tags=[:broken] begin
+@testitem "Control Coil System Integration" begin
     area = π * 0.02^2
     resistance = 0.001
     self_inductance = 1e-6
@@ -304,7 +282,7 @@ end
     @test coils[3].voltage_ext == 0.0  # Still unchanged
 end
 
-@testitem "Control Controller Limits" tags=[:broken] begin
+@testitem "Control Controller Limits" begin
     area = π * 0.02^2
     resistance = 0.001
     self_inductance = 1e-6
@@ -324,7 +302,7 @@ end
 
 # Integration with interface functions. A fuller test would need a complete RAPID
 # setup; this only verifies the measurement-extraction signatures exist.
-@testitem "Control Interface Functions" tags=[:broken] begin
+@testitem "Control Interface Functions" begin
     @testset "Measurement Extraction" begin
         # This would test extract_plasma_current, extract_plasma_position, etc.
         # For now, just verify the functions exist and can be called
