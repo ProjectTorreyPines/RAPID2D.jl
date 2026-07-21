@@ -1,16 +1,14 @@
-using Test
-using RAPID2D
+# Wall geometry file readers (read_wall_data_file / read_device_wall_data!).
 
-@testset "Wall IO Tests" begin
+@testitem "Wall IO" begin
     @testset "Wall Data Reading Tests" begin
-        test_dir = joinpath(@__DIR__, "../..", "data", "wall")
+        test_dir = joinpath(pkgdir(RAPID2D), "test", "data", "wall")
 
         @testset "read_wall_data_file - Valid Data" begin
             # Test reading a valid wall data file
             wall_file = joinpath(test_dir, "valid_wall.dat")
             wall = RAPID2D.read_wall_data_file(wall_file)
 
-            # Check that the results are correct
             @test length(wall.R) == 13  # 12 points + 1 for closing the loop
             @test length(wall.Z) == 13
             # Check some specific points from the tokamak shape
@@ -29,16 +27,15 @@ using RAPID2D
             # Test reading a file with fewer points than declared
             wall_file = joinpath(test_dir, "missing_wall.dat")
 
-            # Define wall variable outside the @test_logs block so it's accessible later
+            # SCOPE-SENSITIVE: this declaration, the @test_logs assignment below and
+            # the follow-up @tests must stay in one contiguous scope.
             local wall
 
             # Should produce a warning but still read available data
-            # We capture warnings using the @test_logs macro from Test
             @test_logs (:warn, r"Expected 10 points but only read 6 points from wall data file") begin
                 wall = RAPID2D.read_wall_data_file(wall_file)
             end
 
-            # Check that we got the correct data that was available
             @test length(wall.R) == 7  # 6 points + 1 for closing the loop
             @test wall.R[1] ≈ 1.5
             @test wall.Z[6] ≈ 0.0
@@ -68,7 +65,6 @@ using RAPID2D
             wall_file = joinpath(test_dir, "valid_wall.dat")
             RAPID2D.read_device_wall_data!(RP, wall_file)
 
-            # Check that the wall was loaded correctly
             @test length(RP.wall.R) == 13  # 12 points + 1 for closing the loop
             @test RP.wall.R[1] ≈ 1.5
             @test RP.wall.Z[1] ≈ 0.5

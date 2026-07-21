@@ -1,6 +1,10 @@
 ---
 name: CI
 
+# @testitem suite (test/runtests.jl). RETESTITEMS_NWORKERS>0 routes it through ReTestItems
+# worker processes (test/runtests_parallel.jl); 0 falls back to sequential TestItemRunner.
+# The workflow_dispatch `nworkers` input overrides it per run (0 = sequential).
+
 on:
   push:
     branches:
@@ -9,6 +13,12 @@ on:
     tags: '*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      nworkers:
+        description: >-
+          Override ReTestItems workers for all jobs. 0 = sequential
+          TestItemRunner. Blank = per-OS default (ubuntu 4, macOS 3).
+        default: ''
   schedule:
     - cron: '0 0 * * 0'  # Run at midnight on Sunday every week
 
@@ -19,35 +29,37 @@ concurrency:
 
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.flavor.os }} - ${{ matrix.flavor.arch }}
-    runs-on: ${{ matrix.flavor.os }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60  # cap a hang instead of burning the 6-hour default
     strategy:
       fail-fast: false
       matrix:
         version:
-          - '1.x'  # Latest version
-          # - '1.9'  # Specific stable version
-        flavor:
-          - {os: ubuntu-latest, arch: x64}  # Linux x64
-          # - {os: macos-latest, arch: arm64}  # macOS ARM (Too expensive GitHub Action runner)
-          # - {os: windows-latest, arch: x64}  # Windows x64 (Stuck in CI, FIX is needed)
+          - '1.x'  # Latest release
+        os:
+          - ubuntu-latest
+          - macos-latest    # arm64 runner; free for public repos
+          # No windows-latest: ADIOS2_jll ships no Windows binary, so RAPID2D can't precompile.
+        include:
+          # nworkers ≈ runner vCPUs. precompile_tasks lower on macOS (7 GB runner swap-storms).
+          # Coverage on ubuntu only: concurrent codecov uploads race the merge and undercount.
+          - os: ubuntu-latest
+            nworkers: 4
+            precompile_tasks: 4
+            coverage: true
+          - os: macos-latest
+            nworkers: 3
+            precompile_tasks: 2
+            coverage: false
 
     steps:
       - uses: actions/checkout@v4
 
-      # - name: Get number of CPU cores
-      #   uses: SimenB/github-actions-cpu-cores@v2
-      #   id: cpu-cores
-
-      # - name: Set JULIA_NUM_THREADS
-      #   shell: bash
-      #   run: >-
-      #     echo "JULIA_NUM_THREADS=${{ steps.cpu-cores.outputs.count }}" >> $GITHUB_ENV
-
+      # No explicit `arch`: pinning x64 would break the arm64 macOS runner.
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
-          arch: ${{ matrix.flavor.arch }}
 
       - uses: julia-actions/cache@v2
         with:
@@ -56,14 +68,26 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
 
       - uses: julia-actions/julia-runtest@v1
+        with:
+          coverage: ${{ matrix.coverage }}
         env:
-          GKSwstype: 100  # Disable graphics output during tests
+          GKSwstype: 100  # disable graphics output during tests
+          RAPID_RUN_REGRESSION: 'true'  # also run the :regression testitems
+          # Blank test, not truthiness: '0' is falsy to GitHub, so `input || matrix` would
+          # drop an explicit request for the sequential path back to the default.
+          RETESTITEMS_NWORKERS: >-
+            ${{ github.event.inputs.nworkers == '' && matrix.nworkers
+                || github.event.inputs.nworkers }}
+          RETESTITEMS_RETRIES: '0'  # fail fast; don't let a retry mask a flaky item
+          JULIA_NUM_PRECOMPILE_TASKS: ${{ matrix.precompile_tasks }}
 
       - uses: julia-actions/julia-processcoverage@v1
+        if: ${{ matrix.coverage }}
         with:
           directories: src
 
       - uses: codecov/codecov-action@v5
+        if: ${{ matrix.coverage }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info

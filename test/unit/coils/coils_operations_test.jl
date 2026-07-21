@@ -1,19 +1,16 @@
-using Test
-using RAPID2D
-
-@testset "Coil System Operations" begin
+@testitem "Coil System Operations" setup=[CoilFactories] begin
     FT = Float64
 
     @testset "Adding Coils to System" begin
         system = CoilSystem{FT}()
 
         # Create test coils
-        pf_coil = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
+        pf = pf_coil("PF1")
         cs_coil = Coil((r=1.8, z=0.0), 0.015, 0.0008, 2e-6, true, false, "CS", 2000.0, 100000.0)
-        wall_segment = Coil((r=2.01, z=0.2), 0.005, 0.01, 1e-7, false, false, "wall_1", nothing, nothing)
+        wall_segment = wall_coil("wall_1"; z=0.2)
 
         # Test adding coils
-        add_coil!(system, pf_coil)
+        add_coil!(system, pf)
         @test system.n_total == 1
         @test system.n_powered == 1
         @test system.n_controllable == 1
@@ -38,12 +35,12 @@ using RAPID2D
     @testset "Getting Coils by Type" begin
         system = CoilSystem{FT}()
 
-        pf_coil = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
+        pf = pf_coil("PF1")
         cs_coil = Coil((r=1.8, z=0.0), 0.015, 0.0008, 2e-6, true, false, "CS", 2000.0, 100000.0)
-        wall1 = Coil((r=2.01, z=0.2), 0.005, 0.01, 1e-7, false, false, "wall_1", nothing, nothing)
-        wall2 = Coil((r=2.01, z=-0.2), 0.005, 0.01, 1e-7, false, false, "wall_2", nothing, nothing)
+        wall1 = wall_coil("wall_1"; z=0.2)
+        wall2 = wall_coil("wall_2"; z=-0.2)
 
-        add_coil!(system, pf_coil)
+        add_coil!(system, pf)
         add_coil!(system, cs_coil)
         add_coil!(system, wall1)
         add_coil!(system, wall2)
@@ -69,8 +66,8 @@ using RAPID2D
     @testset "Finding Coils by Name" begin
         system = CoilSystem{FT}()
 
-        coil1 = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF_Upper", 1000.0, 50000.0)
-        coil2 = Coil((r=2.5, z=-0.5), 0.01, 0.001, 1e-6, true, true, "PF_Lower", 1000.0, 50000.0)
+        coil1 = pf_coil("PF_Upper")
+        coil2 = pf_coil("PF_Lower"; z=-0.5)
 
         add_coil!(system, coil1)
         add_coil!(system, coil2)
@@ -86,11 +83,11 @@ using RAPID2D
     @testset "Individual Voltage Control" begin
         system = CoilSystem{FT}()
 
-        pf_coil = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
-        wall_coil = Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall", nothing, nothing)
+        pf = pf_coil("PF1")
+        wall = wall_coil("wall")
 
-        add_coil!(system, pf_coil)
-        add_coil!(system, wall_coil)
+        add_coil!(system, pf)
+        add_coil!(system, wall)
 
         # Test setting voltage for powered coil
         set_coil_voltage!(system, "PF1", 750.0)
@@ -111,11 +108,11 @@ using RAPID2D
     @testset "Individual Current Control" begin
         system = CoilSystem{FT}()
 
-        pf_coil = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
-        wall_coil = Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall", nothing, nothing)
+        pf = pf_coil("PF1")
+        wall = wall_coil("wall")
 
-        add_coil!(system, pf_coil)
-        add_coil!(system, wall_coil)
+        add_coil!(system, pf)
+        add_coil!(system, wall)
 
         # Test setting current for any coil
         set_coil_current!(system, "PF1", 25000.0)
@@ -132,7 +129,7 @@ using RAPID2D
     @testset "Position Access" begin
         system = CoilSystem{FT}()
 
-        coil1 = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "coil1", 1000.0, 50000.0)
+        coil1 = pf_coil("coil1")
         coil2 = Coil((r=1.8, z=-0.3), 0.015, 0.0008, 2e-6, false, false, "coil2", nothing, nothing)
 
         add_coil!(system, coil1)

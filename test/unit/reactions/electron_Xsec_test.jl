@@ -1,22 +1,10 @@
-using Test
-using RAPID2D
+# Electron cross-section functions (momentum transfer, elastic, ionization,
+# excitation, dissociative ionization, alpha radiation, recombination).
+#
+# The energy vectors in @testsnippet XsecFixtures are read-only in every block (each
+# test allocates its own output buffer), so a single shared definition is safe.
 
-
-# Import functions from RAPID2D
-using RAPID2D: Xsec_Electron_Momentum_Transfer, Xsec_Electron_Momentum_Transfer!,
-				Xsec_Electron_Momentum_Transfer_vectorized, Xsec_Electron_Momentum_Transfer_vectorized!,
-				Xsec_Electron_Elastic_Scattering, Xsec_Electron_Elastic_Scattering!,
-				Xsec_Electron_Ionization, Xsec_Electron_Ionization!,
-				Xsec_Electron_Excitation, Xsec_Electron_Excitation!,
-				Xsec_Electron_tot_Excitation, Xsec_Electron_tot_Excitation!,
-				Xsec_Electron_Dissociative_Ionization, Xsec_Electron_Dissociative_Ionization!,
-				Xsec_Electron_Alpha_Radiation, Xsec_Electron_Alpha_Radiation!,
-				Xsec_Electron_Recombination_with_H2_Ion, Xsec_Electron_Recombination_with_H2_Ion!,
-				Xsec_Electron_Recombination_with_H3_Ion, Xsec_Electron_Recombination_with_H3_Ion!
-
-
-@testset "Electron Cross-Section Functions" begin
-
+@testsnippet XsecFixtures begin
     # Create aliases for RAPID2D constants and types to avoid repetitive namespace prefixes
     N_Elec_excitation = RAPID2D.N_Elec_excitation
     E_exc_threshold_eV = RAPID2D.E_exc_threshold_eV
@@ -25,12 +13,28 @@ using RAPID2D: Xsec_Electron_Momentum_Transfer, Xsec_Electron_Momentum_Transfer!
     Xsec_Table = RAPID2D.Xsec_Table
 
     # Test energy ranges
-	negative_energy = [-100.0, -0.1]
-	zero_energy = [0.0]
+    negative_energy = [-100.0, -0.1]
+    zero_energy = [0.0]
     energy_low = [1e-6, 0.001, 0.01, 0.1, 1.0]
     energy_mid = [10.0, 12.0, 15.5, 20.0, 20.5, 50.0, 100.0]
     energy_high = [200.0, 500.0, 1000.0, 1E6]
     energy_all = vcat(negative_energy, zero_energy, energy_low, energy_mid, energy_high)
+end
+
+@testitem "Electron Cross-Section Functions" setup=[XsecFixtures] begin
+    # Declared here, not in the snippet: these names are used by THIS body. A snippet
+    # becomes a module under the ReTestItems path, and `using` only re-exports names a
+    # module OWNS — imported ones stay invisible to the consumer.
+    using RAPID2D: Xsec_Electron_Momentum_Transfer, Xsec_Electron_Momentum_Transfer!,
+                    Xsec_Electron_Momentum_Transfer_vectorized, Xsec_Electron_Momentum_Transfer_vectorized!,
+                    Xsec_Electron_Elastic_Scattering, Xsec_Electron_Elastic_Scattering!,
+                    Xsec_Electron_Ionization, Xsec_Electron_Ionization!,
+                    Xsec_Electron_Excitation, Xsec_Electron_Excitation!,
+                    Xsec_Electron_tot_Excitation, Xsec_Electron_tot_Excitation!,
+                    Xsec_Electron_Dissociative_Ionization, Xsec_Electron_Dissociative_Ionization!,
+                    Xsec_Electron_Alpha_Radiation, Xsec_Electron_Alpha_Radiation!,
+                    Xsec_Electron_Recombination_with_H2_Ion, Xsec_Electron_Recombination_with_H2_Ion!,
+                    Xsec_Electron_Recombination_with_H3_Ion, Xsec_Electron_Recombination_with_H3_Ion!
 
     @testset "Constants and Data Structures" begin
         # Test that constants are properly defined

@@ -1,12 +1,6 @@
-"""
-Test script for Green's function implementation
-"""
+# Green's function implementation.
 
-using RAPID2D
-using Test
-using RAPID2D.SpecialFunctions
-
-@testset "Green's Function Tests" begin
+@testitem "Green's Function" begin
 
     @testset "Basic functionality" begin
         # Simple test case
@@ -118,4 +112,3 @@ using RAPID2D.SpecialFunctions
         @test all(isfinite.(derivatives.dψ_dZsrc))
     end
 end
-

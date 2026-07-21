@@ -1,7 +1,4 @@
-using Test
-using RAPID2D
-
-@testset "Coil Initialization and Vectorized Operations" begin
+@testitem "Coil Initialization and Vectorized Operations" setup=[CoilFactories] begin
     FT = Float64
 
     @testset "Four Wall System Initialization" begin
@@ -101,9 +98,9 @@ using RAPID2D
         system = CoilSystem{FT}()
 
         # Add test coils
-        coil1 = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0, 100.0)
-        coil2 = Coil((r=2.5, z=-0.5), 0.01, 0.001, 1e-6, true, false, "PF2", 1000.0, 50000.0, 200.0)
-        coil3 = Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall", nothing, nothing, -50.0)
+        coil1 = pf_coil("PF1"; current=100.0)
+        coil2 = pf_coil("PF2"; z=-0.5, is_controllable=false, current=200.0)
+        coil3 = wall_coil("wall"; current=-50.0)
 
         add_coil!(system, coil1)
         add_coil!(system, coil2)
@@ -148,9 +145,9 @@ using RAPID2D
         system = CoilSystem{FT}()
 
         # Add test coils
-        coil1 = Coil((r=2.5, z=0.5), 0.01, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0, 0.0, 300.0)
-        coil2 = Coil((r=2.5, z=-0.5), 0.01, 0.001, 1e-6, true, false, "PF2", 1000.0, 50000.0, 0.0, 400.0)
-        coil3 = Coil((r=2.01, z=0.0), 0.005, 0.01, 1e-7, false, false, "wall", nothing, nothing, 0.0, 0.0)
+        coil1 = pf_coil("PF1"; voltage_ext=300.0)
+        coil2 = pf_coil("PF2"; z=-0.5, is_controllable=false, voltage_ext=400.0)
+        coil3 = wall_coil("wall")
 
         add_coil!(system, coil1)
         add_coil!(system, coil2)

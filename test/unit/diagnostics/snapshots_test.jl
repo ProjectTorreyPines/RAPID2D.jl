@@ -1,8 +1,10 @@
-using RAPID2D
-using Test
+# Snapshot0D / Snapshot2D diagnostics containers and their equality operators.
+#
+# NOTE on nesting: several inner @testset names repeat across the file ("Type
+# Consistency" three times, "Basic Equality" twice). They stay NESTED rather than
+# promoted to @testitems, whose names must be globally unique across the suite.
 
-
-@testset "Snapshot Diagnostics Tests" begin
+@testitem "Snapshot Diagnostics" begin
 
     @testset "Memory Safety: Reference vs Copy" begin
         # This is the most critical test - ensures data integrity
@@ -180,7 +182,7 @@ using Test
 end
 
 
-@testset "Snapshot Equality Operators" begin
+@testitem "Snapshot Equality Operators" begin
 
     @testset "Snapshot0D Equality Tests" begin
         # Basic equality tests

@@ -9,8 +9,8 @@ using DiscretePIDs
 """
     create_controller(target::FT, coils::Vector{Coil{FT}};
                      control_type="generic",
+                     dt,
                      Kp=FT(1.0), Ti=typemax(FT), Td=zero(FT),
-                     dt=zero(FT),
                      umin=typemin(FT), umax=typemax(FT)) where {FT<:AbstractFloat}
 
 Create a generic controller using DiscretePID.
@@ -23,31 +23,31 @@ Create a generic controller using DiscretePID.
 - `control_type`: String describing the control purpose
 - `Kp`: Proportional gain
 - `Ti`: Integral time constant [s] (typemax(FT) = no integral action)
+- `dt`: Sampling period [s] (REQUIRED; forwarded to DiscretePID as `Ts`)
 - `Td`: Derivative time constant [s] (zero(FT) = no derivative action)
-- `dt`: Time step [s]
 - `umin, umax`: Control signal limits (typemin/typemax(FT) = no limits)
 """
 function create_controller(
 			target::FT,
-			dt::FT,
 			coils::Vector{Coil{FT}};
+			dt::FT,
 			control_type::String="generic",
 			Kp::FT=FT(1.0), Ti::FT=typemax(FT), Td::FT=zero(FT),
 			umin::FT=typemin(FT), umax::FT=typemax(FT), pid_kwargs...
 		) where {FT<:AbstractFloat}
 
-    # Convert PID parameters for DiscretePID
+    # Convert PID parameters for DiscretePID.
+    # umin/umax are forwarded, not decorative: DiscretePID clamps its output with
+    # `u = clamp(v, pid.umin, pid.umax)`, so dropping them would silently disable
+    # every caller's control-signal limits.
     pid = DiscretePID(;
         K = Kp,
         Ti = Ti,
         Td = Td,
         Ts = dt,
+        umin = umin,
+        umax = umax,
         pid_kwargs...
-        # N = FT(2),         # Derivative filter
-        # b = FT(1.0),       # Setpoint weighting
-        # umin = umin,
-        # umax = umax
-        # Tt = sqrt(2.0 * Td)  # Anti-windup time constant
     )
 
     return Controller{FT}(
@@ -109,7 +109,7 @@ function create_position_controller(target_position::FT,
                                    Kp=FT(1.0), Ti=FT(10.0), Td=FT(0.1),
                                    kwargs...) where {FT<:AbstractFloat}
 
-    return create_controller(target_position, dt, coils;
+    return create_controller(target_position, coils;
         control_type = "position",
         Kp = Kp, Ti = Ti, Td = Td,
         kwargs...

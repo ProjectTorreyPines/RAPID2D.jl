@@ -1,21 +1,14 @@
-using RAPID2D
-using RAPID2D.LinearAlgebra
-using RAPID2D.SparseArrays
-using Test
+# Discretized differential operators: divergence, ∇𝐃∇, ∇⋅(𝐮 f) and 𝐮⋅∇f.
+# Each testitem builds and mutates its OWN RAPID object; the shared
+# SimulationConfig factories live in setup_numerics.jl.
 
-
-@testset "Basic differential operators" begin
+@testitem "Basic differential operators" setup=[NumericsFixtures] begin
     # Define test parameters
     NR, NZ = 50, 100  # Small grid for testing
     FT = Float64    # Floating point type
 
     # Create a proper RAPID object for testing using create_rapid_object
-    config = RAPID2D.SimulationConfig{FT}(
-        prefilled_gas_pressure=4e-3,
-        R0B0=1.5*1.8,
-        NR=NR,
-        NZ=NZ
-    )
+    config = gas_filled_config(FT; NR=NR, NZ=NZ)
     # Create the RAPID object
     RP = create_rapid_object(; config=config)
 
@@ -41,7 +34,7 @@ using Test
 
     OP = RP.operators
 
-	# Explicit method
+    # Explicit method
     div_numerical_1 = calculate_divergence(RP.G, FR, FZ) # Using central differencing
 
     # using operators matrix-vector multiplication
@@ -106,17 +99,13 @@ using Test
     end
 end
 
-@testset "Diffusion operator [∇𝐃∇]" begin
+@testitem "Diffusion operator [∇𝐃∇]" setup=[NumericsFixtures] begin
     # Define test parameters
     NR, NZ = 15, 30  # Small grid for testing
     FT = Float64    # Floating point type
 
     # Create a proper RAPID object for testing using create_rapid_object
-    config = RAPID2D.SimulationConfig{FT}()
-	config.prefilled_gas_pressure = 4e-3
-	config.R0B0 = 1.5*1.8;
-	config.NR = NR
-	config.NZ = NZ
+    config = gas_filled_config(FT; NR=NR, NZ=NZ)
 
     # Create the RAPID object
     RP = create_rapid_object(; config=config)
@@ -136,7 +125,7 @@ end
         test_density[i,j] = exp(-(r_norm + z_norm))
     end
 
-	# Explicit method
+    # Explicit method
     explicit_result = compute_∇𝐃∇f_directly(RP, test_density)
 
     # Implicit method
@@ -153,9 +142,9 @@ end
     @test ∇𝐃∇ == RP.operators.∇𝐃∇
     @test !(∇𝐃∇ === RP.operators.∇𝐃∇)
 
-	# Comparison
-	@test isapprox(explicit_result, implicit_result, rtol=1e-10)
-	@test isapprox(explicit_result, implicit_result2, rtol=1e-10)
+    # Comparison
+    @test isapprox(explicit_result, implicit_result, rtol=1e-10)
+    @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
 
 
     # Additional test: Verify that matrix multiplication operations don't error
@@ -163,17 +152,13 @@ end
     @test_nowarn ∇𝐃∇ * (∇𝐃∇ * test_density)
 end
 
-@testset "Convective-flux divergence operator [∇⋅(𝐮 f)] " begin
+@testitem "Convective-flux divergence operator [∇⋅(𝐮 f)]" setup=[NumericsFixtures] begin
     # Define test parameters
     NR, NZ = 15, 30  # Small grid for testing
     FT = Float64     # Floating point type
 
     # Create a proper RAPID object for testing using create_rapid_object
-    config = RAPID2D.SimulationConfig{FT}()
-    config.prefilled_gas_pressure = 4e-3
-    config.R0B0 = 1.5*1.8
-    config.NR = NR
-    config.NZ = NZ
+    config = gas_filled_config(FT; NR=NR, NZ=NZ)
 
     # Create the RAPID object
     RP = create_rapid_object(; config=config)
@@ -281,20 +266,11 @@ end
 end
 
 
-@testset "Directional derivative operator [𝐮⋅∇f]" begin
+@testitem "Directional derivative operator [𝐮⋅∇f]" setup=[NumericsFixtures] begin
 
     FT = Float64
     # Create simulation configuration
-    config = SimulationConfig{FT}(
-        NR=100, NZ=200,
-        R_min=0.8, R_max=2.2,
-        Z_min=-1.2, Z_max=1.2,
-        dt=1e-6, t_end_s=10e-6,
-        R0B0=1.0,
-        prefilled_gas_pressure=5e-3,
-        wall_R=[1.0, 2.0, 2.0, 1.0],
-        wall_Z=[-1.0, -1.0, 1.0, 1.0]
-    )
+    config = walled_box_config(FT)
 
     # Create RAPID object
     RP = RAPID{FT}(config)
@@ -344,8 +320,8 @@ end
     for flag_upwind in [true, false]
         @testset "Upwind = $flag_upwind" begin
             # Calculate explicit convection term
-			∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, test_f; upwind=flag_upwind)
-			explicit_result = @. (RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
+            ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, test_f; upwind=flag_upwind)
+            explicit_result = @. (RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
 
             explicit_result2 = compute_𝐮∇f_directly(RP, test_f; flag_upwind)
 

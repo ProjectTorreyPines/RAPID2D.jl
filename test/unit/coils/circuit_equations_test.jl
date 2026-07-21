@@ -1,7 +1,4 @@
-using Test
-using RAPID2D
-
-@testset "Circuit Equations Tests" begin
+@testitem "Circuit Equations Tests" begin
     FT = Float64
 
     @testset "Basic Mutual Inductance Calculation" begin
@@ -148,30 +145,20 @@ using RAPID2D
         # Matrices should remain empty/uninitialized for empty csys
         @test csys.n_total == 0
     end
-
-
 end
 
-@testset "Current Distribution Functions" begin
+@testitem "Current Distribution Functions" setup=[CoilGridHelpers] begin
     FT = Float64
+
     @testset "Single Coil Current Distribution" begin
         # Create a simple 5x5 grid
         NR, NZ = 5, 5
-        grid = GridGeometry{FT}(NR, NZ)
 
         # Initialize grid with R = [1, 2, 3, 4, 5], Z = [1, 2, 3, 4, 5]
-        initialize_grid_geometry!(grid, (1.0, 5.0), (1.0, 5.0))
+        grid = make_grid(NR, NZ, (1.0, 5.0), (1.0, 5.0))
 
         # Create a single coil at grid point (2.5, 2.5) - exactly between grid points
-        coil = Coil{FT}(
-            location=(r=2.5, z=2.5),
-            area=1.0, resistance=1.0, self_inductance=1.0,
-            is_powered=true, is_controllable=true,
-            name="test_coil"
-        )
-
-        coil_system = CoilSystem{FT}([coil])
-        determine_coils_inside_grid!(coil_system, grid)
+        coil_system = place_coils(grid, unit_coil(2.5, 2.5, "test_coil"))
 
         # Set coil current to 1.0 A
         coil_system.coils[1].current = 1.0
@@ -206,19 +193,10 @@ end
     @testset "Coil at Grid Point" begin
         # Test coil exactly at a grid point
         NR, NZ = 4, 4
-        grid = GridGeometry{FT}(NR, NZ)
-        initialize_grid_geometry!(grid, (0.0, 3.0), (0.0, 3.0))
+        grid = make_grid(NR, NZ, (0.0, 3.0), (0.0, 3.0))
 
         # Coil exactly at grid point (1.0, 1.0) - grid index [2,2]
-        coil = Coil{FT}(
-            location=(r=1.0, z=1.0),
-            area=1.0, resistance=1.0, self_inductance=1.0,
-            is_powered=true, is_controllable=true,
-            name="grid_point_coil"
-        )
-
-        coil_system = CoilSystem{FT}([coil])
-        determine_coils_inside_grid!(coil_system, grid)
+        coil_system = place_coils(grid, unit_coil(1.0, 1.0, "grid_point_coil"))
 
         # Set coil current to 2.0 A
         coil_system.coils[1].current = 2.0
@@ -240,26 +218,13 @@ end
     @testset "Multiple Coils" begin
         # Test with multiple coils
         NR, NZ = 6, 6
-        grid = GridGeometry{FT}(NR, NZ)
-        initialize_grid_geometry!(grid, (0.0, 5.0), (0.0, 5.0))
+        grid = make_grid(NR, NZ, (0.0, 5.0), (0.0, 5.0))
 
         # Create two coils at different positions
-        coil1 = Coil{FT}(
-            location=(r=1.5, z=1.5),  # Between grid points
-            area=1.0, resistance=1.0, self_inductance=1.0,
-            is_powered=true, is_controllable=true,
-            name="coil1"
-        )
-
-        coil2 = Coil{FT}(
-            location=(r=3.0, z=3.0),  # At grid point
-            area=1.0, resistance=1.0, self_inductance=1.0,
-            is_powered=true, is_controllable=true,
-            name="coil2"
-        )
-
-        coil_system = CoilSystem{FT}([coil1, coil2])
-        determine_coils_inside_grid!(coil_system, grid)
+        coil_system = place_coils(grid, [
+            unit_coil(1.5, 1.5, "coil1"),  # Between grid points
+            unit_coil(3.0, 3.0, "coil2")   # At grid point
+        ])
 
         # Set coil currents
         coil_system.coils[1].current = 1.0
@@ -286,18 +251,14 @@ end
     @testset "Boundary Conditions" begin
         # Test coils near/outside boundaries
         NR, NZ = 4, 4
-        grid = GridGeometry{FT}(NR, NZ)
-        initialize_grid_geometry!(grid, (0.0, 3.0), (0.0, 3.0))
+        grid = make_grid(NR, NZ, (0.0, 3.0), (0.0, 3.0))
 
         # Create coils: inside, on boundary, and outside
-        coils = [
-            Coil{FT}(location=(r=1.5, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="inside"),
-            Coil{FT}(location=(r=3.0, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="on_boundary"),
-            Coil{FT}(location=(r=4.0, z=1.5), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="outside")
-        ]
-
-        coil_system = CoilSystem{FT}(coils)
-        determine_coils_inside_grid!(coil_system, grid)
+        coil_system = place_coils(grid, [
+            unit_coil(1.5, 1.5, "inside"; is_controllable=false),
+            unit_coil(3.0, 1.5, "on_boundary"; is_controllable=false),
+            unit_coil(4.0, 1.5, "outside"; is_controllable=false)
+        ])
 
         # Only first two coils should be inside domain
         @test length(coil_system.inside_domain_indices) == 2
@@ -319,18 +280,14 @@ end
     @testset "Coil Mask Functionality" begin
         # Test selective coil processing using mask
         NR, NZ = 4, 4
-        grid = GridGeometry{FT}(NR, NZ)
-        initialize_grid_geometry!(grid, (0.0, 3.0), (0.0, 3.0))
+        grid = make_grid(NR, NZ, (0.0, 3.0), (0.0, 3.0))
 
         # Create three coils inside domain
-        coils = [
-            Coil{FT}(location=(r=1.0, z=1.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil1"),
-            Coil{FT}(location=(r=2.0, z=1.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil2"),
-            Coil{FT}(location=(r=1.0, z=2.0), area=1.0, resistance=1.0, self_inductance=1.0, is_powered=true, name="coil3")
-        ]
-
-        coil_system = CoilSystem{FT}(coils)
-        determine_coils_inside_grid!(coil_system, grid)
+        coil_system = place_coils(grid, [
+            unit_coil(1.0, 1.0, "coil1"; is_controllable=false),
+            unit_coil(2.0, 1.0, "coil2"; is_controllable=false),
+            unit_coil(1.0, 2.0, "coil3"; is_controllable=false)
+        ])
 
         # Set coil currents
         for (i, current) in enumerate([1.0, 1.0, 1.0])
@@ -352,18 +309,9 @@ end
     @testset "In-place vs Allocating Functions" begin
         # Test that both versions give same results
         NR, NZ = 4, 4
-        grid = GridGeometry{FT}(NR, NZ)
-        initialize_grid_geometry!(grid, (0.0, 3.0), (0.0, 3.0))
+        grid = make_grid(NR, NZ, (0.0, 3.0), (0.0, 3.0))
 
-        coil = Coil{FT}(
-            location=(r=1.5, z=1.5),
-            area=1.0, resistance=1.0, self_inductance=1.0,
-            is_powered=true, is_controllable=true,
-            name="test"
-        )
-
-        coil_system = CoilSystem{FT}([coil])
-        determine_coils_inside_grid!(coil_system, grid)
+        coil_system = place_coils(grid, unit_coil(1.5, 1.5, "test"))
 
         # Set coil current
         coil_system.coils[1].current = 1.0
@@ -382,18 +330,9 @@ end
     @testset "Zero Current Handling" begin
         # Test handling of zero currents
         NR, NZ = 4, 4
-        grid = GridGeometry{FT}(NR, NZ)
-        initialize_grid_geometry!(grid, (0.0, 3.0), (0.0, 3.0))
+        grid = make_grid(NR, NZ, (0.0, 3.0), (0.0, 3.0))
 
-        coil = Coil{FT}(
-            location=(r=1.5, z=1.5),
-            area=1.0, resistance=1.0, self_inductance=1.0,
-            is_powered=true, is_controllable=true,
-            name="zero_current"
-        )
-
-        coil_system = CoilSystem{FT}([coil])
-        determine_coils_inside_grid!(coil_system, grid)
+        coil_system = place_coils(grid, unit_coil(1.5, 1.5, "zero_current"))
 
         # Set zero current
         coil_system.coils[1].current = 0.0
@@ -408,34 +347,18 @@ end
         NR, NZ = 4, 4
 
         # Fine grid
-        grid_fine = GridGeometry{FT}(NR, NZ)
-        initialize_grid_geometry!(grid_fine, (0.0, 1.0), (0.0, 1.0))  # dR = dZ = 1/3
+        grid_fine = make_grid(NR, NZ, (0.0, 1.0), (0.0, 1.0))    # dR = dZ = 1/3
 
         # Coarse grid
-        grid_coarse = GridGeometry{FT}(NR, NZ)
-        initialize_grid_geometry!(grid_coarse, (0.0, 3.0), (0.0, 3.0))  # dR = dZ = 1
+        grid_coarse = make_grid(NR, NZ, (0.0, 3.0), (0.0, 3.0))  # dR = dZ = 1
 
         # Same coil position (fractionally)
-        coil = Coil{FT}(
-            location=(r=0.5, z=0.5),  # Relative position in fine grid
-            area=1.0, resistance=1.0, self_inductance=1.0,
-            is_powered=true, is_controllable=true,
-            name="test"
-        )
-
-        coil_system_fine = CoilSystem{FT}([coil])
-        determine_coils_inside_grid!(coil_system_fine, grid_fine)
+        # Relative position in fine grid
+        coil_system_fine = place_coils(grid_fine, unit_coil(0.5, 0.5, "test"))
 
         # Scale coil position for coarse grid
-        coil_coarse = Coil{FT}(
-            location=(r=1.5, z=1.5),  # Equivalent position in coarse grid
-            area=1.0, resistance=1.0, self_inductance=1.0,
-            is_powered=true, is_controllable=true,
-            name="test"
-        )
-
-        coil_system_coarse = CoilSystem{FT}([coil_coarse])
-        determine_coils_inside_grid!(coil_system_coarse, grid_coarse)
+        # Equivalent position in coarse grid
+        coil_system_coarse = place_coils(grid_coarse, unit_coil(1.5, 1.5, "test"))
 
         # Set coil currents
         coil_system_fine.coils[1].current = 1.0

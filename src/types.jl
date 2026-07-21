@@ -775,8 +775,14 @@ mutable struct RAPID{FT<:AbstractFloat}
 
         flf = FieldLineFollowingResult{FT}(NR, NZ)
 
-        # Create AdiosFileWrapper instances for snapshots
-        prefixName = joinpath(config.Output_path, config.Output_prefix)
+        # Create AdiosFileWrapper instances for snapshots.
+        # abspath: Output_path defaults to the RELATIVE "./output", but these handles are
+        # closed by a finalizer that may run under a DIFFERENT working directory than the
+        # one active at open time (TestItemRunner cd's into each testitem's directory and
+        # restores the cwd afterwards). A relative path then resolves elsewhere on close,
+        # giving "Bad file descriptor" and an intermittent SIGABRT. Resolving once, here,
+        # pins the handle to a fixed location for its whole lifetime.
+        prefixName = joinpath(abspath(config.Output_path), config.Output_prefix)
         AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
         AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
 

@@ -1,20 +1,18 @@
-"""
-Test suite for magnetic field calculations from poloidal flux function ψ.
+# Magnetic field calculations from poloidal flux ψ (calculate_B_from_ψ! /
+# calculate_B_from_ψ), checked against analytical solutions. The grid in @testsnippet
+# BFieldGrid is read-only in every block, so one shared instance is safe.
 
-Tests the calculate_B_from_ψ! and calculate_B_from_ψ functions using analytical solutions.
-"""
-
-using Test
-using RAPID2D
-
-@testset "Magnetic Field Calculations from ψ" begin
-
+@testsnippet BFieldGrid begin
     # Test parameters
     FT = Float64
 
-	NR, NZ = 40, 80
-	G = GridGeometry{FT}(40, 80)
-	initialize_grid_geometry!(G, (0.5, 1.5), (-1.0, 1.0))
+    NR, NZ = 40, 80
+    # NB: build the grid FROM NR/NZ so the two cannot silently drift apart.
+    G = GridGeometry{FT}(NR, NZ)
+    initialize_grid_geometry!(G, (0.5, 1.5), (-1.0, 1.0))
+end
+
+@testitem "Magnetic Field Calculations from ψ" setup=[BFieldGrid] begin
 
     @testset "Uniform field test (ψ = constant)" begin
         # Test case 1: ψ = constant → BR = BZ = 0
@@ -31,21 +29,21 @@ using RAPID2D
     @testset "Mixed field test (ψ = aR² + bZ²)" begin
         # Test case 4: ψ = a*R² + b*Z² → BR = -2b*Z/R, BZ = 2a
         a, b = 1.0, 0.8
-		ψ = @. a * G.R2D^2 + b * G.Z2D^2
+        ψ = @. a * G.R2D^2 + b * G.Z2D^2
 
         BR, BZ = calculate_B_from_ψ(G, ψ)
 
-		expected_BR = @. -2*b * G.Z2D / G.R2D
-		expected_BZ = 2 *a * ones(FT, NR, NZ)
+        expected_BR = @. -2*b * G.Z2D / G.R2D
+        expected_BZ = 2 *a * ones(FT, NR, NZ)
 
-		# Check interior points (higher accuracy)
-		interiors = (2:NR-1, 2:NZ-1)
-		@test isapprox(BR[interiors...], expected_BR[interiors...], rtol=1e-10)
-		@test isapprox(BZ[interiors...], expected_BZ[interiors...], rtol=1e-10)
+        # Check interior points (higher accuracy)
+        interiors = (2:NR-1, 2:NZ-1)
+        @test isapprox(BR[interiors...], expected_BR[interiors...], rtol=1e-10)
+        @test isapprox(BZ[interiors...], expected_BZ[interiors...], rtol=1e-10)
 
-		# Check including boundaries (lower accuracy)
-		@test isapprox(BR, expected_BR, rtol=1e-2)
-		@test isapprox(BZ, expected_BZ, rtol=1e-2)
+        # Check including boundaries (lower accuracy)
+        @test isapprox(BR, expected_BR, rtol=1e-2)
+        @test isapprox(BZ, expected_BZ, rtol=1e-2)
     end
 
     @testset "Wrapper function test" begin
