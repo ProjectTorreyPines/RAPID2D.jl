@@ -593,7 +593,177 @@ end
     implicit_plasma_oneθ = deepcopy(RP.plasma)
 
     @test isequal(explicit_plasma.ne, implicit_plasma_zeroθ.ne) # exactly the same
-    @test isapprox(explicit_plasma.ne, implicit_plasma_oneθ.ne, rtol=1e-3)
+    # rtol=1e-2: explicit vs implicit θ=1 differ by an O(ν_iz·dt) first-order scheme error
+    # (ν_iz,max·dt ≈ 7.5e-3 → ~0.6%). Ordinary numerics, not a bug.
+    @test isapprox(explicit_plasma.ne, implicit_plasma_oneθ.ne, rtol=1e-2)
+end
+
+@testset "Thermal ionization at low/zero E/p (ClampExtrap low-field limit)" begin
+    # E/p = 0 does NOT mean zero rates: the rate is set by the electron energy distribution,
+    # so a 10 eV Maxwellian ionizes with no field. ClampExtrap gives sub-minimum-E/p cells the
+    # low-field boundary rate; the old fill-0 unphysically zeroed them.
+    #
+    # Measured (implicit θ=1, dt=10us): ne/n0 1.000 -> 1.162 (saturated by 1 ms);
+    # <Te> 10 -> 2.00 (1 ms) -> 1.81 eV (2 ms). Te can't reach room_T here: below the ~12 eV
+    # excitation threshold only elastic transfer (~2me/mi) remains (0.23 eV even at 30 ms).
+    # dt=10us costs ~1.2% vs a dt=1us reference; don't enlarge much (at 50us Te undershoots
+    # below the room-T floor). Thresholds are loose to survive an RRC-table refresh.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        NR=20, NZ=30, R_min=0.8, R_max=2.2, Z_min=-1.2, Z_max=1.2,
+        dt=1e-5, t_end_s=2000e-6, R0B0=1.0, Dpara0=0.0, Dperp0=0.0,
+        prefilled_gas_pressure=5e-3,
+        wall_R=[1.0, 2.0, 2.0, 1.0], wall_Z=[-1.0, -1.0, 1.0, 1.0]
+    )
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        src=true, ud_evolve=false, ud_method="Xsec",
+        Te_evolve=true,          # cooling is the point of this test
+        Ti_evolve=false,
+        diffu=false, convec=false, Ampere=false,
+        E_para_self_ES=false, E_para_self_EM=false, Gas_evolve=false,
+        update_ni_independently=false, Include_ud_convec_term=false,
+        Coulomb_Collision=false, negative_n_correction=false
+    )
+    RP.flags.Atomic_Collision = true
+    RP.flags.Ionz_method = "Xsec"
+    RP.flags.Implicit = true
+    RP.flags.Implicit_weight = 1.0
+
+    initialize!(RP)
+    R0 = (config.R_min + config.R_max) / 2
+    Z0 = (config.Z_min + config.Z_max) / 2
+    ini_n = zeros(FT, RP.G.NR, RP.G.NZ)
+    for i in 1:RP.G.NR, j in 1:RP.G.NZ
+        R, Z = RP.G.R2D[i, j], RP.G.Z2D[i, j]
+        ini_n[i, j] = 1.0e6 * exp(-((R-R0)^2/(2*0.1^2) + (Z-Z0)^2/(2*0.1^2)))
+    end
+    ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
+
+    RP.plasma.ne = copy(ini_n)
+    RP.plasma.ni = copy(ini_n)
+    RP.fields.BR_ext .= 1e-4
+    RP.fields.BZ_ext .= 1e-4
+    RAPID2D.combine_external_and_self_fields!(RP)
+    Te0 = 10.0
+    RP.plasma.Te_eV .= Te0
+    ini_sum = sum(RP.plasma.ne)
+
+    # (a) Table-level (config-independent): E/p=0 clamps to the lowest-E/p column and stays
+    #     nonzero for hot electrons, while the 15.46 eV energy threshold still applies.
+    rrc_iz = RP.eRRCs.Ionization
+    @test rrc_iz.itp(0.0, 15.0) == rrc_iz.itp(rrc_iz.EoverP[1], 15.0)  # clamped to boundary
+    @test rrc_iz.itp(0.0, 15.0) > 0.0                                  # ...and nonzero (≈6.2e-15)
+    @test rrc_iz.itp(0.0, 1.5) == 0.0    # but the 15.46 eV energy threshold still applies
+    update_transport_quantities!(RP)
+    @test all(RP.plasma.ν_en_iz[RP.G.nodes.in_wall_nids] .> 0.0)
+
+    # (b) Thermal ionization grows the density, and the energy cost cools Te (t = 1 ms)
+    for _ in 1:100
+        RAPID2D.advance_timestep!(RP, config.dt)
+    end
+    ne_1ms = sum(RP.plasma.ne)
+    Te_1ms = sum(RP.plasma.ne .* RP.plasma.Te_eV) / sum(RP.plasma.ne)
+    @test ne_1ms > 1.05 * ini_sum   # measured ≈ 1.162×
+    @test Te_1ms < 0.6 * Te0        # measured ≈ 2.0 eV
+
+    # (c) As Te falls, ionization shuts off and the density saturates (t = 2 ms)
+    for _ in 1:100
+        RAPID2D.advance_timestep!(RP, config.dt)
+    end
+    ne_2ms = sum(RP.plasma.ne)
+    Te_2ms = sum(RP.plasma.ne .* RP.plasma.Te_eV) / sum(RP.plasma.ne)
+    @test isapprox(ne_2ms, ne_1ms; rtol=1e-2)  # saturated (measured: no further growth)
+
+    # (d) Te keeps cooling toward room_T_eV but cannot reach it on this timescale
+    @test Te_2ms < Te_1ms                         # still cooling (measured 1.81 < 2.00)
+    @test Te_2ms > RP.config.constants.room_T_eV  # not collapsed below the floor
+
+    @test !any(isnan, RP.plasma.ne)
+    @test !any(isnan, RP.plasma.Te_eV)
+end
+
+@testset "Te relaxes to room_T_eV over ~tau_E, from both directions" begin
+    # Elastic e-n collisions equilibrate Te with the gas on
+    #     tau_E = 1/(2*(me/mi)*nu_en_mom),  nu_en_mom = n_gas*RRC_mom
+    # Measured: nu_en_mom ≈ 1.70e4 /s, 2me/mi = 5.44e-4  =>  tau_E ≈ 0.108 s.
+    # Over ~4.6 tau_E, Te must converge on room_T_eV FROM BOTH SIDES (measured):
+    #   Te0 = 0.1   eV -> cools -> room x 1.013
+    #   Te0 = 0.001 eV -> heats -> room x 0.961   <- sharper check: the exchange is
+    # bidirectional, not one-way cooling. Both below the iz threshold, so ne is untouched.
+    # dt=1ms is fine: smooth exponential relaxation, dt/tau_E ≈ 0.01, implicit.
+    FT = Float64
+    function _build_relax(Te0)
+        config = SimulationConfig{FT}(
+            NR=20, NZ=30, R_min=0.8, R_max=2.2, Z_min=-1.2, Z_max=1.2,
+            dt=1e-3, t_end_s=0.5, R0B0=1.0, Dpara0=0.0, Dperp0=0.0,
+            prefilled_gas_pressure=5e-3,
+            wall_R=[1.0, 2.0, 2.0, 1.0], wall_Z=[-1.0, -1.0, 1.0, 1.0]
+        )
+        RP = RAPID{FT}(config)
+        RP.flags = SimulationFlags{FT}(
+            src=true, ud_evolve=false, ud_method="Xsec",
+            Te_evolve=true, Ti_evolve=false,
+            diffu=false, convec=false, Ampere=false,
+            E_para_self_ES=false, E_para_self_EM=false, Gas_evolve=false,
+            update_ni_independently=false, Include_ud_convec_term=false,
+            Coulomb_Collision=false, negative_n_correction=false
+        )
+        RP.flags.Atomic_Collision = true
+        RP.flags.Ionz_method = "Xsec"
+        RP.flags.Implicit = true
+        RP.flags.Implicit_weight = 1.0
+        initialize!(RP)
+        R0 = (config.R_min + config.R_max) / 2
+        Z0 = (config.Z_min + config.Z_max) / 2
+        ini_n = zeros(FT, RP.G.NR, RP.G.NZ)
+        for i in 1:RP.G.NR, j in 1:RP.G.NZ
+            R, Z = RP.G.R2D[i, j], RP.G.Z2D[i, j]
+            ini_n[i, j] = 1.0e6 * exp(-((R-R0)^2/(2*0.1^2) + (Z-Z0)^2/(2*0.1^2)))
+        end
+        ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
+        RP.plasma.ne = copy(ini_n)
+        RP.plasma.ni = copy(ini_n)
+        RP.fields.BR_ext .= 1e-4
+        RP.fields.BZ_ext .= 1e-4
+        RAPID2D.combine_external_and_self_fields!(RP)
+        RP.plasma.Te_eV .= Te0
+        return RP, config, sum(ini_n)
+    end
+    _wTe(RP) = sum(RP.plasma.ne .* RP.plasma.Te_eV) / sum(RP.plasma.ne)
+
+    # tau_E straight from the momentum-transfer rate and the electron/ion mass ratio
+    RP0, _, _ = _build_relax(0.026)
+    update_transport_quantities!(RP0)
+    room = RP0.config.constants.room_T_eV
+    me, mi = RP0.config.constants.me, RP0.config.constants.mi
+    inw = RP0.G.nodes.in_wall_nids
+    ν_mom = sum(RP0.plasma.ν_en_mom[inw]) / length(inw)
+    τ_E = 1 / (2 * (me/mi) * ν_mom)
+    @test ν_mom > 0.0
+    @test 0.01 < τ_E < 1.0        # measured ≈ 0.108 s
+
+    nsteps = 500                  # 500 * 1 ms = 0.5 s ≈ 4.6 tau_E
+    for (Te0, is_hot) in ((0.1, true), (0.001, false))
+        RP, config, ini_sum = _build_relax(Te0)
+        for _ in 1:nsteps
+            RAPID2D.advance_timestep!(RP, config.dt)
+        end
+        Te_end = _wTe(RP)
+
+        # Converged onto the gas temperature from whichever side it started
+        @test isapprox(Te_end, room; rtol=0.10)   # measured within 1.3% (hot) / 3.9% (cold)
+        if is_hot
+            @test Te_end < Te0                    # hot electrons cooled by the gas
+        else
+            @test Te_end > Te0                    # cold electrons HEATED by the gas
+        end
+
+        # Far below the ionization threshold -> density untouched
+        @test isapprox(sum(RP.plasma.ne), ini_sum; rtol=1e-6)
+        @test all(RP.plasma.ν_en_iz .== 0.0)
+        @test !any(isnan, RP.plasma.Te_eV)
+    end
 end
 
 @testset "Ion Heating Powers Tests" begin
