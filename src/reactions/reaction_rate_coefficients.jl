@@ -19,14 +19,14 @@ Stores both raw data and an interpolation object for efficient calculation of ra
 - `EoverP::Vector{FT}`: Electric field over pressure (E/p) coordinates
 - `Erg_eV::Vector{FT}`: Particle energy in eV
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp`: Interpolation object with extrapolation for quick access"""
+- `itp`: Interpolant; clamps to the table boundary outside its bounds"""
 struct RRC_EoverP_Erg{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 2 variables for given reaction rate coefficient
 	EoverP::Vector{FT}  # Electric field over pressure (E/p) coordinates
 	Erg_eV::Vector{FT}  # Particle's energy
 
 	raw_data::AbstractArray{FT}
-	itp  # Interpolation object with extrapolation
+	itp  # Interpolant; clamps to the table boundary outside its bounds
 
 	function RRC_EoverP_Erg(EoverP::Vector{FT}, Erg_eV::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
 		# ClampExtrap: below the table's minimum E/p the rate relaxes to the room-T
@@ -46,7 +46,7 @@ Used for reactions where the rate depends on temperature and drift velocity.
 - `T_eV::Vector{FT}`: Temperature in eV
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp`: Interpolation object with extrapolation for quick access
+- `itp`: Interpolant; clamps to the table boundary outside its bounds
 """
 struct RRC_T_ud{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 2 variables for given reaction rate coefficient
@@ -54,7 +54,7 @@ struct RRC_T_ud{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	ud_para::Vector{FT}  # parallel velocity
 
 	raw_data::AbstractArray{FT}
-	itp  # Interpolation object with extrapolation
+	itp  # Interpolant; clamps to the table boundary outside its bounds
 
 	function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
 		# ClampExtrap: out-of-domain (T, u_d) queries clamp to the nearest boundary rate.
@@ -74,7 +74,7 @@ Used for more complex reactions where the distribution function shape affects th
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `gFac::Vector{FT}`: g-factor of the distribution function
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data
-- `itp`: Interpolation object with extrapolation for quick access
+- `itp`: Interpolant; clamps to the table boundary outside its bounds
 """
 struct RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 3 variables for given reaction rate coefficient
@@ -83,7 +83,7 @@ struct RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	gFac::Vector{FT}  # g-factor of Distribution function
 
 	raw_data::AbstractArray{FT}
-	itp  # Interpolation object with extrapolation
+	itp  # Interpolant; clamps to the table boundary outside its bounds
 
 	function RRC_T_ud_gFac(T_eV::Vector{FT}, ud_para::Vector{FT}, gFac::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
 		# ClampExtrap: out-of-domain (T, u_d, gFac) queries clamp to the nearest boundary rate.
@@ -100,8 +100,10 @@ Stores various reaction models for electron-neutral and electron-ion interaction
 
 # Fields
 - `Ionization`: Rate coefficient for electron impact ionization
-- `Momentum`: Rate coefficient for momentum transfer
-- `Total_Excitation`: Rate coefficient for all excitation processes
+- `Momentum`: Drift-friction rate coefficient — the v_z-weighted moment
+  ⟨σ_mom·|v|·v_z⟩/⟨v_z⟩, NOT the density-weighted collision frequency ⟨σ_mom·|v|⟩
+- `Total_Excitation`: Energy-normalized excitation rate coefficient
+  K_exc·ε_exc,eff/ε_ch, consumed as P_exc = ν_exc·ε_ch (see `characteristic_exc_erg_eV`)
 - `Dissoc_Ionz`: Rate coefficient for dissociative ionization
 - `Halpha`: Rate coefficient for Halpha emission
 - `Recomb_H2Ion`: Rate coefficient for H2+ recombination

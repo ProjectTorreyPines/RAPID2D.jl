@@ -128,6 +128,7 @@ Contains the power terms for electron energy equation.
 # Fields
 - `tot`: Total power density [W/m³]
 - `drag`: Power from drag forces [W/m³]
+- `ela`: Power lost to neutrals via elastic recoil, ~2mₑ/M per momentum-transfer collision [W/m³]
 - `conv`: Power from convective transport [W/m³]
 - `diffu`: Power from diffusive transport [W/m³]
 - `heat`: Power from heating sources (e.g., ohmic) [W/m³]
@@ -243,7 +244,7 @@ Contains the plasma state variables including density, temperature, and velocity
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
     ν_ei_eff::Matrix{FT} = zeros(FT, dims) # Effective electron-ion collision frequency [1/s]
     ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
-    ν_en_mom::Matrix{FT} = zeros(FT, dims) # Electron momentum transfer rate [1/s]
+    ν_en_mom::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
