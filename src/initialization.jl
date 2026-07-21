@@ -464,6 +464,9 @@ end
 
 function initialize_RRCs!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.eRRCs = load_electron_RRCs()
+    # Validate the loaded table's excitation normalization against our constant here,
+    # where RP.config is available (rather than inside the Electron_RRCs constructor).
+    check_exc_erg_consistency(RP.eRRCs, RP.config.constants.exc_erg_eV)
     RP.iRRCs = load_H2_Ion_RRCs()
     return RP
 end

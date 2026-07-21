@@ -105,6 +105,8 @@ Stores various reaction models for electron-neutral and electron-ion interaction
 - `Halpha`: Rate coefficient for Halpha emission
 - `Recomb_H2Ion`: Rate coefficient for H2+ recombination
 - `Recomb_H3Ion`: Rate coefficient for H3+ recombination
+- `characteristic_exc_erg_eV`: the excitation normalization the loaded table was built
+  with (`nothing` if the table omits it); validated in `initialize_RRCs!`.
 """
 struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
     Ionization::RRC_EoverP_Erg{FT}
@@ -115,6 +117,8 @@ struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
 	Halpha::RRC_T_ud{FT}
 	Recomb_H2Ion::RRC_T_ud{FT}
 	Recomb_H3Ion::RRC_T_ud{FT}
+
+	characteristic_exc_erg_eV::Union{FT,Nothing}  # table's exc normalization; checked in initialize_RRCs!
 
 	function Electron_RRCs(eRRC_EoverP_Erg_fileName::String, eRRC_T_ud_fileName::String)
 		@assert isfile(eRRC_EoverP_Erg_fileName) "File not found: $eRRC_EoverP_Erg_fileName"
@@ -127,6 +131,11 @@ struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
 		Ionization = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Ionization"))
 		Momentum = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Momentum"))
 		Total_Excitation = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Total_Excitation"))
+		# Excitation normalization the table was built with — kept as a field and
+		# validated later in initialize_RRCs! (where RP.config is available) against
+		# config.constants.exc_erg_eV. `nothing` if the table omits it.
+		char_exc = haskey(h5fid, "characteristic_exc_erg_eV") ?
+			Float64(read(h5fid, "characteristic_exc_erg_eV")) : nothing
 		close(h5fid)
 
 		# Create RRC_T_ud objects for each reaction type from the given H5 file
@@ -143,8 +152,32 @@ struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
 		FT = eltype(EoverP)  # Determine the floating-point type from the data
 
 		new{FT}(Ionization, Momentum, Total_Excitation,
-			Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion)
+			Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion,
+			char_exc === nothing ? nothing : FT(char_exc))
 	end
+end
+
+"""
+    check_exc_erg_consistency(eRRCs::Electron_RRCs, exc_erg_eV)
+
+Verify the loaded electron RRC table's excitation normalization matches RAPID2D's
+`exc_erg_eV` (`config.constants`). The `Total_Excitation` surface is energy-normalized
+to the table's `characteristic_exc_erg_eV`, so `P_exc = e·exc_erg_eV·n_gas·RRC` only
+reproduces the kinetic loss if the two agree. Missing (`nothing`) → warn + assume our
+value; present but different → error. Called from `initialize_RRCs!`.
+"""
+function check_exc_erg_consistency(eRRCs::Electron_RRCs, exc_erg_eV::Real)
+    ch = eRRCs.characteristic_exc_erg_eV
+    if ch === nothing
+        @warn "Electron RRC table has no characteristic_exc_erg_eV; " *
+              "assuming $exc_erg_eV eV (RAPID2D's exc_erg_eV)."
+    else
+        isapprox(ch, exc_erg_eV; rtol = 1e-6) || error(
+            "Electron RRC table is normalized to characteristic_exc_erg_eV = $ch eV, " *
+            "but RAPID2D uses exc_erg_eV = $exc_erg_eV eV. Regenerate the table or " *
+            "update PlasmaConstants.exc_erg_eV so they match.")
+    end
+    return nothing
 end
 
 """
