@@ -343,6 +343,12 @@
 end
 
 @testitem "Global JxB Force" tags=[:regression] setup=[RegressionCommon, JxBForceAnalysis] begin
+    # Declared here as well as in the snippets: a snippet becomes a module under the
+    # ReTestItems path, and `using` only re-exports names a module OWNS, so imports made
+    # inside a snippet are invisible to this body.
+    using RAPID2D.Statistics
+    using Printf
+
     verbose   = get(ENV, "RAPID_VERBOSE", "false") == "true"
     visualize = get(ENV, "RAPID_VISUALIZE", "false") == "true"
 

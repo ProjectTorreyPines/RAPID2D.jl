@@ -1,6 +1,23 @@
 ---
 name: CI
 
+# The suite is @testitem-based (see test/runtests.jl). Each job runs it SERIALLY through
+# TestItemRunner.
+#
+# ── Why not ReTestItems workers, unlike FastInterpolations' CI? ───────────────────────
+# test/runtests_parallel.jl exists and works (RETESTITEMS_NWORKERS=N), but this suite is
+# compile-bound, not test-bound: individual items measure 67-93% JIT compile
+# (e.g. "Snapshot Equality Operators" 93%, "Wall IO" 78%). Worker processes cannot share
+# JIT compilation, so N workers duplicate that ~90% N times while parallelising only the
+# remaining ~10%. Measured locally: ~12m44s on 4 workers vs ~7m24s serial (machine was
+# not fully idle, so treat the ratio as indicative, not exact).
+# FastInterpolations benefits because its suite is ~200 files of small-array numerics —
+# many more items to spread, far less per-item compile to duplicate.
+# To revisit: add `nworkers` to the matrix include-blocks and set RETESTITEMS_NWORKERS.
+#
+# Sharding (RETESTITEMS_SHARD) is likewise not used: at ~7 min total, each shard would
+# still pay full package precompile, trading ~7 min for ~5 min at double the runner cost.
+
 on:
   push:
     branches:
@@ -19,35 +36,39 @@ concurrency:
 
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.flavor.os }} - ${{ matrix.flavor.arch }}
-    runs-on: ${{ matrix.flavor.os }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # The suite is ~7 min; 60 caps a hang (e.g. native I/O stalling) instead of
+    # burning the 6-hour default.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         version:
-          - '1.x'  # Latest version
-          # - '1.9'  # Specific stable version
-        flavor:
-          - {os: ubuntu-latest, arch: x64}  # Linux x64
-          # - {os: macos-latest, arch: arm64}  # macOS ARM (Too expensive GitHub Action runner)
-          # - {os: windows-latest, arch: x64}  # Windows x64 (Stuck in CI, FIX is needed)
+          - '1.x'  # Latest release
+        os:
+          - ubuntu-latest
+          - macos-latest    # arm64 runner; free for public repos
+          - windows-latest
+        include:
+          # Coverage from ONE leg only. Three concurrent uploads race codecov's merge and
+          # it undercounts; the suite has no OS-specific branches, so ubuntu is
+          # representative.
+          - os: ubuntu-latest
+            coverage: true
+          - os: macos-latest
+            coverage: false
+          - os: windows-latest
+            coverage: false
 
     steps:
       - uses: actions/checkout@v4
 
-      # - name: Get number of CPU cores
-      #   uses: SimenB/github-actions-cpu-cores@v2
-      #   id: cpu-cores
-
-      # - name: Set JULIA_NUM_THREADS
-      #   shell: bash
-      #   run: >-
-      #     echo "JULIA_NUM_THREADS=${{ steps.cpu-cores.outputs.count }}" >> $GITHUB_ENV
-
+      # No explicit `arch`: setup-julia defaults to the runner's native architecture.
+      # Pinning x64 here would break the arm64 macOS runner.
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
-          arch: ${{ matrix.flavor.arch }}
 
       - uses: julia-actions/cache@v2
         with:
@@ -56,14 +77,22 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
 
       - uses: julia-actions/julia-runtest@v1
+        with:
+          coverage: ${{ matrix.coverage }}
         env:
           GKSwstype: 100  # Disable graphics output during tests
+          # Run the :regression testitems too (inductance, global JxB force balance,
+          # plasma-coil coupling). They validate physics against analytical solutions,
+          # cost ~1.5 min, and were never exercised by CI before.
+          RAPID_RUN_REGRESSION: 'true'
 
       - uses: julia-actions/julia-processcoverage@v1
+        if: ${{ matrix.coverage }}
         with:
           directories: src
 
       - uses: codecov/codecov-action@v5
+        if: ${{ matrix.coverage }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info

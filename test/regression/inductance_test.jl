@@ -233,6 +233,12 @@
 end
 
 @testitem "Basic Inductance" tags=[:regression] setup=[RegressionCommon, InductanceAnalysis] begin
+    # Declared here as well as in the snippets: a snippet becomes a module under the
+    # ReTestItems path, and `using` only re-exports names a module OWNS, so imports made
+    # inside a snippet are invisible to this body.
+    using RAPID2D.Statistics
+    using Printf
+
     # A single plasma filament driven by a toroidal loop voltage. Everything that is not
     # L/R circuit physics is switched off, so the current response can be compared
     # against an analytical L/R solution.
