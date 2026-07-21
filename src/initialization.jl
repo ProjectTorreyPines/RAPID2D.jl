@@ -721,7 +721,9 @@ function initialize_diagnostics!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-    prefixName = joinpath( RP.config.Output_path, RP.config.Output_prefix)
+    # abspath for the same reason as in the RAPID constructor (see types.jl): these handles
+    # outlive this call and are closed by a finalizer that may run under a different cwd.
+    prefixName = joinpath(abspath(RP.config.Output_path), RP.config.Output_prefix)
 
     # Check and close existing files if they are already open
     close_wrapper!(RP.AW_snap0D)

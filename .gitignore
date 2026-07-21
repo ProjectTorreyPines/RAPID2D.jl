@@ -12,6 +12,7 @@ coverage/
 # Simulation artifacts. SimulationConfig.Output_path defaults to a RELATIVE "./output",
 # and TestItemRunner cd's into each test file's directory, so stray runs can drop these
 # anywhere under test/. Fixtures point at mktempdir(); this is the backstop.
+/output/
 test/**/output/
 test/output/
 test/*.png
