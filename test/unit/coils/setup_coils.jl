@@ -1,18 +1,13 @@
 # Shared setup for the test/unit/coils/ suite.
 #
-# The neutral `setup_*.jl` name is load-bearing, not cosmetic. Do NOT rename this to
-# `*_testsetup.jl`: that suffix matches ReTestItems' `is_testsetup_file`, so the parallel
-# path (test/runtests_parallel.jl) would hand this file straight to ReTestItems, which
-# understands `@testsetup module` but NOT `@testsnippet` and dies with "Test files must
-# only include `@testitem` and `@testsetup` calls". That path already scans every `.jl`
-# file for `@testsnippet` blocks and re-emits them into its own generated wrapper, so this
-# file must stay invisible to ReTestItems' own discovery. TestItemRunner scans every `.jl`
-# file regardless of name, so nothing is lost.
+# The neutral `setup_*.jl` name is load-bearing. Do NOT rename to `*_testsetup.jl`:
+# that suffix matches ReTestItems' `is_testsetup_file`, so the parallel path
+# (test/runtests_parallel.jl) would hand this file to ReTestItems, which understands
+# `@testsetup module` but NOT `@testsnippet`, and dies.
 #
-# Everything here is a FACTORY FUNCTION, never a `const` instance. Call sites mutate
-# `.current` / `.voltage_ext` on the coils they receive, and @testsnippet bodies are
-# spliced into each testitem module, so a shared mutable constant would leak state
-# across testitems in exactly the way that is hardest to debug.
+# Everything here is a FACTORY FUNCTION, never a `const` instance: call sites mutate
+# `.current` / `.voltage_ext` on the coils they receive, so a shared mutable constant
+# would leak state across testitems.
 
 @testsnippet CoilFactories begin
     # Canonical powered PF-style coil: area 0.01 m², R 1 mΩ, L 1 μH.

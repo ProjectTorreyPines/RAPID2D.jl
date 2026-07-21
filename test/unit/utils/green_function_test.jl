@@ -1,11 +1,4 @@
 # Green's function implementation.
-#
-# Grouped into a single @testitem: all five blocks are fast (~2.6s total) and share
-# no fixture, so per-item module isolation would buy nothing over nested @testsets.
-#
-# NOTE: the previous header carried `using RAPID2D.SpecialFunctions`, which nothing
-# in this file references — dropped. `using Test` and `using RAPID2D` are injected
-# into every @testitem automatically, so no imports are needed here at all.
 
 @testitem "Green's Function" begin
 

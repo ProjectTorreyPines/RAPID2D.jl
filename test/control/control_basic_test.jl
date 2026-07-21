@@ -1,62 +1,34 @@
 # Tests for the modular control system: Controller, ControllerSet, coil-system
 # integration, and the measurement-extraction interface functions.
 #
-# ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  EVERY @testitem HERE IS TAGGED :broken AND IS EXPECTED TO FAIL.             ║
-# ║  Opt in with RAPID_RUN_BROKEN=true (see test/runtests.jl).                   ║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
-#
-# These tests had NEVER run: the previous runner walked only `unit/` and
-# `regression/`, and `test/control/` was in neither, so the rot below went unnoticed
-# for months. TestItemRunner discovers by MARKER rather than by directory list, so
-# they are now visible — and they immediately expose that `src/control/` itself is
-# broken. This branch is a TEST-ONLY refactor; src/ is deliberately untouched.
+# EVERY @testitem HERE IS TAGGED :broken AND IS EXPECTED TO FAIL — opt in with
+# RAPID_RUN_BROKEN=true (see test/runtests.jl). They fail because src/control/ is
+# broken, not the tests. Fixing it belongs on a separate branch; once fixed, drop the
+# `tags=[:broken]` below.
 #
 # ── VERIFIED src/control/ DEFECTS BLOCKING THESE TESTS ───────────────────────
+# 1. controllers.jl:30 — `create_controller` is defined with THREE positionals,
+#    `(target, dt, coils; ...)`, while its own docstring (:10) advertises TWO,
+#    `(target, coils; ..., dt=...)`. Every call site here follows the docstring
+#    → MethodError.
+# 2. controllers.jl:83 — `create_current_controller` calls `create_controller` with
+#    2 positionals, not matching the 3-positional definition → MethodError.
+# 3. controllers.jl:112 — `create_position_controller` passes `dt`, which is undefined
+#    in that scope → UndefVarError.
+# 4. controllers.jl:36 — `umin`/`umax` are accepted but never forwarded to
+#    `DiscretePID` (the forwarding at :48-49 is commented out), so the
+#    `controller.pid.umin`/`.umax` assertions and "Controller Limits" cannot pass.
 #
-# 1. src/control/controllers.jl:30 — `create_controller` is defined with THREE
-#    positional arguments, `(target::FT, dt::FT, coils::Vector{Coil{FT}}; ...)`,
-#    while its own docstring at src/control/controllers.jl:10 advertises TWO,
-#    `(target, coils; ..., dt=...)`. Every call site in this file follows the
-#    docstring (2 positional + `dt=` keyword) → MethodError.
+# "Control Coil Finding" and "Control Interface Functions" touch only
+# `find_coils_by_name` / `hasmethod` and may pass on their own; they are tagged :broken
+# anyway so the file can be un-gated in one move.
 #
-# 2. src/control/controllers.jl:83 — `create_current_controller` calls
-#    `create_controller(target_current, coils; ...)` with 2 positional arguments,
-#    which does not match the 3-positional definition → MethodError.
-#
-# 3. src/control/controllers.jl:112 — `create_position_controller` calls
-#    `create_controller(target_position, dt, coils; ...)` where `dt` is an UNDEFINED
-#    variable in that scope (it is not a parameter of `create_position_controller`)
-#    → UndefVarError.
-#
-# 4. src/control/controllers.jl:36 — `umin`/`umax` are accepted as keyword arguments
-#    but never forwarded to `DiscretePID`; the forwarding lines
-#    src/control/controllers.jl:48-49 are commented out. The "Generic Controller
-#    Creation" assertions on `controller.pid.umin`/`.umax` and the whole
-#    "Controller Limits" item therefore cannot pass.
-#
-# Fixing src/control/ belongs on a separate branch. Once it is fixed, drop the
-# `tags=[:broken]` from the items below.
-#
-# ── Migration notes ──────────────────────────────────────────────────────────
-# * The file-scope `using DiscretePIDs` was invalid: DiscretePIDs is not a dependency
-#   of test/Project.toml. Per the suite-wide convention we reach through the package
-#   instead — `using RAPID2D.DiscretePIDs` — which resolves because RAPID2D depends
-#   on DiscretePIDs and src/control/controllers.jl does `using DiscretePIDs`. It is
-#   needed only by the item that inspects `controller.pid` internals.
-# * `using Test` / `using RAPID2D` are auto-injected into every @testitem.
-# * The trailing top-level `println("New control system tests completed
-#   successfully!")` was removed: it printed unconditionally, even when every
-#   assertion above it had failed.
-# * NOTE: "Control Coil Finding" and "Control Interface Functions" exercise
-#   `find_coils_by_name` / `hasmethod` only and do not touch `create_controller`, so
-#   they may well pass on their own. They are tagged :broken anyway so the whole file
-#   can be un-gated in one move when src/control/ is repaired.
+# DiscretePIDs is reached through the package (`using RAPID2D.DiscretePIDs`): it is not
+# a direct dependency of test/Project.toml.
 
 @testitem "Control Controller Creation" tags=[:broken] begin
     using RAPID2D.DiscretePIDs
 
-    # Create test coils with proper constructor
     area = π * 0.02^2  # 2cm radius coil
     resistance = 0.001  # 1 mΩ
     self_inductance = 1e-6  # 1 μH
@@ -124,11 +96,9 @@
 end
 
 # ORDERING DEPENDENCY: "Target Setting" → "Controller Reset" → "Control Signal
-# Computation" all operate on the SAME `controller` object created below and thread
-# PID integrator state through it, so they must stay fused in one item.
-# "Control Signal Application" shares `test_coils` and is fast, so it stays here too.
+# Computation" share the SAME `controller` and thread PID integrator state through it,
+# so they must stay fused in one item. "Control Signal Application" shares `test_coils`.
 @testitem "Control Controller Management" tags=[:broken] begin
-    # Create test coils with proper constructor
     area = π * 0.02^2
     resistance = 0.001
     self_inductance = 1e-6
@@ -153,8 +123,7 @@ end
         # Reset controller
         reset_controller!(controller)
 
-        # Check that state is reset (this tests that reset_state! was called)
-        # We can't directly check internal state, but we can verify the function runs
+        # Can't inspect PID internals directly; this only verifies reset_controller! runs
         @test controller isa Controller
     end
 
@@ -168,9 +137,8 @@ end
         # Should be a finite number
         @test isfinite(signal)
 
-        # For proportional control with error = 0.2e6 and Kp=5.0
-        # Expected signal should be around 5.0 * 0.2e6 = 1e6
-        # (exact value depends on PID implementation details)
+        # Proportional control with error = 0.2e6 and Kp = 5.0 would give ≈ 1e6, but the
+        # exact value depends on PID implementation details, so only check nonzero.
         @test abs(signal) > 0  # Should produce some control signal
     end
 
@@ -208,7 +176,6 @@ end
     end
 
     @testset "ControllerSet Population" begin
-        # Create test coils with proper constructor
         area = π * 0.02^2
         resistance = 0.001
         self_inductance = 1e-6
@@ -244,7 +211,6 @@ end
 end
 
 @testitem "Control Coil Finding" tags=[:broken] begin
-    # Create a mock coil system with proper constructor
     area = π * 0.02^2
     resistance = 0.001
     self_inductance = 1e-6
@@ -262,36 +228,30 @@ end
     coil_system = (coils=coils,)
 
     @testset "Case Insensitive Pattern Matching" begin
-        # Test OH pattern matching
         oh_coils = find_coils_by_name(coil_system, ["OH"])
         @test length(oh_coils) == 2
         @test oh_coils[1].name == "OH_Upper"
         @test oh_coils[2].name == "OH_Lower"
 
-        # Test PF pattern matching
         pf_coils = find_coils_by_name(coil_system, ["PF"])
         @test length(pf_coils) == 2
         @test pf_coils[1].name == "PF_Coil_1"
         @test pf_coils[2].name == "PF_Coil_2"
 
-        # Test CS pattern matching
         cs_coils = find_coils_by_name(coil_system, ["CS"])
         @test length(cs_coils) == 1
         @test cs_coils[1].name == "CS_Main"
     end
 
     @testset "Multiple Pattern Matching" begin
-        # Test multiple patterns
         oh_and_cs_coils = find_coils_by_name(coil_system, ["OH", "CS"])
         @test length(oh_and_cs_coils) == 3  # 2 OH + 1 CS
 
-        # Test fallback patterns
         current_coils = find_coils_by_name(coil_system, ["OHMIC", "CURRENT", "CS"])
         @test length(current_coils) == 1  # Only CS_Main matches
     end
 
     @testset "Case Sensitive Matching" begin
-        # Test case sensitive matching
         oh_coils_sensitive = find_coils_by_name(coil_system, ["oh"]; case_sensitive=true)
         @test length(oh_coils_sensitive) == 0  # No lowercase "oh"
 
@@ -300,14 +260,12 @@ end
     end
 
     @testset "No Matches" begin
-        # Test no matches
         no_matches = find_coils_by_name(coil_system, ["NONEXISTENT"])
         @test length(no_matches) == 0
     end
 end
 
 @testitem "Control Coil System Integration" tags=[:broken] begin
-    # Test that controllers properly integrate with coil system
     area = π * 0.02^2
     resistance = 0.001
     self_inductance = 1e-6
@@ -364,9 +322,8 @@ end
     @test large_error_signal <= 10.0
 end
 
-# Integration with interface functions.
-# (A fuller test would require a complete RAPID setup; for now this only verifies
-#  that the measurement-extraction functions exist with the expected signatures.)
+# Integration with interface functions. A fuller test would need a complete RAPID
+# setup; this only verifies the measurement-extraction signatures exist.
 @testitem "Control Interface Functions" tags=[:broken] begin
     @testset "Measurement Extraction" begin
         # This would test extract_plasma_current, extract_plasma_position, etc.

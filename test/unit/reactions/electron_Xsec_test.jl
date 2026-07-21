@@ -1,14 +1,8 @@
 # Electron cross-section functions (momentum transfer, elastic, ionization,
 # excitation, dissociative ionization, alpha radiation, recombination).
 #
-# Grouped into a single @testitem: all ten blocks are fast (~1.6s total) and every one
-# of them reads the same fixture, so per-item module isolation would only mean
-# rebuilding that fixture ten times.
-#
-# The fixture — the long RAPID2D import list, the constant/type aliases and the
-# shared energy grids — lives in @testsnippet XsecFixtures below. The energy vectors
-# are read-only in every block (each test allocates its own output buffer), so a
-# single shared definition is safe.
+# The energy vectors in @testsnippet XsecFixtures are read-only in every block (each
+# test allocates its own output buffer), so a single shared definition is safe.
 
 @testsnippet XsecFixtures begin
     # Import functions from RAPID2D

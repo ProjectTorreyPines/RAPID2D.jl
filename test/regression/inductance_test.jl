@@ -1,40 +1,20 @@
-# Basic inductance regression scenario.
+# Basic inductance regression scenario: a loop-voltage-driven plasma filament checked
+# against two analytical L/R references — constant inductance, and the time-varying L(t)
+# reported by the 0D diagnostics.
 #
-# A single plasma filament is driven by a toroidal loop voltage. Every transport and
-# atomic process is switched off, so the plasma behaves as a lumped L/R circuit and its
-# current response can be compared against an analytical solution. Two references are
-# used: a constant-inductance model, and one integrating the time-varying L(t) that the
-# 0D diagnostics report.
-#
-# ── Granularity ──────────────────────────────────────────────────────────────
-# ONE @testitem. The scenario is a ~8.6s end-to-end simulation whose single result
-# object feeds all 5 assertions, so the assertions stay nested inside one item. A
-# @testsnippet body is re-evaluated per testitem, so splitting would re-run the
-# simulation once per group for no isolation benefit.
-#
-# ── What lives where ─────────────────────────────────────────────────────────
-# The scenario — grid, timestep, flags, plasma, thresholds — is spelled out in the
-# @testitem body, because that is what the test is actually about. Only the
-# post-processing (error metrics, the analytical L(t) integration, plotting) is hidden
-# in the InductanceAnalysis snippet below; it is arithmetic on an already-finished run
-# and says nothing about the physics being exercised.
-#
-# `using Test` / `using RAPID2D` are auto-injected into every @testitem.
+# ONE @testitem: all 5 assertions consume the same ~8.6 s simulation, and a snippet body
+# is re-evaluated per testitem, so splitting would re-run it per group.
 
 @testsnippet InductanceAnalysis begin
     using RAPID2D.Statistics
     using RAPID2D.FastInterpolations
     using Printf
-    # Unconditional (was previously `using Plots` nested inside `if visualize`).
-    # Plots and Dates are declared in test/Project.toml.
     using Plots
     using Dates
 
     # Compare the simulated toroidal current against analytical L/R solutions.
-    #
-    # `major_R` / `minor_r` are the plasma geometry [m]; they are REQUIRED kwargs so the
-    # inductance estimate stays tied to the filament the scenario actually created,
-    # rather than silently defaulting to a geometry the caller never chose.
+    # `major_R` / `minor_r` [m] are required kwargs: the inductance estimate must stay
+    # tied to the filament the scenario actually created.
     function analyze_inductance(RP::RAPID; major_R::Real, minor_r::Real,
                                 verbose::Bool=false, visualize::Bool=false,
                                 outdir::AbstractString=mktempdir(; cleanup=false))
@@ -128,11 +108,8 @@
     end
 
     # Create visualization plots for inductance test results.
-    #
-    # `outdir` MUST be a unique per-run directory: the original wrote
-    # `joinpath(pwd(), "inductance_test_$(timestamp).png")` with a second-resolution
-    # timestamp, which polluted the repository and let two runs finishing in the same
-    # second silently overwrite each other.
+    # `outdir` MUST be unique per run: the filename timestamp is only second-resolution,
+    # so two runs sharing a directory can overwrite each other.
     function create_inductance_plots(RP, times, I_sim, I_analytical, I_analytical_timevar;
                                      outdir::AbstractString=mktempdir(; cleanup=false))
         # Current evolution plot
@@ -210,10 +187,8 @@
         return plot_combined
     end
 
-    # Calculate analytical solution for an RL circuit with time-varying inductance L(t)
-    #
-    # Solves: L(t) * dI/dt + dL/dt * I + R * I = V
-    # using numerical integration with a 4th-order Runge-Kutta method.
+    # Analytical solution for an RL circuit with time-varying inductance L(t).
+    # Solves L(t)*dI/dt + dL/dt*I + R*I = V by 4th-order Runge-Kutta.
     function calculate_time_varying_inductance_solution(times, V, R, itp_L; I0=0.0)
         dt = length(times) > 1 ? times[2] - times[1] : 1e-6
         I_solution = zeros(length(times))
@@ -265,9 +240,8 @@ end
     verbose   = get(ENV, "RAPID_VERBOSE", "false") == "true"
     visualize = get(ENV, "RAPID_VISUALIZE", "false") == "true"
 
-    # Artifacts go to a fresh per-run directory, never into pwd(). cleanup=false so
-    # they outlive the process and remain inspectable; the path is reported by the
-    # @info inside create_inductance_plots.
+    # Artifacts go to a fresh per-run directory; cleanup=false so they outlive the
+    # process and stay inspectable. The path is reported by @info when plots are saved.
     outdir = visualize ? mktempdir(; cleanup=false) : tempname()
 
     config = regression_config(;

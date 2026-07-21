@@ -1,34 +1,18 @@
-# Shared fixtures for the regression scenarios in this directory.
+# Shared fixtures for the regression scenarios in this directory: baseline config, the
+# toroidal field setup, and density-profile builders.
 #
-# WHAT BELONGS HERE (and what does not)
-# -------------------------------------
-# Only plumbing that is common to two or more scenarios: baseline test configuration,
-# the shared field setup, and generic density-profile builders.
-#
-# Scenario-defining settings — which physics flags are on, grid size, timestep, the
-# plasma parameters, the pass/fail thresholds — deliberately live in each @testitem
-# body instead. A reader must be able to see what a test is actually testing without
-# following a call into this file. "Everything off except Ampère" IS the inductance
-# test; hiding it here would make the test unreadable.
-#
-# A @testsnippet body is include_string'd into each @testitem's private module, so
-# nothing here leaks between files and no method can be overwritten.
+# RULE: only plumbing common to two or more scenarios belongs here. Scenario-defining
+# settings — physics flags, grid, timestep, plasma parameters, thresholds — stay in the
+# @testitem body, where a reader can see what the test actually tests.
 
 @testsnippet RegressionCommon begin
     using RAPID2D.Statistics
 
-    # Baseline configuration for a regression scenario.
-    #
-    # Supplies ONLY the two infrastructure defaults every scenario shares:
-    #   device_Name = "manual"  — no device file lookup
-    #   Output_path             — a per-run temp dir, so snapshot writers never touch
-    #                             the repo. cleanup=false is REQUIRED: the RAPID
-    #                             constructor opens ADIOS handles here (src/types.jl)
-    #                             that are closed by a FINALIZER at a GC-determined
-    #                             time, so the directory must outlive the object. A
-    #                             self-deleting tempdir aborts the process instead.
-    # Everything else — NR, NZ, dt, t_end_s, R0B0, pressures, snapshot intervals — is
-    # scenario physics and is passed explicitly at the call site.
+    # Baseline config: the infrastructure defaults every scenario shares.
+    # `device_Name = "manual"` skips the device-file lookup; `Output_path` is a per-run
+    # temp dir so snapshot writers never touch the repo. cleanup=false is REQUIRED —
+    # the RAPID constructor opens ADIOS handles here (src/types.jl) that a finalizer
+    # closes at a GC-determined time, so the directory must outlive the object.
     function regression_config(; kwargs...)
         return SimulationConfig{Float64}(;
             device_Name = "manual",
@@ -39,14 +23,9 @@
 
     # Pure toroidal magnetic field, shared by all three regression scenarios.
     #
-    # `E0` is the applied toroidal electric field referenced to the mean major radius
-    # [V/m]. It is passed explicitly by each scenario rather than defaulted silently,
-    # because whether the plasma is loop-voltage driven (E0 > 0) or coil driven
-    # (E0 = 0) is a defining property of the scenario.
-    #
-    # With E0 = 0 the general form below is identically 0.0 everywhere — Jacob = R2D is
-    # strictly positive and finite — so it reproduces a bespoke `fill!(Eϕ, 0)` variant
-    # bit-for-bit.
+    # `E0` [V/m] is the applied toroidal electric field referenced to the mean major
+    # radius. Each scenario passes it explicitly: loop-voltage driven (E0 > 0) vs coil
+    # driven (E0 = 0) is a defining property of the scenario, not a default.
     function setup_toroidal_field!(RP::RAPID; E0::Real, verbose::Bool=false)
         # Zero poloidal field components (pure toroidal field)
         fill!(RP.fields.BR, 0.0)
@@ -82,9 +61,8 @@
     end
 
     # ── Density profile builders ─────────────────────────────────────────────────
-    # Pure geometry: they return an array and touch no RP state, so the SCENARIO
-    # (centre, minor radius, peak density, background floor) stays visible at the
-    # call site where it matters.
+    # Pure geometry: they return an array and touch no RP state, so the scenario
+    # (centre, radius, peak density, background floor) stays at the call site.
 
     # Uniform column of radius `radius`, `background` outside it.
     function tophat_blob(G; cenR, cenZ=0.0, radius, n0, background=0.0)

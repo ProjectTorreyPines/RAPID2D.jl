@@ -1,17 +1,12 @@
-# Scalar-field gradient helpers and the 2D smoothing kernel.
-#
-# Two @testitems, one per original top-level @testset. Both build a full RAPID
-# object on a 100x200 grid and mutate it, so they are genuine separate scenarios
-# rather than cheap sibling assertions. The shared SimulationConfig factory lives
-# in setup_numerics.jl. `using Test` / `using RAPID2D` are auto-injected.
+# Scalar-field gradient helpers and the 2D smoothing kernel. Both testitems build
+# and mutate a full RAPID object on a 100x200 grid; the shared SimulationConfig
+# factory lives in setup_numerics.jl.
 
 @testitem "Gradient Calculation Tests" setup=[NumericsFixtures] begin
 
     FT = Float64
-    # Create simulation configuration
     config = walled_box_config(FT)
 
-    # Create RAPID object
     RP = RAPID{FT}(config)
     initialize!(RP)
 
@@ -63,10 +58,8 @@ end
 @testitem "smooth_data_2D" setup=[NumericsFixtures] begin
 
     FT = Float64
-    # Create simulation configuration
     config = walled_box_config(FT)
 
-    # Create RAPID object
     RP = RAPID{FT}(config)
     initialize!(RP)
 
@@ -86,8 +79,7 @@ end
     # with an in-place `smooth_data_2D!(ff; num_SM=3)`, so the "with weighting"
     # block deliberately starts from the ALREADY-SMOOTHED field. Splitting them
     # would hand the second block a pristine Gaussian instead and silently change
-    # what is being asserted. Keeping both as nested @testsets inside one
-    # @testitem preserves the original sequential semantics exactly.
+    # what is being asserted.
     @testset "smooth_data_2D without weighting" begin
         # No smoothing
         num_SM = 0
@@ -108,9 +100,8 @@ end
     @testset "smooth_data_2D with weighting" begin
         # `copy` is REQUIRED: `RP.G.Jacob` is a live field of the grid, and the
         # "test with zero weighting" section below mutates `weighting` IN PLACE
-        # (`weighting[1, 1:3] .= 0.0`). Binding it directly, as this test used to,
-        # aliased and silently corrupted the RAPID object's own Jacobian — harmless
-        # only because it happened to be the last thing the file did.
+        # (`weighting[1, 1:3] .= 0.0`). Binding it directly would alias and
+        # silently corrupt the RAPID object's own Jacobian.
         weighting = copy(RP.G.Jacob)
         # No smoothing
         num_SM = 0

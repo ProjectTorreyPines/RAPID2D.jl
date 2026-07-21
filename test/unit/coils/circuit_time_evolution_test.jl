@@ -302,9 +302,8 @@
 	end
 end
 
-# Split out as its own @testitem deliberately: this is the single heaviest item in the
-# whole suite (~1m44s), so isolating it lets a parallel worker pick it up first instead
-# of tacking it onto the end of a batch.
+# The single heaviest item in the suite (~1m44s); kept separate so a parallel worker
+# can pick it up first rather than tacking it onto the end of a batch.
 @testitem "RAPID coils evolution without plasma - coupled coils vs analytical" setup=[CircuitHelpers] begin
 	FT = Float64
 

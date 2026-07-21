@@ -1,25 +1,12 @@
 # Reaction-rate-coefficient tables (RRC_EoverP_Erg / RRC_T_ud) and their containers.
 #
-# Split into TWO @testitems:
-#   "Reaction Rate Coefficients"  — read-only HDF5 opens + container construction, fast.
-#   "Sample RRC Calculation"      — builds a full RAPID object via create_rapid_object,
-#                                   a materially heavier fixture, so it gets its own
-#                                   module rather than riding along with the cheap blocks.
+#   "Reaction Rate Coefficients" — read-only HDF5 opens + container construction, fast.
+#   "Sample RRC Calculation"     — builds a full RAPID object, a materially heavier
+#                                  fixture, hence its own testitem.
 # Both share the RRC data-file paths through @testsnippet RRCDataFiles.
-#
-# NOTE: the previous header carried `using RAPID2D.FastInterpolations`, which nothing
-# in this file references — `rrc.itp(x, y)` dispatches on the object's type and needs
-# no import. Dropped, matching the green_function_test.jl precedent. `RAPID2D.HDF5`
-# is still needed, but only by the first testitem, so it is declared there.
 
 @testsnippet RRCDataFiles begin
     # RRC tables ship with the package, so ask the package where it lives.
-    #
-    # This previously walked up with dirname(dirname(dirname(@__DIR__))), which was doubly
-    # fragile: it silently encodes this file's depth in the tree, and a @testsnippet body
-    # is evaluated wherever its consumer is, not where it is written — under the
-    # ReTestItems path (test/runtests_parallel.jl) snippets are re-emitted into a single
-    # file at the shadow-tree root, where that walk lands somewhere else entirely.
     RRC_data_dir = joinpath(pkgdir(RAPID2D), "RRC_data")
     EoverP_Erg_file = joinpath(RRC_data_dir, "eRRCs_EoverP_Erg.h5")
     e_tud_file = joinpath(RRC_data_dir, "eRRCs_T_ud.h5")
@@ -173,13 +160,10 @@ end
 end
 
 @testitem "Sample RRC Calculation" setup=[RRCDataFiles] begin
-    # Create mock RAPID model for testing get_electron_RRC and get_H2_ion_RRC
-    # This is a simplified version for testing only
+    # Minimal mock RAPID object for exercising get_electron_RRC / get_H2_ion_RRC
 
-    # Create minimal RAPID struct for testing
     FT = Float64
 
-    # Create mock RAPID struct
     config =  RAPID2D.SimulationConfig{Float64}()
     config.prefilled_gas_pressure = 4e-3;
     config.R0B0 = 1.5*1.8;

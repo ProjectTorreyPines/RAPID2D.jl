@@ -1,29 +1,19 @@
 # runtests_parallel.jl — run the RAPID2D @testitem suite in PARALLEL via ReTestItems,
-# WITHOUT changing anything under test/. The TestItemRunner path (test/runtests.jl) and the
-# VS Code "Julia test" integration keep working exactly as before.
+# leaving test/ and the TestItemRunner path (test/runtests.jl, VS Code) untouched.
 #
-# ── Why a shadow copy is needed at all ───────────────────────────────────────────────
-# TestItemRunner and ReTestItems agree on `@testitem` and on NOTHING else:
+# ── Why a shadow copy is needed ──────────────────────────────────────────────────────
+# TestItemRunner and ReTestItems agree on `@testitem` and on NOTHING else: the former
+# understands `@testsnippet` but not `@testsetup`, the latter the reverse. The source uses
+# `@testsnippet` because its body is SPLICED into each testitem, so fixtures land in a flat
+# name scope and every item gets a fresh copy. So this script builds a transient shadow
+# tree rewriting each `@testsnippet Name begin … end` into `@testsetup module Name … end`.
 #
-#   TestItemRunner / VS Code : @testitem, @testmodule, @testsnippet   (no @testsetup)
-#   ReTestItems              : @testitem, @testsetup module           (no @testsnippet)
-#
-# `@testsnippet` is what we want in the source: its body is SPLICED into each testitem, so
-# fixtures land in a flat name scope and every item gets a fresh copy. ReTestItems only
-# understands `@testsetup module`, so this script builds a transient shadow tree in which
-# each `@testsnippet Name begin … end` becomes `@testsetup module Name … end`.
-#
-# RAPID2D needs less rewriting than a typical suite because of one property:
-#   test files are named `*_test.jl` — exactly what ReTestItems discovers — so no renaming
-#   or symlink-with-new-suffix dance is required.
-#
-# But a blanking pass IS still needed, contrary to first impressions: ReTestItems rejects
-# ANY top-level expression that is not @testitem/@testsetup, and `@testsnippet` is itself
-# such a stray. So a file with a CO-LOCATED snippet (physics_test.jl has 4, and
-# global_JxB_force_test.jl / RRCs_test.jl / utils_test.jl one each) cannot be symlinked
-# verbatim — it is copied with the snippet ranges blanked to spaces (newlines preserved so
-# line numbers still line up). Files whose snippets live in a separate setup_*.jl are
-# symlinked untouched.
+# ReTestItems also rejects ANY top-level expression that is not @testitem/@testsetup, and
+# `@testsnippet` is itself such a stray — so a file with a CO-LOCATED snippet is copied
+# with the snippet ranges blanked to spaces (newlines preserved so line numbers line up),
+# while files whose snippets live in a separate setup_*.jl are symlinked untouched. Test
+# files are already named `*_test.jl`, exactly what ReTestItems discovers, so nothing has
+# to be renamed.
 #
 # Corollary: the setup_*.jl files must NOT be named `*_testsetup.jl`. That suffix would
 # make ReTestItems load them directly, where `@testsnippet` is invalid.
@@ -35,10 +25,9 @@
 # Standalone (skips the Pkg.test sandbox; test env must already be instantiated):
 #     julia --project=test test/runtests_parallel.jl physics --nworkers 4
 #
-# NOTE: parallelism pays off on LARGE runs. Two items dominate this suite —
-# "RAPID coils evolution without plasma" (~1m44s) and the plasma-coil coupling regression
-# (~1m05s) — so wall-clock is bounded below by the slower of those. On a small keyword
-# subset, plain `cc-julia-test-runner .` is usually faster (workers cannot share compilation).
+# NOTE: parallelism pays off on LARGE runs. Wall-clock is bounded below by the slowest item
+# ("RAPID coils evolution without plasma" ~1m44s, plasma-coil coupling ~1m05s); on a small
+# keyword subset plain `cc-julia-test-runner .` is usually faster.
 
 using ReTestItems
 
@@ -49,14 +38,9 @@ const REALTEST = joinpath(PKGROOT, "test")
 const SHADOW = joinpath(PKGROOT, "_partest_shadow_$(getpid())")
 const STANDALONE = !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
 
-# Directories under test/ NOT walked for test files.
-#
-# `data` is NOT mirrored into the shadow, deliberately. Test fixtures must be addressed
-# via `pkgdir(RAPID2D)` (see unit/utils/utils_test.jl, unit/io/wall_io_test.jl,
-# unit/reactions/RRCs_test.jl), which resolves to the REAL package root regardless of
-# where the code lives or is evaluated. A @__DIR__-relative path would break here: this
-# script re-emits every @testsnippet into one generated file at the shadow ROOT, so a
-# snippet's @__DIR__ is the shadow root, not the directory it was written in.
+# Directories under test/ NOT walked for test files. `data` is deliberately NOT mirrored
+# into the shadow: fixtures must be addressed via `pkgdir(RAPID2D)`, which resolves to the
+# real package root no matter where the shadowed code ends up being evaluated.
 const SKIP_DIRS = ("tmp_regression", "output", "data", basename(SHADOW))
 
 # ── args ─────────────────────────────────────────────────────────────────────────────
@@ -81,13 +65,10 @@ function parse_args(args)
 end
 
 # ── scan a file for @testsnippet blocks ──────────────────────────────────────────────
-# Returns (src, snippets, cuts, item_names):
-#   snippets   Vector{(name, body_source)} to re-emit as @testsetup modules
-#   cuts       char ranges of the @testsnippet blocks THEMSELVES, to blank from the copy
-#              that goes into the shadow — ReTestItems rejects any top-level expression
-#              other than @testitem/@testsetup, and @testsnippet is exactly such a stray.
-# Walks top-level expressions with Meta.parse rather than regex so nested begin/end inside
-# a snippet body cannot confuse the extent.
+# Returns (src, snippets, cuts, item_names): `snippets` are (name, body) pairs to re-emit
+# as @testsetup modules, `cuts` the char ranges of the @testsnippet blocks themselves, to
+# blank from the shadow copy. Walks top-level expressions with Meta.parse rather than
+# regex so nested begin/end inside a snippet body cannot confuse the extent.
 function scan_snippets(path)
     src = read(path, String)
     snips = Tuple{String, String}[]
@@ -128,10 +109,9 @@ end
 # Overwrite every `cuts` range with spaces but keep newlines, so the shadow copy's LINE
 # numbers still match the real file and stack traces stay meaningful.
 #
-# Iterates with `pairs(src)`, which yields BYTE indices — the same index space Meta.parse
-# reports. Indexing a collect()ed Char vector would be wrong here: these files are full of
-# Unicode identifiers (∇𝐃∇, ψ, θ, ν_en_iz), so character indices and byte indices diverge
-# and the blanking would land in the wrong place and corrupt the source.
+# `pairs(src)` yields BYTE indices, the same index space Meta.parse reports. A collect()ed
+# Char vector would be wrong: these files are full of Unicode identifiers (∇𝐃∇, ψ, θ,
+# ν_en_iz), so char and byte indices diverge and the blanking would corrupt the source.
 function blank_ranges(src, cuts)
     isempty(cuts) && return src
     io = IOBuffer()
@@ -203,11 +183,8 @@ function build_and_run(shadow, patterns, nworkers)
             rel = relpath(real, REALTEST)
             dst = joinpath(shadow, rel)
             mkpath(dirname(dst))
-            # A file with NO co-located @testsnippet can be symlinked verbatim. One that has
-            # snippets must be COPIED with them blanked out: ReTestItems rejects any
-            # top-level expression that is not @testitem/@testsetup, and @testsnippet is
-            # precisely such a stray. The snippets were already captured above and are
-            # re-emitted as @testsetup modules in the wrapper file.
+            # No co-located @testsnippet → symlink verbatim. Otherwise copy with the
+            # snippets blanked; they were captured above and re-emitted in the wrapper.
             if isempty(cuts)
                 symlink(real, dst)
             else

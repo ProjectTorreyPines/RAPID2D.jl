@@ -1,17 +1,6 @@
 # Discretized differential operators: divergence, ∇𝐃∇, ∇⋅(𝐮 f) and 𝐮⋅∇f.
-#
-# Split into FOUR @testitems, one per original top-level @testset. These are not
-# cheap sibling assertions sharing a fixture: each one builds its OWN RAPID object
-# from its OWN SimulationConfig (two different grids, two different config shapes)
-# and then mutates it — RP.transport.D*, RP.plasma.ue*, RP.operators.* are all
-# written to. Separate testitems give each scenario a fresh module, so a leak from
-# one can no longer silently condition the next.
-#
-# The shared SimulationConfig factories live in setup_numerics.jl. The former
-# file-level `using RAPID2D.LinearAlgebra` / `using RAPID2D.SparseArrays` were
-# dropped: nothing in this file references a name from either (verified by grep for
-# norm/dot/mul!/nnz/sparse/spzeros/findnz/SparseMatrixCSC/issparse/dropzeros/tr/det).
-# `using Test` and `using RAPID2D` are injected into every testitem automatically.
+# Each testitem builds and mutates its OWN RAPID object; the shared
+# SimulationConfig factories live in setup_numerics.jl.
 
 @testitem "Basic differential operators" setup=[NumericsFixtures] begin
     # Define test parameters

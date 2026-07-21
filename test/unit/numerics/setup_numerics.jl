@@ -1,27 +1,10 @@
 # Shared @testsnippet fixtures for test/unit/numerics/.
-#
-# A @testsnippet is `include_string`d into the testitem's own fresh module AFTER
-# TestItemRunner has evaluated the default `using Test` / `using RAPID2D`, so both
-# are already in scope below and must NOT be repeated here. Each requesting
-# testitem gets its OWN evaluation of the snippet, so anything built here is
-# genuinely fresh per testitem — no state leaks between them.
-#
-# NOTE ON NAMING: `NumericsFixtures` is deliberately namespaced to this directory.
-# test/unit/physics/ builds the same SimulationConfig shape with different
-# NR/NZ/dt and owns its own snippet; keeping the names distinct avoids a silent
-# collision (TestItemRunner stores setups in a Dict keyed by name, so a duplicate
-# name would overwrite rather than error).
 
 @testsnippet NumericsFixtures begin
     # The dominant config shape in this directory: a rectangular vacuum vessel
-    # (wall_R/wall_Z) inside a 0.8-2.2 m x -1.2-1.2 m domain. Previously this exact
-    # literal was copy-pasted byte-for-byte into three separate testsets
-    # (operators "Directional derivative", numerics "Gradient Calculation Tests"
-    # and numerics "smooth_data_2D").
-    #
-    # NR/NZ/dt/t_end_s/Dpara0/Dperp0 are parameterized because callers vary them;
-    # the geometry, R0B0 and prefilled_gas_pressure are what make this "the walled
-    # box" and are intentionally fixed.
+    # (wall_R/wall_Z) inside a 0.8-2.2 m x -1.2-1.2 m domain. NR/NZ/dt/t_end_s/
+    # Dpara0/Dperp0 are parameterized because callers vary them; the geometry, R0B0
+    # and prefilled_gas_pressure are what make this "the walled box" and are fixed.
     function walled_box_config(::Type{FT}=Float64;
                                NR::Int=100, NZ::Int=200,
                                dt=1e-6, t_end_s=10e-6,
@@ -40,14 +23,8 @@
     end
 
     # The wall-free, prefilled-gas config used by the operator-construction tests.
-    # NR=50/NZ=100 are the SimulationConfig struct defaults, so
-    # `gas_filled_config()` reproduces the old "Basic differential operators"
-    # config exactly; the ∇𝐃∇ and ∇⋅(𝐮 f) testitems pass NR=15, NZ=30.
-    #
-    # Two of the three original call sites built this by constructing an empty
-    # SimulationConfig and then mutating fields one at a time; that is normalized
-    # to keyword construction here. SimulationConfig is a plain @kwdef mutable
-    # struct with no constructor-side logic, so the two forms are equivalent.
+    # NR=50/NZ=100 are the SimulationConfig struct defaults; the ∇𝐃∇ and ∇⋅(𝐮 f)
+    # testitems pass NR=15, NZ=30.
     function gas_filled_config(::Type{FT}=Float64;
                                NR::Int=50, NZ::Int=100) where {FT<:AbstractFloat}
         return SimulationConfig{FT}(
@@ -60,16 +37,10 @@
 end
 
 @testsnippet DiscretizedOperatorFixtures begin
-    # Builds a fresh (identity, central-difference-in-R) DiscretizedOperator pair on
-    # a 3x3 grid — 9 unknowns, so both operators are 9x9. Formerly a plain helper
-    # function defined inside the top-level "DiscretizedOperator" testset and
-    # re-invoked by four of its inner testsets; hoisting it here is what allows
-    # those four to become independent testitems.
-    #
-    # Returned fresh on every call (and the snippet itself is re-evaluated per
-    # testitem), so callers may mutate the results without affecting each other.
+    # A fresh (identity, central-difference-in-R) DiscretizedOperator pair on a 3x3
+    # grid — 9 unknowns, so both operators are 9x9. Returned fresh on every call, so
+    # callers may mutate the results without affecting each other.
     function create_test_operators()
-        # Create a simple 3x3 grid for testing
         NR, NZ = 3, 3
         dims_rz = (NR, NZ)
 

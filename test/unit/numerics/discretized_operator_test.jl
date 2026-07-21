@@ -1,19 +1,7 @@
-# Test suite for DiscretizedOperator arithmetic operations.
-#
-# Pure sparse-matrix arithmetic on a 3x3 grid — no RAPID object is constructed
-# anywhere in this file, and the whole suite ran in ~2.5s. Split into FIVE
-# @testitems (one per original inner testset) rather than one: they are cohesive
-# but independently meaningful, and four of them already re-invoked the fixture
-# helper from scratch, so per-item isolation costs nothing.
-#
-# The former `create_test_operators()` helper — previously defined mid-way inside
-# the top-level testset — now lives in setup_numerics.jl as the
-# `DiscretizedOperatorFixtures` snippet. Names are prefixed "DiscretizedOperator"
-# because @testitem names must be unique suite-wide and bare "Constructor" /
-# "Basic Operations" already occur elsewhere in the suite.
-#
-# `using Test` / `using RAPID2D` are auto-injected; the SparseArrays and
-# LinearAlgebra imports are declared per-testitem, only where actually referenced.
+# DiscretizedOperator arithmetic: pure sparse-matrix operations on a 3x3 grid, no
+# RAPID object anywhere. The `create_test_operators()` fixture lives in
+# setup_numerics.jl. Testitem names are prefixed "DiscretizedOperator" because
+# @testitem names must be unique suite-wide.
 
 @testitem "DiscretizedOperator Constructor" begin
     using RAPID2D.SparseArrays  # SparseMatrixCSC, nnz

@@ -9,26 +9,14 @@
 #   * time-varying M(t) and L₂(t) taken from the diagnostics — RK4 integration.
 # The assertions use the second (tighter) comparison.
 #
-# ── Where things live ────────────────────────────────────────────────────────
-# The SCENARIO — grid, timestep, physics flags, the plasma column, the coil — is
-# spelled out in the @testitem body, so a reader can see what is being tested without
-# chasing a call into a snippet. The @testsnippet below holds only post-processing:
-# the analytical oracles and the plotting.
-#
-# ── Granularity ──────────────────────────────────────────────────────────────
-# ONE @testitem. The simulation is a ~65s end-to-end run whose single result object
-# feeds all 8 assertions, so they stay nested inside one item rather than re-running
-# the simulation per group (a @testsnippet body is re-evaluated per testitem).
-#
-# `using Test` / `using RAPID2D` are auto-injected into every @testitem.
+# ONE @testitem: all 8 assertions consume the same ~65 s simulation, and a snippet body
+# is re-evaluated per testitem, so splitting would re-run it per group.
 
 @testsnippet CouplingAnalysis begin
     using RAPID2D.Statistics
     using RAPID2D.LinearAlgebra
     using RAPID2D.FastInterpolations
     using Printf
-    # Unconditional (was previously `using Plots` nested inside `if visualize`).
-    # Plots and Dates are declared in test/Project.toml.
     using Plots
     using Dates
 
@@ -221,10 +209,9 @@
         return L_plasma, R_plasma, LV_plasma
     end
 
-    # Analyze plasma-coil coupling results and compare with analytical solution.
-    #
-    # The "✓ PASS" / "✗ FAIL" lines printed under `verbose` are cosmetic commentary;
-    # the actual assertions and their thresholds live in the @testitem body.
+    # Analyze plasma-coil coupling results and compare with the analytical solutions.
+    # The "✓ PASS" / "✗ FAIL" lines printed under `verbose` are cosmetic; the real
+    # assertions and thresholds live in the @testitem body.
     function analyze_coupling_results(RP::RAPID; verbose::Bool=false, visualize::Bool=false,
                                       outdir::AbstractString=mktempdir(; cleanup=false))
         if verbose
@@ -273,9 +260,6 @@
                                         R_coil, R_plasma, V_coil, LV_plasma)
 
         # Calculate analytical solution with both time-varying M(t) and L₂(t).
-        # (The original first built a synthetic "10% linear increase" profile here and
-        #  then immediately overwrote it with the diagnostics series; only the second
-        #  assignment ever took effect, so the dead one is dropped.)
         L_plasma_values = RP.diagnostics.snaps0D.self_inductance_plasma
         L_plasma_values[1] = L_plasma_values[2] # Avoid zero at t=0
         itp_L_plasma = linear_interp(times, L_plasma_values)
@@ -382,17 +366,9 @@
         )
     end
 
-    # Create comprehensive visualization plots comparing constant M and time-varying
-    # M&L analytical solutions.
-    #
-    # `RP` is a REQUIRED first argument: the animation call below used to reference a
-    # free `RP` that resolved to `Main.RP`, raising an UndefVarError that the
-    # surrounding try/catch swallowed on the testset path.
-    #
-    # `outdir` MUST be a unique per-run directory: the original wrote
-    # `joinpath(pwd(), "plasma_coil_coupling_comparison_$(timestamp).png")` with a
-    # second-resolution timestamp, which polluted the repository and let two runs
-    # finishing in the same second silently overwrite each other.
+    # Plot the simulation against the constant-M and time-varying-M&L analytical
+    # solutions. `outdir` MUST be unique per run: the filename timestamp is only
+    # second-resolution, so two runs sharing a directory can overwrite each other.
     function create_coupling_plots_combined(RP, times, I_coil_sim, I_plasma_sim,
                                            I_coil_ana, I_plasma_ana,
                                            I_coil_ana_ML, I_plasma_ana_ML;
@@ -518,15 +494,13 @@ end
     verbose   = get(ENV, "RAPID_VERBOSE", "false") == "true"
     visualize = get(ENV, "RAPID_VISUALIZE", "false") == "true"
 
-    # Artifacts go to a fresh per-run directory, never into pwd(). cleanup=false so they
-    # outlive the process and remain inspectable; the path is reported by the @info
-    # inside create_coupling_plots_combined.
+    # Artifacts go to a fresh per-run directory; cleanup=false so they outlive the
+    # process and stay inspectable. The path is reported by @info when plots are saved.
     outdir = visualize ? mktempdir(; cleanup=false) : tempname()
 
     # ── Discretization ──────────────────────────────────────────────────────────
-    # 40×60 grid, 400 steps of 5 μs. The snapshot intervals fix how many points the
-    # comparison is made over: 101 × 0D samples feed the current error metrics, and
-    # 21 × 2D samples feed the mutual inductance M(t).
+    # The snapshot intervals fix how many points the comparison spans: 101 × 0D samples
+    # feed the current error metrics, 21 × 2D samples feed the mutual inductance M(t).
     config = regression_config(;
         NR = 40,
         NZ = 60,
@@ -581,20 +555,18 @@ end
 
     initialize!(RP)
 
-    # Pure toroidal field, and E0 = 0.0 — this scenario imposes no external Eϕ of its
-    # own at t = 0, so nothing but the mutual inductance links the two circuits.
-    # NOTE: `initialize!` above already installed the manual-device default loop
-    # voltage (src/initialization.jl, set_RZ_B_E_manually!: 0.3 V/m). This helper
-    # overwrites Eϕ / Eϕ_ext / E_para_ext but NOT fields.LV_ext, and that surviving
-    # LV_ext is what drives the plasma loop — it is read back as V₂ (and, with the
-    # saturated drift, as R_plasma) in extract_plasma_circuit_parameters.
+    # Pure toroidal field with E0 = 0.0 — no external Eϕ imposed by this scenario.
+    # NOTE: E0 = 0.0 does NOT mean undriven. `initialize!` above already installed the
+    # manual-device default loop voltage (src/initialization.jl, set_RZ_B_E_manually!:
+    # 0.3 V/m); this helper overwrites Eϕ / Eϕ_ext / E_para_ext but NOT fields.LV_ext,
+    # and that surviving LV_ext is what drives the plasma loop. It is read back as V₂
+    # (and, via the saturated drift, as R_plasma) in extract_plasma_circuit_parameters.
     setup_toroidal_field!(RP; E0=0.0, verbose)
 
     # ── Initial plasma: a stationary top-hat current channel ────────────────────
-    # Core (within 0.3 m of R = 1.5 m on the midplane): n = 1e16 m⁻³, Te = 10 eV,
-    # Ti = 0.026 eV. Outside it a 1e6 m⁻³ floor at Te = 1 eV / Ti = 0.1 eV — cold and
-    # rarefied enough to carry no appreciable current, but nonzero so that ν_ei and the
-    # transport coefficients stay finite across the whole grid.
+    # The background floor outside the core is cold and rarefied enough to carry no
+    # appreciable current, but nonzero so that ν_ei and the transport coefficients stay
+    # finite across the whole grid.
     cenR, radius = 1.5, 0.3
     RP.plasma.ne    .= tophat_blob(RP.G; cenR, radius, n0=1e16,  background=1e6)
     RP.plasma.ni    .= tophat_blob(RP.G; cenR, radius, n0=1e16,  background=1e6)
@@ -608,9 +580,8 @@ end
     fill!(RP.plasma.Jϕ, 0.0)
 
     # ── External coil: circuit 1 of the coupled pair ────────────────────────────
-    # A single filament at (R, Z) = (1.2 m, 0.8 m) — inboard of the column (R = 1.5 m)
-    # and well off the midplane, so it links part of the column's flux without sitting
-    # inside it.
+    # A single filament inboard of the column (R = 1.5 m) and well off the midplane, so
+    # it links part of the column's flux without sitting inside it.
     coil_r = 1.2                 # m, coil major radius
     coil_z = 0.8                 # m, above the midplane
     coil_area = π * (0.05)^2     # m², conductor cross-section (5 cm radius)

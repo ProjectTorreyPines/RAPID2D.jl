@@ -1,18 +1,13 @@
-# Test suite for magnetic field calculations from poloidal flux function ψ.
-#
-# Tests the calculate_B_from_ψ! and calculate_B_from_ψ functions using analytical solutions.
-#
-# Grouped into a single @testitem: all four blocks are fast (~0.5s total) and share the
-# same grid, which lives in @testsnippet BFieldGrid. The grid is read-only in every
-# block (each one allocates its own ψ/BR/BZ), so one shared instance is safe.
+# Magnetic field calculations from poloidal flux ψ (calculate_B_from_ψ! /
+# calculate_B_from_ψ), checked against analytical solutions. The grid in @testsnippet
+# BFieldGrid is read-only in every block, so one shared instance is safe.
 
 @testsnippet BFieldGrid begin
     # Test parameters
     FT = Float64
 
     NR, NZ = 40, 80
-    # NB: build the grid FROM NR/NZ. The original hard-coded GridGeometry{FT}(40, 80)
-    # alongside the NR, NZ assignment, so the two could silently drift apart.
+    # NB: build the grid FROM NR/NZ so the two cannot silently drift apart.
     G = GridGeometry{FT}(NR, NZ)
     initialize_grid_geometry!(G, (0.5, 1.5), (-1.0, 1.0))
 end

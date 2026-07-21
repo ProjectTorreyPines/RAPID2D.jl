@@ -1,15 +1,8 @@
 # ADIOS BP round-trip I/O for Snapshot0D / Snapshot2D.
 #
-# Grouped into a single @testitem: every block is fast (~1.7s total) and shares no
-# fixture, so per-item module isolation would buy nothing over nested @testsets.
-#
-# WINDOWS GUARD — why it is an `if` and not `skip=`:
-# The original file bailed out with a top-level `return`, which is invalid inside a
-# @testitem body (the body is `include_string`d at module top level). `skip=` is not
-# available either: TestItemRunner's detector accepts ONLY `tags`, `default_imports`
-# and `setup`, and any other keyword raises "Unknown keyword argument" which aborts
-# the ENTIRE suite at discovery time (verified empirically). `skip=` is a ReTestItems
-# feature. So the guard lives inside the body, where it works under both runners.
+# WINDOWS GUARD: the guard is an `if` inside the body, NOT a `skip=` keyword.
+# TestItemRunner's detector accepts ONLY `tags`, `default_imports` and `setup`; any
+# other keyword aborts the ENTIRE suite at discovery time. (`skip=` is ReTestItems-only.)
 
 @testitem "ADIOS I/O Round-trip" begin
     if Sys.iswindows()

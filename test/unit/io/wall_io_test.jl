@@ -1,14 +1,4 @@
 # Wall geometry file readers (read_wall_data_file / read_device_wall_data!).
-#
-# Grouped into a single @testitem: all four blocks are fast (~0.2s total). The one
-# shared binding is `test_dir`, which has exactly one consumer now that the file is
-# a single testitem — a @testsnippet for it would be pure indirection, so it stays
-# inline. It is anchored on pkgdir(RAPID2D) rather than @__DIR__ so it does not depend
-# on the file's location or on the process working directory.
-#
-# NOTE: the "Fewer Points" block declares `local wall` OUTSIDE the @test_logs block
-# and asserts on it afterwards. That is scope-sensitive: the declaration, the
-# @test_logs assignment and the follow-up @tests must stay in one contiguous scope.
 
 @testitem "Wall IO" begin
     @testset "Wall Data Reading Tests" begin
@@ -19,7 +9,6 @@
             wall_file = joinpath(test_dir, "valid_wall.dat")
             wall = RAPID2D.read_wall_data_file(wall_file)
 
-            # Check that the results are correct
             @test length(wall.R) == 13  # 12 points + 1 for closing the loop
             @test length(wall.Z) == 13
             # Check some specific points from the tokamak shape
@@ -38,16 +27,15 @@
             # Test reading a file with fewer points than declared
             wall_file = joinpath(test_dir, "missing_wall.dat")
 
-            # Define wall variable outside the @test_logs block so it's accessible later
+            # SCOPE-SENSITIVE: this declaration, the @test_logs assignment below and
+            # the follow-up @tests must stay in one contiguous scope.
             local wall
 
             # Should produce a warning but still read available data
-            # We capture warnings using the @test_logs macro from Test
             @test_logs (:warn, r"Expected 10 points but only read 6 points from wall data file") begin
                 wall = RAPID2D.read_wall_data_file(wall_file)
             end
 
-            # Check that we got the correct data that was available
             @test length(wall.R) == 7  # 6 points + 1 for closing the loop
             @test wall.R[1] ≈ 1.5
             @test wall.Z[6] ≈ 0.0
@@ -77,7 +65,6 @@
             wall_file = joinpath(test_dir, "valid_wall.dat")
             RAPID2D.read_device_wall_data!(RP, wall_file)
 
-            # Check that the wall was loaded correctly
             @test length(RP.wall.R) == 13  # 12 points + 1 for closing the loop
             @test RP.wall.R[1] ≈ 1.5
             @test RP.wall.Z[1] ≈ 0.5

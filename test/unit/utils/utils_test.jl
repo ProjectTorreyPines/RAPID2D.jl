@@ -1,14 +1,4 @@
 # Wall-status utilities (get_wall_status / is_inside_wall).
-#
-# Grouped into a single @testitem: all seven blocks are fast (~0.2s total).
-#
-# The fixture splits cleanly along a dependency boundary, so it is expressed as TWO
-# snippets rather than one:
-#   RectWallFixture    — a pure in-memory rectangle, used by 6 of the 7 blocks.
-#   TokamakWallFixture — reads test/data/wall/valid_wall.dat, used ONLY by the
-#                        "get_wall_status - Tokamak Wall" block.
-# Keeping them apart means the filesystem dependency is declared where it is actually
-# needed, and splitting the tokamak block into its own testitem later costs nothing.
 
 @testsnippet RectWallFixture begin
     # Simple rectangular wall for testing
@@ -16,28 +6,18 @@
     wall_R = Float64[1.0, 3.0, 3.0, 1.0, 1.0]
     wall_Z = Float64[1.0, 1.0, 3.0, 3.0, 1.0]
 
-    # Create WallGeometry object for the rectangle
     rect_wall = WallGeometry{Float64}(wall_R, wall_Z)
 end
 
 @testsnippet TokamakWallFixture begin
     # Complex tokamak-shaped wall (data from valid_wall.dat)
-    #
-    # Anchored on pkgdir(RAPID2D), NOT @__DIR__: a @testsnippet body is evaluated inside
-    # whichever module consumes it, so @__DIR__ resolves to wherever that evaluation
-    # happens — not to this file. Under the ReTestItems path (test/runtests_parallel.jl)
-    # snippets are re-emitted into a single generated file at the shadow-tree root, where
-    # a relative "../.." climbs out of the tree entirely. pkgdir asks the package where it
-    # is and is therefore independent of both the file layout and the working directory.
     test_dir = joinpath(pkgdir(RAPID2D), "test", "data", "wall")
     wall_file = joinpath(test_dir, "valid_wall.dat")
 
-    # Load data from valid_wall.dat file
     tokamak_wall_data = RAPID2D.read_wall_data_file(wall_file)
     tokamak_wall_R = tokamak_wall_data.R
     tokamak_wall_Z = tokamak_wall_data.Z
 
-    # Create WallGeometry object for the tokamak
     tokamak_wall = WallGeometry{Float64}(tokamak_wall_R, tokamak_wall_Z)
 end
 

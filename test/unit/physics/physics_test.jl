@@ -1,20 +1,7 @@
-# Physics module tests.
-#
-# ORGANISATION
-# ------------
-# One @testitem per PHYSICS SCENARIO. Each item is self-contained and readable top to
-# bottom: the grid config, the SimulationFlags that define what is (and is not) being
-# exercised, the initial conditions, the run, then the assertions.
-#
-# Numerical-scheme variations of the SAME scenario (explicit vs implicit, upwind vs
-# central) are nested @testsets INSIDE their scenario's item, not separate items. They
-# share one scenario definition, so splitting them would force the config and the
-# ~15-flag block to be duplicated per combination and the scenario would stop being
-# visible at a glance — which is the whole point.
-#
-# Only the Gaussian blob builder is factored into a @testsnippet: five scenarios build
-# the same profile, and it is pure geometry with no bearing on what is under test.
-# Everything that DEFINES a test — flags, grid, thresholds — stays in the body.
+# Physics module tests. One @testitem per PHYSICS SCENARIO, self-contained and readable
+# top to bottom: grid config, SimulationFlags, initial conditions, the run, the
+# assertions. Numerical-scheme variations of the SAME scenario are nested @testsets
+# inside their scenario's item.
 #
 # Some scenarios are STRICTLY SEQUENTIAL (they chain state with no reset between
 # blocks); each is marked with a SEQUENTIAL comment explaining why it cannot be split.
@@ -261,7 +248,7 @@ end
     end
 
     @testset "implicit θ=0 ≡ explicit, θ=1 differs" begin
-        # upwind is set EXPLICITLY: it previously leaked in from the last loop iteration.
+        # upwind is set EXPLICITLY: otherwise it leaks in from the last loop iteration.
         RP.flags.upwind = true
 
         RP.flags.Implicit = false

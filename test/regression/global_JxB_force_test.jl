@@ -1,44 +1,26 @@
-# Global J×B force regression scenario.
+# Global J×B force regression scenario. Ported from test_force_balance.m of the
+# RAPID-2D MATLAB version.
 #
-# A Gaussian plasma blob is released off-axis (R = 1.3 m, Z = 0.1 m) in a pure
-# toroidal field with a loop-voltage drive. `Global_JxB_Force` is the feature under
-# test: the net J×B force on the current-carrying blob accelerates its centroid
-# outward in R until it reaches the wall and the density is lost. Density diffusion,
-# the ionization source, E×B drifts and Te/Ti evolution are all switched off, so the
-# centroid trajectory is driven by the global force alone and can be checked for
-# force → velocity → position consistency.
-# Ported from test_force_balance.m of the RAPID-2D MATLAB version.
+# A Gaussian plasma blob is released off-axis (R = 1.3 m, Z = 0.1 m) in a pure toroidal
+# field with a loop-voltage drive. `Global_JxB_Force` is the feature under test: the net
+# J×B force on the current-carrying blob accelerates its centroid outward in R until it
+# reaches the wall and the density is lost. Density diffusion, the ionization source,
+# E×B drifts and Te/Ti evolution are all switched off, so the centroid trajectory is
+# driven by the global force alone and can be checked for force → velocity → position
+# consistency.
 #
-# ── Where the scenario lives ─────────────────────────────────────────────────
-# Config, flags and initial plasma are written out in the @testitem body on purpose:
-# they ARE the test. Only post-processing plumbing (analysis + plotting) lives in the
-# snippet below. `using Test` / `using RAPID2D` are auto-injected into every
-# @testitem; `regression_config`, `setup_toroidal_field!` and `gaussian_blob` come
-# from the shared `RegressionCommon` snippet (setup_regression.jl).
-#
-# ── Granularity ──────────────────────────────────────────────────────────────
-# ONE @testitem holding all six nested @testsets ("Plasma Motion Physics",
-# "Force-Kinematics Consistency", "Wall Interaction", "Collision Timing",
-# "Physical Bounds", "Simulation Quality"). They all consume the SAME ~4.5 s
-# simulation. A @testsnippet body is re-evaluated per testitem, so promoting the six
-# testsets to six testitems would re-run the simulation six times for zero isolation
-# benefit.
+# ONE @testitem: all six nested @testsets consume the same ~4.5 s simulation, and a
+# snippet body is re-evaluated per testitem, so splitting would re-run it six times.
 
 @testsnippet JxBForceAnalysis begin
     using RAPID2D.Statistics
     using Printf
-    # Unconditional (was previously `using Plots` nested inside `if visualize`).
-    # Plots and Dates are declared in test/Project.toml.
     using Plots
     using Dates
 
-    # Analyze simulation results focusing on JxB force-driven plasma motion and wall interaction.
-    #
-    # `initial_R` / `initial_Z` / `plasma_radius` describe the blob the caller launched.
-    # They are REQUIRED kwargs rather than literals baked in here: the displacement and
-    # wall-proximity metrics below are only meaningful against the actual initial
-    # condition, and a copy of those numbers hidden in this file would silently desync
-    # from the scenario in the @testitem body.
+    # Analyze JxB force-driven plasma motion and wall interaction.
+    # `initial_R` / `initial_Z` / `plasma_radius` are required kwargs: the displacement
+    # and wall-proximity metrics are only meaningful against the blob actually launched.
     function analyze_force_balance_results(RP::RAPID;
                                            initial_R::Real, initial_Z::Real, plasma_radius::Real,
                                            verbose::Bool=false, visualize::Bool=false,
@@ -261,11 +243,8 @@
     end
 
     # Create visualization plots for JxB force-driven plasma motion.
-    #
-    # `outdir` MUST be a unique per-run directory: the original wrote
-    # `joinpath(pwd(), "JxB_force_test_$(timestamp).png")` with a second-resolution
-    # timestamp, which polluted the repository and let two runs finishing in the same
-    # second silently overwrite each other.
+    # `outdir` MUST be unique per run: the filename timestamp is only second-resolution,
+    # so two runs sharing a directory can overwrite each other.
     function create_force_balance_plots(RP, times, ne_cen_R, ne_cen_Z, total_ne, avg_aR_by_JxB, wall_collision_time;
                                         outdir::AbstractString=mktempdir(; cleanup=false))
         # Convert times to ms for plotting
@@ -367,9 +346,8 @@ end
     verbose   = get(ENV, "RAPID_VERBOSE", "false") == "true"
     visualize = get(ENV, "RAPID_VISUALIZE", "false") == "true"
 
-    # Artifacts go to a fresh per-run directory, never into pwd(). cleanup=false so
-    # they outlive the process and remain inspectable; the path is reported by the
-    # @info inside create_force_balance_plots.
+    # Artifacts go to a fresh per-run directory; cleanup=false so they outlive the
+    # process and stay inspectable. The path is reported by @info when plots are saved.
     outdir = visualize ? mktempdir(; cleanup=false) : tempname()
 
     config = regression_config(;
