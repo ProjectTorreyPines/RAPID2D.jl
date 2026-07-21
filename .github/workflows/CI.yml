@@ -49,16 +49,18 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest    # arm64 runner; free for public repos
-          - windows-latest
+          # No windows-latest: RAPID2D depends on ADIOS2.jl, and ADIOS2_jll publishes
+          # artifacts for linux/macos/freebsd only. On Windows the JLL defines no
+          # `libadios2_c`, so ADIOS2 -- and therefore RAPID2D -- fails to precompile;
+          # the suite cannot even load, let alone run. Re-add if ADIOS2_jll gains a
+          # Windows build.
         include:
-          # Coverage from ONE leg only. Three concurrent uploads race codecov's merge and
-          # it undercounts; the suite has no OS-specific branches, so ubuntu is
+          # Coverage from ONE leg only. Concurrent uploads race codecov's merge and it
+          # undercounts; the suite has no OS-specific branches, so ubuntu is
           # representative.
           - os: ubuntu-latest
             coverage: true
           - os: macos-latest
-            coverage: false
-          - os: windows-latest
             coverage: false
 
     steps:
