@@ -1,5 +1,5 @@
 using HDF5
-using Interpolations
+using FastInterpolations
 
 """
     AbstractReactionRateCoefficient{T<:AbstractFloat}
@@ -29,9 +29,10 @@ struct RRC_EoverP_Erg{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	itp  # Interpolation object with extrapolation
 
 	function RRC_EoverP_Erg(EoverP::Vector{FT}, Erg_eV::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
-		itp = interpolate((EoverP, Erg_eV), raw_data, Gridded(Linear()))
-		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
-		new{FT}(EoverP, Erg_eV, raw_data, itp_extrap)
+		# ClampExtrap: below the table's minimum E/p the rate relaxes to the room-T
+		# Maxwellian (bottom row), not 0 — E/p=0 means no field, not no collisions.
+		itp = linear_interp((EoverP, Erg_eV), raw_data; extrap = ClampExtrap())
+		new{FT}(EoverP, Erg_eV, raw_data, itp)
 	end
 end
 
@@ -56,9 +57,9 @@ struct RRC_T_ud{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	itp  # Interpolation object with extrapolation
 
 	function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
-		itp = interpolate((T_eV, ud_para), raw_data, Gridded(Linear()))
-		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
-		new{FT}(T_eV, ud_para, raw_data, itp_extrap)
+		# ClampExtrap: out-of-domain (T, u_d) queries clamp to the nearest boundary rate.
+		itp = linear_interp((T_eV, ud_para), raw_data; extrap = ClampExtrap())
+		new{FT}(T_eV, ud_para, raw_data, itp)
 	end
 end
 
@@ -85,9 +86,9 @@ struct RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	itp  # Interpolation object with extrapolation
 
 	function RRC_T_ud_gFac(T_eV::Vector{FT}, ud_para::Vector{FT}, gFac::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
-		itp = interpolate((T_eV, ud_para, gFac), raw_data, Gridded(Linear()))
-		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
-		new{FT}(T_eV, ud_para, gFac, raw_data, itp_extrap)
+		# ClampExtrap: out-of-domain (T, u_d, gFac) queries clamp to the nearest boundary rate.
+		itp = linear_interp((T_eV, ud_para, gFac), raw_data; extrap = ClampExtrap())
+		new{FT}(T_eV, ud_para, gFac, raw_data, itp)
 	end
 end
 
@@ -241,9 +242,13 @@ function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Sym
 		if RRC isa RRC_EoverP_Erg
 			mean_Ke_eV = @. 1.5*RP.plasma.Te_eV + 0.5*mass*RP.plasma.ue_para^2/ee;
 			abs_Epara_over_pGas = @. abs(RP.fields.E_para_tot/(RP.plasma.n_H2_gas*RP.plasma.T_gas_eV*ee));
-			return RRC.itp.(abs_Epara_over_pGas, mean_Ke_eV)
+			# No-gas guard: n_H2_gas=0 makes E/p non-finite (NaN if E_para=0 too), and a NaN
+			# query returns NaN, poisoning ν_en = n_gas·RRC (0·NaN) → singular Ampère matrix.
+			# n_gas scales the rate to 0 anyway, so any finite placeholder is safe.
+			@. abs_Epara_over_pGas = ifelse(isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT))
+			return RRC.itp((abs_Epara_over_pGas, mean_Ke_eV))
 		elseif RRC isa RRC_T_ud
-			return RRC.itp.(RP.plasma.Te_eV, abs.(RP.plasma.ue_para))
+			return RRC.itp((RP.plasma.Te_eV, abs.(RP.plasma.ue_para)))
 		end
 	else
 		throw(ArgumentError("Invalid reaction type: $reaction"))
@@ -273,7 +278,7 @@ function get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol)
 	if hasfield(typeof(iRRCs), reaction)
 		RRC = getfield(iRRCs, reaction)
 		if RRC isa RRC_T_ud
-			return RRC.itp.(RP.plasma.Ti_eV, abs.(RP.plasma.ui_para))
+			return RRC.itp((RP.plasma.Ti_eV, abs.(RP.plasma.ui_para)))
 		end
 	else
 		throw(ArgumentError("Invalid reaction type: $reaction"))

@@ -6,7 +6,7 @@ including forward/backward field line following, closed field line detection, an
 length calculations.
 """
 
-using Interpolations
+using FastInterpolations
 using LinearAlgebra
 using RAPID2D
 
@@ -43,8 +43,8 @@ function advance_step_along_b_rz_plane(
     dl::FT,
     R::FT,
     Z::FT,
-    interp_BR::Interpolations.AbstractInterpolation,
-    interp_BZ::Interpolations.AbstractInterpolation
+    interp_BR::FastInterpolations.AbstractInterpolantND,
+    interp_BZ::FastInterpolations.AbstractInterpolantND
 ) where FT<:AbstractFloat
     half = FT(0.5)
     two_FT = FT(2.0)
@@ -469,17 +469,15 @@ end
 function my_interpolation(R1D::Vector{FT}, Z1D::Vector{FT}, data_2d::Matrix{FT}; method::Symbol=:cubic) where FT<:AbstractFloat
     @assert method in (:nearst, :linear, :cubic) "Invalid interpolation method: $method"
 
-    if method == :nearst
-        bsp = BSpline(Constant())
-    elseif method == :linear
-        bsp = BSpline(Linear())
-    elseif method == :cubic
-        bsp = BSpline(Cubic())
-    end
-
     r1d = range(R1D[1], stop=R1D[end], length=length(R1D))
     z1d = range(Z1D[1], stop=Z1D[end], length=length(Z1D))
 
-    itp = scale(interpolate(data_2d, bsp), (r1d,z1d))
+    if method == :nearst
+        itp = constant_interp((r1d, z1d), data_2d)
+    elseif method == :linear
+        itp = linear_interp((r1d, z1d), data_2d)
+    elseif method == :cubic
+        itp = cubic_interp((r1d, z1d), data_2d)
+    end
     return itp
 end

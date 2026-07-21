@@ -1,7 +1,7 @@
 using Test
 using RAPID2D
 using RAPID2D.HDF5
-using RAPID2D.Interpolations
+using RAPID2D.FastInterpolations
 
 @testset "Reaction Rate Coefficients" begin
     # Define paths to test data
@@ -65,12 +65,15 @@ using RAPID2D.Interpolations
                 @test !isnan(rrc.itp(interp_eoeverp, interp_erg))
             end
 
-            # Test bounds handling
-            # It should return the zero value beyond edges
-            @test rrc.itp(EoverP[1] - 1.0, Erg_eV[1]) == 0.0
-            @test rrc.itp(-10.0, 100.0) == 0.0
-            @test rrc.itp(1e5, 100.0) == 0.0
-            @test rrc.itp(EoverP[end] + 1.0, Erg_eV[1]) == 0.0
+            # Test bounds handling: RRC_EoverP_Erg uses ClampExtrap, so out-of-domain
+            # queries clamp to the nearest boundary value (not 0). At low E/p the rate
+            # relaxes toward the room-T Maxwellian (the table's bottom row).
+            clampEP(x)  = clamp(x, EoverP[1], EoverP[end])
+            clampErg(x) = clamp(x, Erg_eV[1], Erg_eV[end])
+            @test rrc.itp(EoverP[1] - 1.0, Erg_eV[1])   == rrc.itp(EoverP[1], Erg_eV[1])
+            @test rrc.itp(-10.0, 100.0)                 == rrc.itp(clampEP(-10.0), clampErg(100.0))
+            @test rrc.itp(1e5, 100.0)                   == rrc.itp(clampEP(1e5), clampErg(100.0))
+            @test rrc.itp(EoverP[end] + 1.0, Erg_eV[1]) == rrc.itp(EoverP[end], Erg_eV[1])
         end
     end
 

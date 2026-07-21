@@ -157,6 +157,15 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT<:AbstractFloa
                            (RP.plasma.T_gas_eV * RP.config.ee) .*
                            ones(FT, RP.G.NR, RP.G.NZ)
 
+    # No gas → atomic collision rates are identically zero, so skip those routines entirely
+    # (they would also divide E_para by n_gas=0). Static case only; a cell depleting to 0
+    # while prefilled_gas_pressure > 0 is caught per-cell by the guard in get_electron_RRC.
+    if iszero(RP.config.prefilled_gas_pressure) && RP.flags.Atomic_Collision
+        @info "No neutral gas (prefilled_gas_pressure = 0): disabling Atomic_Collision " *
+              "(electron/ion–neutral collision rates are identically zero)."
+        RP.flags.Atomic_Collision = false
+    end
+
     # TODO: need to set plasma quantities outside? instead of here?
     # Initialize density and temperature
     initialize_density!(RP)

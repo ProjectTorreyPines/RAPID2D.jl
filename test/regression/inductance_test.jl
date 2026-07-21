@@ -9,7 +9,7 @@ analytical solutions for a simple single-filament circuit model.
 
 using RAPID2D
 using RAPID2D.Statistics
-using RAPID2D.Interpolations
+using RAPID2D.FastInterpolations
 using Test
 using Printf
 
@@ -231,7 +231,7 @@ function analyze_results(RP::RAPID; verbose::Bool=false, visualize::Bool=false)
 	snap0D_time_s = range(snap0D_time_s[1], stop=snap0D_time_s[end], length=length(snap0D_time_s))
     L_values = RP.diagnostics.snaps0D.self_inductance_plasma
     L_values[1] = L_values[2] # Avoid zero at t=0
-    itp_L_self_plasma = cubic_spline_interpolation(snap0D_time_s, L_values)
+    itp_L_self_plasma = cubic_interp(snap0D_time_s, L_values)
 
     # L/R time constant
     tau_LR = L_estimate / R_estimate

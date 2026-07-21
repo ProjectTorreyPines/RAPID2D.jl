@@ -25,7 +25,7 @@ export read_input_file,
 using Printf
 using LinearAlgebra
 using DelimitedFiles
-using Interpolations
+using FastInterpolations
 
 # Import from fields module
 import RAPID2D: TimeSeriesExternalField, AbstractExternalField
@@ -357,12 +357,16 @@ function create_new_grid_with_target_resolution(ori_data, target_r_1d, target_z_
     # Create meshgrid for new coordinates
     new_r, new_z = meshgrid(target_r_1d, target_z_1d)
 
-    # Define interpolation objects
-    # Use linear interpolation for stability
-    itp_br = interpolate((ori_data.R[:, 1], ori_data.Z[1, :]), ori_data.BR, Gridded(Linear()))
-    itp_bz = interpolate((ori_data.R[:, 1], ori_data.Z[1, :]), ori_data.BZ, Gridded(Linear()))
-    itp_psi = interpolate((ori_data.R[:, 1], ori_data.Z[1, :]), ori_data.psi, Gridded(Linear()))
-    itp_lv = interpolate((ori_data.R[:, 1], ori_data.Z[1, :]), ori_data.LV, Gridded(Linear()))
+    # Define interpolation objects (linear, for stability). @view avoids copying the
+    # R column / Z row; linear_interp copies the grid into each interpolant anyway
+    # (StorePolicy default = copy), so these views are only read during construction.
+    R1d = @view ori_data.R[:, 1]
+    Z1d = @view ori_data.Z[1, :]
+    grid = (R1d, Z1d)
+    itp_br  = linear_interp(grid, ori_data.BR)
+    itp_bz  = linear_interp(grid, ori_data.BZ)
+    itp_psi = linear_interp(grid, ori_data.psi)
+    itp_lv  = linear_interp(grid, ori_data.LV)
 
 
     new_br = [itp_br(r, z) for r in target_r_1d, z in target_z_1d]
