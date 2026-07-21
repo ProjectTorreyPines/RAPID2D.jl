@@ -19,7 +19,7 @@ Physical setup:
 using RAPID2D
 using RAPID2D.Statistics
 using RAPID2D.LinearAlgebra
-using RAPID2D.Interpolations
+using RAPID2D.FastInterpolations
 using Test
 using Printf
 
@@ -506,7 +506,7 @@ function analyze_coupling_results(RP::RAPID; verbose::Bool=false, visualize::Boo
 	M_values = [(2π*RP.coil_system.Green_grid2coils*s.Jϕ[:]/sum(s.Jϕ))[1] for s in RP.diagnostics.snaps2D]
 	M_values[1] = M_values[2] # Avoid zero M
 
-	itp_M = cubic_spline_interpolation(snaps2D_time_s, M_values)
+	itp_M = cubic_interp(snaps2D_time_s, M_values)
 
 
 	mean_M = mean(M_values)
@@ -530,7 +530,7 @@ function analyze_coupling_results(RP::RAPID; verbose::Bool=false, visualize::Boo
 	L_plasma_values = L_plasma .* (1.0 .+ 0.1 .* (times ./ times[end]))  # 10% increase over time
 	L_plasma_values = RP.diagnostics.snaps0D.self_inductance_plasma
 	L_plasma_values[1] = L_plasma_values[2] # Avoid zero at t=0
-	itp_L_plasma = linear_interpolation(times, L_plasma_values)
+	itp_L_plasma = linear_interp(times, L_plasma_values)
 
 	I_coil_analytical_ML, I_plasma_analytical_ML =
 		calculate_analytical_solution_time_varying_M_and_L(times, L_coil, itp_L_plasma, itp_M,

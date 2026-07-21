@@ -1,5 +1,5 @@
 using HDF5
-using Interpolations
+using FastInterpolations
 
 """
     AbstractReactionRateCoefficient{T<:AbstractFloat}
@@ -19,19 +19,20 @@ Stores both raw data and an interpolation object for efficient calculation of ra
 - `EoverP::Vector{FT}`: Electric field over pressure (E/p) coordinates
 - `Erg_eV::Vector{FT}`: Particle energy in eV
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp`: Interpolation object with extrapolation for quick access"""
+- `itp`: Interpolant; clamps to the table boundary outside its bounds"""
 struct RRC_EoverP_Erg{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 2 variables for given reaction rate coefficient
 	EoverP::Vector{FT}  # Electric field over pressure (E/p) coordinates
 	Erg_eV::Vector{FT}  # Particle's energy
 
 	raw_data::AbstractArray{FT}
-	itp  # Interpolation object with extrapolation
+	itp  # Interpolant; clamps to the table boundary outside its bounds
 
 	function RRC_EoverP_Erg(EoverP::Vector{FT}, Erg_eV::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
-		itp = interpolate((EoverP, Erg_eV), raw_data, Gridded(Linear()))
-		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
-		new{FT}(EoverP, Erg_eV, raw_data, itp_extrap)
+		# ClampExtrap: below the table's minimum E/p the rate relaxes to the room-T
+		# Maxwellian (bottom row), not 0 — E/p=0 means no field, not no collisions.
+		itp = linear_interp((EoverP, Erg_eV), raw_data; extrap = ClampExtrap())
+		new{FT}(EoverP, Erg_eV, raw_data, itp)
 	end
 end
 
@@ -45,7 +46,7 @@ Used for reactions where the rate depends on temperature and drift velocity.
 - `T_eV::Vector{FT}`: Temperature in eV
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp`: Interpolation object with extrapolation for quick access
+- `itp`: Interpolant; clamps to the table boundary outside its bounds
 """
 struct RRC_T_ud{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 2 variables for given reaction rate coefficient
@@ -53,12 +54,12 @@ struct RRC_T_ud{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	ud_para::Vector{FT}  # parallel velocity
 
 	raw_data::AbstractArray{FT}
-	itp  # Interpolation object with extrapolation
+	itp  # Interpolant; clamps to the table boundary outside its bounds
 
 	function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
-		itp = interpolate((T_eV, ud_para), raw_data, Gridded(Linear()))
-		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
-		new{FT}(T_eV, ud_para, raw_data, itp_extrap)
+		# ClampExtrap: out-of-domain (T, u_d) queries clamp to the nearest boundary rate.
+		itp = linear_interp((T_eV, ud_para), raw_data; extrap = ClampExtrap())
+		new{FT}(T_eV, ud_para, raw_data, itp)
 	end
 end
 
@@ -73,7 +74,7 @@ Used for more complex reactions where the distribution function shape affects th
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `gFac::Vector{FT}`: g-factor of the distribution function
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data
-- `itp`: Interpolation object with extrapolation for quick access
+- `itp`: Interpolant; clamps to the table boundary outside its bounds
 """
 struct RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	# 3 variables for given reaction rate coefficient
@@ -82,12 +83,12 @@ struct RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 	gFac::Vector{FT}  # g-factor of Distribution function
 
 	raw_data::AbstractArray{FT}
-	itp  # Interpolation object with extrapolation
+	itp  # Interpolant; clamps to the table boundary outside its bounds
 
 	function RRC_T_ud_gFac(T_eV::Vector{FT}, ud_para::Vector{FT}, gFac::Vector{FT}, raw_data::AbstractArray{FT}) where FT<:AbstractFloat
-		itp = interpolate((T_eV, ud_para, gFac), raw_data, Gridded(Linear()))
-		itp_extrap = extrapolate(itp, FT(0.0))  # Return 0 outside interpolation bounds
-		new{FT}(T_eV, ud_para, gFac, raw_data, itp_extrap)
+		# ClampExtrap: out-of-domain (T, u_d, gFac) queries clamp to the nearest boundary rate.
+		itp = linear_interp((T_eV, ud_para, gFac), raw_data; extrap = ClampExtrap())
+		new{FT}(T_eV, ud_para, gFac, raw_data, itp)
 	end
 end
 
@@ -99,12 +100,16 @@ Stores various reaction models for electron-neutral and electron-ion interaction
 
 # Fields
 - `Ionization`: Rate coefficient for electron impact ionization
-- `Momentum`: Rate coefficient for momentum transfer
-- `Total_Excitation`: Rate coefficient for all excitation processes
+- `Momentum`: Drift-friction rate coefficient — the v_z-weighted moment
+  ⟨σ_mom·|v|·v_z⟩/⟨v_z⟩, NOT the density-weighted collision frequency ⟨σ_mom·|v|⟩
+- `Total_Excitation`: Energy-normalized excitation rate coefficient
+  K_exc·ε_exc,eff/ε_ch, consumed as P_exc = ν_exc·ε_ch (see `characteristic_exc_erg_eV`)
 - `Dissoc_Ionz`: Rate coefficient for dissociative ionization
 - `Halpha`: Rate coefficient for Halpha emission
 - `Recomb_H2Ion`: Rate coefficient for H2+ recombination
 - `Recomb_H3Ion`: Rate coefficient for H3+ recombination
+- `characteristic_exc_erg_eV`: the excitation normalization the loaded table was built
+  with (`nothing` if the table omits it); validated in `initialize_RRCs!`.
 """
 struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
     Ionization::RRC_EoverP_Erg{FT}
@@ -115,6 +120,8 @@ struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
 	Halpha::RRC_T_ud{FT}
 	Recomb_H2Ion::RRC_T_ud{FT}
 	Recomb_H3Ion::RRC_T_ud{FT}
+
+	characteristic_exc_erg_eV::Union{FT,Nothing}  # table's exc normalization; checked in initialize_RRCs!
 
 	function Electron_RRCs(eRRC_EoverP_Erg_fileName::String, eRRC_T_ud_fileName::String)
 		@assert isfile(eRRC_EoverP_Erg_fileName) "File not found: $eRRC_EoverP_Erg_fileName"
@@ -127,6 +134,11 @@ struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
 		Ionization = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Ionization"))
 		Momentum = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Momentum"))
 		Total_Excitation = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Total_Excitation"))
+		# Excitation normalization the table was built with — kept as a field and
+		# validated later in initialize_RRCs! (where RP.config is available) against
+		# config.constants.exc_erg_eV. `nothing` if the table omits it.
+		char_exc = haskey(h5fid, "characteristic_exc_erg_eV") ?
+			Float64(read(h5fid, "characteristic_exc_erg_eV")) : nothing
 		close(h5fid)
 
 		# Create RRC_T_ud objects for each reaction type from the given H5 file
@@ -143,8 +155,32 @@ struct Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
 		FT = eltype(EoverP)  # Determine the floating-point type from the data
 
 		new{FT}(Ionization, Momentum, Total_Excitation,
-			Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion)
+			Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion,
+			char_exc === nothing ? nothing : FT(char_exc))
 	end
+end
+
+"""
+    check_exc_erg_consistency(eRRCs::Electron_RRCs, exc_erg_eV)
+
+Verify the loaded electron RRC table's excitation normalization matches RAPID2D's
+`exc_erg_eV` (`config.constants`). The `Total_Excitation` surface is energy-normalized
+to the table's `characteristic_exc_erg_eV`, so `P_exc = e·exc_erg_eV·n_gas·RRC` only
+reproduces the kinetic loss if the two agree. Missing (`nothing`) → warn + assume our
+value; present but different → error. Called from `initialize_RRCs!`.
+"""
+function check_exc_erg_consistency(eRRCs::Electron_RRCs, exc_erg_eV::Real)
+    ch = eRRCs.characteristic_exc_erg_eV
+    if ch === nothing
+        @warn "Electron RRC table has no characteristic_exc_erg_eV; " *
+              "assuming $exc_erg_eV eV (RAPID2D's exc_erg_eV)."
+    else
+        isapprox(ch, exc_erg_eV; rtol = 1e-6) || error(
+            "Electron RRC table is normalized to characteristic_exc_erg_eV = $ch eV, " *
+            "but RAPID2D uses exc_erg_eV = $exc_erg_eV eV. Regenerate the table or " *
+            "update PlasmaConstants.exc_erg_eV so they match.")
+    end
+    return nothing
 end
 
 """
@@ -208,9 +244,13 @@ function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Sym
 		if RRC isa RRC_EoverP_Erg
 			mean_Ke_eV = @. 1.5*RP.plasma.Te_eV + 0.5*mass*RP.plasma.ue_para^2/ee;
 			abs_Epara_over_pGas = @. abs(RP.fields.E_para_tot/(RP.plasma.n_H2_gas*RP.plasma.T_gas_eV*ee));
-			return RRC.itp.(abs_Epara_over_pGas, mean_Ke_eV)
+			# No-gas guard: n_H2_gas=0 makes E/p non-finite (NaN if E_para=0 too), and a NaN
+			# query returns NaN, poisoning ν_en = n_gas·RRC (0·NaN) → singular Ampère matrix.
+			# n_gas scales the rate to 0 anyway, so any finite placeholder is safe.
+			@. abs_Epara_over_pGas = ifelse(isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT))
+			return RRC.itp((abs_Epara_over_pGas, mean_Ke_eV))
 		elseif RRC isa RRC_T_ud
-			return RRC.itp.(RP.plasma.Te_eV, abs.(RP.plasma.ue_para))
+			return RRC.itp((RP.plasma.Te_eV, abs.(RP.plasma.ue_para)))
 		end
 	else
 		throw(ArgumentError("Invalid reaction type: $reaction"))
@@ -240,7 +280,7 @@ function get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol)
 	if hasfield(typeof(iRRCs), reaction)
 		RRC = getfield(iRRCs, reaction)
 		if RRC isa RRC_T_ud
-			return RRC.itp.(RP.plasma.Ti_eV, abs.(RP.plasma.ui_para))
+			return RRC.itp((RP.plasma.Ti_eV, abs.(RP.plasma.ui_para)))
 		end
 	else
 		throw(ArgumentError("Invalid reaction type: $reaction"))

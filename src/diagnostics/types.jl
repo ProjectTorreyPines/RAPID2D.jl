@@ -44,7 +44,7 @@ Contains volume-averaged quantities
 
     # Collision frequencies
     ν_en_iz::FT = zero(FT)          # Average ionization frequency [1/s]
-    ν_en_mom::FT = zero(FT)         # Average momentum transfer frequency [1/s]
+    ν_en_mom::FT = zero(FT)         # Average drift-friction frequency (v_z-weighted) [1/s]
     ν_en_Hα::FT = zero(FT)          # Hα emission frequency [1/s]
     ν_ei::FT = zero(FT)             # Electron-ion coulomb collision frequency [1/s]
     ν_ei_eff::FT = zero(FT)         # effective electron-ion coulomb collision frequency [1/s]
@@ -200,7 +200,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Collision frequencies
     ν_en_iz::Matrix{FT} = zeros(FT, dims_RZ)        # Average ionization frequency [1/s]
-    ν_en_mom::Matrix{FT} = zeros(FT, dims_RZ)       # Average momentum transfer frequency [1/s]
+    ν_en_mom::Matrix{FT} = zeros(FT, dims_RZ)       # Average drift-friction frequency (v_z-weighted) [1/s]
     ν_en_Hα::Matrix{FT} = zeros(FT, dims_RZ)        # Hα emission frequency [1/s]
     ν_ei::Matrix{FT} = zeros(FT, dims_RZ)           # Electron-ion coulomb collision frequency [1/s]
     ν_ei_eff::Matrix{FT} = zeros(FT, dims_RZ)       # effective electron-ion coulomb collision frequency [1/s]

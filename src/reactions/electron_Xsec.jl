@@ -131,7 +131,7 @@ end
 function Xsec_Electron_Momentum_Transfer_vectorized!(E_eV::Vector{Float64}, out_Xsec::Vector{Float64}; XT=XT_mom::Xsec_Table)
     @assert length(E_eV) == length(out_Xsec) "Length of input and output arrays should be same"
 
-    itp1 = interpolate((XT.E_eV,), XT.Xsec, Gridded(Linear()))
+    itp1 = linear_interp(XT.E_eV, XT.Xsec)
 
     idx = (E_eV .<= 0.001)
     out_Xsec[idx] .= XT.Xsec[1]
@@ -143,7 +143,7 @@ end
 
 function Xsec_Electron_Momentum_Transfer_vectorized(E_eV::Vector{Float64}; XT=XT_mom::Xsec_Table)
 
-    itp1 = interpolate((XT.E_eV,), XT.Xsec, Gridded(Linear()))
+    itp1 = linear_interp(XT.E_eV, XT.Xsec)
 
     out_Xsec = zeros(Float64, size(E_eV))
     idx = (E_eV .<= 0.001)

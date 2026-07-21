@@ -380,17 +380,11 @@ Update electron heating power components for electron energy equation.
 """
 function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @timeit RAPID_TIMER "update_electron_heating_powers!" begin
-    # Ionization energy for H2 molecule (H2->H2+ + e-) in eV
-    iz_erg_eV = FT(15.46)
-
-    # TODO: Replace with actual average excitation energy
-    # avg_exc_erg_eV = FT(12.0)  # Average excitation energy in eV (assumption)
-    # avg_exc_erg_eV = FT(13.0)  # Average excitation energy in eV (assumption)
-    # avg_exc_erg_eV = FT(10.0)  # Average excitation energy in eV (assumption)
-    avg_exc_erg_eV = FT(11.8)  # Average excitation energy in eV (assumption)
-
-    # Extract physical constants
-    @unpack ee, qe, me, mi = RP.config.constants
+    # Extract physical constants + reaction energies (all in RP.config.constants).
+    # exc_erg_eV normalizes the Total_Excitation surface and is validated at load
+    # against the table's characteristic_exc_erg_eV (Electron_RRCs), so P_exc
+    # reproduces the kinetic loss exactly.
+    @unpack ee, qe, me, mi, exc_erg_eV, iz_erg_eV = RP.config.constants
     OP = RP.operators
 
     # Alias common objects for readability
@@ -470,7 +464,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat
         # Get excitation rate coefficient
         RRC_exc = get_electron_RRC(RP, :Total_Excitation)
         # Excitation power (energy lost to excite particles)
-        @. ePowers.exc = ee * avg_exc_erg_eV * pla.n_H2_gas * RRC_exc
+        @. ePowers.exc = ee * exc_erg_eV * pla.n_H2_gas * RRC_exc
 
         # For ionization
         if RP.flags.src

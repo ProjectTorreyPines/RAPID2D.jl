@@ -18,7 +18,7 @@ using Statistics
 using HDF5
 using Printf
 using DelimitedFiles
-using Interpolations
+using FastInterpolations
 using SimpleUnPack
 using ADIOS2
 using TimerOutputs
