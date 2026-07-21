@@ -1,24 +1,9 @@
 ---
 name: CI
 
-# The suite is @testitem-based (see test/runtests.jl). RETESTITEMS_NWORKERS routes it
-# through ReTestItems worker PROCESSES (test/runtests_parallel.jl); unset or 0 falls back
-# to the sequential TestItemRunner path. It still runs under Pkg.test via julia-runtest,
-# so the sandbox, --check-bounds=yes and package-scoped coverage are unchanged either way.
-#
-# ── Is parallel actually faster here? MEASURE, don't assume ───────────────────────────
-# Unlike FastInterpolations (~200 files of small-array numerics — many items to spread,
-# little per-item compile), this suite is compile-bound: items measure 67-93% JIT
-# ("Snapshot Equality Operators" 93%, "Wall IO" 78%). Workers cannot share JIT, so N
-# workers duplicate that ~90% N times while parallelising only the remaining ~10%. A local
-# run suggested workers were SLOWER (~12m44s on 4 vs ~7m24s serial) but the machine was
-# loaded, so it did not settle anything.
-# Clean CI reference, ubuntu, serial (run 29870914884): julia-runtest step 11m03s.
-# The workflow_dispatch `nworkers` input re-measures either way on demand — 0 forces the
-# sequential path — so revisit this with numbers rather than reverting on a hunch.
-#
-# Sharding (RETESTITEMS_SHARD) is NOT wired up: test/runtests_parallel.jl does not
-# implement it, and each shard would still pay the full package precompile.
+# @testitem suite (test/runtests.jl). RETESTITEMS_NWORKERS>0 routes it through ReTestItems
+# worker processes (test/runtests_parallel.jl); 0 falls back to sequential TestItemRunner.
+# The workflow_dispatch `nworkers` input overrides it per run (0 = sequential).
 
 on:
   push:
@@ -46,9 +31,7 @@ jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # The suite is ~7 min; 60 caps a hang (e.g. native I/O stalling) instead of
-    # burning the 6-hour default.
-    timeout-minutes: 60
+    timeout-minutes: 60  # cap a hang instead of burning the 6-hour default
     strategy:
       fail-fast: false
       matrix:
@@ -57,20 +40,10 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest    # arm64 runner; free for public repos
-          # No windows-latest: RAPID2D depends on ADIOS2.jl, and ADIOS2_jll publishes
-          # artifacts for linux/macos/freebsd only. On Windows the JLL defines no
-          # `libadios2_c`, so ADIOS2 -- and therefore RAPID2D -- fails to precompile;
-          # the suite cannot even load, let alone run. Re-add if ADIOS2_jll gains a
-          # Windows build.
+          # No windows-latest: ADIOS2_jll ships no Windows binary, so RAPID2D can't precompile.
         include:
-          # nworkers matches the runner's vCPUs on public repos (ubuntu 4, macOS arm64 3).
-          # JULIA_NUM_PRECOMPILE_TASKS is held lower on macOS: that runner has 7 GB, and
-          # concurrent precompiles of a package this size swap-storm.
-          #
-          # Coverage from ONE leg only. Concurrent uploads race codecov's merge and it
-          # undercounts; the suite has no OS-specific branches, so ubuntu is
-          # representative. Workers each emit their own .cov files, which
-          # julia-processcoverage merges — one upload, as before.
+          # nworkers ≈ runner vCPUs. precompile_tasks lower on macOS (7 GB runner swap-storms).
+          # Coverage on ubuntu only: concurrent codecov uploads race the merge and undercount.
           - os: ubuntu-latest
             nworkers: 4
             precompile_tasks: 4
@@ -83,8 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No explicit `arch`: setup-julia defaults to the runner's native architecture.
-      # Pinning x64 here would break the arm64 macOS runner.
+      # No explicit `arch`: pinning x64 would break the arm64 macOS runner.
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
@@ -95,27 +67,18 @@ jobs:
 
       - uses: julia-actions/julia-buildpkg@v1
 
-      # RETESTITEMS_NWORKERS flips test/runtests.jl to the parallel path.
       - uses: julia-actions/julia-runtest@v1
         with:
           coverage: ${{ matrix.coverage }}
         env:
-          GKSwstype: 100  # Disable graphics output during tests
-          # Run the :regression testitems too (inductance, global JxB force balance,
-          # plasma-coil coupling). They validate physics against analytical solutions,
-          # cost ~1.5 min, and were never exercised by CI before.
-          RAPID_RUN_REGRESSION: 'true'
-          # Test for BLANK, not truthiness. `inputs.nworkers || matrix.nworkers` would be
-          # wrong: GitHub coerces the string '0' to falsy, so an explicit request for the
-          # sequential path would silently fall through to the matrix default. Written this
-          # way round, the `&&` branch yields matrix.nworkers (always truthy, so `||` takes
-          # it), and any non-blank input -- '0' included -- passes through untouched.
-          # On push/PR/schedule `inputs` is null, and null == '' holds, so the default wins.
+          GKSwstype: 100  # disable graphics output during tests
+          RAPID_RUN_REGRESSION: 'true'  # also run the :regression testitems
+          # Blank test, not truthiness: '0' is falsy to GitHub, so `input || matrix` would
+          # drop an explicit request for the sequential path back to the default.
           RETESTITEMS_NWORKERS: >-
             ${{ github.event.inputs.nworkers == '' && matrix.nworkers
                 || github.event.inputs.nworkers }}
-          # 0 = fail fast; do not let a retry mask a genuinely flaky item.
-          RETESTITEMS_RETRIES: '0'
+          RETESTITEMS_RETRIES: '0'  # fail fast; don't let a retry mask a flaky item
           JULIA_NUM_PRECOMPILE_TASKS: ${{ matrix.precompile_tasks }}
 
       - uses: julia-actions/julia-processcoverage@v1
