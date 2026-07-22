@@ -1,6 +1,7 @@
 <a id="readme-top"></a>
 [![CI](https://github.com/ProjectTorreyPines/RAPID2D.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/ProjectTorreyPines/RAPID2D.jl/actions/workflows/CI.yml)
 [![codecov](https://codecov.io/github/ProjectTorreyPines/RAPID2D.jl/graph/badge.svg?token=BHeyEDF71T)](https://codecov.io/github/ProjectTorreyPines/RAPID2D.jl)
+[![code style: runic](https://img.shields.io/badge/code_style-%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%81%E1%9A%B2-black)](https://github.com/fredrikekre/Runic.jl)
 
 # RAPID2D.jl
 
