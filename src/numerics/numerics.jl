@@ -19,8 +19,10 @@ In-place smoothing of a 2D field using a weighted average filter. Modifies the i
 - Setting `num_SM=0` returns the original field unchanged
 - Modifies the input array directly to minimize allocations
 """
-function smooth_data_2D!(target::AbstractMatrix{FT};
-                         num_SM::Int=1, weighting::AbstractMatrix{FT}=ones(FT, size(target))) where {FT<:AbstractFloat}
+function smooth_data_2D!(
+        target::AbstractMatrix{FT};
+        num_SM::Int = 1, weighting::AbstractMatrix{FT} = ones(FT, size(target))
+    ) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "smooth_data_2D!" begin
         # If no smoothing requested, return original field unchanged
         if num_SM <= 0
@@ -30,30 +32,30 @@ function smooth_data_2D!(target::AbstractMatrix{FT};
         NR, NZ = size(target)  # Note: we use first index for R, second for Z
 
         # Create arrays with ghost cells (to handle boundaries)
-        VV = zeros(FT, NR+2, NZ+2)
-        VV[2:end-1, 2:end-1] .= weighting
+        VV = zeros(FT, NR + 2, NZ + 2)
+        VV[2:(end - 1), 2:(end - 1)] .= weighting
 
         # Initialize the target array with ghost cells
-        tarVal = zeros(FT, NR+2, NZ+2)
-        tarVal[2:end-1, 2:end-1] .= target
+        tarVal = zeros(FT, NR + 2, NZ + 2)
+        tarVal[2:(end - 1), 2:(end - 1)] .= target
 
         # Create temporary array for smoothing iterations
         smoothed = similar(tarVal)
 
         # Define interior indices
-        rid = 2:NR+1
-        zid = 2:NZ+1
+        rid = 2:(NR + 1)
+        zid = 2:(NZ + 1)
 
         # Calculate smoothing coefficients
-        Z_coeff_down = @. 0.5 * VV[rid, zid-1] / (VV[rid, zid-1] + VV[rid, zid])
-        Z_coeff_middle = @. 0.5 * VV[rid, zid] * (VV[rid, zid-1] + 2.0*VV[rid, zid] + VV[rid, zid+1]) /
-                            ((VV[rid, zid-1] + VV[rid, zid]) * (VV[rid, zid] + VV[rid, zid+1]))
-        Z_coeff_up = @. 0.5 * VV[rid, zid+1] / (VV[rid, zid+1] + VV[rid, zid])
+        Z_coeff_down = @. 0.5 * VV[rid, zid - 1] / (VV[rid, zid - 1] + VV[rid, zid])
+        Z_coeff_middle = @. 0.5 * VV[rid, zid] * (VV[rid, zid - 1] + 2.0 * VV[rid, zid] + VV[rid, zid + 1]) /
+            ((VV[rid, zid - 1] + VV[rid, zid]) * (VV[rid, zid] + VV[rid, zid + 1]))
+        Z_coeff_up = @. 0.5 * VV[rid, zid + 1] / (VV[rid, zid + 1] + VV[rid, zid])
 
-        R_coeff_left = @. 0.5 * VV[rid-1, zid] / (VV[rid-1, zid] + VV[rid, zid])
-        R_coeff_middle = @. 0.5 * VV[rid, zid] * (VV[rid-1, zid] + 2.0*VV[rid, zid] + VV[rid+1, zid]) /
-                            ((VV[rid-1, zid] + VV[rid, zid]) * (VV[rid, zid] + VV[rid+1, zid]))
-        R_coeff_right = @. 0.5 * VV[rid+1, zid] / (VV[rid+1, zid] + VV[rid, zid])
+        R_coeff_left = @. 0.5 * VV[rid - 1, zid] / (VV[rid - 1, zid] + VV[rid, zid])
+        R_coeff_middle = @. 0.5 * VV[rid, zid] * (VV[rid - 1, zid] + 2.0 * VV[rid, zid] + VV[rid + 1, zid]) /
+            ((VV[rid - 1, zid] + VV[rid, zid]) * (VV[rid, zid] + VV[rid + 1, zid]))
+        R_coeff_right = @. 0.5 * VV[rid + 1, zid] / (VV[rid + 1, zid] + VV[rid, zid])
 
         # Handle zero weighting areas specially
         idx_zero_weighting = findall(weighting .== 0)
@@ -72,9 +74,9 @@ function smooth_data_2D!(target::AbstractMatrix{FT};
             # Z-direction smoothing
             @inbounds for j in zid
                 for i in rid
-                    smoothed[i, j] = Z_coeff_down[i-1, j-1] * tarVal[i, j-1] +
-                                    Z_coeff_middle[i-1, j-1] * tarVal[i, j] +
-                                    Z_coeff_up[i-1, j-1] * tarVal[i, j+1]
+                    smoothed[i, j] = Z_coeff_down[i - 1, j - 1] * tarVal[i, j - 1] +
+                        Z_coeff_middle[i - 1, j - 1] * tarVal[i, j] +
+                        Z_coeff_up[i - 1, j - 1] * tarVal[i, j + 1]
                 end
             end
 
@@ -84,9 +86,9 @@ function smooth_data_2D!(target::AbstractMatrix{FT};
             # R-direction smoothing
             @inbounds for j in zid
                 for i in rid
-                    smoothed[i, j] = R_coeff_left[i-1, j-1] * tarVal[i-1, j] +
-                                   R_coeff_middle[i-1, j-1] * tarVal[i, j] +
-                                   R_coeff_right[i-1, j-1] * tarVal[i+1, j]
+                    smoothed[i, j] = R_coeff_left[i - 1, j - 1] * tarVal[i - 1, j] +
+                        R_coeff_middle[i - 1, j - 1] * tarVal[i, j] +
+                        R_coeff_right[i - 1, j - 1] * tarVal[i + 1, j]
                 end
             end
 
@@ -121,8 +123,10 @@ Smooth a 2D field using a weighted average filter.
 - Areas with zero weight maintain their original values
 - Setting `num_SM=0` bypasses smoothing and returns a copy of the original field
 """
-function smooth_data_2D(target::AbstractMatrix{FT};
-                        num_SM::Int=1, weighting::AbstractMatrix{FT}=ones(FT, size(target))) where {FT<:AbstractFloat}
+function smooth_data_2D(
+        target::AbstractMatrix{FT};
+        num_SM::Int = 1, weighting::AbstractMatrix{FT} = ones(FT, size(target))
+    ) where {FT <: AbstractFloat}
     # If no smoothing requested, return a copy of the original field
     if num_SM <= 0
         return copy(target)

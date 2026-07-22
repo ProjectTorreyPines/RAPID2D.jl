@@ -32,7 +32,7 @@ end
 # Side effects
 - Updates `csys.mutual_inductance` matrix in-place
 """
-function calculate_mutual_inductance_matrix!(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function calculate_mutual_inductance_matrix!(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     N = csys.n_total
     if N == 0
         return nothing
@@ -44,8 +44,10 @@ function calculate_mutual_inductance_matrix!(csys::CoilSystem{FT}) where FT<:Abs
 
     # Calculate mutual inductance using Green's function
     # Each element [i,j] is the flux at coil i due to unit current in coil j
-    ψ_matrix = calculate_ψ_by_green_function(R_positions, Z_positions,
-                                             R_positions, Z_positions, ones(FT, N))
+    ψ_matrix = calculate_ψ_by_green_function(
+        R_positions, Z_positions,
+        R_positions, Z_positions, ones(FT, N)
+    )
 
     # Convert to mutual inductance: LM = 2π * ψ
     csys.mutual_inductance = FT(2π) * ψ_matrix
@@ -81,7 +83,7 @@ Updates the following fields in `csys`:
 - `dGreen_dRg_grid2coils`: R-derivative of Green's function (grid to coils)
 - `dGreen_dZg_grid2coils`: Z-derivative of Green's function (grid to coils)
 """
-function calculate_Green_tables!(csys::CoilSystem{FT}, G::GridGeometry{FT}) where FT<:AbstractFloat
+function calculate_Green_tables!(csys::CoilSystem{FT}, G::GridGeometry{FT}) where {FT <: AbstractFloat}
 
     if csys.n_total == 0
         return csys
@@ -93,7 +95,7 @@ function calculate_Green_tables!(csys::CoilSystem{FT}, G::GridGeometry{FT}) wher
     BDY_R = G.R2D[G.BDY_idx]
     BDY_Z = G.Z2D[G.BDY_idx]
 
-    csys.Green_coils2bdy  = calculate_ψ_by_green_function(
+    csys.Green_coils2bdy = calculate_ψ_by_green_function(
         BDY_R, BDY_Z,
         coils_R, coils_Z,
         one(FT)
@@ -111,7 +113,6 @@ function calculate_Green_tables!(csys::CoilSystem{FT}, G::GridGeometry{FT}) wher
 
     return csys
 end
-
 
 
 """
@@ -136,7 +137,7 @@ The circuit equation is: (L + R*dt) * I_new = L * I_old + dt * (V_ext - other_te
 # Notes
 - Mutual inductance matrix must be calculated first using `calculate_mutual_inductance_matrix!`
 """
-function calculate_circuit_matrices!(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function calculate_circuit_matrices!(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     N = csys.n_total
     if N == 0
         return nothing
@@ -176,7 +177,7 @@ This is a convenience function that calls both:
 - Call this function whenever coils are added/removed or when time step changes
 - For efficiency, only call `calculate_circuit_matrices!` if only dt changes
 """
-function update_coil_system_matrices!(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function update_coil_system_matrices!(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     calculate_mutual_inductance_matrix!(csys)
     calculate_circuit_matrices!(csys)
     return nothing
@@ -195,7 +196,7 @@ Get mutual inductance between coil i and coil j.
 # Returns
 - `FT`: Mutual inductance value [H]
 """
-function get_mutual_inductance(csys::CoilSystem{FT}, i::Int, j::Int) where FT<:AbstractFloat
+function get_mutual_inductance(csys::CoilSystem{FT}, i::Int, j::Int) where {FT <: AbstractFloat}
     @assert 1 <= i <= csys.n_total "Coil index i out of range"
     @assert 1 <= j <= csys.n_total "Coil index j out of range"
     return csys.mutual_inductance[i, j]
@@ -209,7 +210,7 @@ Return the full mutual inductance matrix as a copy.
 # Returns
 - `Matrix{FT}`: Copy of the mutual inductance matrix [H]
 """
-function get_coil_coupling_matrix(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_coil_coupling_matrix(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return copy(csys.mutual_inductance)
 end
 
@@ -244,12 +245,12 @@ which spreads each coil's current to the four surrounding grid nodes based on th
 
 """
 function distribute_coil_currents_to_Jϕ!(
-    Jϕ::Matrix{FT},
-    csys::CoilSystem{FT},
-    grid::GridGeometry{FT};
-    coil_mask::Union{Nothing, Vector{Bool}} = nothing,
-    currents::Union{Nothing, Vector{FT}} = nothing
-) where FT<:AbstractFloat
+        Jϕ::Matrix{FT},
+        csys::CoilSystem{FT},
+        grid::GridGeometry{FT};
+        coil_mask::Union{Nothing, Vector{Bool}} = nothing,
+        currents::Union{Nothing, Vector{FT}} = nothing
+    ) where {FT <: AbstractFloat}
 
     @assert size(Jϕ) == (grid.NR, grid.NZ) "Jϕ matrix size must match grid dimensions"
     if currents !== nothing
@@ -307,11 +308,11 @@ function distribute_coil_currents_to_Jϕ!(
         # Bottom-left node [rid, zid]
         Jϕ[rid, zid] += (one(FT) - mr) * (one(FT) - mz) * current * inv_dA
         # Bottom-right node [rid+1, zid]
-        Jϕ[rid+1, zid] += mr * (one(FT) - mz) * current * inv_dA
+        Jϕ[rid + 1, zid] += mr * (one(FT) - mz) * current * inv_dA
         # Top-left node [rid, zid+1]
-        Jϕ[rid, zid+1] += (one(FT) - mr) * mz * current * inv_dA
+        Jϕ[rid, zid + 1] += (one(FT) - mr) * mz * current * inv_dA
         # Top-right node [rid+1, zid+1]
-        Jϕ[rid+1, zid+1] += mr * mz * current * inv_dA
+        Jϕ[rid + 1, zid + 1] += mr * mz * current * inv_dA
     end
 
     return Jϕ
@@ -339,11 +340,11 @@ This is a convenience wrapper that allocates the output matrix and calls the in-
 - `Matrix{FT}`: Toroidal current density distribution [A/m²]
 """
 function distribute_coil_currents_to_Jϕ(
-    csys::CoilSystem{FT},
-    grid::GridGeometry{FT};
-    coil_mask::Union{Nothing, Vector{Bool}} = nothing,
-    currents::Union{Nothing, Vector{FT}} = nothing
-) where FT<:AbstractFloat
+        csys::CoilSystem{FT},
+        grid::GridGeometry{FT};
+        coil_mask::Union{Nothing, Vector{Bool}} = nothing,
+        currents::Union{Nothing, Vector{FT}} = nothing
+    ) where {FT <: AbstractFloat}
 
     Jϕ = zeros(FT, grid.NR, grid.NZ)
     distribute_coil_currents_to_Jϕ!(Jϕ, csys, grid; coil_mask, currents)
@@ -367,7 +368,7 @@ and updates the coil system's `inside_domain_indices` field.
 - Coils exactly on the boundary are considered inside
 - This function modifies the coil system in-place
 """
-function determine_coils_inside_grid!(csys::CoilSystem{FT}, grid::GridGeometry{FT}) where FT<:AbstractFloat
+function determine_coils_inside_grid!(csys::CoilSystem{FT}, grid::GridGeometry{FT}) where {FT <: AbstractFloat}
     # Clear existing indices
     empty!(csys.inside_domain_indices)
 
@@ -413,7 +414,7 @@ new_coil_I_k = obj.coils.inv_A_LR_circuit*circuit_rhs;
 - Assumes circuit matrices (A_LR_circuit, inv_A_LR_circuit) are already computed
 - Does not include plasma contributions (simplified circuit equation)
 """
-function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT=csys.time_s) where FT<:AbstractFloat
+function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT = csys.time_s) where {FT <: AbstractFloat}
     if csys.n_total == 0
         return nothing
     end
@@ -426,7 +427,7 @@ function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT=csys.time_s) where
     resistances = get_all_resistances(csys)
 
     # Circuit equation: (L + R*dt) * I_new = L * I_old + dt * V_ext
-    circuit_rhs = csys.mutual_inductance * currents .+ csys.Δt * ( voltages - (one(FT) - csys.θimp) * resistances .* currents)
+    circuit_rhs = csys.mutual_inductance * currents .+ csys.Δt * (voltages - (one(FT) - csys.θimp) * resistances .* currents)
 
     # Solve for new currents
     new_currents = csys.inv_A_LR_circuit * circuit_rhs
@@ -439,12 +440,12 @@ function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT=csys.time_s) where
 end
 
 
-function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT=csys.time_s) where FT<:AbstractFloat
+function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT = csys.time_s) where {FT <: AbstractFloat}
     if csys.n_total == 0
         return nothing
     end
 
-        # Get current voltages at time (t + 0.5 * csys.Δt)
+    # Get current voltages at time (t + 0.5 * csys.Δt)
     voltages = get_all_voltages_at_time(csys, t + 0.5 * csys.Δt)
 
     # Get current state
@@ -453,7 +454,7 @@ function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT=csys.time
 
     # Right-hand side of LR circuit equation:
     # L * I_old + dt * (V_ext - (1-θimp) * R * I)
-    return csys.mutual_inductance * currents .+ csys.Δt * ( voltages - (one(FT) - csys.θimp) * resistances .* currents)
+    return csys.mutual_inductance * currents .+ csys.Δt * (voltages - (one(FT) - csys.θimp) * resistances .* currents)
 end
 
 
@@ -470,7 +471,7 @@ Energy = 0.5 * I^T * L * I
 # Returns
 - `FT`: Total magnetic energy [J]
 """
-function calculate_circuit_magnetic_energy(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function calculate_circuit_magnetic_energy(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     if csys.n_total == 0
         return zero(FT)
     end
@@ -492,7 +493,7 @@ Power = I^T * R * I
 # Returns
 - `FT`: Total power dissipation [W]
 """
-function calculate_power_dissipation(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function calculate_power_dissipation(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     if csys.n_total == 0
         return zero(FT)
     end

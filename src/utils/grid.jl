@@ -18,10 +18,10 @@ Initialize a grid geometry with specified coordinate ranges.
 - The initialized grid geometry (for chaining)
 """
 function initialize_grid_geometry!(
-    grid::GridGeometry{FT},
-    R_range::Tuple{<:Real,<:Real},
-    Z_range::Tuple{<:Real,<:Real}
-) where FT<:AbstractFloat
+        grid::GridGeometry{FT},
+        R_range::Tuple{<:Real, <:Real},
+        Z_range::Tuple{<:Real, <:Real}
+    ) where {FT <: AbstractFloat}
     # Calculate grid spacings
     R_min, R_max = R_range
     Z_min, Z_max = Z_range
@@ -31,11 +31,11 @@ function initialize_grid_geometry!(
 
     # Generate 1D coordinate arrays
     for i in 1:grid.NR
-        grid.R1D[i] = FT(R_min + (i-1)*grid.dR)
+        grid.R1D[i] = FT(R_min + (i - 1) * grid.dR)
     end
 
     for j in 1:grid.NZ
-        grid.Z1D[j] = FT(Z_min + (j-1)*grid.dZ)
+        grid.Z1D[j] = FT(Z_min + (j - 1) * grid.dZ)
     end
 
     # Generate 2D coordinate arrays
@@ -54,12 +54,16 @@ function initialize_grid_geometry!(
 
     # Define boundary indices - the perimeter of the domain using linear indices
     # This combines all four edges of the domain and ensures unique, sorted indices
-    grid.BDY_idx = sort(unique([
-        LinearIndices((grid.NR, grid.NZ))[:,1];       # Bottom edge
-        LinearIndices((grid.NR, grid.NZ))[:,end];     # Top edge
-        LinearIndices((grid.NR, grid.NZ))[1,:];       # Left edge
-        LinearIndices((grid.NR, grid.NZ))[end,:]      # Right edge
-    ]))
+    grid.BDY_idx = sort(
+        unique(
+            [
+                LinearIndices((grid.NR, grid.NZ))[:, 1];       # Bottom edge
+                LinearIndices((grid.NR, grid.NZ))[:, end];     # Top edge
+                LinearIndices((grid.NR, grid.NZ))[1, :];       # Left edge
+                LinearIndices((grid.NR, grid.NZ))[end, :]      # Right edge
+            ]
+        )
+    )
 
     return grid
 end
@@ -84,12 +88,12 @@ Create and initialize a new grid geometry with specified dimensions and coordina
 - A new initialized grid geometry
 """
 function initialize_grid_geometry(
-    NR::Int,
-    NZ::Int,
-    R_range::Tuple{<:Real,<:Real},
-    Z_range::Tuple{<:Real,<:Real},
-    ::Type{T}=Float64
-) where T<:AbstractFloat
+        NR::Int,
+        NZ::Int,
+        R_range::Tuple{<:Real, <:Real},
+        Z_range::Tuple{<:Real, <:Real},
+        ::Type{T} = Float64
+    ) where {T <: AbstractFloat}
     # Create an empty GridGeometry
     grid = GridGeometry{T}(NR, NZ)
 
@@ -113,7 +117,7 @@ Uses a depth-first search algorithm to explore all connected zeros.
 # Returns
 - Vector of named tuples with fields `rid` and `zid` representing the contour path
 """
-function trace_zero_contour(matrix::Matrix{T}, start_position::NamedTuple{(:rid, :zid), Tuple{Int, Int}}) where T<:Real
+function trace_zero_contour(matrix::Matrix{T}, start_position::NamedTuple{(:rid, :zid), Tuple{Int, Int}}) where {T <: Real}
     # Get matrix dimensions
     num_r, num_z = size(matrix)
 
@@ -160,7 +164,7 @@ function trace_zero_contour(matrix::Matrix{T}, start_position::NamedTuple{(:rid,
             if 1 <= new_rid <= num_r && 1 <= new_zid <= num_z
                 # If value is 0 and not visited
                 if matrix[new_rid, new_zid] == 0 && !visited[new_rid, new_zid]
-                    push!(stack, (rid=new_rid, zid=new_zid))
+                    push!(stack, (rid = new_rid, zid = new_zid))
                 end
             end
         end
@@ -182,8 +186,8 @@ Convenience method that accepts separate r and z indices instead of a named tupl
 # Returns
 - Vector of named tuples with fields `rid` and `zid` representing the contour path
 """
-function trace_zero_contour(matrix::Matrix{T}, start_rid::Int, start_zid::Int) where T<:Real
-    return trace_zero_contour(matrix, (rid=start_rid, zid=start_zid))
+function trace_zero_contour(matrix::Matrix{T}, start_rid::Int, start_zid::Int) where {T <: Real}
+    return trace_zero_contour(matrix, (rid = start_rid, zid = start_zid))
 end
 
 """
@@ -207,7 +211,7 @@ This implements a zero-gradient (Neumann-like) boundary condition by extending
 interior values to the boundary through local averaging, which is commonly used
 for velocity components and other transport quantities.
 """
-function extrapolate_field_to_boundary_nodes!(G::GridGeometry{FT}, field::AbstractMatrix{FT}) where FT<:AbstractFloat
+function extrapolate_field_to_boundary_nodes!(G::GridGeometry{FT}, field::AbstractMatrix{FT}) where {FT <: AbstractFloat}
     # Set on-wall node values using neighboring in-wall nodes
     for nid in G.nodes.on_wall_nids
         if !isempty(G.nodes.ngh_in_wall_nids[nid])
@@ -225,6 +229,7 @@ function extrapolate_field_to_boundary_nodes!(G::GridGeometry{FT}, field::Abstra
             field[nid] = mean(field[G.nodes.ngh_on_wall_nids[nid]])
         end
     end
+    return
 end
 
 # Export functions

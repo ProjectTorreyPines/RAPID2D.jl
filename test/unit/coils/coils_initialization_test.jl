@@ -1,4 +1,4 @@
-@testitem "Coil Initialization and Vectorized Operations" setup=[CoilFactories] begin
+@testitem "Coil Initialization and Vectorized Operations" setup = [CoilFactories] begin
     FT = Float64
 
     @testset "Four Wall System Initialization" begin
@@ -52,10 +52,10 @@
 
         # Define control coil specifications
         control_specs = [
-            (r=2.5, z=0.5, area=π*0.02^2, name="PF_Upper", max_voltage=1000.0, max_current=50000.0),
-            (r=2.5, z=0.0, area=π*0.03^2, name="CS_Main", max_voltage=2000.0, max_current=100000.0),
-            (r=2.5, z=-0.5, area=π*0.02^2, name="PF_Lower", max_voltage=1000.0, is_controllable=false),
-            (r=1.8, z=0.0, area=π*0.015^2, name="OH_Heating", max_voltage=500.0, is_controllable=false)
+            (r = 2.5, z = 0.5, area = π * 0.02^2, name = "PF_Upper", max_voltage = 1000.0, max_current = 50000.0),
+            (r = 2.5, z = 0.0, area = π * 0.03^2, name = "CS_Main", max_voltage = 2000.0, max_current = 100000.0),
+            (r = 2.5, z = -0.5, area = π * 0.02^2, name = "PF_Lower", max_voltage = 1000.0, is_controllable = false),
+            (r = 1.8, z = 0.0, area = π * 0.015^2, name = "OH_Heating", max_voltage = 500.0, is_controllable = false),
         ]
 
         add_control_coils!(system, control_specs)
@@ -98,9 +98,9 @@
         system = CoilSystem{FT}()
 
         # Add test coils
-        coil1 = pf_coil("PF1"; current=100.0)
-        coil2 = pf_coil("PF2"; z=-0.5, is_controllable=false, current=200.0)
-        coil3 = wall_coil("wall"; current=-50.0)
+        coil1 = pf_coil("PF1"; current = 100.0)
+        coil2 = pf_coil("PF2"; z = -0.5, is_controllable = false, current = 200.0)
+        coil3 = wall_coil("wall"; current = -50.0)
 
         add_coil!(system, coil1)
         add_coil!(system, coil2)
@@ -145,8 +145,8 @@
         system = CoilSystem{FT}()
 
         # Add test coils
-        coil1 = pf_coil("PF1"; voltage_ext=300.0)
-        coil2 = pf_coil("PF2"; z=-0.5, is_controllable=false, voltage_ext=400.0)
+        coil1 = pf_coil("PF1"; voltage_ext = 300.0)
+        coil2 = pf_coil("PF2"; z = -0.5, is_controllable = false, voltage_ext = 400.0)
         coil3 = wall_coil("wall")
 
         add_coil!(system, coil1)
@@ -190,10 +190,10 @@
 
         # Add control coils with mixed controllability
         control_specs = [
-            (r=2.5, z=0.4, area=π*0.02^2, name="PF1", max_voltage=1000.0, is_controllable=true),
-            (r=1.8, z=0.0, area=π*0.03^2, name="CS", max_voltage=2000.0, is_controllable=true),
-            (r=2.5, z=-0.4, area=π*0.02^2, name="PF2", max_voltage=1000.0, is_controllable=true),
-            (r=1.2, z=0.0, area=π*0.015^2, name="heating", max_voltage=500.0, is_controllable=false)
+            (r = 2.5, z = 0.4, area = π * 0.02^2, name = "PF1", max_voltage = 1000.0, is_controllable = true),
+            (r = 1.8, z = 0.0, area = π * 0.03^2, name = "CS", max_voltage = 2000.0, is_controllable = true),
+            (r = 2.5, z = -0.4, area = π * 0.02^2, name = "PF2", max_voltage = 1000.0, is_controllable = true),
+            (r = 1.2, z = 0.0, area = π * 0.015^2, name = "heating", max_voltage = 500.0, is_controllable = false),
         ]
 
         add_control_coils!(system, control_specs)

@@ -12,7 +12,7 @@
     initialize_grid_geometry!(G, (0.5, 1.5), (-1.0, 1.0))
 end
 
-@testitem "Magnetic Field Calculations from ψ" setup=[BFieldGrid] begin
+@testitem "Magnetic Field Calculations from ψ" setup = [BFieldGrid] begin
 
     @testset "Uniform field test (ψ = constant)" begin
         # Test case 1: ψ = constant → BR = BZ = 0
@@ -22,8 +22,8 @@ end
 
         calculate_B_from_ψ!(G, ψ, BR, BZ)
 
-        @test all(abs.(BR) .< 1e-14)
-        @test all(abs.(BZ) .< 1e-14)
+        @test all(abs.(BR) .< 1.0e-14)
+        @test all(abs.(BZ) .< 1.0e-14)
     end
 
     @testset "Mixed field test (ψ = aR² + bZ²)" begin
@@ -33,17 +33,17 @@ end
 
         BR, BZ = calculate_B_from_ψ(G, ψ)
 
-        expected_BR = @. -2*b * G.Z2D / G.R2D
-        expected_BZ = 2 *a * ones(FT, NR, NZ)
+        expected_BR = @. -2 * b * G.Z2D / G.R2D
+        expected_BZ = 2 * a * ones(FT, NR, NZ)
 
         # Check interior points (higher accuracy)
-        interiors = (2:NR-1, 2:NZ-1)
-        @test isapprox(BR[interiors...], expected_BR[interiors...], rtol=1e-10)
-        @test isapprox(BZ[interiors...], expected_BZ[interiors...], rtol=1e-10)
+        interiors = (2:(NR - 1), 2:(NZ - 1))
+        @test isapprox(BR[interiors...], expected_BR[interiors...], rtol = 1.0e-10)
+        @test isapprox(BZ[interiors...], expected_BZ[interiors...], rtol = 1.0e-10)
 
         # Check including boundaries (lower accuracy)
-        @test isapprox(BR, expected_BR, rtol=1e-2)
-        @test isapprox(BZ, expected_BZ, rtol=1e-2)
+        @test isapprox(BR, expected_BR, rtol = 1.0e-2)
+        @test isapprox(BZ, expected_BZ, rtol = 1.0e-2)
     end
 
     @testset "Wrapper function test" begin
@@ -54,20 +54,20 @@ end
 
         @test size(BR_result) == (NR, NZ)
         @test size(BZ_result) == (NR, NZ)
-        @test all(abs.(BR_result) .< 1e-14)
-        @test all(abs.(BZ_result) .< 1e-14)
+        @test all(abs.(BR_result) .< 1.0e-14)
+        @test all(abs.(BZ_result) .< 1.0e-14)
     end
 
     @testset "Error handling tests" begin
         # Test dimension mismatches
-        ψ_wrong = ones(FT, NR+1, NZ)
+        ψ_wrong = ones(FT, NR + 1, NZ)
         BR = zeros(FT, NR, NZ)
         BZ = zeros(FT, NR, NZ)
 
         @test_throws AssertionError calculate_B_from_ψ!(G, ψ_wrong, BR, BZ)
 
         ψ = ones(FT, NR, NZ)
-        BR_wrong = zeros(FT, NR, NZ+1)
+        BR_wrong = zeros(FT, NR, NZ + 1)
 
         @test_throws AssertionError calculate_B_from_ψ!(G, ψ, BR_wrong, BZ)
     end

@@ -38,15 +38,17 @@ makie_plot_snap1D(RP.diagnostics.snaps0D)
 - Plot object (type depends on the loaded plotting backend)
 """
 function plot_snaps0D(snap0D; kwargs...)
-    error("""
-    plot_snaps0D requires a plotting package to be loaded.
+    error(
+        """
+        plot_snaps0D requires a plotting package to be loaded.
 
-    For Plots.jl backend:
-        using Plots
+        For Plots.jl backend:
+            using Plots
 
-    For Makie.jl backend:
-        using CairoMakie  # or GLMakie
-    """)
+        For Makie.jl backend:
+            using CairoMakie  # or GLMakie
+        """
+    )
 end
 
 """
@@ -85,27 +87,31 @@ plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
 ```
 """
 function plot_snaps2D(snap2D, R1D, Z1D, field::Symbol, kwargs...)
-    error("""
-    plot_snaps2D requires a plotting package to be loaded.
+    error(
+        """
+        plot_snaps2D requires a plotting package to be loaded.
 
-    For Plots.jl backend:
-        using Plots
+        For Plots.jl backend:
+            using Plots
 
-    For Makie.jl backend:
-        using CairoMakie  # or GLMakie
-    """)
+        For Makie.jl backend:
+            using CairoMakie  # or GLMakie
+        """
+    )
 end
 
 function plot_snaps2D(snap2D, R1D, Z1D, fields::AbstractArray{Symbol}, kwargs...)
-    error("""
-    plot_snaps2D requires a plotting package to be loaded.
+    error(
+        """
+        plot_snaps2D requires a plotting package to be loaded.
 
-    For Plots.jl backend:
-        using Plots
+        For Plots.jl backend:
+            using Plots
 
-    For Makie.jl backend:
-        using CairoMakie  # or GLMakie
-    """)
+        For Makie.jl backend:
+            using CairoMakie  # or GLMakie
+        """
+    )
 end
 
 """
@@ -134,27 +140,31 @@ animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
 ```
 """
 function animate_snaps2D(snaps2D, R1D, Z1D, field::Symbol; kwargs...)
-    error("""
-    animate_snaps2D requires a plotting package to be loaded.
+    error(
+        """
+        animate_snaps2D requires a plotting package to be loaded.
 
-    For Plots.jl backend:
-        using Plots
+        For Plots.jl backend:
+            using Plots
 
-    For Makie.jl backend (faster for large datasets):
-        using CairoMakie  # or GLMakie
-    """)
+        For Makie.jl backend (faster for large datasets):
+            using CairoMakie  # or GLMakie
+        """
+    )
 end
 
 function animate_snaps2D(snaps2D, R1D, Z1D, fields::AbstractArray{Symbol}; kwargs...)
-    error("""
-    animate_snaps2D requires a plotting package to be loaded.
+    error(
+        """
+        animate_snaps2D requires a plotting package to be loaded.
 
-    For Plots.jl backend:
-        using Plots
+        For Plots.jl backend:
+            using Plots
 
-    For Makie.jl backend (faster for large datasets):
-        using CairoMakie  # or GLMakie
-    """)
+        For Makie.jl backend (faster for large datasets):
+            using CairoMakie  # or GLMakie
+        """
+    )
 end
 
 
@@ -181,15 +191,17 @@ plot_comparison(RP1.diagnostics.snaps0D, RP2.diagnostics.snaps0D,
 ```
 """
 function plot_comparison(snaps0D_1, snaps0D_2; kwargs...)
-    error("""
-    plot_comparison requires a plotting package to be loaded.
+    error(
+        """
+        plot_comparison requires a plotting package to be loaded.
 
-    For Plots.jl backend:
-        using Plots
+        For Plots.jl backend:
+            using Plots
 
-    For Makie.jl backend:
-        using CairoMakie  # or GLMakie
-    """)
+        For Makie.jl backend:
+            using CairoMakie  # or GLMakie
+        """
+    )
 end
 
 # Export plotting interface functions (implementations provided by extensions)

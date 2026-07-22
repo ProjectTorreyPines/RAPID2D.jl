@@ -1,4 +1,4 @@
-@testitem "Time-dependent Voltage Functions" setup=[CoilFactories] begin
+@testitem "Time-dependent Voltage Functions" setup = [CoilFactories] begin
     FT = Float64
 
     @testset "Voltage Function Evaluation" begin
@@ -12,12 +12,12 @@
         @test evaluate_voltage_ext(linear_func, 2.0) == 250.0
 
         sine_func = t -> 1000.0 * sin(2π * t)
-        @test evaluate_voltage_ext(sine_func, 0.0) ≈ 0.0 atol=1e-10
-        @test evaluate_voltage_ext(sine_func, 0.25) ≈ 1000.0 atol=1e-10
+        @test evaluate_voltage_ext(sine_func, 0.0) ≈ 0.0 atol = 1.0e-10
+        @test evaluate_voltage_ext(sine_func, 0.25) ≈ 1000.0 atol = 1.0e-10
     end
 
     @testset "Individual Coil Time-dependent Voltage" begin
-        coil_constant = pf_coil("constant"; r=2.0, z=0.0, voltage_ext=750.0)
+        coil_constant = pf_coil("constant"; r = 2.0, z = 0.0, voltage_ext = 750.0)
 
         # Test constant voltage at different times
         @test get_coil_voltage_at_time(coil_constant, 0.0) == 750.0
@@ -26,7 +26,7 @@
 
         # Test function voltage
         ramp_func = t -> 200.0 * t + 100.0
-        coil_function = pf_coil("function"; r=2.0, z=0.0, voltage_ext=ramp_func)
+        coil_function = pf_coil("function"; r = 2.0, z = 0.0, voltage_ext = ramp_func)
 
         @test get_coil_voltage_at_time(coil_function, 0.0) == 100.0
         @test get_coil_voltage_at_time(coil_function, 1.0) == 300.0
@@ -42,10 +42,10 @@
         system = CoilSystem{FT}()
 
         # Add coils with different voltage types
-        coil1 = pf_coil("constant_coil"; voltage_ext=400.0)
+        coil1 = pf_coil("constant_coil"; voltage_ext = 400.0)
 
         ramp_func = t -> 100.0 * t
-        coil2 = pf_coil("ramp_coil"; z=-0.5, is_controllable=false, voltage_ext=ramp_func)
+        coil2 = pf_coil("ramp_coil"; z = -0.5, is_controllable = false, voltage_ext = ramp_func)
 
         passive_coil = wall_coil("wall")
 
@@ -82,7 +82,7 @@
     @testset "Setting Voltage Functions" begin
         system = CoilSystem{FT}()
 
-        coil = pf_coil("test_coil"; z=0.0, voltage_ext=200.0)
+        coil = pf_coil("test_coil"; z = 0.0, voltage_ext = 200.0)
         passive_coil = wall_coil("wall")
 
         add_coil!(system, coil)
@@ -93,9 +93,9 @@
         set_coil_voltage_function!(system, "test_coil", sine_func)
 
         # Verify function was set
-        @test get_coil_voltage_at_time(system, "test_coil", 0.0) ≈ 0.0 atol=1e-10
-        @test get_coil_voltage_at_time(system, "test_coil", 2.5) ≈ 500.0 atol=1e-10
-        @test get_coil_voltage_at_time(system, "test_coil", 5.0) ≈ 0.0 atol=1e-10
+        @test get_coil_voltage_at_time(system, "test_coil", 0.0) ≈ 0.0 atol = 1.0e-10
+        @test get_coil_voltage_at_time(system, "test_coil", 2.5) ≈ 500.0 atol = 1.0e-10
+        @test get_coil_voltage_at_time(system, "test_coil", 5.0) ≈ 0.0 atol = 1.0e-10
 
         # Test error handling
         @test_throws ErrorException set_coil_voltage_function!(system, "NonExistent", sine_func)
@@ -110,9 +110,9 @@
         @test ramp(1.5) == 100.0 + 150.0 * 1.0
 
         # Test create_sinusoidal_voltage
-        sine = create_sinusoidal_voltage(800.0, 2.0, π/4, 50.0)  # 2 Hz, π/4 phase, 50V offset
-        @test sine(0.0) ≈ 800.0 * sin(π/4) + 50.0
-        @test sine(0.125) ≈ 800.0 * sin(π/2 + π/4) + 50.0  # quarter period later
+        sine = create_sinusoidal_voltage(800.0, 2.0, π / 4, 50.0)  # 2 Hz, π/4 phase, 50V offset
+        @test sine(0.0) ≈ 800.0 * sin(π / 4) + 50.0
+        @test sine(0.125) ≈ 800.0 * sin(π / 2 + π / 4) + 50.0  # quarter period later
 
         # Test create_step_voltage
         step = create_step_voltage(200.0, 800.0, 1.0)
@@ -138,7 +138,7 @@
         system = CoilSystem{FT}()
 
         func_voltage = t -> 100.0 * t
-        coil = pf_coil("func_coil"; z=0.0, voltage_ext=func_voltage)
+        coil = pf_coil("func_coil"; z = 0.0, voltage_ext = func_voltage)
 
         add_coil!(system, coil)
 

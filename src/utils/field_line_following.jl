@@ -40,12 +40,12 @@ Uses classical RK4 integration:
 Where f(t,y) = B(R,Z)/|B_pol(R,Z)| is the unit field direction.
 """
 function advance_step_along_b_rz_plane(
-    dl::FT,
-    R::FT,
-    Z::FT,
-    interp_BR::FastInterpolations.AbstractInterpolantND,
-    interp_BZ::FastInterpolations.AbstractInterpolantND
-) where FT<:AbstractFloat
+        dl::FT,
+        R::FT,
+        Z::FT,
+        interp_BR::FastInterpolations.AbstractInterpolantND,
+        interp_BZ::FastInterpolations.AbstractInterpolantND
+    ) where {FT <: AbstractFloat}
     half = FT(0.5)
     two_FT = FT(2.0)
 
@@ -112,9 +112,9 @@ region or hits a wall boundary.
 - `state::Bool`: true if point is valid (not in wall), false if in wall
 """
 function is_in_wall_by_cell_state(
-    R::FT, Z::FT, Rmin::FT, Zmin::FT, NR::Int,
-    inv_dR::FT, inv_dZ::FT, cell_state::AbstractMatrix{Bool}
-) where FT<:AbstractFloat
+        R::FT, Z::FT, Rmin::FT, Zmin::FT, NR::Int,
+        inv_dR::FT, inv_dZ::FT, cell_state::AbstractMatrix{Bool}
+    ) where {FT <: AbstractFloat}
 
     # Convert coordinates to grid indices
     Rid = floor(Int, (R - Rmin) * inv_dR) + 1
@@ -162,13 +162,13 @@ This function follows Julia best practices with:
 - `SingleTraceResult`: Complete tracing results
 """
 function trace_single_field_line(
-    R0::FT, Z0::FT, direction::Int,
-    interp_BR, interp_BZ, interp_Bphi,
-    step_size::FT, max_steps::Int, max_Lpol::FT,
-    wall_checker;
-    detect_closure::Bool = true,
-    closure_tolerance::FT = FT(1e-6)
-) where FT <: AbstractFloat
+        R0::FT, Z0::FT, direction::Int,
+        interp_BR, interp_BZ, interp_Bphi,
+        step_size::FT, max_steps::Int, max_Lpol::FT,
+        wall_checker;
+        detect_closure::Bool = true,
+        closure_tolerance::FT = FT(1.0e-6)
+    ) where {FT <: AbstractFloat}
 
     # Initialize current position
     R_current = R0
@@ -195,8 +195,8 @@ function trace_single_field_line(
 
     if Bpol == 0
         return SingleTraceResult{FT}(;
-            Lpol=FT(Inf), Lc=FT(Inf), min_Bpol, steps,
-            is_closed=false, hit_wall=false, final_R = R_current, final_Z = Z_current
+            Lpol = FT(Inf), Lc = FT(Inf), min_Bpol, steps,
+            is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
         )
     end
 
@@ -228,8 +228,8 @@ function trace_single_field_line(
 
         if Bpol == 0
             return SingleTraceResult{FT}(;
-                Lpol=FT(Inf), Lc=FT(Inf), min_Bpol, steps,
-                is_closed=false, hit_wall=false, final_R = R_current, final_Z = Z_current
+                Lpol = FT(Inf), Lc = FT(Inf), min_Bpol, steps,
+                is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
             )
         end
 
@@ -249,7 +249,7 @@ function trace_single_field_line(
         if Lpol > max_Lpol
             return SingleTraceResult{FT}(;
                 Lpol, Lc, min_Bpol, steps,
-                is_closed=false, hit_wall=false, final_R = R_current, final_Z = Z_current
+                is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
             )
         end
 
@@ -271,7 +271,7 @@ function trace_single_field_line(
                 if abs(total_angle) >= 2π - closure_tolerance
                     return SingleTraceResult{FT}(;
                         Lpol, Lc, min_Bpol, steps,
-                        is_closed=true, hit_wall=false, final_R = R_current, final_Z = Z_current
+                        is_closed = true, hit_wall = false, final_R = R_current, final_Z = Z_current
                     )
                 end
             end
@@ -284,7 +284,7 @@ function trace_single_field_line(
     # Reached maximum steps
     return SingleTraceResult{FT}(;
         Lpol, Lc, min_Bpol, steps,
-        is_closed=false, hit_wall=false, final_R = R_current, final_Z = Z_current
+        is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
     )
 end
 
@@ -330,12 +330,12 @@ flf_result, _ = flf_analysis_field_lines_rz_plane(
 ```
 """
 function flf_analysis_field_lines_rz_plane!(
-    flf::FieldLineFollowingResult{FT},
-    R1D::Vector{FT}, Z1D::Vector{FT}, BR::Matrix{FT}, BZ::Matrix{FT}, Bϕ::Matrix{FT},
-    cell_state::AbstractMatrix{Bool};
-    dR::Union{FT,Nothing}=nothing, dZ::Union{FT,Nothing}=nothing,
-    out_wall_idx::Union{Vector{Int},Nothing}=nothing,
-) where FT<:AbstractFloat
+        flf::FieldLineFollowingResult{FT},
+        R1D::Vector{FT}, Z1D::Vector{FT}, BR::Matrix{FT}, BZ::Matrix{FT}, Bϕ::Matrix{FT},
+        cell_state::AbstractMatrix{Bool};
+        dR::Union{FT, Nothing} = nothing, dZ::Union{FT, Nothing} = nothing,
+        out_wall_idx::Union{Vector{Int}, Nothing} = nothing,
+    ) where {FT <: AbstractFloat}
 
     # @assert size(flf.Lc_tot) == (length(R1D), length(Z1D)) "FieldLineFollowingResult size mismatch"
 
@@ -435,42 +435,45 @@ function flf_analysis_field_lines_rz_plane!(
 end
 
 function flf_analysis_field_lines_rz_plane(
-    R1D::Vector{FT}, Z1D::Vector{FT}, BR::Matrix{FT}, BZ::Matrix{FT}, Bϕ::Matrix{FT},
-    cell_state::AbstractMatrix{Bool};
-    dR::Union{FT,Nothing}=nothing, dZ::Union{FT,Nothing}=nothing,
-    out_wall_idx::Union{Vector{Int},Nothing}=nothing,
-) where FT<:AbstractFloat
+        R1D::Vector{FT}, Z1D::Vector{FT}, BR::Matrix{FT}, BZ::Matrix{FT}, Bϕ::Matrix{FT},
+        cell_state::AbstractMatrix{Bool};
+        dR::Union{FT, Nothing} = nothing, dZ::Union{FT, Nothing} = nothing,
+        out_wall_idx::Union{Vector{Int}, Nothing} = nothing,
+    ) where {FT <: AbstractFloat}
 
     flf = FieldLineFollowingResult{FT}(; dims_RZ = (length(R1D), length(Z1D)))
-    return flf_analysis_field_lines_rz_plane!(flf, R1D, Z1D, BR, BZ, Bϕ, cell_state;
-                                       dR, dZ, out_wall_idx)
+    return flf_analysis_field_lines_rz_plane!(
+        flf, R1D, Z1D, BR, BZ, Bϕ, cell_state;
+        dR, dZ, out_wall_idx
+    )
 end
 
 # Convenience dispatch for RAPID object
 function flf_analysis_field_lines_rz_plane(RP::RAPID)
     return flf_analysis_field_lines_rz_plane(
         RP.G.R1D, RP.G.Z1D, RP.fields.BR, RP.fields.BZ, RP.fields.Bϕ,
-        RP.G.cell_state.>=0; # Use cell_state as boolean mask
-        dR=RP.G.dR, dZ=RP.G.dZ,
-        out_wall_idx=RP.G.nodes.out_wall_nids
+        RP.G.cell_state .>= 0; # Use cell_state as boolean mask
+        dR = RP.G.dR, dZ = RP.G.dZ,
+        out_wall_idx = RP.G.nodes.out_wall_nids
     )
 end
 
 function flf_analysis_field_lines_rz_plane!(RP::RAPID)
-    return flf_analysis_field_lines_rz_plane!(RP.flf,
+    return flf_analysis_field_lines_rz_plane!(
+        RP.flf,
         RP.G.R1D, RP.G.Z1D, RP.fields.BR, RP.fields.BZ, RP.fields.Bϕ,
-        RP.G.cell_state.>=0; # Use cell_state as boolean mask
-        dR=RP.G.dR, dZ=RP.G.dZ,
-        out_wall_idx=RP.G.nodes.out_wall_nids
+        RP.G.cell_state .>= 0; # Use cell_state as boolean mask
+        dR = RP.G.dR, dZ = RP.G.dZ,
+        out_wall_idx = RP.G.nodes.out_wall_nids
     )
 end
 
 # Helper function to create 2D interpolation that matches MATLAB's griddedInterpolant behavior
-function my_interpolation(R1D::Vector{FT}, Z1D::Vector{FT}, data_2d::Matrix{FT}; method::Symbol=:cubic) where FT<:AbstractFloat
+function my_interpolation(R1D::Vector{FT}, Z1D::Vector{FT}, data_2d::Matrix{FT}; method::Symbol = :cubic) where {FT <: AbstractFloat}
     @assert method in (:nearst, :linear, :cubic) "Invalid interpolation method: $method"
 
-    r1d = range(R1D[1], stop=R1D[end], length=length(R1D))
-    z1d = range(Z1D[1], stop=Z1D[end], length=length(Z1D))
+    r1d = range(R1D[1], stop = R1D[end], length = length(R1D))
+    z1d = range(Z1D[1], stop = Z1D[end], length = length(Z1D))
 
     if method == :nearst
         itp = constant_interp((r1d, z1d), data_2d)

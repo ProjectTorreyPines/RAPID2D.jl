@@ -15,26 +15,26 @@
     # Test energy ranges
     negative_energy = [-100.0, -0.1]
     zero_energy = [0.0]
-    energy_low = [1e-6, 0.001, 0.01, 0.1, 1.0]
+    energy_low = [1.0e-6, 0.001, 0.01, 0.1, 1.0]
     energy_mid = [10.0, 12.0, 15.5, 20.0, 20.5, 50.0, 100.0]
-    energy_high = [200.0, 500.0, 1000.0, 1E6]
+    energy_high = [200.0, 500.0, 1000.0, 1.0e6]
     energy_all = vcat(negative_energy, zero_energy, energy_low, energy_mid, energy_high)
 end
 
-@testitem "Electron Cross-Section Functions" setup=[XsecFixtures] begin
+@testitem "Electron Cross-Section Functions" setup = [XsecFixtures] begin
     # Declared here, not in the snippet: these names are used by THIS body. A snippet
     # becomes a module under the ReTestItems path, and `using` only re-exports names a
     # module OWNS — imported ones stay invisible to the consumer.
     using RAPID2D: Xsec_Electron_Momentum_Transfer, Xsec_Electron_Momentum_Transfer!,
-                    Xsec_Electron_Momentum_Transfer_vectorized, Xsec_Electron_Momentum_Transfer_vectorized!,
-                    Xsec_Electron_Elastic_Scattering, Xsec_Electron_Elastic_Scattering!,
-                    Xsec_Electron_Ionization, Xsec_Electron_Ionization!,
-                    Xsec_Electron_Excitation, Xsec_Electron_Excitation!,
-                    Xsec_Electron_tot_Excitation, Xsec_Electron_tot_Excitation!,
-                    Xsec_Electron_Dissociative_Ionization, Xsec_Electron_Dissociative_Ionization!,
-                    Xsec_Electron_Alpha_Radiation, Xsec_Electron_Alpha_Radiation!,
-                    Xsec_Electron_Recombination_with_H2_Ion, Xsec_Electron_Recombination_with_H2_Ion!,
-                    Xsec_Electron_Recombination_with_H3_Ion, Xsec_Electron_Recombination_with_H3_Ion!
+        Xsec_Electron_Momentum_Transfer_vectorized, Xsec_Electron_Momentum_Transfer_vectorized!,
+        Xsec_Electron_Elastic_Scattering, Xsec_Electron_Elastic_Scattering!,
+        Xsec_Electron_Ionization, Xsec_Electron_Ionization!,
+        Xsec_Electron_Excitation, Xsec_Electron_Excitation!,
+        Xsec_Electron_tot_Excitation, Xsec_Electron_tot_Excitation!,
+        Xsec_Electron_Dissociative_Ionization, Xsec_Electron_Dissociative_Ionization!,
+        Xsec_Electron_Alpha_Radiation, Xsec_Electron_Alpha_Radiation!,
+        Xsec_Electron_Recombination_with_H2_Ion, Xsec_Electron_Recombination_with_H2_Ion!,
+        Xsec_Electron_Recombination_with_H3_Ion, Xsec_Electron_Recombination_with_H3_Ion!
 
     @testset "Constants and Data Structures" begin
         # Test that constants are properly defined
@@ -241,10 +241,10 @@ end
 
         # Typical cross-sections should be in the range 1e-22 to 1e-18 m^2
         xsec_elastic = Xsec_Electron_Elastic_Scattering(test_energy)
-        @test all(1e-22 .< xsec_elastic .< 1e-17)
+        @test all(1.0e-22 .< xsec_elastic .< 1.0e-17)
 
         xsec_momentum = Xsec_Electron_Momentum_Transfer(test_energy)
-        @test all(1e-22 .< xsec_momentum .< 1e-17)
+        @test all(1.0e-22 .< xsec_momentum .< 1.0e-17)
 
         # Ionization cross-sections should be smaller than elastic for ceratin ranges
         mid_energy = [16.0, 30.0, 50.0]  # Above ionization threshold
@@ -272,14 +272,14 @@ end
         for E in test_energies
             single_result = Xsec_Electron_Momentum_Transfer(E)
             vector_result = Xsec_Electron_Momentum_Transfer([E])
-            @test single_result ≈ vector_result[1] rtol=1e-12
+            @test single_result ≈ vector_result[1] rtol = 1.0e-12
         end
 
         # Compare single energy vs vector versions for elastic scattering
         for E in test_energies
             single_result = Xsec_Electron_Elastic_Scattering(E)
             vector_result = Xsec_Electron_Elastic_Scattering([E])
-            @test single_result ≈ vector_result[1] rtol=1e-12
+            @test single_result ≈ vector_result[1] rtol = 1.0e-12
         end
     end
 end

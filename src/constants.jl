@@ -26,7 +26,7 @@ Fields:
 - `exc_erg_eV`: characteristic excitation energy [eV] (Total_Excitation normalization)
 - `iz_erg_eV`: H2 ionization energy [eV]
 """
-@kwdef struct PlasmaConstants{FT<:AbstractFloat}
+@kwdef struct PlasmaConstants{FT <: AbstractFloat}
     # Basic physical constants
     ee::FT = FT(1.602176634e-19)    # Elementary charge [C]
     me::FT = FT(9.1093837015e-31)   # Electron mass [kg]

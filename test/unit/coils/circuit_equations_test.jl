@@ -6,9 +6,9 @@
         csys = CoilSystem{FT}()
 
         # Add test coils in a simple configuration
-        coil1 = Coil((r=2.0, z=0.5), π*0.02^2, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
-        coil2 = Coil((r=2.0, z=0.0), π*0.02^2, 0.001, 1e-6, true, true, "CS", 2000.0, 100000.0)
-        coil3 = Coil((r=2.0, z=-0.5), π*0.02^2, 0.001, 1e-6, true, true, "PF2", 1000.0, 50000.0)
+        coil1 = Coil((r = 2.0, z = 0.5), π * 0.02^2, 0.001, 1.0e-6, true, true, "PF1", 1000.0, 50000.0)
+        coil2 = Coil((r = 2.0, z = 0.0), π * 0.02^2, 0.001, 1.0e-6, true, true, "CS", 2000.0, 100000.0)
+        coil3 = Coil((r = 2.0, z = -0.5), π * 0.02^2, 0.001, 1.0e-6, true, true, "PF2", 1000.0, 50000.0)
 
         add_coil!(csys, coil1)
         add_coil!(csys, coil2)
@@ -23,27 +23,27 @@
         @test size(csys.mutual_inductance) == (3, 3)
 
         # Check that diagonal elements are self-inductances
-        @test csys.mutual_inductance[1,1] ≈ coil1.self_inductance
-        @test csys.mutual_inductance[2,2] ≈ coil2.self_inductance
-        @test csys.mutual_inductance[3,3] ≈ coil3.self_inductance
+        @test csys.mutual_inductance[1, 1] ≈ coil1.self_inductance
+        @test csys.mutual_inductance[2, 2] ≈ coil2.self_inductance
+        @test csys.mutual_inductance[3, 3] ≈ coil3.self_inductance
 
         # Check symmetry of mutual inductance matrix
-        @test csys.mutual_inductance[1,2] ≈ csys.mutual_inductance[2,1]
-        @test csys.mutual_inductance[1,3] ≈ csys.mutual_inductance[3,1]
-        @test csys.mutual_inductance[2,3] ≈ csys.mutual_inductance[3,2]
+        @test csys.mutual_inductance[1, 2] ≈ csys.mutual_inductance[2, 1]
+        @test csys.mutual_inductance[1, 3] ≈ csys.mutual_inductance[3, 1]
+        @test csys.mutual_inductance[2, 3] ≈ csys.mutual_inductance[3, 2]
 
         # Check that off-diagonal elements are non-zero (mutual coupling exists)
-        @test abs(csys.mutual_inductance[1,2]) > 0
-        @test abs(csys.mutual_inductance[1,3]) > 0
-        @test abs(csys.mutual_inductance[2,3]) > 0
+        @test abs(csys.mutual_inductance[1, 2]) > 0
+        @test abs(csys.mutual_inductance[1, 3]) > 0
+        @test abs(csys.mutual_inductance[2, 3]) > 0
     end
 
     @testset "Circuit Matrix Calculation" begin
         csys = CoilSystem{FT}()
 
         # Add coils with different resistances
-        coil1 = Coil((r=2.0, z=0.5), π*0.02^2, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
-        coil2 = Coil((r=1.8, z=0.0), π*0.015^2, 0.002, 2e-6, true, true, "CS", 2000.0, 100000.0)
+        coil1 = Coil((r = 2.0, z = 0.5), π * 0.02^2, 0.001, 1.0e-6, true, true, "PF1", 1000.0, 50000.0)
+        coil2 = Coil((r = 1.8, z = 0.0), π * 0.015^2, 0.002, 2.0e-6, true, true, "CS", 2000.0, 100000.0)
 
         add_coil!(csys, coil1)
         add_coil!(csys, coil2)
@@ -52,7 +52,7 @@
         calculate_mutual_inductance_matrix!(csys)
 
         # Then calculate circuit matrices with a time step
-        csys.Δt = 1e-5  # 10 microseconds
+        csys.Δt = 1.0e-5  # 10 microseconds
         calculate_circuit_matrices!(csys)
 
         # Check that A_LR_circuit matrix has correct dimensions
@@ -60,32 +60,32 @@
         @test size(csys.inv_A_LR_circuit) == (2, 2)
 
         # Check that A_LR_circuit = L + R*dt
-        expected_A11 = csys.mutual_inductance[1,1] + csys.Δt * coil1.resistance
-        expected_A22 = csys.mutual_inductance[2,2] + csys.Δt * coil2.resistance
+        expected_A11 = csys.mutual_inductance[1, 1] + csys.Δt * coil1.resistance
+        expected_A22 = csys.mutual_inductance[2, 2] + csys.Δt * coil2.resistance
 
-        @test csys.A_LR_circuit[1,1] ≈ expected_A11
-        @test csys.A_LR_circuit[2,2] ≈ expected_A22
+        @test csys.A_LR_circuit[1, 1] ≈ expected_A11
+        @test csys.A_LR_circuit[2, 2] ≈ expected_A22
 
         # Off-diagonal elements should be same as mutual inductance
-        @test csys.A_LR_circuit[1,2] ≈ csys.mutual_inductance[1,2]
-        @test csys.A_LR_circuit[2,1] ≈ csys.mutual_inductance[2,1]
+        @test csys.A_LR_circuit[1, 2] ≈ csys.mutual_inductance[1, 2]
+        @test csys.A_LR_circuit[2, 1] ≈ csys.mutual_inductance[2, 1]
 
         # Check that inv_A_LR_circuit is actually the inverse
         identity_check = csys.A_LR_circuit * csys.inv_A_LR_circuit
-        @test identity_check ≈ RAPID2D.LinearAlgebra.I(2) atol=1e-12
+        @test identity_check ≈ RAPID2D.LinearAlgebra.I(2) atol = 1.0e-12
     end
 
     @testset "Update System Matrices" begin
         csys = CoilSystem{FT}()
 
         # Add a few coils
-        coil1 = Coil((r=2.0, z=0.5), π*0.02^2, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
-        coil2 = Coil((r=2.0, z=-0.5), π*0.02^2, 0.001, 1e-6, true, true, "PF2", 1000.0, 50000.0)
+        coil1 = Coil((r = 2.0, z = 0.5), π * 0.02^2, 0.001, 1.0e-6, true, true, "PF1", 1000.0, 50000.0)
+        coil2 = Coil((r = 2.0, z = -0.5), π * 0.02^2, 0.001, 1.0e-6, true, true, "PF2", 1000.0, 50000.0)
 
         add_coil!(csys, coil1)
         add_coil!(csys, coil2)
 
-        csys.Δt = 1e-5
+        csys.Δt = 1.0e-5
 
         # Test the convenience function that updates everything
         update_coil_system_matrices!(csys)
@@ -96,19 +96,19 @@
         @test size(csys.inv_A_LR_circuit) == (2, 2)
 
         # Check that diagonal elements are correct
-        @test csys.mutual_inductance[1,1] ≈ coil1.self_inductance
-        @test csys.mutual_inductance[2,2] ≈ coil2.self_inductance
+        @test csys.mutual_inductance[1, 1] ≈ coil1.self_inductance
+        @test csys.mutual_inductance[2, 2] ≈ coil2.self_inductance
 
         # Check that A_LR_circuit = L + R*dt
-        @test csys.A_LR_circuit[1,1] ≈ coil1.self_inductance + csys.Δt * coil1.resistance
-        @test csys.A_LR_circuit[2,2] ≈ coil2.self_inductance + csys.Δt * coil2.resistance
+        @test csys.A_LR_circuit[1, 1] ≈ coil1.self_inductance + csys.Δt * coil1.resistance
+        @test csys.A_LR_circuit[2, 2] ≈ coil2.self_inductance + csys.Δt * coil2.resistance
     end
 
     @testset "Mutual Inductance Access Functions" begin
         csys = CoilSystem{FT}()
 
-        coil1 = Coil((r=2.0, z=0.5), π*0.02^2, 0.001, 1e-6, true, true, "PF1", 1000.0, 50000.0)
-        coil2 = Coil((r=1.8, z=0.0), π*0.02^2, 0.001, 2e-6, true, true, "CS", 2000.0, 100000.0)
+        coil1 = Coil((r = 2.0, z = 0.5), π * 0.02^2, 0.001, 1.0e-6, true, true, "PF1", 1000.0, 50000.0)
+        coil2 = Coil((r = 1.8, z = 0.0), π * 0.02^2, 0.001, 2.0e-6, true, true, "CS", 2000.0, 100000.0)
 
         add_coil!(csys, coil1)
         add_coil!(csys, coil2)
@@ -147,7 +147,7 @@
     end
 end
 
-@testitem "Current Distribution Functions" setup=[CoilGridHelpers] begin
+@testitem "Current Distribution Functions" setup = [CoilGridHelpers] begin
     FT = Float64
 
     @testset "Single Coil Current Distribution" begin
@@ -173,21 +173,21 @@ end
         # - [3,3]: 0.5*0.5 = 0.25
         expected_value = 0.25  # Current density = 1.0 A * 0.25 * inv_dA = 0.25 A/m²
 
-        @test Jϕ[2,2] ≈ expected_value atol=1e-12
-        @test Jϕ[3,2] ≈ expected_value atol=1e-12
-        @test Jϕ[2,3] ≈ expected_value atol=1e-12
-        @test Jϕ[3,3] ≈ expected_value atol=1e-12
+        @test Jϕ[2, 2] ≈ expected_value atol = 1.0e-12
+        @test Jϕ[3, 2] ≈ expected_value atol = 1.0e-12
+        @test Jϕ[2, 3] ≈ expected_value atol = 1.0e-12
+        @test Jϕ[3, 3] ≈ expected_value atol = 1.0e-12
 
         # All other points should be zero
         for i in 1:NR, j in 1:NZ
-            if (i,j) ∉ [(2,2), (3,2), (2,3), (3,3)]
-                @test Jϕ[i,j] ≈ 0.0 atol=1e-12
+            if (i, j) ∉ [(2, 2), (3, 2), (2, 3), (3, 3)]
+                @test Jϕ[i, j] ≈ 0.0 atol = 1.0e-12
             end
         end
 
         # Test current conservation: sum of distributed current should equal input
         total_distributed = sum(Jϕ) * grid.dR * grid.dZ
-        @test total_distributed ≈ 1.0 atol=1e-12
+        @test total_distributed ≈ 1.0 atol = 1.0e-12
     end
 
     @testset "Coil at Grid Point" begin
@@ -205,12 +205,12 @@ end
         # All current should go to the single grid point
         # dR = dZ = 1.0, so inv_dA = 1.0
         # Current density = 2.0 A * 1.0 * 1.0 = 2.0 A/m²
-        @test Jϕ[2,2] ≈ 2.0 atol=1e-12
+        @test Jϕ[2, 2] ≈ 2.0 atol = 1.0e-12
 
         # All other points should be zero
         for i in 1:NR, j in 1:NZ
-            if (i,j) != (2,2)
-                @test Jϕ[i,j] ≈ 0.0 atol=1e-12
+            if (i, j) != (2, 2)
+                @test Jϕ[i, j] ≈ 0.0 atol = 1.0e-12
             end
         end
     end
@@ -221,10 +221,12 @@ end
         grid = make_grid(NR, NZ, (0.0, 5.0), (0.0, 5.0))
 
         # Create two coils at different positions
-        coil_system = place_coils(grid, [
-            unit_coil(1.5, 1.5, "coil1"),  # Between grid points
-            unit_coil(3.0, 3.0, "coil2")   # At grid point
-        ])
+        coil_system = place_coils(
+            grid, [
+                unit_coil(1.5, 1.5, "coil1"),  # Between grid points
+                unit_coil(3.0, 3.0, "coil2"),   # At grid point
+            ]
+        )
 
         # Set coil currents
         coil_system.coils[1].current = 1.0
@@ -235,17 +237,17 @@ end
         # Grid spacing: dR = dZ = 1.0
 
         # Coil1 at (1.5, 1.5) should contribute 0.25 to each of 4 surrounding nodes
-        @test Jϕ[2,2] ≈ 0.25 atol=1e-12  # From coil1 only
-        @test Jϕ[3,2] ≈ 0.25 atol=1e-12  # From coil1 only
-        @test Jϕ[2,3] ≈ 0.25 atol=1e-12  # From coil1 only
-        @test Jϕ[3,3] ≈ 0.25 atol=1e-12  # From coil1 only
+        @test Jϕ[2, 2] ≈ 0.25 atol = 1.0e-12  # From coil1 only
+        @test Jϕ[3, 2] ≈ 0.25 atol = 1.0e-12  # From coil1 only
+        @test Jϕ[2, 3] ≈ 0.25 atol = 1.0e-12  # From coil1 only
+        @test Jϕ[3, 3] ≈ 0.25 atol = 1.0e-12  # From coil1 only
 
         # Coil2 at (3.0, 3.0) should contribute 2.0 to node [4,4]
-        @test Jϕ[4,4] ≈ 2.0 atol=1e-12   # From coil2 only
+        @test Jϕ[4, 4] ≈ 2.0 atol = 1.0e-12   # From coil2 only
 
         # Test current conservation
         total_distributed = sum(Jϕ) * grid.dR * grid.dZ
-        @test total_distributed ≈ 3.0 atol=1e-12  # 1.0 + 2.0
+        @test total_distributed ≈ 3.0 atol = 1.0e-12  # 1.0 + 2.0
     end
 
     @testset "Boundary Conditions" begin
@@ -254,11 +256,13 @@ end
         grid = make_grid(NR, NZ, (0.0, 3.0), (0.0, 3.0))
 
         # Create coils: inside, on boundary, and outside
-        coil_system = place_coils(grid, [
-            unit_coil(1.5, 1.5, "inside"; is_controllable=false),
-            unit_coil(3.0, 1.5, "on_boundary"; is_controllable=false),
-            unit_coil(4.0, 1.5, "outside"; is_controllable=false)
-        ])
+        coil_system = place_coils(
+            grid, [
+                unit_coil(1.5, 1.5, "inside"; is_controllable = false),
+                unit_coil(3.0, 1.5, "on_boundary"; is_controllable = false),
+                unit_coil(4.0, 1.5, "outside"; is_controllable = false),
+            ]
+        )
 
         # Only first two coils should be inside domain
         @test length(coil_system.inside_domain_indices) == 2
@@ -274,7 +278,7 @@ end
 
         # Only inside and boundary coils should contribute
         total_distributed = sum(Jϕ) * grid.dR * grid.dZ
-        @test total_distributed ≈ 2.0 atol=1e-12  # Only first two coils
+        @test total_distributed ≈ 2.0 atol = 1.0e-12  # Only first two coils
     end
 
     @testset "Coil Mask Functionality" begin
@@ -283,11 +287,13 @@ end
         grid = make_grid(NR, NZ, (0.0, 3.0), (0.0, 3.0))
 
         # Create three coils inside domain
-        coil_system = place_coils(grid, [
-            unit_coil(1.0, 1.0, "coil1"; is_controllable=false),
-            unit_coil(2.0, 1.0, "coil2"; is_controllable=false),
-            unit_coil(1.0, 2.0, "coil3"; is_controllable=false)
-        ])
+        coil_system = place_coils(
+            grid, [
+                unit_coil(1.0, 1.0, "coil1"; is_controllable = false),
+                unit_coil(2.0, 1.0, "coil2"; is_controllable = false),
+                unit_coil(1.0, 2.0, "coil3"; is_controllable = false),
+            ]
+        )
 
         # Set coil currents
         for (i, current) in enumerate([1.0, 1.0, 1.0])
@@ -296,14 +302,14 @@ end
 
         # Test with mask that includes only first and third coils
         mask = [true, false, true]
-        Jϕ = distribute_coil_currents_to_Jϕ(coil_system, grid; coil_mask=mask)
+        Jϕ = distribute_coil_currents_to_Jϕ(coil_system, grid; coil_mask = mask)
 
         # Should only see contributions from coils 1 and 3
         total_distributed = sum(Jϕ) * grid.dR * grid.dZ
-        @test total_distributed ≈ 2.0 atol=1e-12  # Only coils 1 and 3
+        @test total_distributed ≈ 2.0 atol = 1.0e-12  # Only coils 1 and 3
 
         # Node [3,2] should be zero (where coil2 would contribute)
-        @test Jϕ[3,2] ≈ 0.0 atol=1e-12
+        @test Jϕ[3, 2] ≈ 0.0 atol = 1.0e-12
     end
 
     @testset "In-place vs Allocating Functions" begin
@@ -324,7 +330,7 @@ end
         distribute_coil_currents_to_Jϕ!(Jϕ_inplace, coil_system, grid)
 
         # Should be identical
-        @test Jϕ_alloc ≈ Jϕ_inplace atol=1e-12
+        @test Jϕ_alloc ≈ Jϕ_inplace atol = 1.0e-12
     end
 
     @testset "Zero Current Handling" begin
@@ -371,11 +377,11 @@ end
         total_fine = sum(Jϕ_fine) * grid_fine.dR * grid_fine.dZ
         total_coarse = sum(Jϕ_coarse) * grid_coarse.dR * grid_coarse.dZ
 
-        @test total_fine ≈ 1.0 atol=1e-12
-        @test total_coarse ≈ 1.0 atol=1e-12
+        @test total_fine ≈ 1.0 atol = 1.0e-12
+        @test total_coarse ≈ 1.0 atol = 1.0e-12
 
         # Current density values should scale with inverse cell area
         # Fine grid has 9x smaller cells, so peak current density should be 9x higher
-        @test maximum(Jϕ_fine) ≈ 9.0 * maximum(Jϕ_coarse) atol=1e-10
+        @test maximum(Jϕ_fine) ≈ 9.0 * maximum(Jϕ_coarse) atol = 1.0e-10
     end
 end

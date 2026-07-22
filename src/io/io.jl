@@ -12,14 +12,14 @@ Contains functions for file input/output, including:
 # Export public functions
 export read_input_file,
 
-       # Wall geometry functions
-       read_wall_data_file,
-       read_device_wall_data!,
+    # Wall geometry functions
+    read_wall_data_file,
+    read_device_wall_data!,
 
-       # External field functions
-       read_break_input_file,
-       read_external_field_time_series,
-       load_external_field_data!
+    # External field functions
+    read_break_input_file,
+    read_external_field_time_series,
+    load_external_field_data!
 
 # Required imports
 using Printf
@@ -43,7 +43,7 @@ Read input data from file.
 # Returns
 - `RP::RAPID{FT}`: The updated RAPID instance
 """
-function read_input_file(RP::RAPID{FT}, filename::String) where {FT<:AbstractFloat}
+function read_input_file(RP::RAPID{FT}, filename::String) where {FT <: AbstractFloat}
     # Placeholder implementation - will be filled in later
     @warn "read_input_file not fully implemented yet"
 
@@ -70,14 +70,14 @@ a new RAPID instance with the wall field updated.
   will use "{device_Name}_First_Wall.dat" in the input path.
 
 """
-function read_device_wall_data!(RP::RAPID{FT}, wall_file_name::String="") where {FT<:AbstractFloat}
+function read_device_wall_data!(RP::RAPID{FT}, wall_file_name::String = "") where {FT <: AbstractFloat}
     # Use provided file name or construct default file path
     file_path = isempty(wall_file_name) ?
         joinpath(RP.config.Input_path, "$(RP.config.device_Name)_First_Wall.dat") :
         wall_file_name
 
     # Read the wall data and assign to RAPID instance
-    RP.wall = read_wall_data_file(file_path, FT)
+    return RP.wall = read_wall_data_file(file_path, FT)
 end
 
 
@@ -102,11 +102,11 @@ wall = read_wall_data_file("path/to/wall.dat")
 wall = read_wall_data_file("path/to/wall.dat", Float32) # Using Float32
 ```
 """
-function read_wall_data_file(file_path::String, FT::Type{<:AbstractFloat}=Float64)
+function read_wall_data_file(file_path::String, FT::Type{<:AbstractFloat} = Float64)
     @assert isfile(file_path) "Wall data file not found: $file_path"
 
     # Open the file for reading
-    open(file_path, "r") do file
+    return open(file_path, "r") do file
         # Read lines until we find the WALL_NUM declaration, skipping comments
         wall_num = nothing
         while !eof(file)
@@ -212,9 +212,9 @@ The file should have the following format:
 - Line 3: "Z_NUM= X Z_MIN= Y Z_MAX= Z" (grid dimensions in Z)
 - Remaining lines: Data with 6 columns: R Z BR BZ psi LV
 """
-function read_break_input_file(file_path::String, FT::Type{<:AbstractFloat}=Float64)
+function read_break_input_file(file_path::String, FT::Type{<:AbstractFloat} = Float64)
     # Open the file for reading
-    open(file_path, "r") do file
+    return open(file_path, "r") do file
         # Read the first three lines for metadata
         time_line = readline(file)
         r_line = readline(file)
@@ -298,7 +298,7 @@ function read_break_input_file(file_path::String, FT::Type{<:AbstractFloat}=Floa
             BR = BR,
             BZ = BZ,
             psi = psi,
-            LV = LV
+            LV = LV,
         )
     end
 end
@@ -316,7 +316,7 @@ This version takes a RAPID instance for type information and returns a standardi
 # Returns
 - `NamedTuple`: A named tuple containing the field data
 """
-function read_break_input_file(RP::RAPID{FT}, file_name::String) where {FT<:AbstractFloat}
+function read_break_input_file(RP::RAPID{FT}, file_name::String) where {FT <: AbstractFloat}
     # Use the generic function to read the file data
     data = read_break_input_file(file_name, FT)
 
@@ -363,10 +363,10 @@ function create_new_grid_with_target_resolution(ori_data, target_r_1d, target_z_
     R1d = @view ori_data.R[:, 1]
     Z1d = @view ori_data.Z[1, :]
     grid = (R1d, Z1d)
-    itp_br  = linear_interp(grid, ori_data.BR)
-    itp_bz  = linear_interp(grid, ori_data.BZ)
+    itp_br = linear_interp(grid, ori_data.BR)
+    itp_bz = linear_interp(grid, ori_data.BZ)
     itp_psi = linear_interp(grid, ori_data.psi)
-    itp_lv  = linear_interp(grid, ori_data.LV)
+    itp_lv = linear_interp(grid, ori_data.LV)
 
 
     new_br = [itp_br(r, z) for r in target_r_1d, z in target_z_1d]
@@ -391,7 +391,7 @@ function create_new_grid_with_target_resolution(ori_data, target_r_1d, target_z_
         BR = new_br,
         BZ = new_bz,
         psi = new_psi,
-        LV = new_lv
+        LV = new_lv,
     )
 end
 
@@ -420,14 +420,16 @@ Read a time series of external field data from BREAK input files.
 # Returns
 - `TimeSeriesExternalField{FT}`: Time series of external field data
 """
-function read_external_field_time_series(dir_path::String="./";
-                                         FT::Type{T}=Float64,
-                                         r_num::Union{Int,Nothing}=nothing,
-                                         r_min::Union{T,Nothing}=nothing,
-                                         r_max::Union{T,Nothing}=nothing,
-                                         z_num::Union{Int,Nothing}=nothing,
-                                         z_min::Union{T,Nothing}=nothing,
-                                         z_max::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
+function read_external_field_time_series(
+        dir_path::String = "./";
+        FT::Type{T} = Float64,
+        r_num::Union{Int, Nothing} = nothing,
+        r_min::Union{T, Nothing} = nothing,
+        r_max::Union{T, Nothing} = nothing,
+        z_num::Union{Int, Nothing} = nothing,
+        z_min::Union{T, Nothing} = nothing,
+        z_max::Union{T, Nothing} = nothing
+    ) where {T <: AbstractFloat}
 
     # Ensure dir_path ends with a path separator
     if !endswith(dir_path, Base.Filesystem.path_separator)
@@ -435,7 +437,7 @@ function read_external_field_time_series(dir_path::String="./";
     end
 
     # Find all .dat files in the directory
-    files = filter(f -> endswith(f, ".dat"), readdir(dir_path; join=true))
+    files = filter(f -> endswith(f, ".dat"), readdir(dir_path; join = true))
 
     if isempty(files)
         error("No .dat files found in directory: $dir_path")
@@ -471,8 +473,8 @@ function read_external_field_time_series(dir_path::String="./";
     z_max_val = isnothing(z_max) ? first_data.Z_MAX : z_max
 
     # Create target grid
-    r_1d = range(r_min_val, r_max_val, length=nr)
-    z_1d = range(z_min_val, z_max_val, length=nz)
+    r_1d = range(r_min_val, r_max_val, length = nr)
+    z_1d = range(z_min_val, z_max_val, length = nz)
 
     # Preallocate arrays for time series data
     n_time = length(times)
@@ -538,13 +540,15 @@ Load external field data from files and set it as the external field source for 
 # Returns
 - `RP::RAPID{FT}`: The updated RAPID instance
 """
-function load_external_field_data!(RP::RAPID{FT}, dir_path::String="./";
-                                r_num::Union{Int,Nothing}=nothing,
-                                r_min::Union{FT,Nothing}=nothing,
-                                r_max::Union{FT,Nothing}=nothing,
-                                z_num::Union{Int,Nothing}=nothing,
-                                z_min::Union{FT,Nothing}=nothing,
-                                z_max::Union{FT,Nothing}=nothing) where {FT<:AbstractFloat}
+function load_external_field_data!(
+        RP::RAPID{FT}, dir_path::String = "./";
+        r_num::Union{Int, Nothing} = nothing,
+        r_min::Union{FT, Nothing} = nothing,
+        r_max::Union{FT, Nothing} = nothing,
+        z_num::Union{Int, Nothing} = nothing,
+        z_min::Union{FT, Nothing} = nothing,
+        z_max::Union{FT, Nothing} = nothing
+    ) where {FT <: AbstractFloat}
 
     # Read the external field data
     ext_field = read_external_field_time_series(
@@ -555,7 +559,7 @@ function load_external_field_data!(RP::RAPID{FT}, dir_path::String="./";
         z_num,
         z_min,
         z_max,
-        FT=FT
+        FT = FT
     )
 
     # Set the external field data in the RAPID instance

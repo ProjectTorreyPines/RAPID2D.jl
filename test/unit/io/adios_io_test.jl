@@ -39,7 +39,7 @@
                     @test isequal(original_snap, restored_snap)
 
                     # Test approximate equality as well
-                    @test isapprox(original_snap, restored_snap; nans=true)
+                    @test isapprox(original_snap, restored_snap; nans = true)
 
                     # Test individual fields for detailed verification
                     @test original_snap.ne == restored_snap.ne
@@ -124,12 +124,12 @@
                 R_axis, Z_axis = size(original_snap.ne)
                 for i in 1:R_axis, j in 1:Z_axis
                     # Create radial profiles (higher density/temperature in center)
-                    r_norm = sqrt((i - R_axis/2)^2 + (j - Z_axis/2)^2) / (R_axis/2)
+                    r_norm = sqrt((i - R_axis / 2)^2 + (j - Z_axis / 2)^2) / (R_axis / 2)
                     profile_factor = exp(-r_norm^2 * 2)  # Gaussian-like profile
 
-                    original_snap.ne[i,j] = 2.0e19 * profile_factor
-                    original_snap.Te_eV[i,j] = 10.0 * profile_factor + 1.0  # Core: 11 eV, edge: 1 eV
-                    original_snap.Ti_eV[i,j] = 8.0 * profile_factor + 0.5   # Core: 8.5 eV, edge: 0.5 eV
+                    original_snap.ne[i, j] = 2.0e19 * profile_factor
+                    original_snap.Te_eV[i, j] = 10.0 * profile_factor + 1.0  # Core: 11 eV, edge: 1 eV
+                    original_snap.Ti_eV[i, j] = 8.0 * profile_factor + 0.5   # Core: 8.5 eV, edge: 0.5 eV
                 end
 
                 # Set scalar fields
@@ -168,9 +168,9 @@
                     @test original_snap.dt == restored_snap.dt
 
                     # Test some specific matrix elements
-                    @test original_snap.ne[1,1] == restored_snap.ne[1,1]
-                    @test original_snap.ne[6,8] == restored_snap.ne[6,8]
-                    @test original_snap.Te_eV[3,4] == restored_snap.Te_eV[3,4]
+                    @test original_snap.ne[1, 1] == restored_snap.ne[1, 1]
+                    @test original_snap.ne[6, 8] == restored_snap.ne[6, 8]
+                    @test original_snap.Te_eV[3, 4] == restored_snap.Te_eV[3, 4]
 
                 end
             end
@@ -184,9 +184,9 @@
                 fill!(original_snap.Te_eV, 5.0)
 
                 # Add some special values
-                original_snap.ne[1,1] = NaN
-                original_snap.Te_eV[2,2] = Inf
-                original_snap.Ti_eV[3,3] = -Inf
+                original_snap.ne[1, 1] = NaN
+                original_snap.Te_eV[2, 2] = Inf
+                original_snap.Ti_eV[3, 3] = -Inf
 
                 original_snap.step = 1500
                 original_snap.time_s = 0.03
@@ -204,9 +204,9 @@
                     @test isequal(original_snap, restored_snap)
 
                     # Verify special values specifically
-                    @test isnan(restored_snap.ne[1,1])
-                    @test isinf(restored_snap.Te_eV[2,2]) && restored_snap.Te_eV[2,2] > 0
-                    @test isinf(restored_snap.Ti_eV[3,3]) && restored_snap.Ti_eV[3,3] < 0
+                    @test isnan(restored_snap.ne[1, 1])
+                    @test isinf(restored_snap.Te_eV[2, 2]) && restored_snap.Te_eV[2, 2] > 0
+                    @test isinf(restored_snap.Ti_eV[3, 3]) && restored_snap.Ti_eV[3, 3] < 0
                 end
             end
 
@@ -219,8 +219,8 @@
 
                     # Create time-evolving profiles
                     for i in 1:dims_RZ[1], j in 1:dims_RZ[2]
-                        snap.ne[i,j] = 1.0e19 * (1.0 + 0.1 * t)
-                        snap.Te_eV[i,j] = 5.0 + t * 0.5
+                        snap.ne[i, j] = 1.0e19 * (1.0 + 0.1 * t)
+                        snap.Te_eV[i, j] = 5.0 + t * 0.5
                     end
 
                     snap.step = t * 500

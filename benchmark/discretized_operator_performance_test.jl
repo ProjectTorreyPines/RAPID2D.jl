@@ -12,7 +12,7 @@ using RAPID2D.LinearAlgebra
 Generate a random sparse matrix of size n×n with the specified sparsity level.
 Returns a SparseMatrixCSC{Float64, Int}.
 """
-function generate_test_sparse_matrix(n, sparsity_level, rng=Random.default_rng())
+function generate_test_sparse_matrix(n, sparsity_level, rng = Random.default_rng())
     # Calculate number of non-zero elements
     nnz = round(Int, n * n * sparsity_level)
 
@@ -22,7 +22,7 @@ function generate_test_sparse_matrix(n, sparsity_level, rng=Random.default_rng()
     V = randn(rng, nnz)
 
     # Create sparse matrix
-    return sparse(one(Float64)*I, J, V, n, n)
+    return sparse(one(Float64) * I, J, V, n, n)
 end
 
 """
@@ -36,7 +36,7 @@ function create_discretized_operator(matrix::SparseMatrixCSC{Float64, Int})
     # Assume square dimensions for simplicity
     each_size = Int(sqrt(n))
     # Create DiscretizedOperator with the sparse matrix
-    return DiscretizedOperator(dims_rz=(each_size, each_size), matrix=matrix)
+    return DiscretizedOperator(dims_rz = (each_size, each_size), matrix = matrix)
 end
 
 """
@@ -59,63 +59,89 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
 
     # Define operations to benchmark
     operations = [
-        ("Linear system solution (A\\b)",
+        (
+            "Linear system solution (A\\b)",
             (A, b) -> A \ b,
-            (A, b) -> A \ b),
+            (A, b) -> A \ b,
+        ),
 
-        ("Addition (A + B)",
+        (
+            "Addition (A + B)",
             (A, B) -> A + B,
-            (A, B) -> A + B),
+            (A, B) -> A + B,
+        ),
 
-        ("Subtraction (A - B)",
+        (
+            "Subtraction (A - B)",
             (A, B) -> A - B,
-            (A, B) -> A - B),
+            (A, B) -> A - B,
+        ),
 
-        ("Scalar multiplication (2.0 * A)",
+        (
+            "Scalar multiplication (2.0 * A)",
             A -> 2.0 * A,
-            A -> 2.0 * A),
+            A -> 2.0 * A,
+        ),
 
-        ("Matrix multiplication (A * B)",
+        (
+            "Matrix multiplication (A * B)",
             (A, B) -> A * B,
-            (A, B) -> A * B),
+            (A, B) -> A * B,
+        ),
 
-        ("Element-wise multiplication (A .* B)",
+        (
+            "Element-wise multiplication (A .* B)",
             (A, B) -> A .* B,
-            (A, B) -> A .* B),
+            (A, B) -> A .* B,
+        ),
 
-        ("Element-wise division (A ./ (B + 0.1))",
+        (
+            "Element-wise division (A ./ (B + 0.1))",
             (A, B) -> A ./ (B .+ 0.1),
-            (A, B) -> A ./ (B .+ 0.1)),
+            (A, B) -> A ./ (B .+ 0.1),
+        ),
 
-        ("Element-wise power (A .^ 2)",
+        (
+            "Element-wise power (A .^ 2)",
             A -> A .^ 2,
-            A -> A .^ 2),
+            A -> A .^ 2,
+        ),
 
-        ("Simple broadcast (@. C = A + B)",
+        (
+            "Simple broadcast (@. C = A + B)",
             (A, B) -> (@. A + B),
-            (A, B) -> (@. A + B)),
+            (A, B) -> (@. A + B)
+        ),
 
-        ("Complex broadcast (@. C = 2.0 * A + 0.5 * B)",
+        (
+            "Complex broadcast (@. C = 2.0 * A + 0.5 * B)",
             (A, B) -> (@. 2.0 * A + 0.5 * B),
-            (A, B) -> (@. 2.0 * A + 0.5 * B)),
+            (A, B) -> (@. 2.0 * A + 0.5 * B)
+        ),
 
-        ("Nested broadcast (@. C = (A + B)^2)",
+        (
+            "Nested broadcast (@. C = (A + B)^2)",
             (A, B) -> (@. (A + B)^2),
-            (A, B) -> (@. (A + B)^2)),
+            (A, B) -> (@. (A + B)^2)
+        ),
 
         # These are combined operations
-        ("Chained operations ((A * B) + C)",
+        (
+            "Chained operations ((A * B) + C)",
             (A, B, C) -> (A * B) + C,
-            (A, B, C) -> (A * B) + C),
+            (A, B, C) -> (A * B) + C,
+        ),
 
-        ("Mixed operations (A * (B .* C))",
+        (
+            "Mixed operations (A * (B .* C))",
             (A, B, C) -> A * (B .* C),
-            (A, B, C) -> A * (B .* C))
+            (A, B, C) -> A * (B .* C),
+        ),
     ]
 
     # Run benchmarks for different matrix sizes
     for size in sizes
-        println("\nMatrix size: $(size)×$(size) (total elements: $(size^2)), sparsity: $(sparsity_level*100)%")
+        println("\nMatrix size: $(size)×$(size) (total elements: $(size^2)), sparsity: $(sparsity_level * 100)%")
         println("-------------------------------------------------------------------------")
 
         # Generate sparse matrices
@@ -123,9 +149,9 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
         B_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
         C_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
 
-        A_sparse .+= sparse(one(Float64)*I, size^2, size^2)
-        B_sparse .+= sparse(one(Float64)*I, size^2, size^2)
-        C_sparse .+= sparse(one(Float64)*I, size^2, size^2)
+        A_sparse .+= sparse(one(Float64) * I, size^2, size^2)
+        B_sparse .+= sparse(one(Float64) * I, size^2, size^2)
+        C_sparse .+= sparse(one(Float64) * I, size^2, size^2)
 
         # Generate random vector for solving linear systems (A\b)
         b_vector = randn(rng, size^2)
@@ -138,7 +164,7 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
         # Print header for the comparison table
         @printf("%-40s | %-20s | %-20s | %-10s\n", "Operation", "Sparse Matrix", "DiscretizedOperator", "Relative")
         @printf("%-40s | %-20s | %-20s | %-10s\n", "", "(time in μs)", "(time in μs)", "(DO/Sparse)")
-        println("-" ^ 100)
+        println("-"^100)
 
         # Run benchmarks for each operation
         for op_info in operations
@@ -148,7 +174,7 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
 
             if op_name == "Matrix broadcast (@. A.matrix = B.matrix + B.matrix^2)"
                 # Special case for direct matrix operation
-                dop_result = @benchmark (@. $A_dop.matrix = $B_dop.matrix + $B_dop.matrix^2) seconds=bench_seconds
+                dop_result = @benchmark (@. $A_dop.matrix = $B_dop.matrix + $B_dop.matrix^2) seconds = bench_seconds
                 dop_time = median(dop_result).time / 1000  # Convert ns to μs
                 sparse_time = NaN
                 relative = NaN
@@ -158,11 +184,11 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
 
             if occursin("Chained operations", op_name) || occursin("Mixed operations", op_name)
                 # Benchmark operations with three arguments
-                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse, $C_sparse) seconds=bench_seconds
+                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse, $C_sparse) seconds = bench_seconds
                 sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
 
                 if dop_op !== nothing
-                    dop_result = @benchmark $dop_op($A_dop, $B_dop, $C_dop) seconds=bench_seconds
+                    dop_result = @benchmark $dop_op($A_dop, $B_dop, $C_dop) seconds = bench_seconds
                     dop_time = median(dop_result).time / 1000  # Convert ns to μs
                     relative = dop_time / sparse_time
                 else
@@ -173,11 +199,11 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
                 # Benchmark operations with one or two arguments
                 if applicable(sparse_op, A_sparse)
                     # Single argument operation
-                    sparse_result = @benchmark $sparse_op($A_sparse) seconds=bench_seconds
+                    sparse_result = @benchmark $sparse_op($A_sparse) seconds = bench_seconds
                     sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
 
                     if dop_op !== nothing
-                        dop_result = @benchmark $dop_op($A_dop) seconds=bench_seconds
+                        dop_result = @benchmark $dop_op($A_dop) seconds = bench_seconds
                         dop_time = median(dop_result).time / 1000  # Convert ns to μs
                         relative = dop_time / sparse_time
                     else
@@ -186,11 +212,11 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
                     end
                 elseif op_name == "Linear system solution (A\\b)"
                     # Special case for linear system solution
-                    sparse_result = @benchmark $sparse_op($A_sparse, $b_vector) seconds=bench_seconds
+                    sparse_result = @benchmark $sparse_op($A_sparse, $b_vector) seconds = bench_seconds
                     sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
 
                     if dop_op !== nothing
-                        dop_result = @benchmark $dop_op($A_dop, $b_vector) seconds=bench_seconds
+                        dop_result = @benchmark $dop_op($A_dop, $b_vector) seconds = bench_seconds
                         dop_time = median(dop_result).time / 1000  # Convert ns to μs
                         relative = dop_time / sparse_time
                     else
@@ -199,11 +225,11 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
                     end
                 else
                     # Two argument operation
-                    sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse) seconds=bench_seconds
+                    sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse) seconds = bench_seconds
                     sparse_time = median(sparse_result).time / 1000  # Convert ns to μs
 
                     if dop_op !== nothing
-                        dop_result = @benchmark $dop_op($A_dop, $B_dop) seconds=bench_seconds
+                        dop_result = @benchmark $dop_op($A_dop, $B_dop) seconds = bench_seconds
                         dop_time = median(dop_result).time / 1000  # Convert ns to μs
                         relative = dop_time / sparse_time
                     else
@@ -217,6 +243,7 @@ function run_benchmarks(sizes, sparsity_level, bench_seconds)
             @printf("%-40s | %-20.3f | %-20.3f | %-10.3f\n", op_name, sparse_time, dop_time, relative)
         end
     end
+    return
 end
 
 """
@@ -229,25 +256,33 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level, bench_
     println("=============")
 
     # Generate logarithmically spaced matrix sizes
-    sizes = round.(Int, exp.(range(log(min_size), log(max_size), length=num_points)))
+    sizes = round.(Int, exp.(range(log(min_size), log(max_size), length = num_points)))
 
     # Define operations to test for scaling
     operations = [
-        ("Simple addition (A + B)",
+        (
+            "Simple addition (A + B)",
             (A, B) -> A + B,
-            (A, B) -> A + B),
+            (A, B) -> A + B,
+        ),
 
-        ("Element-wise multiplication (A .* B)",
+        (
+            "Element-wise multiplication (A .* B)",
             (A, B) -> A .* B,
-            (A, B) -> A .* B),
+            (A, B) -> A .* B,
+        ),
 
-        ("Complex broadcast (@. 2.0 * A + 0.5 * B)",
+        (
+            "Complex broadcast (@. 2.0 * A + 0.5 * B)",
             (A, B) -> (@. 2.0 * A + 0.5 * B),
-            (A, B) -> (@. 2.0 * A + 0.5 * B)),
+            (A, B) -> (@. 2.0 * A + 0.5 * B)
+        ),
 
-        ("Linear system solution (A\\b)",
+        (
+            "Linear system solution (A\\b)",
             (A, b) -> A \ b,
-            (A, b) -> A \ b)
+            (A, b) -> A \ b,
+        ),
     ]
 
     # Set random seed for reproducibility
@@ -259,7 +294,7 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level, bench_
         println("--------------------")
 
         @printf("%-15s | %-15s | %-15s | %-15s\n", "Matrix Size", "Sparse (μs)", "DiscretizedOp (μs)", "Ratio")
-        println("-" ^ 70)
+        println("-"^70)
 
         for size in sizes
             # Generate matrices
@@ -267,8 +302,8 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level, bench_
             B_sparse = generate_test_sparse_matrix(size^2, sparsity_level, rng)
 
             # Make sure matrices are well-conditioned for inversion
-            A_sparse .+= sparse(one(Float64)*I, size^2, size^2)
-            B_sparse .+= sparse(one(Float64)*I, size^2, size^2)
+            A_sparse .+= sparse(one(Float64) * I, size^2, size^2)
+            B_sparse .+= sparse(one(Float64) * I, size^2, size^2)
 
             # Generate random vector for solving linear systems
             b_vector = randn(rng, size^2)
@@ -279,11 +314,11 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level, bench_
 
             # Benchmark
             if op_name == "Linear system solution (A\\b)"
-                sparse_result = @benchmark $sparse_op($A_sparse, $b_vector) seconds=bench_seconds
-                dop_result = @benchmark $dop_op($A_dop, $b_vector) seconds=bench_seconds
+                sparse_result = @benchmark $sparse_op($A_sparse, $b_vector) seconds = bench_seconds
+                dop_result = @benchmark $dop_op($A_dop, $b_vector) seconds = bench_seconds
             else
-                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse) seconds=bench_seconds
-                dop_result = @benchmark $dop_op($A_dop, $B_dop) seconds=bench_seconds
+                sparse_result = @benchmark $sparse_op($A_sparse, $B_sparse) seconds = bench_seconds
+                dop_result = @benchmark $dop_op($A_dop, $B_dop) seconds = bench_seconds
             end
 
             # Calculate times
@@ -294,20 +329,21 @@ function run_scaling_test(min_size, max_size, num_points, sparsity_level, bench_
             @printf("%-15d | %-15.3f | %-15.3f | %-15.3f\n", size, sparse_time, dop_time, relative)
         end
     end
+    return
 end
 
 # Main benchmark function
 function main(;
-    sizes = [10, 20],                # Matrix sizes to test
-    sparsity = 0.01,                # Sparsity level (fraction of non-zero elements)
-    min_size = 5,                   # Minimum matrix size for scaling test
-    max_size = 40,                  # Maximum matrix size for scaling test
-    num_points = 6,                 # Number of points in scaling test
-    bench_seconds = 5,              # Maximum seconds per benchmark
-    output_file = nothing           # Optional output file path
-)
+        sizes = [10, 20],                # Matrix sizes to test
+        sparsity = 0.01,                # Sparsity level (fraction of non-zero elements)
+        min_size = 5,                   # Minimum matrix size for scaling test
+        max_size = 40,                  # Maximum matrix size for scaling test
+        num_points = 6,                 # Number of points in scaling test
+        bench_seconds = 5,              # Maximum seconds per benchmark
+        output_file = nothing           # Optional output file path
+    )
     # Redirect output to file if specified
-    if output_file !== nothing
+    return if output_file !== nothing
         mkpath(dirname(output_file))
         open(output_file, "w") do io
             redirect_stdout(io) do
@@ -327,14 +363,14 @@ function run_benchmarks_internal(sizes, sparsity, min_size, max_size, num_points
     println("- Detailed benchmark matrix sizes: $sizes")
     println("- Scaling test range: $min_size to $max_size with $num_points points")
     println("- Benchmark time limit: $bench_seconds seconds")
-    println("- Matrix sparsity: $(sparsity*100)%")
+    println("- Matrix sparsity: $(sparsity * 100)%")
     println()
 
     # Run detailed benchmarks for specific sizes
     run_benchmarks(sizes, sparsity, bench_seconds)
 
     # Run scaling test
-    run_scaling_test(min_size, max_size, num_points, sparsity, bench_seconds)
+    return run_scaling_test(min_size, max_size, num_points, sparsity, bench_seconds)
 end
 
 # Simple execution when run as script

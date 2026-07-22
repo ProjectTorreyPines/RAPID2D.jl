@@ -2,7 +2,7 @@
 # and mutate a full RAPID object on a 100x200 grid; the shared SimulationConfig
 # factory lives in setup_numerics.jl.
 
-@testitem "Gradient Calculation Tests" setup=[NumericsFixtures] begin
+@testitem "Gradient Calculation Tests" setup = [NumericsFixtures] begin
 
     FT = Float64
     config = walled_box_config(FT)
@@ -11,8 +11,8 @@
     initialize!(RP)
 
     # Set up a specific siutation for testing
-    RP.fields.BR_ext .= 20e-4
-    RP.fields.BZ_ext .= 10e-4
+    RP.fields.BR_ext .= 20.0e-4
+    RP.fields.BZ_ext .= 10.0e-4
     RAPID2D.combine_external_and_self_fields!(RP)
 
     R0 = (config.R_min + config.R_max) / 2
@@ -21,8 +21,8 @@
     sigma_Z = 0.3
     peak_ue_para = 1.0e6  # Peak velocity
     for i in 1:RP.G.NR, j in 1:RP.G.NZ
-        R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
-        RP.plasma.ue_para[i, j] = peak_ue_para * exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
+        R, Z = RP.G.R2D[i, j], RP.G.Z2D[i, j]
+        RP.plasma.ue_para[i, j] = peak_ue_para * exp(-((R - R0)^2 / (2 * sigma_R^2) + (Z - Z0)^2 / (2 * sigma_Z^2)))
     end
     RAPID2D.update_transport_quantities!(RP)
 
@@ -33,29 +33,28 @@
     F_test = @. RP.G.R2D^3 + RP.G.Z2D^2
 
     # Known analytic gradients
-    expected_∇F_R = @. 3*RP.G.R2D^2
-    expected_∇F_Z = 2*RP.G.Z2D
+    expected_∇F_R = @. 3 * RP.G.R2D^2
+    expected_∇F_Z = 2 * RP.G.Z2D
 
     # Calculate gradients using our function (no upwind)
-    ∇F_R, ∇F_Z = RAPID2D.calculate_grad_of_scalar_F(RP, F_test; upwind=false)
-    tmp_para_∇F = @. ∇F_R*RP.fields.bR + ∇F_Z*RP.fields.bZ;
-    para_∇F = RAPID2D.calculate_para_grad_of_scalar_F(RP, F_test; upwind=false)
-    @test isapprox(∇F_R, expected_∇F_R, rtol=1e-2)
-    @test isapprox(∇F_Z, expected_∇F_Z, rtol=1e-2)
-    @test isapprox(tmp_para_∇F, para_∇F, rtol=1e-10)
+    ∇F_R, ∇F_Z = RAPID2D.calculate_grad_of_scalar_F(RP, F_test; upwind = false)
+    tmp_para_∇F = @. ∇F_R * RP.fields.bR + ∇F_Z * RP.fields.bZ
+    para_∇F = RAPID2D.calculate_para_grad_of_scalar_F(RP, F_test; upwind = false)
+    @test isapprox(∇F_R, expected_∇F_R, rtol = 1.0e-2)
+    @test isapprox(∇F_Z, expected_∇F_Z, rtol = 1.0e-2)
+    @test isapprox(tmp_para_∇F, para_∇F, rtol = 1.0e-10)
 
     # Calculate gradients using our function (with upwind)
-    ∇F_R, ∇F_Z = RAPID2D.calculate_grad_of_scalar_F(RP, F_test; upwind=true)
-    tmp_para_∇F = @. ∇F_R*RP.fields.bR + ∇F_Z*RP.fields.bZ;
-    para_∇F = RAPID2D.calculate_para_grad_of_scalar_F(RP, F_test; upwind=true)
-    @test isapprox(∇F_R, expected_∇F_R, rtol=1e-2)
-    @test isapprox(∇F_Z, expected_∇F_Z, rtol=1e-2)
-    @test isapprox(tmp_para_∇F, para_∇F, rtol=1e-10)
+    ∇F_R, ∇F_Z = RAPID2D.calculate_grad_of_scalar_F(RP, F_test; upwind = true)
+    tmp_para_∇F = @. ∇F_R * RP.fields.bR + ∇F_Z * RP.fields.bZ
+    para_∇F = RAPID2D.calculate_para_grad_of_scalar_F(RP, F_test; upwind = true)
+    @test isapprox(∇F_R, expected_∇F_R, rtol = 1.0e-2)
+    @test isapprox(∇F_Z, expected_∇F_Z, rtol = 1.0e-2)
+    @test isapprox(tmp_para_∇F, para_∇F, rtol = 1.0e-10)
 end
 
 
-
-@testitem "smooth_data_2D" setup=[NumericsFixtures] begin
+@testitem "smooth_data_2D" setup = [NumericsFixtures] begin
 
     FT = Float64
     config = walled_box_config(FT)
@@ -70,8 +69,8 @@ end
     sigma_Z = 0.3
     ff = zeros(FT, RP.G.NR, RP.G.NZ)
     for i in 1:RP.G.NR, j in 1:RP.G.NZ
-        R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
-        ff[i, j] =  exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
+        R, Z = RP.G.R2D[i, j], RP.G.Z2D[i, j]
+        ff[i, j] = exp(-((R - R0)^2 / (2 * sigma_R^2) + (Z - Z0)^2 / (2 * sigma_Z^2)))
     end
 
     # ORDERING IS LOAD-BEARING — DO NOT SPLIT THESE TWO BLOCKS INTO SEPARATE
@@ -92,7 +91,7 @@ end
         num_SM = 3
         ff_SM = RAPID2D.smooth_data_2D(ff; num_SM)
         @test ff_SM ≉ ff
-        @test isapprox(sum(ff_SM), sum(ff), rtol=1e-12)
+        @test isapprox(sum(ff_SM), sum(ff), rtol = 1.0e-12)
         RAPID2D.smooth_data_2D!(ff; num_SM)
         @test ff_SM == ff
     end
@@ -114,19 +113,19 @@ end
         num_SM = 3
         ff_SM = RAPID2D.smooth_data_2D(ff; num_SM, weighting)
         @test ff_SM ≉ ff
-        @test !isapprox(sum(ff_SM), sum(ff), rtol=1e-12)
-        @test isapprox(sum(ff_SM.*weighting), sum(ff.*weighting), rtol=1e-12)
+        @test !isapprox(sum(ff_SM), sum(ff), rtol = 1.0e-12)
+        @test isapprox(sum(ff_SM .* weighting), sum(ff .* weighting), rtol = 1.0e-12)
         RAPID2D.smooth_data_2D!(ff; num_SM, weighting)
         @test ff_SM == ff
 
         # test with zero weighting
         weighting[1, 1:3] .= 0.0
-        weighting[end-3:end, end - 1] .= 0.0
+        weighting[(end - 3):end, end - 1] .= 0.0
         num_SM = 3
         ff_SM = RAPID2D.smooth_data_2D(ff; num_SM, weighting)
         @test ff_SM ≉ ff
-        @test !isapprox(sum(ff_SM), sum(ff), rtol=1e-12)
-        @test isapprox(sum(ff_SM.*weighting), sum(ff.*weighting), rtol=1e-12)
+        @test !isapprox(sum(ff_SM), sum(ff), rtol = 1.0e-12)
+        @test isapprox(sum(ff_SM .* weighting), sum(ff .* weighting), rtol = 1.0e-12)
         RAPID2D.smooth_data_2D!(ff; num_SM, weighting)
         @test ff_SM == ff
     end

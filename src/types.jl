@@ -16,14 +16,14 @@ include("coils/types.jl")
 """
     AbstractElectronRRCs{T<:AbstractFloat}
 """
-abstract type AbstractSpeciesRRCs{FT<:AbstractFloat} end
+abstract type AbstractSpeciesRRCs{FT <: AbstractFloat} end
 
 """
     SimulationConfig{FT<:AbstractFloat}
 
 Contains simulation configuration parameters.
 """
-@kwdef mutable struct SimulationConfig{FT<:AbstractFloat}
+@kwdef mutable struct SimulationConfig{FT <: AbstractFloat}
     # Paths
     Input_path::String = "./input"     # Path to input files
     Output_path::String = "./output"   # Path to output files
@@ -37,15 +37,15 @@ Contains simulation configuration parameters.
     # Grid dimensions
     NR::Int = 50                       # Number of radial grid points
     NZ::Int = 100                      # Number of vertical grid points
-    R_min::Union{FT,Nothing} = nothing       # Minimum radial coordinate
-    R_max::Union{FT,Nothing} = nothing       # Maximum radial coordinate
-    Z_min::Union{FT,Nothing} = nothing       # Minimum vertical coordinate
-    Z_max::Union{FT,Nothing} = nothing       # Maximum vertical coordinate
+    R_min::Union{FT, Nothing} = nothing       # Minimum radial coordinate
+    R_max::Union{FT, Nothing} = nothing       # Maximum radial coordinate
+    Z_min::Union{FT, Nothing} = nothing       # Minimum vertical coordinate
+    Z_max::Union{FT, Nothing} = nothing       # Maximum vertical coordinate
 
     # Time parameters
     t_start_s::FT = FT(0.0)            # Simulation start time [s]
     t_end_s::FT = FT(1.0e-3)           # Simulation end time [s]
-    dt::FT = FT(10e-6)                # Time step [s]
+    dt::FT = FT(10.0e-6)                # Time step [s]
 
     # Physical constants
     constants::PlasmaConstants{FT} = PlasmaConstants{FT}()  # Consolidated physical constants
@@ -59,10 +59,10 @@ Contains simulation configuration parameters.
     kB::FT = FT(1.380649e-23)          # Boltzmann constant (J/K)
 
     # Field configuration
-    R0B0::Union{FT,Nothing} = nothing                 # On-axis R0*B0 value
+    R0B0::Union{FT, Nothing} = nothing                 # On-axis R0*B0 value
 
     # Initial conditions
-    prefilled_gas_pressure::Union{FT,Nothing} = nothing  # Prefilled gas pressure (Pa)
+    prefilled_gas_pressure::Union{FT, Nothing} = nothing  # Prefilled gas pressure (Pa)
 
     # Limits
     min_Te::FT = FT(0.001)              # Minimum electron temperature (eV)
@@ -75,13 +75,13 @@ Contains simulation configuration parameters.
     turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
 
     # Output intervals
-    snap0D_Δt_s::FT = FT(20e-6)  # Time interval for 1D snapshots
-    snap2D_Δt_s::FT = FT(100e-6)  # Time interval for 2D snapshots
-    write_File_Interval_s::FT = FT(1e-3)  # Time interval for file writing
+    snap0D_Δt_s::FT = FT(20.0e-6)  # Time interval for 1D snapshots
+    snap2D_Δt_s::FT = FT(100.0e-6)  # Time interval for 2D snapshots
+    write_File_Interval_s::FT = FT(1.0e-3)  # Time interval for file writing
 
     # Wall geometry
-    wall_R::Vector{FT}  = Vector{FT}()  # Radial coordinates of wall points
-    wall_Z::Vector{FT}  = Vector{FT}()  # Vertical coordinates of wall points
+    wall_R::Vector{FT} = Vector{FT}()  # Radial coordinates of wall points
+    wall_Z::Vector{FT} = Vector{FT}()  # Vertical coordinates of wall points
 end
 
 """
@@ -93,16 +93,16 @@ Fields:
 - `R`: Radial coordinates of wall points
 - `Z`: Vertical coordinates of wall points
 """
-struct WallGeometry{FT<:AbstractFloat}
+struct WallGeometry{FT <: AbstractFloat}
     R::Vector{FT}
     Z::Vector{FT}
 
-    function WallGeometry{FT}() where {FT<:AbstractFloat}
+    function WallGeometry{FT}() where {FT <: AbstractFloat}
         return new{FT}(FT[], FT[])
     end
 
     # Custom constructor that ensures valid wall geometry
-    function WallGeometry{FT}(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat}
+    function WallGeometry{FT}(R::Vector{FT}, Z::Vector{FT}) where {FT <: AbstractFloat}
         @assert length(R) == length(Z) "R and Z must have the same length"
         @assert length(R) >= 3 "At least 3 points needed to define a wall unless creating an empty placeholder"
 
@@ -115,7 +115,7 @@ struct WallGeometry{FT<:AbstractFloat}
     end
 end
 
-function WallGeometry(R::Vector{FT}, Z::Vector{FT}) where {FT<:AbstractFloat}
+function WallGeometry(R::Vector{FT}, Z::Vector{FT}) where {FT <: AbstractFloat}
     return WallGeometry{FT}(R, Z)
 end
 
@@ -137,8 +137,8 @@ Contains the power terms for electron energy equation.
 - `dilution`: Power from density dilution [W/m³]
 - `equi`: Power from temperature equilibration [W/m³]
 """
-@kwdef mutable struct ElectronHeatingPowers{FT<:AbstractFloat}
-    dims::Tuple{Int,Int}  # Grid dimensions (NR, NZ)
+@kwdef mutable struct ElectronHeatingPowers{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
 
     # Power terms - all in W/m³
     tot::Matrix{FT} = zeros(FT, dims)        # Total power density
@@ -154,11 +154,11 @@ Contains the power terms for electron energy equation.
 end
 
 # Constructor with dimensions
-function ElectronHeatingPowers{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
-    return ElectronHeatingPowers{FT}(dims=dimensions)
+function ElectronHeatingPowers{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return ElectronHeatingPowers{FT}(dims = dimensions)
 end
-function ElectronHeatingPowers{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
-    return ElectronHeatingPowers{FT}(dims=(NR, NZ))
+function ElectronHeatingPowers{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
+    return ElectronHeatingPowers{FT}(dims = (NR, NZ))
 end
 
 """
@@ -171,8 +171,8 @@ Contains the power terms for ion energy equation.
 - `atomic`: Power from atomic processes [W/m³]
 - `equi`: Power from temperature equilibration [W/m³]
 """
-@kwdef mutable struct IonHeatingPowers{FT<:AbstractFloat}
-    dims::Tuple{Int,Int}  # Grid dimensions (NR, NZ)
+@kwdef mutable struct IonHeatingPowers{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
 
     # Power terms - all in W/m³
     tot::Matrix{FT} = zeros(FT, dims)        # Total power density
@@ -181,20 +181,20 @@ Contains the power terms for ion energy equation.
 end
 
 # Constructor with dimensions
-function IonHeatingPowers{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
-    return IonHeatingPowers{FT}(dims=dimensions)
+function IonHeatingPowers{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return IonHeatingPowers{FT}(dims = dimensions)
 end
-function IonHeatingPowers{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
-    return IonHeatingPowers{FT}(dims=(NR, NZ))
+function IonHeatingPowers{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
+    return IonHeatingPowers{FT}(dims = (NR, NZ))
 end
 
 """
     PlasmaState{FT<:AbstractFloat}
 Contains the plasma state variables including density, temperature, and velocity components.
 """
-@kwdef mutable struct PlasmaState{FT<:AbstractFloat}
+@kwdef mutable struct PlasmaState{FT <: AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int} # (NR, NZ)
+    dims::Tuple{Int, Int} # (NR, NZ)
 
     # Gas temperature (scalar)
     T_gas_eV::FT = FT(0.026)           # Gas temperature [eV]
@@ -257,11 +257,11 @@ Contains the plasma state variables including density, temperature, and velocity
     iPowers::IonHeatingPowers{FT} = IonHeatingPowers{FT}(dims)
 end
 
-function PlasmaState{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
-    return PlasmaState{FT}(dims=dimensions)
+function PlasmaState{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return PlasmaState{FT}(dims = dimensions)
 end
-function PlasmaState{FT}(NR::Int, NZ::Int; kwargs...) where {FT<:AbstractFloat}
-    return PlasmaState{FT}(dims=(NR, NZ); kwargs...)
+function PlasmaState{FT}(NR::Int, NZ::Int; kwargs...) where {FT <: AbstractFloat}
+    return PlasmaState{FT}(dims = (NR, NZ); kwargs...)
 end
 
 
@@ -272,9 +272,9 @@ Contains the electromagnetic field variables.
 
 Fields include components of the magnetic and electric fields.
 """
-@kwdef mutable struct Fields{FT<:AbstractFloat}
+@kwdef mutable struct Fields{FT <: AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int} # (NR, NZ)
+    dims::Tuple{Int, Int} # (NR, NZ)
 
     # R0B0
     R0B0::FT = FT(0.0)
@@ -327,11 +327,11 @@ Fields include components of the magnetic and electric fields.
 end
 
 # Constructor with separate dimensions
-function Fields{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
-    return Fields{FT}(dims=dimensions)
+function Fields{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return Fields{FT}(dims = dimensions)
 end
-function Fields{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
-    return Fields{FT}(dims=(NR, NZ))
+function Fields{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
+    return Fields{FT}(dims = (NR, NZ))
 end
 
 """
@@ -341,9 +341,9 @@ Contains the transport coefficients for the plasma.
 
 Fields include diffusion coefficients in different directions.
 """
-@kwdef mutable struct Transport{FT<:AbstractFloat}
+@kwdef mutable struct Transport{FT <: AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int} # (NR, NZ)
+    dims::Tuple{Int, Int} # (NR, NZ)
 
     # Base diffusivity values
     Dpara0::FT = FT(1.0)            # Base parallel diffusion coefficient [m²/s]
@@ -379,11 +379,11 @@ Fields include diffusion coefficients in different directions.
 end
 
 # Constructor with separate dimensions
-function Transport{FT}(dimensions::Tuple{Int,Int}; Dpara0::FT=FT(1.0), Dperp0::FT=FT(0.1)) where FT<:AbstractFloat
-    return Transport{FT}(dims=dimensions, Dpara0=Dpara0, Dperp0=Dperp0)
+function Transport{FT}(dimensions::Tuple{Int, Int}; Dpara0::FT = FT(1.0), Dperp0::FT = FT(0.1)) where {FT <: AbstractFloat}
+    return Transport{FT}(dims = dimensions, Dpara0 = Dpara0, Dperp0 = Dperp0)
 end
-function Transport{FT}(NR::Int, NZ::Int; Dpara0::FT=FT(1.0), Dperp0::FT=FT(0.1)) where FT<:AbstractFloat
-    return Transport{FT}(dims=(NR, NZ), Dpara0=Dpara0, Dperp0=Dperp0)
+function Transport{FT}(NR::Int, NZ::Int; Dpara0::FT = FT(1.0), Dperp0::FT = FT(0.1)) where {FT <: AbstractFloat}
+    return Transport{FT}(dims = (NR, NZ), Dpara0 = Dpara0, Dperp0 = Dperp0)
 end
 
 
@@ -394,9 +394,9 @@ Contains the numerical operators used in the simulation.
 
 Fields include various matrices for solving different parts of the model.
 """
-@kwdef mutable struct Operators{FT<:AbstractFloat}
+@kwdef mutable struct Operators{FT <: AbstractFloat}
     # Dimensions
-    dims::Tuple{Int,Int} # (NR, NZ)
+    dims::Tuple{Int, Int} # (NR, NZ)
 
     # Identity matrix
     II::SparseMatrixCSC{FT, Int} = sparse(one(FT) * I, prod(dims), prod(dims))
@@ -411,7 +411,7 @@ Fields include various matrices for solving different parts of the model.
 
     # Operators for solving continuity equations
     ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
-    ν_en_iz ::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization [1/s]
+    ν_en_iz::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization [1/s]
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
@@ -430,11 +430,11 @@ Fields include various matrices for solving different parts of the model.
 end
 
 # Constructor with separate dimensions
-function Operators{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
-    return Operators{FT}(dims=dimensions)
+function Operators{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return Operators{FT}(dims = dimensions)
 end
-function Operators{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
-    return Operators{FT}(dims=(NR, NZ))
+function Operators{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
+    return Operators{FT}(dims = (NR, NZ))
 end
 
 
@@ -443,7 +443,7 @@ end
 
 Contains boolean flags that control various aspects of the simulation.
 """
-@kwdef mutable struct SimulationFlags{FT<:AbstractFloat}
+@kwdef mutable struct SimulationFlags{FT <: AbstractFloat}
     # Method selection flags
     eRRC_method::String = "EoverP_Erg"        # Electron reaction rate coefficient method
     iRRC_method::String = "ud_T"              # Ion reaction rate coefficient method
@@ -499,11 +499,11 @@ Contains boolean flags that control various aspects of the simulation.
     # artificial limiters to avoid numerical instabilities
     limit_acceleration::NamedTuple = (
         state = true,                         # Enable acceleration limiting
-        factor = 0.5                          # Limiting factor (accel < factor*max(u_para))
+        factor = 0.5,                          # Limiting factor (accel < factor*max(u_para))
     )
     limit_flux::NamedTuple = (
         state = true,                         # Enable flux limiting
-        factor = 0.25                          # Limiting factor (Deff = min(D_SH, factor*vth*Ln))
+        factor = 0.25,                          # Limiting factor (Deff = min(D_SH, factor*vth*Ln))
     )
 
     # Numerical settings
@@ -555,7 +555,7 @@ Contains information about the grid nodes in relation to the wall.
 - `out_wall_nids`: Linear indices of nodes outside wall
 - `on_wall_nids`: Linear indices of nodes on the wall
 """
-mutable struct NodeState{FT<:AbstractFloat}
+mutable struct NodeState{FT <: AbstractFloat}
     rid::Matrix{Int}          # Radial index of each node
     zid::Matrix{Int}          # Vertical index of each node
     nid::Matrix{Int}      # Linear index of each node
@@ -575,7 +575,7 @@ mutable struct NodeState{FT<:AbstractFloat}
     inWall_deepInWall_nids::Vector{Int}    # In-wall nodes deep inside (away from boundary)
 
     # Constructor
-    function NodeState{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
+    function NodeState{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
         rid = zeros(Int, NR, NZ)
         zid = zeros(Int, NR, NZ)
         nid = zeros(Int, NR, NZ)
@@ -593,8 +593,10 @@ mutable struct NodeState{FT<:AbstractFloat}
             ngh_on_wall_nids[i, j] = Int[]
         end
 
-        return new{FT}(rid, zid, nid, state, Int[], Int[], Int[], Int[],
-                       ngh_in_wall_nids, ngh_normal_in_wall_nids, ngh_on_wall_nids, Int[], Int[])
+        return new{FT}(
+            rid, zid, nid, state, Int[], Int[], Int[], Int[],
+            ngh_in_wall_nids, ngh_normal_in_wall_nids, ngh_on_wall_nids, Int[], Int[]
+        )
     end
 
     # Convenience constructor
@@ -624,7 +626,7 @@ Contains the geometric properties of the computational grid.
 - `BDY_idx`: Indices of boundary points
 - `nodes`: Node information
 """
-mutable struct GridGeometry{FT<:AbstractFloat}
+mutable struct GridGeometry{FT <: AbstractFloat}
     # Grid dimensions
     NR::Int                  # Number of radial grid points
     NZ::Int                  # Number of vertical grid points
@@ -640,7 +642,7 @@ mutable struct GridGeometry{FT<:AbstractFloat}
     dZ::FT                   # Vertical grid spacing
     Jacob::Matrix{FT}        # Jacobian determinant
     inv_Jacob::Matrix{FT}    # Inverse of Jacobian determinant
-	inVol2D::Matrix{FT}      # Volume of each grid cell
+    inVol2D::Matrix{FT}      # Volume of each grid cell
 
     # Boundary indices
     BDY_idx::Vector{Int}     # Indices of boundary points
@@ -655,7 +657,7 @@ mutable struct GridGeometry{FT<:AbstractFloat}
     device_inVolume::FT      # Total volume inside fitted wall
 
     # Constructor with dimensions
-    function GridGeometry{FT}(NR::Int, NZ::Int) where FT<:AbstractFloat
+    function GridGeometry{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
         # Pre-allocate arrays
         R1D = Vector{FT}(undef, NR)
         Z1D = Vector{FT}(undef, NZ)
@@ -663,7 +665,7 @@ mutable struct GridGeometry{FT<:AbstractFloat}
         Z2D = zeros(FT, NR, NZ)
         Jacob = zeros(FT, NR, NZ)
         inv_Jacob = zeros(FT, NR, NZ)
-		inVol2D = zeros(FT, NR, NZ)
+        inVol2D = zeros(FT, NR, NZ)
         BDY_idx = Int[]
         nodes = NodeState{FT}(NR, NZ)
         cell_state = zeros(Int, NR, NZ)
@@ -694,7 +696,7 @@ end
 Abstract type for all external electromagnetic field sources.
 Concrete implementations must provide methods to compute or interpolate field values at specified times.
 """
-abstract type AbstractExternalField{FT<:AbstractFloat} end
+abstract type AbstractExternalField{FT <: AbstractFloat} end
 
 """
     RAPID{FT<:AbstractFloat}
@@ -702,7 +704,7 @@ abstract type AbstractExternalField{FT<:AbstractFloat} end
 The main simulation structure containing all simulation data including grid information,
 physical fields, and simulation state.
 """
-mutable struct RAPID{FT<:AbstractFloat}
+mutable struct RAPID{FT <: AbstractFloat}
     # Grid and wall geometry
     G::GridGeometry{FT}               # Grid geometry
     wall::WallGeometry{FT}            # Wall geometry data
@@ -746,7 +748,7 @@ mutable struct RAPID{FT<:AbstractFloat}
     coil_system::CoilSystem{FT} # Placeholder for coil data, to be defined later
 
     # Primary constructor - from config
-    function RAPID{FT}(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
+    function RAPID{FT}(config::SimulationConfig{FT}) where {FT <: AbstractFloat}
         # Get grid dimensions
         NR, NZ = config.NR, config.NZ
         dims = (NR, NZ)
@@ -756,7 +758,7 @@ mutable struct RAPID{FT<:AbstractFloat}
         wall = WallGeometry{FT}()
         plasma = PlasmaState{FT}(dims)
         fields = Fields{FT}(dims)
-        transport = Transport{FT}(dims; Dpara0=config.Dpara0, Dperp0=config.Dperp0)
+        transport = Transport{FT}(dims; Dpara0 = config.Dpara0, Dperp0 = config.Dperp0)
         operators = Operators{FT}(dims)
         flags = SimulationFlags{FT}()
 
@@ -811,18 +813,20 @@ end
 
 Create a RAPID instance with the specified grid dimensions.
 """
-function RAPID{FT}(NR::Int, NZ::Int;
-                  t_start::FT=FT(0.0),
-                  t_end::FT=FT(1.0e-3),
-                  dt::FT=FT(1.0e-9),
-                  kwargs...) where {FT<:AbstractFloat}
+function RAPID{FT}(
+        NR::Int, NZ::Int;
+        t_start::FT = FT(0.0),
+        t_end::FT = FT(1.0e-3),
+        dt::FT = FT(1.0e-9),
+        kwargs...
+    ) where {FT <: AbstractFloat}
     # Create a default config with provided dimensions and time params
     config = SimulationConfig{FT}(;
-        NR=NR,
-        NZ=NZ,
-        t_start_s=t_start,
-        t_end_s=t_end,
-        dt=dt,
+        NR = NR,
+        NZ = NZ,
+        t_start_s = t_start,
+        t_end_s = t_end,
+        dt = dt,
         kwargs...
     )
 
@@ -832,7 +836,7 @@ end
 
 # Type-inferring constructor
 RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
-RAPID(config::SimulationConfig{FT}) where {FT<:AbstractFloat} = RAPID{FT}(config)
+RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
 export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, RAPID, GridGeometry, NodeState

@@ -30,12 +30,12 @@ end
 println("\nStep 3: Running a minimal simulation...")
 config = SimulationConfig{Float64}()
 config.NR, config.NZ = 20, 30
-config.t_end_s = 1e-4
-config.dt = 1e-6
-config.snap0D_Δt_s = 2e-5
-config.snap2D_Δt_s = 5e-5
-config.prefilled_gas_pressure = 1e-3
-config.R0B0=3.0
+config.t_end_s = 1.0e-4
+config.dt = 1.0e-6
+config.snap0D_Δt_s = 2.0e-5
+config.snap2D_Δt_s = 5.0e-5
+config.prefilled_gas_pressure = 1.0e-3
+config.R0B0 = 3.0
 
 RP = RAPID{Float64}(config)
 
@@ -46,25 +46,25 @@ initialize!(RP)
 for i in 1:5
     # Create fake snapshot data
     snap0D = Snapshot0D{Float64}()
-    snap0D.time_s = i * 2e-5
-    snap0D.ne = 1e19 * (1 + 0.1 * sin(i))
+    snap0D.time_s = i * 2.0e-5
+    snap0D.ne = 1.0e19 * (1 + 0.1 * sin(i))
     snap0D.Te_eV = 10.0 * (1 + 0.2 * cos(i))
-    snap0D.Epara_tot = 1000.0 * exp(-i/10)
-    snap0D.ue_para = 1e5 * (1 + 0.3 * sin(i))
+    snap0D.Epara_tot = 1000.0 * exp(-i / 10)
+    snap0D.ue_para = 1.0e5 * (1 + 0.3 * sin(i))
     snap0D.Ke_eV = 15.0 * (1 + 0.1 * i)
     push!(RP.diagnostics.snaps0D, snap0D)
 
     # Create fake 2D data
-    snap2D = Snapshot2D{Float64}(dims_RZ=(config.NR, config.NZ))
-    snap2D.time_s = i * 5e-5
+    snap2D = Snapshot2D{Float64}(dims_RZ = (config.NR, config.NZ))
+    snap2D.time_s = i * 5.0e-5
 
     # Create some interesting 2D patterns
     for (ir, r) in enumerate(RP.G.R1D), (iz, z) in enumerate(RP.G.Z1D)
         # Gaussian-like distribution with time evolution
         r_center, z_center = 1.5, 0.0
         σ = 0.3
-        amp = 1e19 * (1 + 0.2 * sin(i))
-        snap2D.ne[ir, iz] = amp * exp(-((r-r_center)^2 + (z-z_center)^2)/(2*σ^2))
+        amp = 1.0e19 * (1 + 0.2 * sin(i))
+        snap2D.ne[ir, iz] = amp * exp(-((r - r_center)^2 + (z - z_center)^2) / (2 * σ^2))
         snap2D.Te_eV[ir, iz] = 10.0 + 5.0 * sin(i + r + z)
         snap2D.B_pol[ir, iz] = 0.1 * r * (1 + 0.1 * cos(i + z))
     end
@@ -84,19 +84,21 @@ try
     println("✓ Time series plot saved as 'demo_time_series_plots.png'")
 
     # 2D density plot
-    p2 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
+    p2 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field = :ne)
     savefig(p2, "demo_density_2d_plots.png")
     println("✓ 2D density plot saved as 'demo_density_2d_plots.png'")
 
     # 2D temperature plot
-    p3 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:Te_eV)
+    p3 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field = :Te_eV)
     savefig(p3, "demo_temperature_2d_plots.png")
     println("✓ 2D temperature plot saved as 'demo_temperature_2d_plots.png'")
 
     # Animation
     println("Creating animation with Plots.jl (this may take a moment)...")
-    animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
-                   field=:ne, fps=2, filename="demo_evolution_plots..mp4")
+    animate_snaps2D(
+        RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
+        field = :ne, fps = 2, filename = "demo_evolution_plots..mp4"
+    )
     println("✓ Animation saved as 'demo_evolution_plots.mp4'")
 
 catch e
@@ -116,14 +118,16 @@ try
     println("✓ Makie time series saved as 'demo_time_series_makie.png'")
 
     # High-performance 2D plot
-    fig2 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field=:ne)
+    fig2 = plot_snaps2D(RP.diagnostics.snaps2D[end], RP.G.R1D, RP.G.Z1D, field = :ne)
     save("demo_density_2d_makie.png", fig2)
     println("✓ Makie 2D plot saved as 'demo_density_2d_makie.png'")
 
     # High-performance animation
     println("Creating animation with Makie.jl (faster for large datasets)...")
-    animate_snaps2D(RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
-                         field=:ne, fps=3, filename="demo_evolution_makie.mp4")
+    animate_snaps2D(
+        RP.diagnostics.snaps2D, RP.G.R1D, RP.G.Z1D,
+        field = :ne, fps = 3, filename = "demo_evolution_makie.mp4"
+    )
     println("✓ Makie animation saved as 'demo_evolution_makie.mp4'")
 
 catch e
@@ -134,10 +138,12 @@ end
 # Summary
 println("\n=== Demo Complete ===")
 println("Files created:")
-files = ["demo_time_series_plots.png", "demo_density_2d_plots.png",
-         "demo_temperature_2d_plots.png", "demo_evolution_plots..mp4",
-         "demo_time_series_makie.png", "demo_density_2d_makie.png",
-         "demo_evolution_makie.mp4"]
+files = [
+    "demo_time_series_plots.png", "demo_density_2d_plots.png",
+    "demo_temperature_2d_plots.png", "demo_evolution_plots..mp4",
+    "demo_time_series_makie.png", "demo_density_2d_makie.png",
+    "demo_evolution_makie.mp4",
+]
 
 for file in files
     if isfile(file)

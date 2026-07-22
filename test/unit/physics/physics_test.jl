@@ -18,7 +18,7 @@
     # the RAPID constructor opens ADIOS handles here (src/types.jl) that are closed by a
     # FINALIZER at a GC-determined time, so the directory must outlive the RAPID object.
     # A self-deleting tempdir aborts the process with "Bad file descriptor".
-    scratch_output_dir() = mktempdir(; cleanup=false)
+    scratch_output_dir() = mktempdir(; cleanup = false)
 end
 
 # ── Initialization ───────────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ end
     @test all(RP.plasma.Ti_eV .≈ RP.config.constants.room_T_eV)
 
     # Field unit vectors are normalised; manual setup gives BR = 0, BZ > 0
-    @test all(isapprox.(RP.fields.bR.^2 + RP.fields.bZ.^2 + RP.fields.bϕ.^2, 1.0, atol=1.0e-10))
+    @test all(isapprox.(RP.fields.bR .^ 2 + RP.fields.bZ .^ 2 + RP.fields.bϕ .^ 2, 1.0, atol = 1.0e-10))
     @test all(RP.fields.BR .== 0.0)
     @test all(RP.fields.BZ .> 0.0)
 
@@ -100,7 +100,7 @@ end
     config = SimulationConfig{Float64}(
         device_Name = "manual",
         NR = 20, NZ = 20,
-        prefilled_gas_pressure = 5e-3,
+        prefilled_gas_pressure = 5.0e-3,
         R0B0 = 1.0,
         dt = 1.0e-6,
         Dperp0 = 0.1,
@@ -134,10 +134,10 @@ end
 
     # ne is still uniform inside the wall, so the diffusion term must vanish there —
     # checked both via the direct evaluation and via the assembled operator.
-    @test all( compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.inWall_deepInWall_nids] .== 0.0)
+    @test all(compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.inWall_deepInWall_nids] .== 0.0)
     RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
     mean_inside_ne = mean(RP.plasma.ne[RP.G.nodes.in_wall_nids])
-    @test all( isapprox.(RHS_diffu[RP.G.nodes.inWall_deepInWall_nids], 0.0, atol=1e-12*mean_inside_ne))
+    @test all(isapprox.(RHS_diffu[RP.G.nodes.inWall_deepInWall_nids], 0.0, atol = 1.0e-12 * mean_inside_ne))
 
     # Introduce a density gradient; diffusion must now be non-zero
     inside_idx = RP.G.nodes.in_wall_nids
@@ -153,24 +153,24 @@ end
 
 # ── Transport scenarios ──────────────────────────────────────────────────────────────
 
-@testitem "Pure Convection: constant ue_para" setup=[PhysicsFixtures] begin
+@testitem "Pure Convection: constant ue_para" setup = [PhysicsFixtures] begin
     # A Gaussian blob is advected along B at a CONSTANT parallel velocity. Convection is
     # the only transport term enabled — no sources, diffusion, heating, or field
     # evolution — so the density centroid must move by exactly ue_para·b·t_end.
     # Repeated over all four (implicit × upwind) scheme combinations.
     FT = Float64
     config = SimulationConfig{FT}(
-        NR=50, NZ=70,
-        R_min=0.1, R_max=0.5,
-        Z_min=-0.4, Z_max=0.4,
-        dt=1e-6, t_end_s=100e-6,
-        R0B0=1.0,
-        Dpara0=10.0, Dperp0=0.1,          # irrelevant here: diffu is off
-        prefilled_gas_pressure=5e-3,
-        wall_R=[0.15, 0.45, 0.45, 0.15],
-        wall_Z=[-0.35, -0.35, 0.35, 0.35],
-        snap0D_Δt_s = 10e-6,
-        snap2D_Δt_s = 20e-6,
+        NR = 50, NZ = 70,
+        R_min = 0.1, R_max = 0.5,
+        Z_min = -0.4, Z_max = 0.4,
+        dt = 1.0e-6, t_end_s = 100.0e-6,
+        R0B0 = 1.0,
+        Dpara0 = 10.0, Dperp0 = 0.1,          # irrelevant here: diffu is off
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [0.15, 0.45, 0.45, 0.15],
+        wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        snap0D_Δt_s = 10.0e-6,
+        snap2D_Δt_s = 20.0e-6,
     )
     config.Output_path = scratch_output_dir()
 
@@ -203,9 +203,9 @@ end
     ini_ne = gaussian_density(RP.G; R0, Z0, σR, σZ, peak = 1.0e6)
     ini_ne[RP.G.nodes.on_out_wall_nids] .= 0.0
 
-    ini_ue_para = 1e6        # m/s, held constant
-    ini_BR_ext = 10e-4       # T — tilts B so the blob moves in both R and Z
-    ini_BZ_ext = 20e-4
+    ini_ue_para = 1.0e6        # m/s, held constant
+    ini_BR_ext = 10.0e-4       # T — tilts B so the blob moves in both R and Z
+    ini_BZ_ext = 20.0e-4
 
     function reset_to_initial_conditions!(RP)
         RP.plasma.ne = copy(ini_ne)
@@ -239,11 +239,11 @@ end
             if upwind
                 @test all(RP.plasma.ne .>= 0.0)
             else
-                @test all(RP.plasma.ne .>= -1e-9 * maximum(ini_ne))
+                @test all(RP.plasma.ne .>= -1.0e-9 * maximum(ini_ne))
             end
 
-            @test isapprox(actual_R, expected_R, rtol=5e-2)
-            @test isapprox(actual_Z, expected_Z, rtol=5e-2)
+            @test isapprox(actual_R, expected_R, rtol = 5.0e-2)
+            @test isapprox(actual_Z, expected_Z, rtol = 5.0e-2)
         end
     end
 
@@ -269,29 +269,29 @@ end
         RP_implicit_1 = deepcopy(RP)
 
         # θ=0 is algebraically identical to the explicit update
-        @test isapprox(RP_explicit.plasma.ne, RP_implicit_0.plasma.ne, rtol=1e-12)
+        @test isapprox(RP_explicit.plasma.ne, RP_implicit_0.plasma.ne, rtol = 1.0e-12)
         # θ=1 is close but must NOT be identical — it is a different scheme
-        @test isapprox(RP_explicit.plasma.ne, RP_implicit_1.plasma.ne, rtol=5e-2)
-        @test !isapprox(RP_explicit.plasma.ne, RP_implicit_1.plasma.ne, rtol=1e-12)
+        @test isapprox(RP_explicit.plasma.ne, RP_implicit_1.plasma.ne, rtol = 5.0e-2)
+        @test !isapprox(RP_explicit.plasma.ne, RP_implicit_1.plasma.ne, rtol = 1.0e-12)
     end
 end
 
-@testitem "Pure Diffusion: measured D matches configured D" setup=[PhysicsFixtures] begin
+@testitem "Pure Diffusion: measured D matches configured D" setup = [PhysicsFixtures] begin
     # A Gaussian blob spreads by diffusion alone. Convection and sources are off, so the
     # growth of the blob's variance gives back the configured diffusivity:
     #     σ²(t) - σ²(0) = 2·D·t
     # Checked separately for pure perpendicular and pure parallel diffusion.
     FT = Float64
     config = SimulationConfig{FT}(
-        NR=50, NZ=70,
-        R_min=0.8, R_max=2.2,
-        Z_min=-1.2, Z_max=1.2,
-        dt=1e-6, t_end_s=100e-6,
-        R0B0=1.0,
-        Dpara0=0.0, Dperp0=100.0,          # overridden per block below
-        prefilled_gas_pressure=5e-3,
-        wall_R=[1.0, 2.0, 2.0, 1.0],
-        wall_Z=[-1.0, -1.0, 1.0, 1.0],
+        NR = 50, NZ = 70,
+        R_min = 0.8, R_max = 2.2,
+        Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 100.0e-6,
+        R0B0 = 1.0,
+        Dpara0 = 0.0, Dperp0 = 100.0,          # overridden per block below
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [1.0, 2.0, 2.0, 1.0],
+        wall_Z = [-1.0, -1.0, 1.0, 1.0],
     )
     config.Output_path = scratch_output_dir()
 
@@ -328,8 +328,10 @@ end
         RAPID2D.combine_external_and_self_fields!(RP)
     end
 
-    measure_σ(ne) = (σR = sqrt(sum(ne .* (RP.G.R2D .- R0).^2) / sum(ne)),
-                     σZ = sqrt(sum(ne .* (RP.G.Z2D .- Z0).^2) / sum(ne)))
+    measure_σ(ne) = (
+        σR = sqrt(sum(ne .* (RP.G.R2D .- R0) .^ 2) / sum(ne)),
+        σZ = sqrt(sum(ne .* (RP.G.Z2D .- Z0) .^ 2) / sum(ne)),
+    )
 
     # Perpendicular only: with B purely toroidal the blob spreads isotropically in (R,Z)
     for implicit in (false, true)
@@ -348,7 +350,7 @@ end
             mean_σ_end = (σR_end + σZ_end) / 2
 
             estimated_Dperp0 = (mean_σ_end^2 - mean_σ0^2) / (2.0 * RP.time_s)
-            @test isapprox(estimated_Dperp0, RP.transport.Dperp0; rtol=0.05)
+            @test isapprox(estimated_Dperp0, RP.transport.Dperp0; rtol = 0.05)
         end
     end
 
@@ -357,11 +359,11 @@ end
     for implicit in (false, true)
         @testset "parallel only, Implicit=$implicit" begin
             RP.flags.Implicit = implicit
-            RP.config.Dpara0 = 1e6
+            RP.config.Dpara0 = 1.0e6
             RP.config.Dperp0 = 0
 
             initialize!(RP)
-            reset_to_initial_conditions!(RP, 50e-4, 100e-4)
+            reset_to_initial_conditions!(RP, 50.0e-4, 100.0e-4)
             RAPID2D.run_simulation!(RP)
 
             σR0, σZ0 = measure_σ(ini_ne)
@@ -372,27 +374,27 @@ end
             estimated_DRR = (σR_end^2 - σR0^2) / (2.0 * RP.time_s)
             estimated_DZZ = (σZ_end^2 - σZ0^2) / (2.0 * RP.time_s)
 
-            @test isapprox(avg_DRR, estimated_DRR; rtol=0.05)
-            @test isapprox(avg_DZZ, estimated_DZZ; rtol=0.05)
+            @test isapprox(avg_DRR, estimated_DRR; rtol = 0.05)
+            @test isapprox(avg_DZZ, estimated_DZZ; rtol = 0.05)
         end
     end
 end
 
-@testitem "Free Accel & Heating: no collision" setup=[PhysicsFixtures] begin
+@testitem "Free Accel & Heating: no collision" setup = [PhysicsFixtures] begin
     # Collisionless free acceleration in a static parallel E field. Transport, sources
     # and collisions are all off, so both species must reach exactly the ballistic
     # velocity  u = (q E_∥ / m)·t_end  — a direct check of the momentum equation.
     FT = Float64
     config = SimulationConfig{FT}(
-        NR=50, NZ=70,
-        R_min=0.8, R_max=2.2,
-        Z_min=-1.2, Z_max=1.2,
-        dt=1e-6, t_end_s=100e-6,
-        R0B0=1.0,
-        Dpara0=0.0, Dperp0=0.0,
-        prefilled_gas_pressure=5e-3,
-        wall_R=[1.0, 2.0, 2.0, 1.0],
-        wall_Z=[-1.0, -1.0, 1.0, 1.0],
+        NR = 50, NZ = 70,
+        R_min = 0.8, R_max = 2.2,
+        Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 100.0e-6,
+        R0B0 = 1.0,
+        Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [1.0, 2.0, 2.0, 1.0],
+        wall_Z = [-1.0, -1.0, 1.0, 1.0],
     )
     config.Output_path = scratch_output_dir()
 
@@ -419,8 +421,8 @@ end
     function reset_to_initial_conditions!(RP)
         RP.plasma.ne = copy(ini_n)
         RP.plasma.ni = copy(ini_n)
-        RP.fields.BR_ext .= 1e-4
-        RP.fields.BZ_ext .= 1e-4
+        RP.fields.BR_ext .= 1.0e-4
+        RP.fields.BZ_ext .= 1.0e-4
         RAPID2D.combine_external_and_self_fields!(RP)
     end
 
@@ -444,29 +446,29 @@ end
             expected_avg_ui_para = sum(@. ini_n * ion_accel_2D) / sum(ini_n) * RP.config.t_end_s
 
             actual_avg_ue_para = sum(RP.plasma.ne .* RP.plasma.ue_para) / sum(RP.plasma.ne)
-            @test isapprox(actual_avg_ue_para, expected_avg_ue_para; rtol=0.01)
+            @test isapprox(actual_avg_ue_para, expected_avg_ue_para; rtol = 0.01)
             actual_avg_ui_para = sum(RP.plasma.ni .* RP.plasma.ui_para) / sum(RP.plasma.ni)
-            @test isapprox(actual_avg_ui_para, expected_avg_ui_para; rtol=0.01)
+            @test isapprox(actual_avg_ui_para, expected_avg_ui_para; rtol = 0.01)
         end
     end
 end
 
-@testitem "Ionization without transport" setup=[PhysicsFixtures] begin
+@testitem "Ionization without transport" setup = [PhysicsFixtures] begin
     # Ionization in isolation: no transport, no heating, no field evolution, so density
     # changes come only from the source term. Two regimes are checked — below the
     # ionization threshold nothing happens at all, and above it the explicit and
     # implicit(θ=0) schemes must agree exactly.
     FT = Float64
     config = SimulationConfig{FT}(
-        NR=50, NZ=70,
-        R_min=0.8, R_max=2.2,
-        Z_min=-1.2, Z_max=1.2,
-        dt=1e-6, t_end_s=100e-6,
-        R0B0=1.0,
-        Dpara0=0.0, Dperp0=0.0,
-        prefilled_gas_pressure=5e-3,
-        wall_R=[1.0, 2.0, 2.0, 1.0],
-        wall_Z=[-1.0, -1.0, 1.0, 1.0],
+        NR = 50, NZ = 70,
+        R_min = 0.8, R_max = 2.2,
+        Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 100.0e-6,
+        R0B0 = 1.0,
+        Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [1.0, 2.0, 2.0, 1.0],
+        wall_Z = [-1.0, -1.0, 1.0, 1.0],
     )
     config.Output_path = scratch_output_dir()
 
@@ -492,14 +494,14 @@ end
     ini_n = gaussian_density(RP.G; R0, Z0, σR = 0.1, σZ = 0.1, peak = 1.0e6)
     ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
 
-    function run_case!(RP; implicit, Te_eV, implicit_weight=nothing)
+    function run_case!(RP; implicit, Te_eV, implicit_weight = nothing)
         RP.flags.Implicit = implicit
         implicit_weight === nothing || (RP.flags.Implicit_weight = implicit_weight)
         initialize!(RP)
         RP.plasma.ne = copy(ini_n)
         RP.plasma.ni = copy(ini_n)
-        RP.fields.BR_ext .= 1e-4
-        RP.fields.BZ_ext .= 1e-4
+        RP.fields.BR_ext .= 1.0e-4
+        RP.fields.BZ_ext .= 1.0e-4
         RAPID2D.combine_external_and_self_fields!(RP)
         RP.plasma.Te_eV .= Te_eV
         RAPID2D.run_simulation!(RP)
@@ -517,21 +519,21 @@ end
     end
 
     @testset "Te=10 eV: implicit θ=0 ≡ explicit, θ=1 within 1%" begin
-        explicit_plasma       = deepcopy(run_case!(RP; implicit=false, Te_eV=10.0))
-        implicit_plasma_zeroθ = deepcopy(run_case!(RP; implicit=true, Te_eV=10.0, implicit_weight=0.0))
-        implicit_plasma_oneθ  = deepcopy(run_case!(RP; implicit=true, Te_eV=10.0, implicit_weight=1.0))
+        explicit_plasma = deepcopy(run_case!(RP; implicit = false, Te_eV = 10.0))
+        implicit_plasma_zeroθ = deepcopy(run_case!(RP; implicit = true, Te_eV = 10.0, implicit_weight = 0.0))
+        implicit_plasma_oneθ = deepcopy(run_case!(RP; implicit = true, Te_eV = 10.0, implicit_weight = 1.0))
 
         @test isequal(explicit_plasma.ne, implicit_plasma_zeroθ.ne)
         # θ=1 differs by an O(ν_iz·dt) first-order scheme error (ν_iz,max·dt ≈ 7.5e-3
         # → ~0.6%). Ordinary numerics, not a bug.
-        @test isapprox(explicit_plasma.ne, implicit_plasma_oneθ.ne, rtol=1e-2)
+        @test isapprox(explicit_plasma.ne, implicit_plasma_oneθ.ne, rtol = 1.0e-2)
     end
 end
 
 # SEQUENTIAL — do not split. Block (c) runs 100 MORE timesteps from the state block (b)
 # left behind (t: 1 ms → 2 ms) and asserts the density has saturated RELATIVE to the
 # 1 ms value. The later blocks are meaningless standalone.
-@testitem "Thermal ionization at low/zero E/p (ClampExtrap low-field limit)" setup=[PhysicsFixtures] begin
+@testitem "Thermal ionization at low/zero E/p (ClampExtrap low-field limit)" setup = [PhysicsFixtures] begin
     # E/p = 0 does NOT mean zero rate: ionization is set by the electron energy
     # distribution, so a 10 eV Maxwellian ionizes with no applied field at all.
     # ClampExtrap gives sub-minimum-E/p cells the low-field boundary rate; the old
@@ -544,10 +546,10 @@ end
     # are loose so an RRC-table refresh does not break them.
     FT = Float64
     config = SimulationConfig{FT}(
-        NR=20, NZ=30, R_min=0.8, R_max=2.2, Z_min=-1.2, Z_max=1.2,
-        dt=1e-5, t_end_s=2000e-6, R0B0=1.0, Dpara0=0.0, Dperp0=0.0,
-        prefilled_gas_pressure=5e-3,
-        wall_R=[1.0, 2.0, 2.0, 1.0], wall_Z=[-1.0, -1.0, 1.0, 1.0],
+        NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-5, t_end_s = 2000.0e-6, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
     )
     config.Output_path = scratch_output_dir()
 
@@ -575,8 +577,8 @@ end
 
     RP.plasma.ne = copy(ini_n)
     RP.plasma.ni = copy(ini_n)
-    RP.fields.BR_ext .= 1e-4
-    RP.fields.BZ_ext .= 1e-4
+    RP.fields.BR_ext .= 1.0e-4
+    RP.fields.BZ_ext .= 1.0e-4
     RAPID2D.combine_external_and_self_fields!(RP)
     Te0 = 10.0
     RP.plasma.Te_eV .= Te0
@@ -605,14 +607,14 @@ end
     end
     ne_2ms = sum(RP.plasma.ne)
     Te_2ms = sum(RP.plasma.ne .* RP.plasma.Te_eV) / sum(RP.plasma.ne)
-    @test isapprox(ne_2ms, ne_1ms; rtol=1e-2)     # ionization has shut off; ne saturated
+    @test isapprox(ne_2ms, ne_1ms; rtol = 1.0e-2)     # ionization has shut off; ne saturated
     @test Te_2ms < Te_1ms                         # still cooling (measured 1.81 < 2.00)
     @test Te_2ms > RP.config.constants.room_T_eV  # but not below the gas temperature
     @test !any(isnan, RP.plasma.ne)
     @test !any(isnan, RP.plasma.Te_eV)
 end
 
-@testitem "Te relaxes to room_T_eV over ~tau_E, from both directions" setup=[PhysicsFixtures] begin
+@testitem "Te relaxes to room_T_eV over ~tau_E, from both directions" setup = [PhysicsFixtures] begin
     # Elastic electron-neutral collisions equilibrate Te with the gas on
     #     tau_E = 1/(2·(me/mi)·nu_en_mom),   nu_en_mom = n_gas·RRC_mom
     # Measured: nu_en_mom ≈ 1.70e4 /s, 2me/mi = 5.44e-4 ⇒ tau_E ≈ 0.108 s.
@@ -624,10 +626,10 @@ end
     # Builds a fresh, fully independent scenario at the given starting Te.
     function build_relaxation_case(Te0)
         config = SimulationConfig{FT}(
-            NR=20, NZ=30, R_min=0.8, R_max=2.2, Z_min=-1.2, Z_max=1.2,
-            dt=1e-3, t_end_s=0.5, R0B0=1.0, Dpara0=0.0, Dperp0=0.0,
-            prefilled_gas_pressure=5e-3,
-            wall_R=[1.0, 2.0, 2.0, 1.0], wall_Z=[-1.0, -1.0, 1.0, 1.0],
+            NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+            dt = 1.0e-3, t_end_s = 0.5, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
+            prefilled_gas_pressure = 5.0e-3,
+            wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
         )
         config.Output_path = scratch_output_dir()
 
@@ -653,8 +655,8 @@ end
         ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
         RP.plasma.ne = copy(ini_n)
         RP.plasma.ni = copy(ini_n)
-        RP.fields.BR_ext .= 1e-4
-        RP.fields.BZ_ext .= 1e-4
+        RP.fields.BR_ext .= 1.0e-4
+        RP.fields.BZ_ext .= 1.0e-4
         RAPID2D.combine_external_and_self_fields!(RP)
         RP.plasma.Te_eV .= Te0
         return RP, config, sum(ini_n)
@@ -668,7 +670,7 @@ end
         me, mi = RP0.config.constants.me, RP0.config.constants.mi
         inw = RP0.G.nodes.in_wall_nids
         ν_mom = sum(RP0.plasma.ν_en_mom[inw]) / length(inw)
-        τ_E = 1 / (2 * (me/mi) * ν_mom)
+        τ_E = 1 / (2 * (me / mi) * ν_mom)
         @test ν_mom > 0.0
         @test 0.01 < τ_E < 1.0        # measured ≈ 0.108 s
     end
@@ -684,7 +686,7 @@ end
             end
             Te_end = weighted_Te(RP)
 
-            @test isapprox(Te_end, room; rtol=0.10)   # within 1.3% (hot) / 3.9% (cold)
+            @test isapprox(Te_end, room; rtol = 0.1)   # within 1.3% (hot) / 3.9% (cold)
             if is_hot
                 @test Te_end < Te0                    # hot electrons cooled by the gas
             else
@@ -692,7 +694,7 @@ end
             end
 
             # Far below the ionization threshold → density untouched
-            @test isapprox(sum(RP.plasma.ne), ini_sum; rtol=1e-6)
+            @test isapprox(sum(RP.plasma.ne), ini_sum; rtol = 1.0e-6)
             @test all(RP.plasma.ν_en_iz .== 0.0)
             @test !any(isnan, RP.plasma.Te_eV)
         end
@@ -714,7 +716,7 @@ end
     config = SimulationConfig{Float64}(
         device_Name = "manual",
         NR = 20, NZ = 20,
-        prefilled_gas_pressure = 5e-3,
+        prefilled_gas_pressure = 5.0e-3,
         R0B0 = 1.0,
         dt = 1.0e-6,
         Dperp0 = 001,
@@ -752,7 +754,7 @@ end
         @test mean(RP.plasma.iPowers.equi) > 0.0
     end
     @testset "ui=1e3, Ti=T_gas, Ti<Te" begin
-        RP.plasma.ui_para .= 1e3
+        RP.plasma.ui_para .= 1.0e3
         RP.plasma.Ti_eV .= 1.0
         RP.plasma.T_gas_eV = 1.0
         RP.plasma.Te_eV .= 0.1
@@ -765,7 +767,7 @@ end
         # Ion flow through the neutral gas heats the ions
         @test all(RP.plasma.iPowers.atomic[in_wall_nids] .> 0.0)
         # Ti > Te ⇒ ions lose energy to the electrons
-        @test all(RP.plasma.iPowers.equi[in_wall_nids] .< 0.0 )
+        @test all(RP.plasma.iPowers.equi[in_wall_nids] .< 0.0)
     end
     @testset "ui=0, Ti>T_gas, Ti=Te" begin
         RP.plasma.ui_para .= 0.0
@@ -833,10 +835,10 @@ end
     config = SimulationConfig{FT}(
         device_Name = "manual",
         NR = 20, NZ = 20,
-        prefilled_gas_pressure = 5e-3,
+        prefilled_gas_pressure = 5.0e-3,
         R0B0 = 1.0,
-        dt = 10e-6,
-        t_end_s = 10e-3,
+        dt = 10.0e-6,
+        t_end_s = 10.0e-3,
     )
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
@@ -854,7 +856,7 @@ end
     RP.plasma.ne .= 2.841e15
     RP.plasma.ni .= RP.plasma.ne
     RP.plasma.Te_eV .= 1.0
-    RP.plasma.Ti_eV .= 1e-6
+    RP.plasma.Ti_eV .= 1.0e-6
 
     update_coulomb_collision_parameters!(RP)
 
@@ -864,35 +866,35 @@ end
     avg_ini_Ti = mean(RP.plasma.Ti_eV[in_wall_nids])
     avg_ini_Te = mean(RP.plasma.Te_eV[in_wall_nids])
     avg_ini_τ_ei = 1.0 ./ mean(RP.plasma.ν_ei)
-    avg_ini_τ_eq = 0.5*((mi+me)^2/(mi*me))*avg_ini_τ_ei
+    avg_ini_τ_eq = 0.5 * ((mi + me)^2 / (mi * me)) * avg_ini_τ_ei
 
-    @test isapprox(mean(RP.plasma.ν_ei), 1e5, rtol=1e-4)
-    @test isapprox(avg_ini_τ_ei, 10e-6, rtol=1e-4)
+    @test isapprox(mean(RP.plasma.ν_ei), 1.0e5, rtol = 1.0e-4)
+    @test isapprox(avg_ini_τ_ei, 10.0e-6, rtol = 1.0e-4)
 
     ΔT0 = abs(avg_ini_Te - avg_ini_Ti)
-    analytic_ΔT = (τeq, t) -> ΔT0*exp(-2*t/τeq)
+    analytic_ΔT = (τeq, t) -> ΔT0 * exp(-2 * t / τeq)
     measure_ΔT = () -> mean(RP.plasma.Te_eV[in_wall_nids]) - mean(RP.plasma.Ti_eV[in_wall_nids])
 
     # Each run_simulation! RESUMES from the previous end state (no time reset).
-    RP.t_end_s = 50e-6
+    RP.t_end_s = 50.0e-6
     run_simulation!(RP)
-    @test isapprox(analytic_ΔT(avg_ini_τ_eq, RP.time_s), measure_ΔT(), rtol=1e-3)
+    @test isapprox(analytic_ΔT(avg_ini_τ_eq, RP.time_s), measure_ΔT(), rtol = 1.0e-3)
 
-    RP.t_end_s = 1e-3
+    RP.t_end_s = 1.0e-3
     run_simulation!(RP)
-    @test isapprox(analytic_ΔT(avg_ini_τ_eq, RP.time_s), measure_ΔT(), rtol=1e-2)
+    @test isapprox(analytic_ΔT(avg_ini_τ_eq, RP.time_s), measure_ΔT(), rtol = 1.0e-2)
 
-    RP.t_end_s = 5e-3
+    RP.t_end_s = 5.0e-3
     run_simulation!(RP)
-    @test isapprox(mean(RP.plasma.Te_eV[in_wall_nids]), 0.7581, atol=0.01)
-    @test isapprox(mean(RP.plasma.Ti_eV[in_wall_nids]), 0.2425, atol=0.01)
+    @test isapprox(mean(RP.plasma.Te_eV[in_wall_nids]), 0.7581, atol = 0.01)
+    @test isapprox(mean(RP.plasma.Ti_eV[in_wall_nids]), 0.2425, atol = 0.01)
 
     # Much longer, with a coarser timestep: both must settle at the mean, 0.5 eV
     RP.dt *= 10
-    RP.t_end_s = 40e-3
+    RP.t_end_s = 40.0e-3
     run_simulation!(RP)
-    @test isapprox(mean(RP.plasma.Te_eV[in_wall_nids]), 0.5, atol=0.01)
-    @test isapprox(mean(RP.plasma.Ti_eV[in_wall_nids]), 0.5, atol=0.01)
+    @test isapprox(mean(RP.plasma.Te_eV[in_wall_nids]), 0.5, atol = 0.01)
+    @test isapprox(mean(RP.plasma.Ti_eV[in_wall_nids]), 0.5, atol = 0.01)
 
-    @test isapprox(RP.plasma.Te_eV[in_wall_nids], RP.plasma.Ti_eV[in_wall_nids], rtol=1e-3)
+    @test isapprox(RP.plasma.Te_eV[in_wall_nids], RP.plasma.Ti_eV[in_wall_nids], rtol = 1.0e-3)
 end

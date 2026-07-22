@@ -11,7 +11,7 @@
         dims_RZ = (20, 25)
 
         # Create mock data
-        mock_ne = rand(dims_RZ...) * 1e19
+        mock_ne = rand(dims_RZ...) * 1.0e19
         mock_Te = rand(dims_RZ...) * 8.0
 
         # Test Snapshot2D memory isolation
@@ -23,16 +23,16 @@
         snap2D_2.ne .= mock_ne .* 2.0
 
         # Modify original data
-        mock_ne[1,1] = 9.99e20
+        mock_ne[1, 1] = 9.99e20
 
         # Snapshots should be unaffected (proper memory isolation)
-        @test snap2D_1.ne[1,1] != 9.99e20
-        @test snap2D_2.ne[1,1] != 9.99e20
+        @test snap2D_1.ne[1, 1] != 9.99e20
+        @test snap2D_2.ne[1, 1] != 9.99e20
         @test snap2D_1.ne !== snap2D_2.ne  # Different memory locations
 
         # Test that each snapshot maintains independent data
-        snap2D_1.ne[2,2] = 1.23e19
-        @test snap2D_2.ne[2,2] != 1.23e19  # Should not be affected
+        snap2D_1.ne[2, 2] = 1.23e19
+        @test snap2D_2.ne[2, 2] != 1.23e19  # Should not be affected
     end
 
     @testset "Snapshot0D Independence" begin
@@ -73,7 +73,7 @@
         for i in 1:5
             snap0D = Snapshot0D{Float64}()
             snap0D.step = i * 100
-            snap0D.ne = i * 1e18
+            snap0D.ne = i * 1.0e18
             push!(diag.snaps0D, snap0D)
             diag.tid_0D += 1
         end
@@ -81,11 +81,11 @@
         @test length(diag.snaps0D) == 5
         @test diag.tid_0D == 5
         @test diag.snaps0D[3].step == 300
-        @test diag.snaps0D[3].ne ≈ 3e18
+        @test diag.snaps0D[3].ne ≈ 3.0e18
 
         # Test that snapshots in vector are independent
         diag.snaps0D[1].ne = 9.99e18
-        @test diag.snaps0D[2].ne ≈ 2e18  # Should not be affected
+        @test diag.snaps0D[2].ne ≈ 2.0e18  # Should not be affected
     end
 
     @testset "Type Consistency" begin
@@ -162,22 +162,22 @@
         dims_RZ = (8, 12)
 
         snap2D = Snapshot2D{Float64}(dims_RZ = dims_RZ)
-        test_data = rand(dims_RZ...) * 1e19
+        test_data = rand(dims_RZ...) * 1.0e19
 
         # Safe assignment (creates copy)
         snap2D.ne .= test_data
-        original_value = test_data[1,1]
+        original_value = test_data[1, 1]
 
         # Modify original data
-        test_data[1,1] = 9.99e20
+        test_data[1, 1] = 9.99e20
 
         # Snapshot should retain original value (not affected by reference)
-        @test snap2D.ne[1,1] ≈ original_value
-        @test snap2D.ne[1,1] != 9.99e20
+        @test snap2D.ne[1, 1] ≈ original_value
+        @test snap2D.ne[1, 1] != 9.99e20
 
         # Test that snap2D.ne is actually a copy, not a reference
-        snap2D.ne[2,2] = 7.77e19
-        @test test_data[2,2] != 7.77e19  # Original data should be unaffected
+        snap2D.ne[2, 2] = 7.77e19
+        @test test_data[2, 2] != 7.77e19  # Original data should be unaffected
     end
 end
 
@@ -244,7 +244,7 @@ end
 
             # With isapprox, depends on nans parameter
             @test !isapprox(snap1, snap2)  # nans=false by default
-            @test isapprox(snap1, snap2, nans=true)  # nans=true treats NaN as equal
+            @test isapprox(snap1, snap2, nans = true)  # nans=true treats NaN as equal
         end
 
         @testset "Dictionary Field Equality" begin
@@ -342,13 +342,13 @@ end
             snap2 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
 
             # Set some matrix values
-            snap1.ne[1,1] = 1.5e19
-            snap1.Te_eV[2,3] = 8.0
+            snap1.ne[1, 1] = 1.5e19
+            snap1.Te_eV[2, 3] = 8.0
             snap1.step = 100
             snap1.time_s = 1.23
 
-            snap2.ne[1,1] = 1.5e19
-            snap2.Te_eV[2,3] = 8.0
+            snap2.ne[1, 1] = 1.5e19
+            snap2.Te_eV[2, 3] = 8.0
             snap2.step = 100
             snap2.time_s = 1.23
 
@@ -357,7 +357,7 @@ end
             @test isapprox(snap1, snap2)
 
             # Test matrix inequality
-            snap2.ne[1,1] = 2.0e19
+            snap2.ne[1, 1] = 2.0e19
             @test !(snap1 == snap2)
             @test !isequal(snap1, snap2)
             @test !isapprox(snap1, snap2)
@@ -369,12 +369,12 @@ end
             snap2 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
 
             # Set some regular values
-            snap1.ne[1,1] = 1.5e19
-            snap2.ne[1,1] = 1.5e19
+            snap1.ne[1, 1] = 1.5e19
+            snap2.ne[1, 1] = 1.5e19
 
             # Test NaN handling in matrices
-            snap1.ne[3,3] = NaN
-            snap2.ne[3,3] = NaN
+            snap1.ne[3, 3] = NaN
+            snap2.ne[3, 3] = NaN
 
             # With ==, NaN != NaN
             @test !(snap1 == snap2)
@@ -384,7 +384,7 @@ end
 
             # With isapprox
             @test !isapprox(snap1, snap2)  # nans=false by default
-            @test isapprox(snap1, snap2, nans=true)  # nans=true treats NaN as equal
+            @test isapprox(snap1, snap2, nans = true)  # nans=true treats NaN as equal
         end
 
         @testset "Approximate Equality" begin
@@ -393,19 +393,19 @@ end
             snap2 = Snapshot2D{Float64}(dims_RZ = dims_RZ)
 
             # Set slightly different values
-            snap1.ne[1,1] = 1.0000001e19
-            snap2.ne[1,1] = 1.0000002e19
+            snap1.ne[1, 1] = 1.0000001e19
+            snap2.ne[1, 1] = 1.0000002e19
 
-            snap1.Te_eV[2,2] = 5.0000001
-            snap2.Te_eV[2,2] = 5.0000002
+            snap1.Te_eV[2, 2] = 5.0000001
+            snap2.Te_eV[2, 2] = 5.0000002
 
             # Should not be exactly equal
             @test !(snap1 == snap2)
             @test !isequal(snap1, snap2)
 
             # But should be approximately equal
-            @test isapprox(snap1, snap2, rtol=1e-6)
-            @test !isapprox(snap1, snap2, rtol=1e-8)
+            @test isapprox(snap1, snap2, rtol = 1.0e-6)
+            @test !isapprox(snap1, snap2, rtol = 1.0e-8)
         end
 
         @testset "Scalar vs Matrix Field Types" begin
@@ -428,7 +428,7 @@ end
             @test !(snap1 == snap2)
 
             snap1.step = 100  # Reset
-            snap1.ne[1,1] = 1e19  # Change matrix
+            snap1.ne[1, 1] = 1.0e19  # Change matrix
             @test !(snap1 == snap2)
         end
 
@@ -438,8 +438,8 @@ end
             snap_f32 = Snapshot2D{Float32}(dims_RZ = dims_RZ)
 
             # Set some values
-            snap_f64.ne[1,1] = 1.5e19
-            snap_f32.ne[1,1] = 1.5f19
+            snap_f64.ne[1, 1] = 1.5e19
+            snap_f32.ne[1, 1] = 1.5f19
 
             # Different float types should be comparable
             @test !(snap_f64 == snap_f32)
@@ -455,7 +455,7 @@ end
         snap2D = Snapshot2D{Float64}(dims_RZ = dims_RZ)
 
         # These should not be equal (and shouldn't crash)
-        @test !( snap0D == snap2D ) # Fall back to default equality
+        @test !(snap0D == snap2D) # Fall back to default equality
         @test !isequal(snap0D, snap2D) # Fall back to default equality
         @test_throws MethodError isapprox(snap0D, snap2D)
     end

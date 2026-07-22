@@ -40,7 +40,7 @@ position_ctrl = Controller{Float64}(
 )
 ```
 """
-@kwdef mutable struct Controller{FT<:AbstractFloat}
+@kwdef mutable struct Controller{FT <: AbstractFloat}
     pid::DiscretePID{FT}
     target::FT = FT(0.0)
     coils::Vector{Coil{FT}} = Coil{FT}[]
@@ -63,7 +63,7 @@ Container for multiple controllers working together.
 - `temperature`: Temperature controller (optional)
 - `custom`: Dictionary for additional custom controllers
 """
-@kwdef mutable struct ControllerSet{FT<:AbstractFloat}
+@kwdef mutable struct ControllerSet{FT <: AbstractFloat}
     current::Union{Nothing, Controller{FT}} = nothing
     position::Union{Nothing, Controller{FT}} = nothing
     temperature::Union{Nothing, Controller{FT}} = nothing
@@ -72,4 +72,4 @@ end
 
 # Export types
 export Controller, ControllerSet,
-       CurrentController, PositionController, TemperatureController
+    CurrentController, PositionController, TemperatureController

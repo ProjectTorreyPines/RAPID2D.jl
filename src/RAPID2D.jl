@@ -114,8 +114,8 @@ rp = create_rapid_object(config=config)
 ```
 """
 function create_rapid_object(;
-    config::SimulationConfig{FT}=SimulationConfig{Float64}(),
-) where {FT<:AbstractFloat}
+        config::SimulationConfig{FT} = SimulationConfig{Float64}(),
+    ) where {FT <: AbstractFloat}
 
     # Create a RAPID object directly from the configuration
     RP = RAPID{FT}(config)

@@ -14,7 +14,7 @@ Throws an error if any required parameter is missing or has an invalid value.
 # Raises
 - `ArgumentError`: If any required parameter is missing or invalid
 """
-function validate_config!(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
+function validate_config!(config::SimulationConfig{FT}) where {FT <: AbstractFloat}
     missing_params = String[]
 
     # Check required physical parameters
@@ -37,7 +37,7 @@ function validate_config!(config::SimulationConfig{FT}) where {FT<:AbstractFloat
     # Raise error if any required parameters are missing
     if !isempty(missing_params)
         error_msg = "Missing required configuration parameters: $(join(missing_params, ", ")). " *
-                   "Please set these parameters before creating the RAPID object."
+            "Please set these parameters before creating the RAPID object."
         throw(ArgumentError(error_msg))
     end
 
@@ -65,7 +65,7 @@ export validate_config!
 
 Initialize all components of the RAPID simulation.
 """
-function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Reset the global timer for fresh timing measurements
     reset_timer!(RAPID_TIMER)
 
@@ -100,9 +100,11 @@ function initialize!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     setup_grid_state_and_volumes_with_wall!(RP)
 
     # calculate damping function using fitted_wall
-    RP.damping_func = cal_damping_function_outside_wall(RP,
-                                                        RP.G.R1D, RP.G.Z1D,
-                                                        RP.fitted_wall.R, RP.fitted_wall.Z)
+    RP.damping_func = cal_damping_function_outside_wall(
+        RP,
+        RP.G.R1D, RP.G.Z1D,
+        RP.fitted_wall.R, RP.fitted_wall.Z
+    )
 
     # Initialize reaction rate coefficients
     initialize_RRCs!(RP)
@@ -138,7 +140,7 @@ end
 
 Initialize all physical field variables.
 """
-function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Create properly sized field objects
     RP.plasma = PlasmaState{FT}(RP.G.NR, RP.G.NZ)
     # RP.fields = Fields{FT}(RP.G.NR, RP.G.NZ)
@@ -154,15 +156,15 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT<:AbstractFloa
 
     # Set initial gas density
     RP.plasma.n_H2_gas .= RP.config.prefilled_gas_pressure ./
-                           (RP.plasma.T_gas_eV * RP.config.ee) .*
-                           ones(FT, RP.G.NR, RP.G.NZ)
+        (RP.plasma.T_gas_eV * RP.config.ee) .*
+        ones(FT, RP.G.NR, RP.G.NZ)
 
     # No gas → atomic collision rates are identically zero, so skip those routines entirely
     # (they would also divide E_para by n_gas=0). Static case only; a cell depleting to 0
     # while prefilled_gas_pressure > 0 is caught per-cell by the guard in get_electron_RRC.
     if iszero(RP.config.prefilled_gas_pressure) && RP.flags.Atomic_Collision
         @info "No neutral gas (prefilled_gas_pressure = 0): disabling Atomic_Collision " *
-              "(electron/ion–neutral collision rates are identically zero)."
+            "(electron/ion–neutral collision rates are identically zero)."
         RP.flags.Atomic_Collision = false
     end
 
@@ -187,7 +189,7 @@ end
 
 Initialize the numerical operators for the simulation.
 """
-function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Create properly sized operators object
     RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
 
@@ -222,13 +224,13 @@ function initialize_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     if RP.flags.diffu && RP.flags.Implicit
         # Update the diffusion tensor components
         RP.transport.DRR .= RP.transport.Dperp .+
-                             (RP.transport.Dpara .- RP.transport.Dperp) .*
-                             (RP.fields.bR).^2
+            (RP.transport.Dpara .- RP.transport.Dperp) .*
+            (RP.fields.bR) .^ 2
         RP.transport.DRZ .= (RP.transport.Dpara .- RP.transport.Dperp) .*
-                             RP.fields.bR .* RP.fields.bZ
+            RP.fields.bR .* RP.fields.bZ
         RP.transport.DZZ .= RP.transport.Dperp .+
-                             (RP.transport.Dpara .- RP.transport.Dperp) .*
-                             (RP.fields.bZ).^2
+            (RP.transport.Dpara .- RP.transport.Dperp) .*
+            (RP.fields.bZ) .^ 2
 
         # Construct diffusion operator
         # RP.operators.∇𝐃∇ = construct_∇𝐃∇(RP, ...)
@@ -243,7 +245,7 @@ end
 Set up electromagnetic fields manually for a test case.
 This initializes a simple geometry with analytical field configurations.
 """
-function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Set grid dimensions
     NR = RP.G.NR > 0 ? RP.G.NR : 50  # Default if not already set
     NZ = RP.G.NZ > 0 ? RP.G.NZ : 100 # Default if not already set
@@ -254,7 +256,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     Z_max = isnothing(RP.config.Z_max) ? FT(1.2) : RP.config.Z_max
     Z_min = isnothing(RP.config.Z_min) ? FT(-1.2) : RP.config.Z_min
 
-    RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max));
+    RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
 
     if isempty(RP.config.wall_R) || isempty(RP.config.wall_Z)
         # Set default wall coordinates if not provided
@@ -286,7 +288,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     end
 
     # Set basic field strengths
-    Bpol = FT(5e-3)  # Poloidal field strength
+    Bpol = FT(5.0e-3)  # Poloidal field strength
 
     RP.fields.R0B0 = RP.config.R0B0
 
@@ -296,8 +298,8 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     RP.fields.BZ = Bpol * ones(FT, NR, NZ)
 
     # Compute derived field quantities
-    RP.fields.Bpol = sqrt.(RP.fields.BR.^2 .+ RP.fields.BZ.^2)
-    RP.fields.Btot = sqrt.(RP.fields.BR.^2 .+ RP.fields.BZ.^2 .+ RP.fields.Bϕ.^2)
+    RP.fields.Bpol = sqrt.(RP.fields.BR .^ 2 .+ RP.fields.BZ .^ 2)
+    RP.fields.Btot = sqrt.(RP.fields.BR .^ 2 .+ RP.fields.BZ .^ 2 .+ RP.fields.Bϕ .^ 2)
 
     # Unit vectors for the fields
     RP.fields.bR = RP.fields.BR ./ RP.fields.Btot
@@ -330,7 +332,7 @@ end
 Set up electromagnetic fields from external files.
 This function loads field data from the specified path and initializes the simulation grid.
 """
-function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String="") where {FT<:AbstractFloat}
+function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String = "") where {FT <: AbstractFloat}
 
     if isempty(dir_path)
         dir_path = joinpath(RP.config.Input_path, RP.config.device_Name, RP.config.shot_Name)
@@ -340,13 +342,14 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String="") where {FT<:Ab
     RP.fields.R0B0 = RP.config.R0B0
 
     # Load external field data
-    load_external_field_data!(RP, dir_path;
-            r_num = RP.config.NR,
-            r_min = RP.config.R_min,
-            r_max = RP.config.R_max,
-            z_num = RP.config.NZ,
-            z_min = RP.config.Z_min,
-            z_max = RP.config.Z_max
+    load_external_field_data!(
+        RP, dir_path;
+        r_num = RP.config.NR,
+        r_min = RP.config.R_min,
+        r_max = RP.config.R_max,
+        z_num = RP.config.NZ,
+        z_min = RP.config.Z_min,
+        z_max = RP.config.Z_max
     )
 
     # Set grid dimensions from the loaded data
@@ -358,7 +361,7 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String="") where {FT<:Ab
     Z_min = RP.external_field.Z_MIN
     Z_max = RP.external_field.Z_MAX
 
-    RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max));
+    RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
 
     if isempty(RP.config.wall_R) || isempty(RP.config.wall_Z)
         # Read device wall data
@@ -371,11 +374,13 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String="") where {FT<:Ab
     return RP
 end
 
-function cal_damping_function_outside_wall(RP::RAPID{FT},
-                                         R1D::Vector{FT},
-                                         Z1D::Vector{FT},
-                                         Wall_R::Vector{FT},
-                                         Wall_Z::Vector{FT}) where {FT<:AbstractFloat}
+function cal_damping_function_outside_wall(
+        RP::RAPID{FT},
+        R1D::Vector{FT},
+        Z1D::Vector{FT},
+        Wall_R::Vector{FT},
+        Wall_Z::Vector{FT}
+    ) where {FT <: AbstractFloat}
     # Create a 2D grid from R1D and Z1D coordinates
     R2D, Z2D = meshgrid(R1D, Z1D)
 
@@ -389,10 +394,12 @@ function cal_damping_function_outside_wall(RP::RAPID{FT},
     for i in eachindex(R2D)
         if !isInside[i]
             # For points outside the wall, find minimum distance to any wall segment
-            for j in 1:length(Wall_R)-1
-                edge = [Wall_R[j] Wall_Z[j]; Wall_R[j+1] Wall_Z[j+1]]
-                distanceToWall[i] = min(distanceToWall[i],
-                                       distance_point_edge([R2D[i], Z2D[i]], edge))
+            for j in 1:(length(Wall_R) - 1)
+                edge = [Wall_R[j] Wall_Z[j]; Wall_R[j + 1] Wall_Z[j + 1]]
+                distanceToWall[i] = min(
+                    distanceToWall[i],
+                    distance_point_edge([R2D[i], Z2D[i]], edge)
+                )
             end
         end
     end
@@ -410,15 +417,17 @@ function cal_damping_function_outside_wall(RP::RAPID{FT},
     sigma = sqrt(dR^2 + dZ^2)
 
     # Calculate distance from boundaries for boundary damping
-    distanceToBoundary = min.(min.(R2D .- R_min, R_max .- R2D),
-                             min.(Z2D .- Z_min, Z_max .- Z2D))
+    distanceToBoundary = min.(
+        min.(R2D .- R_min, R_max .- R2D),
+        min.(Z2D .- Z_min, Z_max .- Z2D)
+    )
 
     # Create boundary damping function - 1 inside wall, decaying near boundaries
-    boundaryDamping = 1 .- exp.(-(distanceToBoundary.^2) ./ (2 * sigma^2))
+    boundaryDamping = 1 .- exp.(-(distanceToBoundary .^ 2) ./ (2 * sigma^2))
     boundaryDamping[isInside] .= 1
 
     # Create wall damping function - 1 inside wall, exponentially decaying outside
-    wallDamping = exp.(-(distanceToWall.^2) ./ (2 * sigma^2))
+    wallDamping = exp.(-(distanceToWall .^ 2) ./ (2 * sigma^2))
     wallDamping[isInside] .= 1  # No damping inside wall
 
     # Combine damping functions (multiply boundary and wall damping)
@@ -439,7 +448,7 @@ Calculate the minimum distance from a point to a line segment (edge).
 # Returns
 - The minimum distance from the point to the line segment
 """
-function distance_point_edge(point::Vector{FT}, edge::Matrix{FT}) where {FT<:AbstractFloat}
+function distance_point_edge(point::Vector{FT}, edge::Matrix{FT}) where {FT <: AbstractFloat}
     # Create vectors for calculation
     a = [edge[2, 1] - edge[1, 1], edge[2, 2] - edge[1, 2], FT(0)]  # Vector along edge
     b = [point[1] - edge[1, 1], point[2] - edge[1, 2], FT(0)]     # Vector from edge start to point
@@ -471,7 +480,7 @@ function load_H2_Ion_RRCs()
     return iRRCs
 end
 
-function initialize_RRCs!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.eRRCs = load_electron_RRCs()
     # Validate the loaded table's excitation normalization against our constant here,
     # where RP.config is available (rather than inside the Electron_RRCs constructor).
@@ -480,7 +489,7 @@ function initialize_RRCs!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Determine boundary indices
     NR = RP.G.NR
     NZ = RP.G.NZ
@@ -517,12 +526,12 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
         zid = nodes.zid[nid]
 
         # Define neighborhood indices, making sure they are within bounds
-        ngh_rids = max(1, rid-1):min(NR, rid+1)
-        ngh_zids = max(1, zid-1):min(NZ, zid+1)
+        ngh_rids = max(1, rid - 1):min(NR, rid + 1)
+        ngh_zids = max(1, zid - 1):min(NZ, zid + 1)
 
         # Check if this outside point has any inside neighbors
         # If sum is greater than -N (where N is number of neighbors), some neighbors are inside
-        if sum(nodes.state[ngh_rids, ngh_zids]) > -length(ngh_rids)*length(ngh_zids)
+        if sum(nodes.state[ngh_rids, ngh_zids]) > -length(ngh_rids) * length(ngh_zids)
             push!(nodes.on_wall_nids, nid)
         end
     end
@@ -540,8 +549,8 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
     # Find and store neighboring node information for on-wall nodes
     for zid in 1:NZ, rid in 1:NR
         # Define neighborhood indices (3x3 grid around current node)
-        ngh_rids = max(1, rid-1):min(NR, rid+1)
-        ngh_zids = max(1, zid-1):min(NZ, zid+1)
+        ngh_rids = max(1, rid - 1):min(NR, rid + 1)
+        ngh_zids = max(1, zid - 1):min(NZ, zid + 1)
 
         # Initialize neighbor lists for this node
         nodes.ngh_normal_in_wall_nids[rid, zid] = Int[]
@@ -574,8 +583,8 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
 
     # Find and store neighboring on-wall nodes for in-wall nodes
     for zid in 1:NZ, rid in 1:NR
-        ngh_rids = max(1, rid-1):min(NR, rid+1)
-        ngh_zids = max(1, zid-1):min(NZ, zid+1)
+        ngh_rids = max(1, rid - 1):min(NR, rid + 1)
+        ngh_zids = max(1, zid - 1):min(NZ, zid + 1)
 
         # Initialize neighbor list for this node
         nodes.ngh_on_wall_nids[rid, zid] = Int[]
@@ -613,7 +622,7 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
 
         # Find path of 0-valued nodes (on-wall nodes) starting from initial point
         # This traces the wall along grid points that lie on the actual boundary
-        path = trace_zero_contour(nodes.state, (rid=ini_rid, zid=ini_zid))
+        path = trace_zero_contour(nodes.state, (rid = ini_rid, zid = ini_zid))
 
         # Extract R and Z coordinates for the fitted wall
         fitted_wall_R = Vector{FT}(undef, length(path) + 1)
@@ -661,11 +670,11 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
         zid = nodes.zid[nid]
 
         # Define 2x2 cell region around the boundary node
-        rr = max(1, rid-1):rid
-        zz = max(1, zid-1):zid
+        rr = max(1, rid - 1):rid
+        zz = max(1, zid - 1):zid
 
         # Calculate fraction of cell inside the wall (similar to MATLAB's sum(...,'all')/4)
-        frac = sum(RP.G.cell_state[rr, zz].==1) / 4
+        frac = sum(RP.G.cell_state[rr, zz] .== 1) / 4
         RP.G.inVol2D[rid, zid] = frac * RP.G.inVol2D[rid, zid]
     end
 
@@ -675,7 +684,7 @@ function setup_grid_state_and_volumes_with_wall!(RP::RAPID{FT}) where {FT<:Abstr
     return RP
 end
 
-function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize_density!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Set small initial seed density inside and on wall
     RP.plasma.ne .= FT(1.0e6)
     # RP.plasma.ne[RP.G.nodes.in_wall_nids] .= FT(1.0e6)
@@ -687,14 +696,14 @@ function initialize_density!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-function initialize_temperature!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize_temperature!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Set initial electron temperature
     RP.plasma.Te_eV .= RP.config.constants.room_T_eV * ones(FT, RP.G.NR, RP.G.NZ)
     RP.plasma.Ti_eV .= RP.config.constants.room_T_eV * ones(FT, RP.G.NR, RP.G.NZ)
     return RP
 end
 
-function initialize_velocities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize_velocities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Set initial velocities to zero
     RP.plasma.ue_para = zeros(FT, RP.G.NR, RP.G.NZ)
     RP.plasma.ui_para = zeros(FT, RP.G.NR, RP.G.NZ)
@@ -712,7 +721,7 @@ function initialize_velocities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 end
 
 
-function initialize_diagnostics!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize_diagnostics!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     dim_tt_0D = Int(ceil((RP.config.t_end_s - RP.config.t_start_s) / RP.config.snap0D_Δt_s)) + 1
     dim_tt_2D = Int(ceil((RP.config.t_end_s - RP.config.t_start_s) / RP.config.snap2D_Δt_s)) + 1
 
@@ -720,7 +729,7 @@ function initialize_diagnostics!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # abspath for the same reason as in the RAPID constructor (see types.jl): these handles
     # outlive this call and are closed by a finalizer that may run under a different cwd.
     prefixName = joinpath(abspath(RP.config.Output_path), RP.config.Output_prefix)
@@ -735,7 +744,7 @@ function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # NRL formula for Coulomb logarithm
     # Note that NRL uses cgs units for density and eV for temperature
 
@@ -757,18 +766,24 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:Abstract
 
     # Calculate Coulomb logarithm based on different regimes
     # Very low Te case
-    @. pla.lnΛ[idx1] = 16.0 - log(sqrt(pla.ni[idx1] * 1e-6) *
-                                (pla.Ti_eV[idx1])^(-1.5) *
-                                pla.Zeff[idx1]^2 * μ)
+    @. pla.lnΛ[idx1] = 16.0 - log(
+        sqrt(pla.ni[idx1] * 1.0e-6) *
+            (pla.Ti_eV[idx1])^(-1.5) *
+            pla.Zeff[idx1]^2 * μ
+    )
 
     # Normal Te case (Te_eV > 10*Zeff^2)
-    @. pla.lnΛ[idx2] = 24.0 - log(sqrt(pla.ne[idx2] * 1e-6) /
-                                  pla.Te_eV[idx2])
+    @. pla.lnΛ[idx2] = 24.0 - log(
+        sqrt(pla.ne[idx2] * 1.0e-6) /
+            pla.Te_eV[idx2]
+    )
 
     # Low Te case
-    @. pla.lnΛ[idx3] = 23.0 - log(sqrt(pla.ne[idx3] * 1e-6) *
-                                 pla.Zeff[idx3] *
-                                 (pla.Te_eV[idx3])^(-1.5))
+    @. pla.lnΛ[idx3] = 23.0 - log(
+        sqrt(pla.ne[idx3] * 1.0e-6) *
+            pla.Zeff[idx3] *
+            (pla.Te_eV[idx3])^(-1.5)
+    )
 
     # Handle non-finite values (NaN, Inf) or non-real values
     not_valid = @. !isfinite(pla.lnΛ) | !isreal(pla.lnΛ)
@@ -778,11 +793,11 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:Abstract
     # ν_ei = n_e e^4 lnΛ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)
     ν_factor_Maxwellian = FT(1.863033936542749e-40)  # sqrt(2)*ee^4/(12π^(1.5)*ϵ0^2*sqrt(me))
     @. pla.ν_ei = ν_factor_Maxwellian * pla.Zeff^2 * pla.ni *
-                        pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
+        pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
 
     # Another way (NRL formula):
     # @. pla.ν_ei = 2.91e-6 * pla.ne*1e-6 *pla.lnΛ * pla.Te_eV^(-1.5)
-    @. pla.ν_ii = 4.80e-8 * pla.Zeff^4 * (mi/mp)^(-0.5) * pla.ni*1e-6 * pla.lnΛ * pla.Ti_eV^(-1.5)
+    @. pla.ν_ii = 4.8e-8 * pla.Zeff^4 * (mi / mp)^(-0.5) * pla.ni * 1.0e-6 * pla.lnΛ * pla.Ti_eV^(-1.5)
 
     # # From lecture note (CH2_Fundamentals) of Prof. Hong
     # τ_ei = @.  (6.0 * sqrt(3.0)*π * eps0^2/ ee^4) * (sqrt(me)* (ee*pla.Te_eV)^(1.5)) / (pla.Zeff^4 * pla.ni * pla.lnΛ)
@@ -795,9 +810,9 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT<:Abstract
 
 
     Zeff = pla.Zeff
-    @. pla.sptz_fac = (1+1.198*Zeff+0.222*Zeff^2)/(1+2.966*Zeff+0.753*Zeff^2);
+    @. pla.sptz_fac = (1 + 1.198 * Zeff + 0.222 * Zeff^2) / (1 + 2.966 * Zeff + 0.753 * Zeff^2)
     # Set Spitzer factor to 0.51 for Zeff=1
-    pla.sptz_fac[Zeff.==1] .= FT(0.510469472194728);
+    pla.sptz_fac[Zeff .== 1] .= FT(0.510469472194728)
 
     if RP.flags.Spitzer_Resistivity
         @. pla.ν_ei_eff = pla.sptz_fac * pla.ν_ei

@@ -20,7 +20,7 @@ end
 
 FT = Float64
 
-function run_CS_swing(verbose::Bool=false)
+function run_CS_swing(verbose::Bool = false)
     """Run simulation with external coils"""
     config = create_config()
     RP = RAPID{FT}(config)
@@ -31,7 +31,7 @@ function run_CS_swing(verbose::Bool=false)
     setup_plasma!(RP; verbose)
     setup_external_coils!(RP; verbose)
 
-    RAPID2D.solve_Ampere_equation!(RP; update_Eϕ_self=false)
+    RAPID2D.solve_Ampere_equation!(RP; update_Eϕ_self = false)
 
     combine_external_and_self_fields!(RP)
     update_transport_quantities!(RP)
@@ -40,18 +40,20 @@ function run_CS_swing(verbose::Bool=false)
         println("  ✓ Coil simulation initialized")
     end
 
-	# Ip_controller = create_controller(200.0, 1e-3,RP.coil_system.coils; Kp=-0.1, Ti=1e-2, control_type="current")
-	# Ip_controller = create_controller(200.0, 1e-3,RP.coil_system.coils; Kp=-0.05, Ti=1e-3, Td=0.5e-3, control_type="current")
-	# Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; Kp=-0.05, Ti=30e-3, Td=10e-3, control_type="current", N=2)
+    # Ip_controller = create_controller(200.0, 1e-3,RP.coil_system.coils; Kp=-0.1, Ti=1e-2, control_type="current")
+    # Ip_controller = create_controller(200.0, 1e-3,RP.coil_system.coils; Kp=-0.05, Ti=1e-3, Td=0.5e-3, control_type="current")
+    # Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; Kp=-0.05, Ti=30e-3, Td=10e-3, control_type="current", N=2)
 
-	# # Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; Kp=-0.05, Ti=Inf, Td=10e-3, control_type="current", N=2)
-	# Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; Kp=-0.2, Ti=Inf, Td=0.1e-3, control_type="current", N=2)
-	# Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; Kp=-0.10, Ti=20e-3, Td=0.05e-3, control_type="current", N=100, Ts=1e-10)
+    # # Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; Kp=-0.05, Ti=Inf, Td=10e-3, control_type="current", N=2)
+    # Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; Kp=-0.2, Ti=Inf, Td=0.1e-3, control_type="current", N=2)
+    # Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; Kp=-0.10, Ti=20e-3, Td=0.05e-3, control_type="current", N=100, Ts=1e-10)
 
-	Ip_controller = create_controller(1e3, 1e-3,RP.coil_system.coils; control_type="current",
-										Kp=-0.05, Ti=0.05e-3, Td=0.0,  N=0.1, Ts=1e-6)
+    Ip_controller = create_controller(
+        1.0e3, 1.0e-3, RP.coil_system.coils; control_type = "current",
+        Kp = -0.05, Ti = 0.05e-3, Td = 0.0, N = 0.1, Ts = 1.0e-6
+    )
 
-    return run_simulation!(RP; controller=Ip_controller)
+    return run_simulation!(RP; controller = Ip_controller)
 end
 
 function create_config()
@@ -63,15 +65,15 @@ function create_config()
     config.NZ = 50
 
     # Physical parameters
-    config.prefilled_gas_pressure = 1e-3  # Pa
+    config.prefilled_gas_pressure = 1.0e-3  # Pa
     config.R0B0 = 3.0  # Tesla⋅meter
 
     # Time parameters - shorter simulation to focus on initial motion
-    config.dt = 5e-6
-    config.snap0D_Δt_s = 10e-6
-    config.snap2D_Δt_s = 100e-6
+    config.dt = 5.0e-6
+    config.snap0D_Δt_s = 10.0e-6
+    config.snap2D_Δt_s = 100.0e-6
     # config.t_end_s = 500e-6  # Shorter than force balance test
-    config.t_end_s = 1e-3  # Shorter than force balance test
+    config.t_end_s = 1.0e-3  # Shorter than force balance test
 
     # Device parameters
     config.device_Name = "manual"
@@ -110,10 +112,10 @@ function setup_flags!(RP::RAPID)
     RP.flags.FLF_nstep = 10
     RP.flags.Implicit = true
     RP.flags.Damp_Transp_outWall = true
-    RP.flags.Global_JxB_Force = false
+    return RP.flags.Global_JxB_Force = false
 end
 
-function setup_magnetic_field!(RP::RAPID; verbose::Bool=false)
+function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     """Set up pure toroidal magnetic field"""
     # Zero poloidal field components
     fill!(RP.fields.BR, 0.0)
@@ -145,18 +147,18 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool=false)
     # Parallel component of E
     RP.fields.E_para_ext .= Eϕ .* (RP.fields.Bϕ ./ RP.fields.Btot)
 
-    if verbose
+    return if verbose
         println("  ✓ Magnetic field configuration set")
     end
 end
 
-function setup_plasma!(RP::RAPID; verbose::Bool=false)
+function setup_plasma!(RP::RAPID; verbose::Bool = false)
     """Set up initial plasma density distribution"""
     # Plasma parameters - same as force balance test
     cenR = 1.5  # m
     cenZ = 0.0  # m
     radius = 0.4  # m
-    n0 = 1e18  # m⁻³
+    n0 = 1.0e18  # m⁻³
     # n0 = 1e17  # m⁻³
     # n0 = 1e10  # m⁻³
 
@@ -180,12 +182,12 @@ function setup_plasma!(RP::RAPID; verbose::Bool=false)
     fill!(RP.plasma.ue_para, 0.0)
     fill!(RP.plasma.ui_para, 0.0)
 
-    if verbose
+    return if verbose
         println("  ✓ Initial plasma configuration set")
     end
 end
 
-function setup_external_coils!(RP::RAPID; verbose::Bool=false)
+function setup_external_coils!(RP::RAPID; verbose::Bool = false)
     """Set up external coils near the outer wall to create opposing currents"""
     RP.coil_system = CoilSystem{FT}()
     csys = RP.coil_system
@@ -195,8 +197,8 @@ function setup_external_coils!(RP::RAPID; verbose::Bool=false)
 
     # Place coils just outside the outer wall
     N_coils = 10
-    coils_r = (wall_R_inner - 0.2)*ones(N_coils)  # 10 cm outside wall
-    coils_z = collect(range(-1.0, 1.0, length=N_coils))
+    coils_r = (wall_R_inner - 0.2) * ones(N_coils)  # 10 cm outside wall
+    coils_z = collect(range(-1.0, 1.0, length = N_coils))
 
     # Coil specifications
     coil_resistivity = csys.cu_resistivity
@@ -208,22 +210,22 @@ function setup_external_coils!(RP::RAPID; verbose::Bool=false)
     # Create coils and add to system
     for i in 1:N_coils
         coil_name = "CS_$(i)"
-        coil_location = (r=coils_r[i], z=coils_z[i])
+        coil_location = (r = coils_r[i], z = coils_z[i])
 
         CS_coil = Coil{FT}(
-                location=coil_location,
-                area=coil_area,
-                resistance=calculate_coil_resistance(coil_area, coil_location.r, coil_resistivity),
-                self_inductance=calculate_self_inductance(coil_area, coil_location.r, csys.μ0),
-                is_powered=true,
-                name="CS_$i",
-                # current=0.0,
-                # voltage_ext= t -> (t < 0.25e-3 ? 1e4*t*4 : 10.0)  # Step function voltage
-                voltage_ext= t -> (t < 0.2e-3 ? 10.0 : max(-10.0, 10.0 - 10*( (t-0.2e-3)/0.5e-3)) ),  # Step function voltage
-				current = 10.0/calculate_coil_resistance(coil_area, coil_location.r, coil_resistivity)
-                # voltage_ext=-10.0
-                # voltage_ext= t -> 0.0  # Step function voltage
-                # voltage_ext= t -> -10.0  # Step function voltage
+            location = coil_location,
+            area = coil_area,
+            resistance = calculate_coil_resistance(coil_area, coil_location.r, coil_resistivity),
+            self_inductance = calculate_self_inductance(coil_area, coil_location.r, csys.μ0),
+            is_powered = true,
+            name = "CS_$i",
+            # current=0.0,
+            # voltage_ext= t -> (t < 0.25e-3 ? 1e4*t*4 : 10.0)  # Step function voltage
+            voltage_ext = t -> (t < 0.2e-3 ? 10.0 : max(-10.0, 10.0 - 10 * ((t - 0.2e-3) / 0.5e-3))),  # Step function voltage
+            current = 10.0 / calculate_coil_resistance(coil_area, coil_location.r, coil_resistivity)
+            # voltage_ext=-10.0
+            # voltage_ext= t -> 0.0  # Step function voltage
+            # voltage_ext= t -> -10.0  # Step function voltage
         )
 
         # Add coil to the system
@@ -231,7 +233,7 @@ function setup_external_coils!(RP::RAPID; verbose::Bool=false)
     end
 
     initialize_coil_system!(RP)
-    if verbose
+    return if verbose
         println("  ✓ External coils configured")
         println("    Number of coils: $(length(coils_z))")
         println("    Coil Z positions: $(coils_z) m")
@@ -239,7 +241,6 @@ function setup_external_coils!(RP::RAPID; verbose::Bool=false)
         println("    Total coils in system: $(RP.coil_system.n_total)")
     end
 end
-
 
 
 # @testset "RAPID2D.jl CS Swing Test" begin
@@ -323,23 +324,23 @@ if abspath(PROGRAM_FILE) == @__FILE__
     println("Starting RAPID2D.jl CS Swing Test...")
 
     try
-        RP = run_CS_swing(verbose=verbose, visualize=visualize)
+        RP = run_CS_swing(verbose = verbose, visualize = visualize)
 
         if comparison !== nothing && comparison.velocity_reduction > 0.05
-            println("\n" * "=" ^ 60)
+            println("\n" * "="^60)
             println("✓ CS Swing TEST COMPLETED SUCCESSFULLY")
             println("✓ Electromagnetic braking effect confirmed")
-            println("=" ^ 60)
+            println("="^60)
         else
-            println("\n" * "=" ^ 60)
+            println("\n" * "="^60)
             println("✗ CS Swing TEST FAILED - Insufficient braking effect")
-            println("=" ^ 60)
+            println("="^60)
         end
     catch e
-        println("\n" * "=" ^ 60)
+        println("\n" * "="^60)
         println("✗ CS Swing TEST FAILED")
         println("Error: $(e)")
-        println("=" ^ 60)
+        println("="^60)
         rethrow(e)
     end
 end

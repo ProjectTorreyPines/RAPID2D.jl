@@ -1,4 +1,4 @@
-@testitem "Coil System Operations" setup=[CoilFactories] begin
+@testitem "Coil System Operations" setup = [CoilFactories] begin
     FT = Float64
 
     @testset "Adding Coils to System" begin
@@ -6,8 +6,8 @@
 
         # Create test coils
         pf = pf_coil("PF1")
-        cs_coil = Coil((r=1.8, z=0.0), 0.015, 0.0008, 2e-6, true, false, "CS", 2000.0, 100000.0)
-        wall_segment = wall_coil("wall_1"; z=0.2)
+        cs_coil = Coil((r = 1.8, z = 0.0), 0.015, 0.0008, 2.0e-6, true, false, "CS", 2000.0, 100000.0)
+        wall_segment = wall_coil("wall_1"; z = 0.2)
 
         # Test adding coils
         add_coil!(system, pf)
@@ -36,9 +36,9 @@
         system = CoilSystem{FT}()
 
         pf = pf_coil("PF1")
-        cs_coil = Coil((r=1.8, z=0.0), 0.015, 0.0008, 2e-6, true, false, "CS", 2000.0, 100000.0)
-        wall1 = wall_coil("wall_1"; z=0.2)
-        wall2 = wall_coil("wall_2"; z=-0.2)
+        cs_coil = Coil((r = 1.8, z = 0.0), 0.015, 0.0008, 2.0e-6, true, false, "CS", 2000.0, 100000.0)
+        wall1 = wall_coil("wall_1"; z = 0.2)
+        wall2 = wall_coil("wall_2"; z = -0.2)
 
         add_coil!(system, pf)
         add_coil!(system, cs_coil)
@@ -67,7 +67,7 @@
         system = CoilSystem{FT}()
 
         coil1 = pf_coil("PF_Upper")
-        coil2 = pf_coil("PF_Lower"; z=-0.5)
+        coil2 = pf_coil("PF_Lower"; z = -0.5)
 
         add_coil!(system, coil1)
         add_coil!(system, coil2)
@@ -130,7 +130,7 @@
         system = CoilSystem{FT}()
 
         coil1 = pf_coil("coil1")
-        coil2 = Coil((r=1.8, z=-0.3), 0.015, 0.0008, 2e-6, false, false, "coil2", nothing, nothing)
+        coil2 = Coil((r = 1.8, z = -0.3), 0.015, 0.0008, 2.0e-6, false, false, "coil2", nothing, nothing)
 
         add_coil!(system, coil1)
         add_coil!(system, coil2)

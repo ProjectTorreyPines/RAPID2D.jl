@@ -5,7 +5,7 @@
 0D diagnostic snapshot
 Contains volume-averaged quantities
 """
-@kwdef mutable struct Snapshot0D{FT<:AbstractFloat}
+@kwdef mutable struct Snapshot0D{FT <: AbstractFloat}
     # Step and time of the snapshot
     step::Int = 0
     time_s::FT = zero(FT)
@@ -116,7 +116,7 @@ end
 Contains spatial distributions at specific time points
 All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 """
-@kwdef mutable struct Snapshot2D{FT<:AbstractFloat}
+@kwdef mutable struct Snapshot2D{FT <: AbstractFloat}
     # Dimension parameters (must be first)
     dims_RZ::Tuple{Int, Int} # (NR, NZ)
 
@@ -229,7 +229,7 @@ end
 Source and Loss Tracker
 Tracks cumulative sources and losses of particles and energy
 """
-@kwdef mutable struct SrcLossTracker{FT<:AbstractFloat}
+@kwdef mutable struct SrcLossTracker{FT <: AbstractFloat}
     # Dimension parameters (must be first)
     dims_RZ::Tuple{Int, Int}    # Number of R and Z grid points
 
@@ -257,7 +257,7 @@ Main Diagnostics container
 Pure struct-based approach using @kwdef for automatic initialization
 No legacy Dictionary compatibility layer
 """
-@kwdef mutable struct Diagnostics{FT<:AbstractFloat}
+@kwdef mutable struct Diagnostics{FT <: AbstractFloat}
     dims_RZ::Tuple{Int, Int} # Dimensions for R and Z (NR, NZ)
 
     # 0D time series snapshots
@@ -268,19 +268,19 @@ No legacy Dictionary compatibility layer
     tid_2D::Int = 0 # Last recorded time index for snaps2D
     snaps2D::Vector{Snapshot2D{FT}} = Snapshot2D{FT}[]
 
-     # tracking number of particles (source/loss)
-    Ntracker::SrcLossTracker{FT} = SrcLossTracker{FT}(;dims_RZ)
+    # tracking number of particles (source/loss)
+    Ntracker::SrcLossTracker{FT} = SrcLossTracker{FT}(; dims_RZ)
 end
 
-function Diagnostics{FT}(dim_R::Int, dim_Z::Int) where FT<:AbstractFloat
+function Diagnostics{FT}(dim_R::Int, dim_Z::Int) where {FT <: AbstractFloat}
     return Diagnostics{FT}(; dims_RZ = (dim_R, dim_Z))
 end
 
-function Diagnostics{FT}(dim_R::Int, dim_Z::Int, dim_tt_0D::Int, dim_tt_2D::Int) where FT<:AbstractFloat
+function Diagnostics{FT}(dim_R::Int, dim_Z::Int, dim_tt_0D::Int, dim_tt_2D::Int) where {FT <: AbstractFloat}
     dims_RZ = (dim_R, dim_Z)
     # Create empty snapshots with given sizes to preallocate memory
     snaps0D = [Snapshot0D{FT}() for _ in 1:dim_tt_0D]
-    snaps2D = [Snapshot2D{FT}( dims_RZ = (dim_R, dim_Z) ) for _ in 1:dim_tt_2D]
+    snaps2D = [Snapshot2D{FT}(dims_RZ = (dim_R, dim_Z)) for _ in 1:dim_tt_2D]
 
     return Diagnostics{FT}(;
         dims_RZ,
@@ -288,7 +288,7 @@ function Diagnostics{FT}(dim_R::Int, dim_Z::Int, dim_tt_0D::Int, dim_tt_2D::Int)
         snaps0D,
         tid_2D = 0, # tid_2D
         snaps2D,
-        Ntracker =SrcLossTracker{FT}(;dims_RZ)
+        Ntracker = SrcLossTracker{FT}(; dims_RZ)
     )
 end
 

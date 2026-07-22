@@ -10,7 +10,7 @@ Updates the provided snap0D with current simulation state and volume-averaged qu
 - `RP::RAPID{FT}`: The RAPID simulation instance to measure
 - `snap0D::Snapshot0D{FT}`: Pre-allocated snapshot object to fill with measurements
 """
-function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:AbstractFloat}
+function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: AbstractFloat}
 
     pla = RP.plasma
     F = RP.fields
@@ -36,17 +36,17 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     snap0D.ne_max = maximum(pla.ne)
     snap0D.ue_para = sum(@. pla.ue_para * Ne2D) / total_Ne
     snap0D.Te_eV = sum(@. pla.Te_eV * Ne2D) / total_Ne
-    snap0D.Ke_eV = sum(@. (1.5 * pla.Te_eV + (0.5 * me * pla.ue_para^2 )/ ee) * Ne2D) / total_Ne
+    snap0D.Ke_eV = sum(@. (1.5 * pla.Te_eV + (0.5 * me * pla.ue_para^2) / ee) * Ne2D) / total_Ne
 
     # Ion quantities
     snap0D.ni = total_Ni / RP.G.device_inVolume
     snap0D.ni_max = maximum(pla.ni)
     snap0D.ui_para = sum(@. pla.ui_para * Ni2D) / total_Ni
     snap0D.Ti_eV = sum(@. pla.Ti_eV * Ni2D) / total_Ni
-    snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para^2 ) / ee) * Ni2D) / total_Ni
+    snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para^2) / ee) * Ni2D) / total_Ni
 
     # Toroidal current
-    snap0D.I_tor = sum( pla.Jϕ * RP.G.dR * RP.G.dZ)
+    snap0D.I_tor = sum(pla.Jϕ * RP.G.dR * RP.G.dZ)
 
     # Electric fields (density-weighted averages)
     snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
@@ -68,8 +68,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
         eRRC_mom = get_electron_RRC(RP, :Momentum)
         eRRC_Hα = get_electron_RRC(RP, :Halpha)
 
-        snap0D.ν_en_iz = sum(@. pla.n_H2_gas * eRRC_iz  * Ne2D) / total_Ne
-        snap0D.ν_en_mom = sum(@. pla.n_H2_gas * eRRC_mom  * Ne2D) / total_Ne
+        snap0D.ν_en_iz = sum(@. pla.n_H2_gas * eRRC_iz * Ne2D) / total_Ne
+        snap0D.ν_en_mom = sum(@. pla.n_H2_gas * eRRC_mom * Ne2D) / total_Ne
         snap0D.ν_en_Hα = sum(@. pla.n_H2_gas * eRRC_Hα * Ne2D) / total_Ne
     end
 
@@ -84,7 +84,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
     # CFL conditions (if adaptive timestepping is not used)
     if hasfield(typeof(RP), :Flag) && hasfield(typeof(RP.Flag), :Adapt_dt) && !RP.Flag.Adapt_dt
         # Placeholder for CFL calculation
-        @warn "CFL condition calculation not yet implemented" maxlog=10
+        @warn "CFL condition calculation not yet implemented" maxlog = 10
         # Would need: Cal_CFL_conditions() equivalent
     end
 
@@ -97,7 +97,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
 
     # Growth rates
     # TODO: Check if this is the correct way to calculate growth rates
-    prev_snap0D = RP.diagnostics.snaps0D[max(1, RP.diagnostics.tid_0D-1)]
+    prev_snap0D = RP.diagnostics.snaps0D[max(1, RP.diagnostics.tid_0D - 1)]
     prev_total_Ne = prev_snap0D.ne * RP.G.device_inVolume
     snap0D.eGrowth_rate = log(FT(1) + Ntracker.cum0D_Ne_src / prev_total_Ne) / RP.config.snap0D_Δt_s
     try
@@ -147,15 +147,15 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
 
     # Control system (if enabled)
     if hasfield(typeof(RP), :Flag) && hasfield(typeof(RP.Flag), :Control) && hasfield(typeof(RP.Flag.Control), :state) && RP.Flag.Control.state
-        @warn "Control system diagnostics not yet implemented" maxlog=10
+        @warn "Control system diagnostics not yet implemented" maxlog = 10
         # Would need PID controller and control field calculations
     end
 
     # measure magnetic energies by toroidal currents
     snap0D.tot_W_mag = zero(FT)
     if RP.flags.Ampere
-        F_plasma = solve_Ampere_equation(RP; plasma=true, coils=false)
-        W_mag_by_plasma_without_coil =  0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
+        F_plasma = solve_Ampere_equation(RP; plasma = true, coils = false)
+        W_mag_by_plasma_without_coil = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
         snap0D.self_inductance_plasma = 2.0 * W_mag_by_plasma_without_coil / (snap0D.I_tor^2 + eps(FT))
 
         # plasma's contribution to magnetic energy [J]
@@ -169,7 +169,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
 
         σ_conductivity = @. pla.ne * ee^2 / (me * ν_eff)
 
-        valid_idx = findall(pla.ne .> 1e3 .&& ν_eff .> 0.0)
+        valid_idx = findall(pla.ne .> 1.0e3 .&& ν_eff .> 0.0)
 
         if isempty(valid_idx)
             snap0D.η_resistivity = Inf
@@ -177,7 +177,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
             snap0D.tot_P_ohm_plasma = 0.0
         else
             snap0D.η_resistivity = 1.0 / (sum(@views @. σ_conductivity[valid_idx] * Ne2D[valid_idx]) / total_Ne)
-            snap0D.resistance_plasma = 1.0/sum(@views @. σ_conductivity[valid_idx]*RP.G.dR * RP.G.dZ/ (2π * RP.G.R2D[valid_idx]))
+            snap0D.resistance_plasma = 1.0 / sum(@views @. σ_conductivity[valid_idx] * RP.G.dR * RP.G.dZ / (2π * RP.G.R2D[valid_idx]))
             snap0D.tot_P_ohm_plasma = snap0D.I_tor^2 * snap0D.resistance_plasma # P_ohm = I^2*R
         end
     end
@@ -190,10 +190,11 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT<:Abstr
         snap0D.coils_V_ext = get_all_voltages_at_time(csys)
 
         # magnetic energy by coils [J]
-        Φ_coils = ( csys.mutual_inductance*coils.current
-                    +2π*(csys.Green_grid2coils *pla.Jϕ[:])*RP.G.dR*RP.G.dZ
-                )
-        snap0D.tot_W_mag += 0.5*coils.current'*Φ_coils
+        Φ_coils = (
+            csys.mutual_inductance * coils.current
+                + 2π * (csys.Green_grid2coils * pla.Jϕ[:]) * RP.G.dR * RP.G.dZ
+        )
+        snap0D.tot_W_mag += 0.5 * coils.current' * Φ_coils
 
         # Ohmic coil dissipation [W]
         snap0D.tot_P_input_coils = sum(coils.current .* get_all_voltages_at_time(csys))
@@ -215,7 +216,7 @@ Creates a new snapshot and fills it with volume-averaged quantities from the sim
 # Returns
 - `Snapshot0D{FT}`: New snapshot object containing measured diagnostics
 """
-function measure_snap0D(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function measure_snap0D(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Create a new Snapshot0D object
     snap0D = Snapshot0D{FT}()
 
@@ -236,7 +237,7 @@ Updates the provided snap2D with current simulation state and 2D field distribut
 - `RP::RAPID{FT}`: The RAPID simulation instance to measure
 - `snap2D::Snapshot2D{FT}`: Pre-allocated snapshot object to fill with measurements
 """
-function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:AbstractFloat}
+function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: AbstractFloat}
 
     @assert snap2D.dims_RZ == (RP.G.NR, RP.G.NZ) "Snapshot dimensions must match RAPID grid dimensions"
 
@@ -279,7 +280,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:Abstr
 
     # Loop voltages
     snap2D.LV_ext .= F.LV_ext
-    @. snap2D.LV_tot = F.LV_ext + 2π*RP.G.R2D * F.Eϕ_self
+    @. snap2D.LV_tot = F.LV_ext + 2π * RP.G.R2D * F.Eϕ_self
 
     # Calculate ExB drift magnitude
     @. snap2D.mean_ExB_pol = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
@@ -391,9 +392,9 @@ Creates a new snapshot with correct grid dimensions and fills it with 2D field d
 # Returns
 - `Snapshot2D{FT}`: New snapshot object containing measured 2D diagnostics
 """
-function measure_snap2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function measure_snap2D(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Create a new Snapshot2D object with the correct dimensions
-    snap2D = Snapshot2D{FT}(dims_RZ = (RP.G.NR, RP.G.NZ) )
+    snap2D = Snapshot2D{FT}(dims_RZ = (RP.G.NR, RP.G.NZ))
 
     # Measure and fill the snapshot
     measure_snap2D!(RP, snap2D)
@@ -411,7 +412,7 @@ Called after each 0D snapshot to restart accumulation for the next diagnostic in
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance with trackers to reset
 """
-function reset_Ntracker_cumulative_0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function reset_Ntracker_cumulative_0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Reset cumulative trackers
     RP.diagnostics.Ntracker.cum0D_Ne_src = zero(FT)
     RP.diagnostics.Ntracker.cum0D_Ne_loss = zero(FT)
@@ -430,7 +431,7 @@ Called after each 2D snapshot to restart accumulation for the next diagnostic in
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance with trackers to reset
 """
-function reset_Ntracker_cumulative_2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function reset_Ntracker_cumulative_2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Reset cumulative trackers
     fill!(RP.diagnostics.Ntracker.cum2D_Ne_src, zero(FT))
     fill!(RP.diagnostics.Ntracker.cum2D_Ne_loss, zero(FT))
@@ -451,7 +452,7 @@ Automatically resets cumulative trackers after measurement.
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance to update diagnostics for
 """
-function update_snaps0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_snaps0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # update time index for 0D snapshots
     RP.diagnostics.tid_0D += 1
 
@@ -484,7 +485,7 @@ Automatically resets cumulative trackers after measurement.
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance to update diagnostics for
 """
-function update_snaps2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_snaps2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # update time index for 2D snapshots
     RP.diagnostics.tid_2D += 1
 
@@ -506,10 +507,10 @@ function update_snaps2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     return RP
 end
 
-function check_energy_conservation(snaps0D::Vector{Snapshot0D{FT}}) where FT
+function check_energy_conservation(snaps0D::Vector{Snapshot0D{FT}}) where {FT}
     times = snaps0D.time_s
 
-    trapz = (P, t) -> sum(0.5*(P[2:end]+P[1:end-1]) .* diff(t))
+    trapz = (P, t) -> sum(0.5 * (P[2:end] + P[1:(end - 1)]) .* diff(t))
 
     W_input = trapz(snaps0D.tot_P_input_coils, times)
     W_ohm_coil = trapz(snaps0D.tot_P_ohm_coils, times)
@@ -518,7 +519,7 @@ function check_energy_conservation(snaps0D::Vector{Snapshot0D{FT}}) where FT
     ΔW_mag = snaps0D.tot_W_mag[end] - snaps0D.tot_W_mag[1]
 
     # Input = Losses + Stored Energy
-    energy_balance = W_input - (W_ohm_coil + W_ohm_plasma + ΔW_mag )
+    energy_balance = W_input - (W_ohm_coil + W_ohm_plasma + ΔW_mag)
 
     @printf("Energy Conservation Analysis:\n")
     @printf("=================================\n")
@@ -528,14 +529,14 @@ function check_energy_conservation(snaps0D::Vector{Snapshot0D{FT}}) where FT
     @printf("Plasma ohmic losses:     %12.7f J\n", W_ohm_plasma)
     @printf("---------------------------------\n")
     @printf("Energy balance:          %12.7f J (should be ≈ 0)\n", energy_balance)
-    @printf("Relative error:          %12.2f%%\n", abs(energy_balance/W_input)*100)
+    @printf("Relative error:          %12.2f%%\n", abs(energy_balance / W_input) * 100)
 
     return (;
-         W_input,
-         W_ohm_coil,
-         W_ohm_plasma,
-         ΔW_mag,
-         energy_balance,
-         rel_error = abs(energy_balance/W_input)*100
+        W_input,
+        W_ohm_coil,
+        W_ohm_plasma,
+        ΔW_mag,
+        energy_balance,
+        rel_error = abs(energy_balance / W_input) * 100,
     )
 end

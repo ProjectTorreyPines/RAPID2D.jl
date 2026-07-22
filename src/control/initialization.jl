@@ -17,7 +17,7 @@ Find coils in the coil system that match any of the given name patterns.
 
 Returns a vector of coils that match any pattern.
 """
-function find_coils_by_name(coil_system, patterns::Vector{String}; case_sensitive=false)
+function find_coils_by_name(coil_system, patterns::Vector{String}; case_sensitive = false)
     matched_coils = []
 
     for coil in coil_system.coils
@@ -54,10 +54,12 @@ to control those coils for plasma current regulation.
 
 Returns the created Controller instance.
 """
-function initialize_current_controller!(RP::RAPID{FT};
-                                       target_current=FT(1e6),
-                                       Kp=FT(5.0), Ti=FT(2.5), Td=FT(0.02),
-                                       umin=FT(-100.0), umax=FT(100.0)) where {FT<:AbstractFloat}
+function initialize_current_controller!(
+        RP::RAPID{FT};
+        target_current = FT(1.0e6),
+        Kp = FT(5.0), Ti = FT(2.5), Td = FT(0.02),
+        umin = FT(-100.0), umax = FT(100.0)
+    ) where {FT <: AbstractFloat}
 
     # Primary patterns for OH coils
     primary_patterns = ["OH"]
@@ -74,7 +76,7 @@ function initialize_current_controller!(RP::RAPID{FT};
     if isempty(oh_coils)
         available_coils = [coil.name for coil in RP.coil_system.coils]
         @error "No suitable coils found for current control. Available coils: " *
-               join(available_coils, ", ")
+            join(available_coils, ", ")
         error("Cannot initialize current controller without suitable coils.")
     end
 
@@ -82,7 +84,8 @@ function initialize_current_controller!(RP::RAPID{FT};
     @info "Found $(length(oh_coils)) OH coils for current control: $(join(coil_names, ", "))"
 
     # Create current controller
-    current_controller = create_current_controller(target_current, oh_coils;
+    current_controller = create_current_controller(
+        target_current, oh_coils;
         Kp = Kp,
         Ti = Ti,
         Td = Td,
@@ -110,10 +113,12 @@ Initialize position controller by finding Poloidal Field (PF) coils.
 
 Returns the created Controller instance.
 """
-function initialize_position_controller!(RP::RAPID{FT};
-                                        target_position=FT(0.65),
-                                        Kp=FT(1.0), Ti=FT(10.0), Td=FT(0.1),
-                                        umin=FT(-10.0), umax=FT(10.0)) where {FT<:AbstractFloat}
+function initialize_position_controller!(
+        RP::RAPID{FT};
+        target_position = FT(0.65),
+        Kp = FT(1.0), Ti = FT(10.0), Td = FT(0.1),
+        umin = FT(-10.0), umax = FT(10.0)
+    ) where {FT <: AbstractFloat}
 
     # Patterns for position control coils
     patterns = ["PF", "POLOIDAL", "SHAPING"]
@@ -128,7 +133,8 @@ function initialize_position_controller!(RP::RAPID{FT};
     @info "Found $(length(pf_coils)) PF coils for position control: $(join(coil_names, ", "))"
 
     # Create position controller
-    position_controller = create_position_controller(target_position, pf_coils;
+    position_controller = create_position_controller(
+        target_position, pf_coils;
         Kp = Kp,
         Ti = Ti,
         Td = Td,
@@ -156,10 +162,12 @@ Initialize a complete controller set with multiple controllers.
 
 Returns a ControllerSet instance.
 """
-function initialize_controller_set!(RP::RAPID{FT};
-                                   enable_current=true,
-                                   enable_position=false,
-                                   kwargs...) where {FT<:AbstractFloat}
+function initialize_controller_set!(
+        RP::RAPID{FT};
+        enable_current = true,
+        enable_position = false,
+        kwargs...
+    ) where {FT <: AbstractFloat}
 
     controller_set = ControllerSet{FT}()
 
@@ -180,5 +188,5 @@ end
 
 # Export initialization functions
 export find_coils_by_name,
-       initialize_current_controller!, initialize_position_controller!,
-       initialize_controller_set!
+    initialize_current_controller!, initialize_position_controller!,
+    initialize_controller_set!

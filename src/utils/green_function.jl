@@ -45,13 +45,15 @@ where K(m) and E(m) are complete elliptic integrals of the first and second kind
 # Notes
 - Output dimensions: (size(dest) × size(src))
 """
-function calculate_ψ_by_green_function(R_dest::AbstractArray{FT},
-                                        Z_dest::AbstractArray{FT},
-                                        R_src::AbstractArray{FT},
-                                        Z_src::AbstractArray{FT},
-                                        I_src::AbstractArray{FT}
-                                        ;
-                                        compute_derivatives::Bool=false) where {FT<:AbstractFloat}
+function calculate_ψ_by_green_function(
+        R_dest::AbstractArray{FT},
+        Z_dest::AbstractArray{FT},
+        R_src::AbstractArray{FT},
+        Z_src::AbstractArray{FT},
+        I_src::AbstractArray{FT}
+        ;
+        compute_derivatives::Bool = false
+    ) where {FT <: AbstractFloat}
     @assert size(R_dest) == size(Z_dest) "R_dest and Z_dest must have the same size"
     @assert size(R_src) == size(Z_src) "R_src and Z_src must have the same size"
     @assert size(R_src) == size(I_src) "I_src size must match size(R_src)"
@@ -73,7 +75,7 @@ function calculate_ψ_by_green_function(R_dest::AbstractArray{FT},
 
     # Calculate the Green's function
     # ψ = I_s × 2×10⁻⁷ × √(Rd*Rs/m) × [(2-m)K - 2E]
-    ψ = @. Is * FT(2e-7) * sqrt((Rd * Rs) / m) * ((FT(2.0) - m) * K - FT(2.0) * E)
+    ψ = @. Is * FT(2.0e-7) * sqrt((Rd * Rs) / m) * ((FT(2.0) - m) * K - FT(2.0) * E)
 
     # Reshape to match expected output dimensions
     output_size = (size(R_dest)..., size(R_src)...)
@@ -84,7 +86,7 @@ function calculate_ψ_by_green_function(R_dest::AbstractArray{FT},
     end
 
     # Calculate derivatives if requested
-    dψ_dm = @. Is * 2e-7 * sqrt.((Rd * Rs) / m) * (-K / m + (2.0 - m) / (2.0 * m * (1.0 - m)) * E)
+    dψ_dm = @. Is * 2.0e-7 * sqrt.((Rd * Rs) / m) * (-K / m + (2.0 - m) / (2.0 * m * (1.0 - m)) * E)
 
     denominator = @. ((Rd + Rs)^2 + (Zd - Zs)^2)^2
 
@@ -107,7 +109,7 @@ function calculate_ψ_by_green_function(R_dest::AbstractArray{FT},
         dψ_dRdest = reshape(dψ_dRd, output_size),
         dψ_dZdest = reshape(dψ_dZd, output_size),
         dψ_dRsrc = reshape(dψ_dRs, output_size),
-        dψ_dZsrc = reshape(dψ_dZs, output_size)
+        dψ_dZsrc = reshape(dψ_dZs, output_size),
     )
 
     return ψ, derivatives
@@ -119,14 +121,18 @@ end
 
 Convenience method for scalar current source. Converts scalar I_src to array and calls main method.
 """
-function calculate_ψ_by_green_function(R_dest::AbstractArray{FT},
-                                        Z_dest::AbstractArray{FT},
-                                        R_src::AbstractArray{FT},
-                                        Z_src::AbstractArray{FT},
-                                        I_src::Number;
-                                        compute_derivatives::Bool=false) where {FT<:AbstractFloat}
+function calculate_ψ_by_green_function(
+        R_dest::AbstractArray{FT},
+        Z_dest::AbstractArray{FT},
+        R_src::AbstractArray{FT},
+        Z_src::AbstractArray{FT},
+        I_src::Number;
+        compute_derivatives::Bool = false
+    ) where {FT <: AbstractFloat}
     # Convert scalar current to array matching source coordinates
     I_array = fill(FT(I_src), size(R_src))
-    return calculate_ψ_by_green_function(R_dest, Z_dest, R_src, Z_src, I_array;
-                                         compute_derivatives=compute_derivatives)
+    return calculate_ψ_by_green_function(
+        R_dest, Z_dest, R_src, Z_src, I_array;
+        compute_derivatives = compute_derivatives
+    )
 end

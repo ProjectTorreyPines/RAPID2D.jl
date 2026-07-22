@@ -28,13 +28,13 @@ Create a generic controller using DiscretePID.
 - `umin, umax`: Control signal limits (typemin/typemax(FT) = no limits)
 """
 function create_controller(
-			target::FT,
-			coils::Vector{Coil{FT}};
-			dt::FT,
-			control_type::String="generic",
-			Kp::FT=FT(1.0), Ti::FT=typemax(FT), Td::FT=zero(FT),
-			umin::FT=typemin(FT), umax::FT=typemax(FT), pid_kwargs...
-		) where {FT<:AbstractFloat}
+        target::FT,
+        coils::Vector{Coil{FT}};
+        dt::FT,
+        control_type::String = "generic",
+        Kp::FT = FT(1.0), Ti::FT = typemax(FT), Td::FT = zero(FT),
+        umin::FT = typemin(FT), umax::FT = typemax(FT), pid_kwargs...
+    ) where {FT <: AbstractFloat}
 
     # Convert PID parameters for DiscretePID.
     # umin/umax are forwarded, not decorative: DiscretePID clamps its output with
@@ -75,12 +75,15 @@ Create a current controller with default parameters optimized for current contro
 - `Td`: Derivative time constant [s] (default: 0.02s for current control)
 - Additional kwargs passed to create_controller
 """
-function create_current_controller(target_current::FT,
-                                  coils::Vector{Coil{FT}};
-                                  Kp=FT(5.0), Ti=FT(0.4), Td=FT(0.02),
-                                  kwargs...) where {FT<:AbstractFloat}
+function create_current_controller(
+        target_current::FT,
+        coils::Vector{Coil{FT}};
+        Kp = FT(5.0), Ti = FT(0.4), Td = FT(0.02),
+        kwargs...
+    ) where {FT <: AbstractFloat}
 
-    return create_controller(target_current, coils;
+    return create_controller(
+        target_current, coils;
         control_type = "current",
         Kp = Kp, Ti = Ti, Td = Td,
         kwargs...
@@ -104,12 +107,15 @@ Create a position controller with default parameters optimized for position cont
 - `Td`: Derivative time constant [s] (default: 0.1s for position control)
 - Additional kwargs passed to create_controller
 """
-function create_position_controller(target_position::FT,
-                                   coils::Vector{Coil{FT}};
-                                   Kp=FT(1.0), Ti=FT(10.0), Td=FT(0.1),
-                                   kwargs...) where {FT<:AbstractFloat}
+function create_position_controller(
+        target_position::FT,
+        coils::Vector{Coil{FT}};
+        Kp = FT(1.0), Ti = FT(10.0), Td = FT(0.1),
+        kwargs...
+    ) where {FT <: AbstractFloat}
 
-    return create_controller(target_position, coils;
+    return create_controller(
+        target_position, coils;
         control_type = "position",
         Kp = Kp, Ti = Ti, Td = Td,
         kwargs...
@@ -121,7 +127,7 @@ end
 
 Update controller target value.
 """
-function set_target!(controller::Controller{FT}, new_target::FT) where {FT<:AbstractFloat}
+function set_target!(controller::Controller{FT}, new_target::FT) where {FT <: AbstractFloat}
     controller.target = new_target
     return controller
 end
@@ -131,8 +137,8 @@ end
 
 Reset PID controller internal state.
 """
-function reset_controller!(controller::Controller{FT}) where {FT<:AbstractFloat}
-	reset_state!(controller.pid)
+function reset_controller!(controller::Controller{FT}) where {FT <: AbstractFloat}
+    reset_state!(controller.pid)
     return controller
 end
 
@@ -143,7 +149,7 @@ Compute control signal using PID controller.
 
 Returns the control signal.
 """
-function compute_control_signal!(controller::Controller{FT}, current_value::FT) where {FT<:AbstractFloat}
+function compute_control_signal!(controller::Controller{FT}, current_value::FT) where {FT <: AbstractFloat}
     # Use DiscretePID to compute control signal
     control_signal = controller.pid(controller.target, current_value, FT(0.0))
     return control_signal
@@ -160,7 +166,7 @@ Apply control signal to all coils controlled by this controller.
 
 Note: This function directly modifies the coil voltages through references.
 """
-function apply_control_signal!(controller::Controller{FT}, signal::FT) where {FT<:AbstractFloat}
+function apply_control_signal!(controller::Controller{FT}, signal::FT) where {FT <: AbstractFloat}
     # Apply signal to all coils controlled by this controller
     for coil in controller.coils
         coil.voltage_ext = signal
@@ -170,5 +176,5 @@ end
 
 # Export controller management functions
 export create_controller, create_current_controller, create_position_controller,
-       set_target!, reset_controller!,
-       compute_control_signal!, apply_control_signal!
+    set_target!, reset_controller!,
+    compute_control_signal!, apply_control_signal!

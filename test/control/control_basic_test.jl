@@ -9,21 +9,22 @@
 
     area = π * 0.02^2  # 2cm radius coil
     resistance = 0.001  # 1 mΩ
-    self_inductance = 1e-6  # 1 μH
+    self_inductance = 1.0e-6  # 1 μH
 
     test_coils = [
-        Coil((r=0.5, z=0.1), area, resistance, self_inductance, true, true, "OH1", 1000.0, 50000.0),
-        Coil((r=0.5, z=-0.1), area, resistance, self_inductance, true, true, "OH2", 1000.0, 50000.0),
-        Coil((r=0.3, z=0.2), area, resistance, self_inductance, true, false, "PF1", 800.0, 30000.0)
+        Coil((r = 0.5, z = 0.1), area, resistance, self_inductance, true, true, "OH1", 1000.0, 50000.0),
+        Coil((r = 0.5, z = -0.1), area, resistance, self_inductance, true, true, "OH2", 1000.0, 50000.0),
+        Coil((r = 0.3, z = 0.2), area, resistance, self_inductance, true, false, "PF1", 800.0, 30000.0),
     ]
 
     @testset "Generic Controller Creation" begin
-        target = 1e6
-        controller = create_controller(target, test_coils[1:2];
-            control_type="current",
-            Kp=5.0, Ti=0.4, Td=0.02,
-            dt=1e-6,
-            umin=-100.0, umax=100.0
+        target = 1.0e6
+        controller = create_controller(
+            target, test_coils[1:2];
+            control_type = "current",
+            Kp = 5.0, Ti = 0.4, Td = 0.02,
+            dt = 1.0e-6,
+            umin = -100.0, umax = 100.0
         )
 
         @test controller.target == target
@@ -39,16 +40,17 @@
         @test controller.pid.K == 5.0
         @test controller.pid.Ti == 0.4
         @test controller.pid.Td == 0.02
-        @test controller.pid.Ts == 1e-6
+        @test controller.pid.Ts == 1.0e-6
         @test controller.pid.umin == -100.0
         @test controller.pid.umax == 100.0
     end
 
     @testset "Current Controller Creation" begin
         target_current = 1.5e6
-        controller = create_current_controller(target_current, test_coils[1:2];
-            Kp=10.0, Ti=0.5, Td=0.01,
-            dt=1e-6
+        controller = create_current_controller(
+            target_current, test_coils[1:2];
+            Kp = 10.0, Ti = 0.5, Td = 0.01,
+            dt = 1.0e-6
         )
 
         @test controller.target == target_current
@@ -60,9 +62,10 @@
 
     @testset "Position Controller Creation" begin
         target_position = 0.65
-        controller = create_position_controller(target_position, test_coils[2:3];
-            Kp=2.0, Ti=5.0, Td=0.1,
-            dt=1e-6
+        controller = create_position_controller(
+            target_position, test_coils[2:3];
+            Kp = 2.0, Ti = 5.0, Td = 0.1,
+            dt = 1.0e-6
         )
 
         @test controller.target == target_position
@@ -79,17 +82,17 @@ end
 @testitem "Control Controller Management" begin
     area = π * 0.02^2
     resistance = 0.001
-    self_inductance = 1e-6
+    self_inductance = 1.0e-6
 
     test_coils = [
-        Coil((r=0.5, z=0.1), area, resistance, self_inductance, true, true, "OH1", 1000.0, 50000.0),
-        Coil((r=0.5, z=-0.1), area, resistance, self_inductance, true, true, "OH2", 1000.0, 50000.0)
+        Coil((r = 0.5, z = 0.1), area, resistance, self_inductance, true, true, "OH1", 1000.0, 50000.0),
+        Coil((r = 0.5, z = -0.1), area, resistance, self_inductance, true, true, "OH2", 1000.0, 50000.0),
     ]
 
-    controller = create_current_controller(1e6, test_coils; dt=1e-6)
+    controller = create_current_controller(1.0e6, test_coils; dt = 1.0e-6)
 
     @testset "Target Setting" begin
-        new_target = 2e6
+        new_target = 2.0e6
         set_target!(controller, new_target)
         @test controller.target == new_target
     end
@@ -106,7 +109,7 @@ end
     end
 
     @testset "Control Signal Computation" begin
-        controller.target = 1e6
+        controller.target = 1.0e6
         current_value = 0.8e6
 
         # Compute control signal
@@ -126,7 +129,7 @@ end
             coil.voltage_ext = 0.0
         end
 
-        controller = create_current_controller(1e6, test_coils; dt=1e-6)
+        controller = create_current_controller(1.0e6, test_coils; dt = 1.0e-6)
         signal = 50.0
 
         apply_control_signal!(controller, signal)
@@ -156,32 +159,34 @@ end
     @testset "ControllerSet Population" begin
         area = π * 0.02^2
         resistance = 0.001
-        self_inductance = 1e-6
+        self_inductance = 1.0e-6
 
         oh_coils = [
-            Coil((r=0.5, z=0.1), area, resistance, self_inductance, true, true, "OH1", 1000.0, 50000.0),
-            Coil((r=0.5, z=-0.1), area, resistance, self_inductance, true, true, "OH2", 1000.0, 50000.0)
+            Coil((r = 0.5, z = 0.1), area, resistance, self_inductance, true, true, "OH1", 1000.0, 50000.0),
+            Coil((r = 0.5, z = -0.1), area, resistance, self_inductance, true, true, "OH2", 1000.0, 50000.0),
         ]
         pf_coils = [
-            Coil((r=0.3, z=0.2), area, resistance, self_inductance, true, false, "PF1", 800.0, 30000.0),
-            Coil((r=0.7, z=0.3), area, resistance, self_inductance, true, false, "PF2", 800.0, 30000.0)
+            Coil((r = 0.3, z = 0.2), area, resistance, self_inductance, true, false, "PF1", 800.0, 30000.0),
+            Coil((r = 0.7, z = 0.3), area, resistance, self_inductance, true, false, "PF2", 800.0, 30000.0),
         ]
 
         controller_set = ControllerSet{Float64}()
 
         # Add current controller
-        controller_set.current = create_current_controller(1e6, oh_coils; dt=1e-6)
+        controller_set.current = create_current_controller(1.0e6, oh_coils; dt = 1.0e-6)
         @test controller_set.current !== nothing
         @test controller_set.current.control_type == "current"
 
         # Add position controller
-        controller_set.position = create_position_controller(0.65, pf_coils; dt=1e-6)
+        controller_set.position = create_position_controller(0.65, pf_coils; dt = 1.0e-6)
         @test controller_set.position !== nothing
         @test controller_set.position.control_type == "position"
 
         # Add custom controller
-        custom_controller = create_controller(100.0, oh_coils;
-            control_type="custom", dt=1e-6)
+        custom_controller = create_controller(
+            100.0, oh_coils;
+            control_type = "custom", dt = 1.0e-6
+        )
         controller_set.custom["test"] = custom_controller
         @test haskey(controller_set.custom, "test")
         @test controller_set.custom["test"].control_type == "custom"
@@ -191,19 +196,19 @@ end
 @testitem "Control Coil Finding" begin
     area = π * 0.02^2
     resistance = 0.001
-    self_inductance = 1e-6
+    self_inductance = 1.0e-6
 
     coils = [
-        Coil((r=0.5, z=0.1), area, resistance, self_inductance, true, true, "OH_Upper", 1000.0, 50000.0),
-        Coil((r=0.5, z=-0.1), area, resistance, self_inductance, true, true, "OH_Lower", 1000.0, 50000.0),
-        Coil((r=0.3, z=0.2), area, resistance, self_inductance, true, false, "PF_Coil_1", 800.0, 30000.0),
-        Coil((r=0.7, z=0.3), area, resistance, self_inductance, true, false, "PF_Coil_2", 800.0, 30000.0),
-        Coil((r=0.4, z=0.0), area, resistance, self_inductance, true, false, "CS_Main", 500.0, 40000.0),
-        Coil((r=0.6, z=0.15), area, resistance, self_inductance, false, false, "Random_Coil", nothing, nothing)
+        Coil((r = 0.5, z = 0.1), area, resistance, self_inductance, true, true, "OH_Upper", 1000.0, 50000.0),
+        Coil((r = 0.5, z = -0.1), area, resistance, self_inductance, true, true, "OH_Lower", 1000.0, 50000.0),
+        Coil((r = 0.3, z = 0.2), area, resistance, self_inductance, true, false, "PF_Coil_1", 800.0, 30000.0),
+        Coil((r = 0.7, z = 0.3), area, resistance, self_inductance, true, false, "PF_Coil_2", 800.0, 30000.0),
+        Coil((r = 0.4, z = 0.0), area, resistance, self_inductance, true, false, "CS_Main", 500.0, 40000.0),
+        Coil((r = 0.6, z = 0.15), area, resistance, self_inductance, false, false, "Random_Coil", nothing, nothing),
     ]
 
     # Mock coil system
-    coil_system = (coils=coils,)
+    coil_system = (coils = coils,)
 
     @testset "Case Insensitive Pattern Matching" begin
         oh_coils = find_coils_by_name(coil_system, ["OH"])
@@ -230,10 +235,10 @@ end
     end
 
     @testset "Case Sensitive Matching" begin
-        oh_coils_sensitive = find_coils_by_name(coil_system, ["oh"]; case_sensitive=true)
+        oh_coils_sensitive = find_coils_by_name(coil_system, ["oh"]; case_sensitive = true)
         @test length(oh_coils_sensitive) == 0  # No lowercase "oh"
 
-        oh_coils_insensitive = find_coils_by_name(coil_system, ["oh"]; case_sensitive=false)
+        oh_coils_insensitive = find_coils_by_name(coil_system, ["oh"]; case_sensitive = false)
         @test length(oh_coils_insensitive) == 2  # Should find OH coils
     end
 
@@ -246,12 +251,12 @@ end
 @testitem "Control Coil System Integration" begin
     area = π * 0.02^2
     resistance = 0.001
-    self_inductance = 1e-6
+    self_inductance = 1.0e-6
 
     coils = [
-        Coil((r=0.5, z=0.1), area, resistance, self_inductance, true, true, "OH1", 1000.0, 50000.0),
-        Coil((r=0.5, z=-0.1), area, resistance, self_inductance, true, true, "OH2", 1000.0, 50000.0),
-        Coil((r=0.3, z=0.2), area, resistance, self_inductance, true, false, "PF1", 800.0, 30000.0)
+        Coil((r = 0.5, z = 0.1), area, resistance, self_inductance, true, true, "OH1", 1000.0, 50000.0),
+        Coil((r = 0.5, z = -0.1), area, resistance, self_inductance, true, true, "OH2", 1000.0, 50000.0),
+        Coil((r = 0.3, z = 0.2), area, resistance, self_inductance, true, false, "PF1", 800.0, 30000.0),
     ]
 
     # Initialize all coil voltages to zero
@@ -260,7 +265,7 @@ end
     end
 
     # Create controller using first two coils
-    controller = create_current_controller(1e6, coils[1:2]; dt=1e-6)
+    controller = create_current_controller(1.0e6, coils[1:2]; dt = 1.0e-6)
 
     # Apply control signal
     test_signal = 75.0
@@ -285,12 +290,14 @@ end
 @testitem "Control Controller Limits" begin
     area = π * 0.02^2
     resistance = 0.001
-    self_inductance = 1e-6
-    test_coils = [Coil((r=0.5, z=0.0), area, resistance, self_inductance, true, true, "Test", 1000.0, 50000.0)]
+    self_inductance = 1.0e-6
+    test_coils = [Coil((r = 0.5, z = 0.0), area, resistance, self_inductance, true, true, "Test", 1000.0, 50000.0)]
 
     # Create controller with tight limits
-    controller = create_current_controller(1e6, test_coils;
-        dt=1e-6, umin=-10.0, umax=10.0)
+    controller = create_current_controller(
+        1.0e6, test_coils;
+        dt = 1.0e-6, umin = -10.0, umax = 10.0
+    )
 
     # Test with large error (should be limited)
     large_error_signal = compute_control_signal!(controller, 0.0)  # Huge error

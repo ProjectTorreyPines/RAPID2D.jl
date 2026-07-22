@@ -16,7 +16,7 @@
     function regression_config(; kwargs...)
         return SimulationConfig{Float64}(;
             device_Name = "manual",
-            Output_path = mktempdir(; cleanup=false),
+            Output_path = mktempdir(; cleanup = false),
             kwargs...
         )
     end
@@ -26,7 +26,7 @@
     # `E0` [V/m] is the applied toroidal electric field referenced to the mean major
     # radius. Each scenario passes it explicitly: loop-voltage driven (E0 > 0) vs coil
     # driven (E0 = 0) is a defining property of the scenario, not a default.
-    function setup_toroidal_field!(RP::RAPID; E0::Real, verbose::Bool=false)
+    function setup_toroidal_field!(RP::RAPID; E0::Real, verbose::Bool = false)
         # Zero poloidal field components (pure toroidal field)
         fill!(RP.fields.BR, 0.0)
         fill!(RP.fields.BZ, 0.0)
@@ -65,13 +65,13 @@
     # (centre, radius, peak density, background floor) stays at the call site.
 
     # Uniform column of radius `radius`, `background` outside it.
-    function tophat_blob(G; cenR, cenZ=0.0, radius, n0, background=0.0)
+    function tophat_blob(G; cenR, cenZ = 0.0, radius, n0, background = 0.0)
         r = @. sqrt((G.R2D - cenR)^2 + (G.Z2D - cenZ)^2)
         return @. ifelse(r < radius, n0, background)
     end
 
     # Gaussian blob with 1-sigma width `radius`.
-    function gaussian_blob(G; cenR, cenZ=0.0, radius, n0)
+    function gaussian_blob(G; cenR, cenZ = 0.0, radius, n0)
         r2 = @. (G.R2D - cenR)^2 + (G.Z2D - cenZ)^2
         return @. n0 * exp(-r2 / (2 * radius^2))
     end

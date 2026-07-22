@@ -34,7 +34,7 @@ This function is automatically called by Julia's garbage collector when the wrap
 becomes unreachable.
 """
 function close_wrapper!(wrapper::AdiosFileWrapper)
-    try
+    return try
         if !wrapper.is_closed[]
             close(wrapper.file)
             wrapper.is_closed[] = true

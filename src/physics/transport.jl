@@ -9,15 +9,15 @@ Contains functions related to transport phenomena, including:
 
 # Export public functions
 export update_transport_quantities!,
-       update_diffusion_tensor!,
-       calculate_particle_fluxes!
+    update_diffusion_tensor!,
+    calculate_particle_fluxes!
 
 """
     update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
 """
-function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     tp = RP.transport
     @unpack mi, me, ee = RP.config.constants
@@ -48,8 +48,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     # Calculate parallel diffusion coefficient based on collision frequency
     # NOTE: vp is the most probable velocity for Maxwellian distribution
-    vp_e = @. sqrt(2.0*pla.Te_eV * ee / me)
-    vp_i = @. sqrt(2.0*pla.Ti_eV * ee / mi)
+    vp_e = @. sqrt(2.0 * pla.Te_eV * ee / me)
+    vp_i = @. sqrt(2.0 * pla.Ti_eV * ee / mi)
 
     # Collision-based diffusion coefficient (D = vth²/(3ν))
     tp.Dpara_e_coll = @. FT(0.5) * vp_e^2 / νe_eff
@@ -69,8 +69,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     # Flux-limiter scheme to prevent excessive diffusion
     if RP.flags.limit_flux.state
         # Limit electron diffusivity
-        ne_SM = smooth_data_2D(pla.ne; num_SM=2, weighting=RP.G.inVol2D)
-        Lne_para = abs.(pla.ne ./ calculate_para_grad_of_scalar_F(RP,ne_SM)) # gradient-scale length
+        ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
+        Lne_para = abs.(pla.ne ./ calculate_para_grad_of_scalar_F(RP, ne_SM)) # gradient-scale length
         @. Lne_para[!isfinite(Lne_para)] = zero(FT)
         De_max_para = RP.flags.limit_flux.factor * vp_e .* Lne_para
         tp.Dpara_e_eff = min.(tp.Dpara_e_eff, De_max_para)
@@ -88,7 +88,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
     @. tp.Dpara = tp.Dpara0 + tp.Dpara_e_eff
 
     # Calculate perpendicular diffusion using Bohm diffusivity
-    Dperp_bohm = @. abs((1/16) * pla.Te_eV / RP.fields.Bϕ)
+    Dperp_bohm = @. abs((1 / 16) * pla.Te_eV / RP.fields.Bϕ)
     @. tp.Dperp = tp.Dperp0 + Dperp_bohm
 
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)
@@ -175,7 +175,7 @@ end
 
 Calculate diffusion coefficients based on field configuration and turbulence models.
 """
-function update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_diffusion_tensor!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # compute RR, RZ, ZZ components of the diffusivity tensor
     F = RP.fields
     tp = RP.transport
@@ -192,9 +192,9 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
         fperp = one(FT) - fpara
 
         # 𝐃 = [ (f⟂ 𝐈) + (f∥ - f⟂) * 𝐛𝐛]
-        @. tp.DRR_turb = tp.Dpol_turb * ( fperp + (fpara - fperp) * F.bpol_R^2 )
+        @. tp.DRR_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_R^2)
         @. tp.DRZ_turb = (tp.Dpol_turb) * (fpara - fperp) * (F.bpol_R * F.bpol_Z)
-        @. tp.DZZ_turb = tp.Dpol_turb * ( fperp + (fpara - fperp) * F.bpol_Z^2)
+        @. tp.DZZ_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_Z^2)
 
         # Add turbulent diffusion to base diffusion
         @. tp.DRR .+= tp.DRR_turb
@@ -204,9 +204,9 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
     dR, dZ = RP.G.dR, RP.G.dZ
 
-    @. tp.CTRR = RP.G.Jacob*tp.DRR/(dR*dR);
-    @. tp.CTRZ = RP.G.Jacob*tp.DRZ/(dR*dZ);
-    @. tp.CTZZ = RP.G.Jacob*tp.DZZ/(dZ*dZ);
+    @. tp.CTRR = RP.G.Jacob * tp.DRR / (dR * dR)
+    @. tp.CTRZ = RP.G.Jacob * tp.DRZ / (dR * dZ)
+    @. tp.CTZZ = RP.G.Jacob * tp.DZZ / (dZ * dZ)
 
     return RP
 end
@@ -217,7 +217,7 @@ end
 
 Update transport-related sparse matrix operators (𝐮∇, ∇𝐮, ∇𝐃∇) based on current transport coefficients and velocity fields.
 """
-function update_transport_related_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function update_transport_related_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     OP = RP.operators
 
@@ -242,21 +242,21 @@ end
 
 Calculate particle fluxes based on density gradients and transport coefficients.
 """
-function calculate_particle_fluxes!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function calculate_particle_fluxes!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Initialize arrays for density gradients
     dndR = zeros(FT, RP.G.NR, RP.G.NZ)
     dndZ = zeros(FT, RP.G.NR, RP.G.NZ)
 
     # Calculate density gradients (using forward/central/backward differences)
     # R-direction
-    dndR[:,1] .= (RP.plasma.ne[:,2] .- RP.plasma.ne[:,1])/RP.G.dR
-    dndR[:,2:end-1] .= (RP.plasma.ne[:,3:end] .- RP.plasma.ne[:,1:end-2])/(2*RP.G.dR)
-    dndR[:,end] .= (RP.plasma.ne[:,end] .- RP.plasma.ne[:,end-1])/RP.G.dR
+    dndR[:, 1] .= (RP.plasma.ne[:, 2] .- RP.plasma.ne[:, 1]) / RP.G.dR
+    dndR[:, 2:(end - 1)] .= (RP.plasma.ne[:, 3:end] .- RP.plasma.ne[:, 1:(end - 2)]) / (2 * RP.G.dR)
+    dndR[:, end] .= (RP.plasma.ne[:, end] .- RP.plasma.ne[:, end - 1]) / RP.G.dR
 
     # Z-direction
-    dndZ[1,:] .= (RP.plasma.ne[2,:] .- RP.plasma.ne[1,:])/RP.G.dZ
-    dndZ[2:end-1,:] .= (RP.plasma.ne[3:end,:] .- RP.plasma.ne[1:end-2,:])/(2*RP.G.dZ)
-    dndZ[end,:] .= (RP.plasma.ne[end,:] .- RP.plasma.ne[end-1,:])/RP.G.dZ
+    dndZ[1, :] .= (RP.plasma.ne[2, :] .- RP.plasma.ne[1, :]) / RP.G.dZ
+    dndZ[2:(end - 1), :] .= (RP.plasma.ne[3:end, :] .- RP.plasma.ne[1:(end - 2), :]) / (2 * RP.G.dZ)
+    dndZ[end, :] .= (RP.plasma.ne[end, :] .- RP.plasma.ne[end - 1, :]) / RP.G.dZ
 
     # Calculate fluxes
     # Diffusive flux: -D⋅∇n

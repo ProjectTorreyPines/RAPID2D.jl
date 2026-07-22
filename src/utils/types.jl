@@ -18,7 +18,7 @@ Results structure for field line following analysis.
 - `max_Lpol::FT`: Maximum allowed poloidal length
 - `max_step::Int`: Maximum number of integration steps
 """
-@kwdef mutable struct FieldLineFollowingResult{FT<:AbstractFloat}
+@kwdef mutable struct FieldLineFollowingResult{FT <: AbstractFloat}
     dims_RZ::Tuple{Int, Int}  # Dimensions of the RZ grid
 
     Lpol_forward::Matrix{FT} = zeros(FT, dims_RZ)
@@ -37,9 +37,9 @@ Results structure for field line following analysis.
     max_step::Int = 0
 end
 
-function FieldLineFollowingResult{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
-    flf = FieldLineFollowingResult{FT}(dims_RZ=(NR, NZ))
-    sizehint!(flf.closed_surface_nids, NR*NZ)  # Preallocate for closed surfaces
+function FieldLineFollowingResult{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
+    flf = FieldLineFollowingResult{FT}(dims_RZ = (NR, NZ))
+    sizehint!(flf.closed_surface_nids, NR * NZ)  # Preallocate for closed surfaces
     return flf
 end
 
@@ -59,7 +59,7 @@ Result of tracing a single magnetic field line in one direction.
 - `final_R::FT`: Final R coordinate
 - `final_Z::FT`: Final Z coordinate
 """
-@kwdef mutable struct SingleTraceResult{FT<:AbstractFloat}
+@kwdef mutable struct SingleTraceResult{FT <: AbstractFloat}
     Lpol::FT = zero(FT)
     Lc::FT = zero(FT)
     min_Bpol::FT = zero(FT)

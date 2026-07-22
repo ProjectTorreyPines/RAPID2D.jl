@@ -13,7 +13,7 @@
     i_tud_file = joinpath(RRC_data_dir, "iRRCs_T_ud.h5")
 end
 
-@testitem "Reaction Rate Coefficients" setup=[RRCDataFiles] begin
+@testitem "Reaction Rate Coefficients" setup = [RRCDataFiles] begin
     using RAPID2D.HDF5
 
     @testset "File Access" begin
@@ -61,7 +61,7 @@ end
 
             # Interpolation should match the raw data at grid points
             @test rrc.itp(midpoint_eoeverp, midpoint_erg) ≈
-                  ionization_data[div(length(EoverP), 2), div(length(Erg_eV), 2)]
+                ionization_data[div(length(EoverP), 2), div(length(Erg_eV), 2)]
 
             # Test interpolation at point between grid points
             if length(EoverP) > 1 && length(Erg_eV) > 1
@@ -74,11 +74,11 @@ end
             # Test bounds handling: RRC_EoverP_Erg uses ClampExtrap, so out-of-domain
             # queries clamp to the nearest boundary value (not 0). At low E/p the rate
             # relaxes toward the room-T Maxwellian (the table's bottom row).
-            clampEP(x)  = clamp(x, EoverP[1], EoverP[end])
+            clampEP(x) = clamp(x, EoverP[1], EoverP[end])
             clampErg(x) = clamp(x, Erg_eV[1], Erg_eV[end])
-            @test rrc.itp(EoverP[1] - 1.0, Erg_eV[1])   == rrc.itp(EoverP[1], Erg_eV[1])
-            @test rrc.itp(-10.0, 100.0)                 == rrc.itp(clampEP(-10.0), clampErg(100.0))
-            @test rrc.itp(1e5, 100.0)                   == rrc.itp(clampEP(1e5), clampErg(100.0))
+            @test rrc.itp(EoverP[1] - 1.0, Erg_eV[1]) == rrc.itp(EoverP[1], Erg_eV[1])
+            @test rrc.itp(-10.0, 100.0) == rrc.itp(clampEP(-10.0), clampErg(100.0))
+            @test rrc.itp(1.0e5, 100.0) == rrc.itp(clampEP(1.0e5), clampErg(100.0))
             @test rrc.itp(EoverP[end] + 1.0, Erg_eV[1]) == rrc.itp(EoverP[end], Erg_eV[1])
         end
     end
@@ -104,7 +104,7 @@ end
             midpoint_ud = ud_para[div(length(ud_para), 2)]
 
             @test RRC.itp(midpoint_T, midpoint_ud) ≈
-                  elastic_data[div(length(T_eV), 2), div(length(ud_para), 2)]
+                elastic_data[div(length(T_eV), 2), div(length(ud_para), 2)]
 
             # Test interpolation at point between grid points
             if length(T_eV) > 1 && length(ud_para) > 1
@@ -150,7 +150,7 @@ end
 
     @testset "RRC_T_ud_gFac placeholder" begin
         T_eV = [1.0, 2.0, 3.0]
-        ud_para = [1, 2, 3]*1e6
+        ud_para = [1, 2, 3] * 1.0e6
         gFac = [0.5, 1.0, 2.0]
 
         raw_data = rand(length(T_eV), length(ud_para), length(gFac))
@@ -159,16 +159,16 @@ end
     end
 end
 
-@testitem "Sample RRC Calculation" setup=[RRCDataFiles] begin
+@testitem "Sample RRC Calculation" setup = [RRCDataFiles] begin
     # Minimal mock RAPID object for exercising get_electron_RRC / get_H2_ion_RRC
 
     FT = Float64
 
-    config =  RAPID2D.SimulationConfig{Float64}()
-    config.prefilled_gas_pressure = 4e-3;
-    config.R0B0 = 1.5*1.8;
+    config = RAPID2D.SimulationConfig{Float64}()
+    config.prefilled_gas_pressure = 4.0e-3
+    config.R0B0 = 1.5 * 1.8
 
-    mock_RP = create_rapid_object(; config=config);
+    mock_RP = create_rapid_object(; config = config)
 
     # Load RRCs
     eRRCs = Electron_RRCs(EoverP_Erg_file, e_tud_file)

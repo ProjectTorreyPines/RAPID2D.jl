@@ -11,10 +11,10 @@ Contains functions related to electromagnetic field calculations, including:
 
 # Export public functions
 export update_external_fields!,
-       combine_external_and_self_fields!,
-       calculate_magnetic_field_unit_vectors!,
-       calculate_B_from_ψ!,
-       calculate_B_from_ψ
+    combine_external_and_self_fields!,
+    calculate_magnetic_field_unit_vectors!,
+    calculate_B_from_ψ!,
+    calculate_B_from_ψ
 
 # Export external field types and functions
 export AbstractExternalField, TimeSeriesExternalField
@@ -31,7 +31,7 @@ using LinearAlgebra
 
 Calculate derived magnetic field quantities based on the current field values.
 """
-function calculate_derived_magnetic_field_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function calculate_derived_magnetic_field_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @. RP.fields.Bpol = sqrt(RP.fields.BR^2 + RP.fields.BZ^2)
     @. RP.fields.Btot = sqrt(RP.fields.Bpol^2 + RP.fields.Bϕ^2)
 
@@ -45,7 +45,7 @@ end
 
 Calculate unit vectors for the magnetic field.
 """
-function calculate_magnetic_field_unit_vectors!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function calculate_magnetic_field_unit_vectors!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     F = RP.fields
 
@@ -71,14 +71,14 @@ end
 
 Calculate the parallel electric field based on external and self-generated fields.
 """
-function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     F = RP.fields
     # external parallel electric field
     @. F.E_para_ext = F.Eϕ_ext * F.bϕ
 
     # self parallel electric field
     if RP.flags.E_para_self_ES
-        @. F.E_para_self_ES = sign(-F.Eϕ_ext*F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+        @. F.E_para_self_ES = sign(-F.Eϕ_ext * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
     end
     if RP.flags.E_para_self_EM
         @. F.E_para_self_EM = F.Eϕ_self * F.bϕ
@@ -103,7 +103,7 @@ This function handles interpolation from time series data and calculates derived
 # Returns
 - `RP::RAPID{FT}`: The updated RAPID instance
 """
-function update_external_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+function update_external_fields!(RP::RAPID{FT}, time_s::FT = RP.time_s) where {FT <: AbstractFloat}
     F = RP.fields
 
     # Use manual mode if no external field source is specified
@@ -149,7 +149,7 @@ This function does NOT update the fields themselves, but assumes they are alread
 External fields should be updated separately using `update_external_fields!` before calling this function.
 Self-generated fields should be updated using appropriate physics functions.
 """
-function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT = RP.time_s) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "combine_external_and_self_fields!" begin
         F = RP.fields
 
@@ -190,14 +190,14 @@ Stores time series data for external electromagnetic fields.
 - `Z_MIN::FT`: Minimum Z value [m]
 - `Z_MAX::FT`: Maximum Z value [m]
 """
-mutable struct TimeSeriesExternalField{FT<:AbstractFloat} <: AbstractExternalField{FT}
+mutable struct TimeSeriesExternalField{FT <: AbstractFloat} <: AbstractExternalField{FT}
     time_s::Vector{FT}    # Time points [s]
 
     # Field components
-    BR::Array{FT,3}       # Radial magnetic field [T]
-    BZ::Array{FT,3}       # Vertical magnetic field [T]
-    psi::Array{FT,3}      # Magnetic flux [Wb/rad]
-    LV::Array{FT,3}       # Loop voltage [V]
+    BR::Array{FT, 3}       # Radial magnetic field [T]
+    BZ::Array{FT, 3}       # Vertical magnetic field [T]
+    psi::Array{FT, 3}      # Magnetic flux [Wb/rad]
+    LV::Array{FT, 3}       # Loop voltage [V]
 
     # Grid geometry
     R::Matrix{FT}         # R coordinates [m]
@@ -222,7 +222,7 @@ Interpolate field values at a specific time from time series data.
 # Returns
 - `NamedTuple`: Contains fields BR, BZ, LV, psi interpolated at the specified time
 """
-function calculate_external_fields_at_time(extF::TimeSeriesExternalField{FT}, time::FT) where {FT<:AbstractFloat}
+function calculate_external_fields_at_time(extF::TimeSeriesExternalField{FT}, time::FT) where {FT <: AbstractFloat}
     # Find the time indices for interpolation
     if time <= extF.time_s[1]
         # Before first time point - use first time point
@@ -236,21 +236,21 @@ function calculate_external_fields_at_time(extF::TimeSeriesExternalField{FT}, ti
         # Find the appropriate time interval
         idx = searchsortedlast(extF.time_s, time)
         # Calculate interpolation weight
-        t_weight = (time - extF.time_s[idx]) / (extF.time_s[idx+1] - extF.time_s[idx])
+        t_weight = (time - extF.time_s[idx]) / (extF.time_s[idx + 1] - extF.time_s[idx])
     end
 
     # Linear interpolation in time
-    BR = (1 - t_weight) * extF.BR[:, :, idx] + t_weight * extF.BR[:, :, idx+1]
-    BZ = (1 - t_weight) * extF.BZ[:, :, idx] + t_weight * extF.BZ[:, :, idx+1]
-    psi = (1 - t_weight) * extF.psi[:, :, idx] + t_weight * extF.psi[:, :, idx+1]
-    LV = (1 - t_weight) * extF.LV[:, :, idx] + t_weight * extF.LV[:, :, idx+1]
+    BR = (1 - t_weight) * extF.BR[:, :, idx] + t_weight * extF.BR[:, :, idx + 1]
+    BZ = (1 - t_weight) * extF.BZ[:, :, idx] + t_weight * extF.BZ[:, :, idx + 1]
+    psi = (1 - t_weight) * extF.psi[:, :, idx] + t_weight * extF.psi[:, :, idx + 1]
+    LV = (1 - t_weight) * extF.LV[:, :, idx] + t_weight * extF.LV[:, :, idx + 1]
 
     return (
         BR = BR,
         BZ = BZ,
         LV = LV,
         psi = psi,
-        time_s = time
+        time_s = time,
     )
 end
 
@@ -292,7 +292,7 @@ in c_RAPID.m. It calculates:
 # Returns
 - `RP::RAPID{FT}`: Updated RAPID object with calculated field effects
 """
-function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Extract commonly used variables
     pla = RP.plasma
     F = RP.fields
@@ -318,7 +318,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     # term2 = my_sigmf(tan_θB_norm, FT(5.0), FT(0.4))
     # pla.γ_shape_fac = @. term1 * term2
 
-    pla.γ_shape_fac = min.(FT(1.0), 0.65*Bpol_norm)
+    pla.γ_shape_fac = min.(FT(1.0), 0.65 * Bpol_norm)
 
     pla.γ_shape_fac[RP.flf.closed_surface_nids] .= 0.0 # closed surface has no self-E effects
 
@@ -333,11 +333,11 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
     # =========================================================================
     # Parallel electrostatic self-field component
     # E_para_self_ES = E_self_pol * (Bpol/Btot) * sign(direction)
-    E_pol_required_for_cancellation = @. abs(F.E_para_ext + RP.flags.E_para_self_EM * F.E_para_self_EM)*(F.Btot/F.Bpol);
+    E_pol_required_for_cancellation = @. abs(F.E_para_ext + RP.flags.E_para_self_EM * F.E_para_self_EM) * (F.Btot / F.Bpol)
 
-    ne_SM = smooth_data_2D(pla.ne; num_SM=2, weighting=RP.G.inVol2D)
+    ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
     # E_self_debye = @. sqrt(abs(pla.ne)*ee*pla.Te_eV/eps0)
-    E_self_debye = @. sqrt(abs(ne_SM)*ee*pla.Te_eV/eps0)
+    E_self_debye = @. sqrt(abs(ne_SM) * ee * pla.Te_eV / eps0)
 
     F.Epol_self = @. min(pla.γ_shape_fac * E_pol_required_for_cancellation, E_self_debye)
     extrapolate_field_to_boundary_nodes!(RP.G, F.Epol_self)
@@ -348,8 +348,8 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
         @. pla.mean_ExB_R = (F.Epol_self / F.Btot) * sign(F.Eϕ) * F.bpol_Z
         @. pla.mean_ExB_Z = (F.Epol_self / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
 
-        @. F.ER = -sign(F.Eϕ.*F.Bϕ)*F.Epol_self*F.bpol_R;
-        @. F.EZ = -sign(F.Eϕ.*F.Bϕ)*F.Epol_self*F.bpol_Z;
+        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.Epol_self * F.bpol_R
+        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.Epol_self * F.bpol_Z
     end
 
     # # Turbulent parallel diffusion based on fluctuation levels
@@ -363,7 +363,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:Abstrac
 
     # # Turbulent diffusion coefficient
     # Dpol_turb = 0.5 * v_(ExB) * L_mixing
-    @. tp.Dpol_turb = 0.5 * F.Epol_self / F.Btot * tp.L_mixing;
+    @. tp.Dpol_turb = 0.5 * F.Epol_self / F.Btot * tp.L_mixing
 
     return RP
 end
@@ -388,7 +388,7 @@ Uses the relations:
 - Uses first-order forward/backward differences at boundaries
 - All matrices must have dimensions (G.NR, G.NZ)
 """
-function calculate_B_from_ψ!(G::GridGeometry{FT}, ψ::Matrix{FT}, BR::Matrix{FT}, BZ::Matrix{FT}) where {FT<:AbstractFloat}
+function calculate_B_from_ψ!(G::GridGeometry{FT}, ψ::Matrix{FT}, BR::Matrix{FT}, BZ::Matrix{FT}) where {FT <: AbstractFloat}
     @assert size(ψ) == (G.NR, G.NZ) "ψ must match grid size (NR=$(G.NR), NZ=$(G.NZ))"
     @assert size(BR) == (G.NR, G.NZ) "BR must match grid size (NR=$(G.NR), NZ=$(G.NZ))"
     @assert size(BZ) == (G.NR, G.NZ) "BZ must match grid size (NR=$(G.NR), NZ=$(G.NZ))"
@@ -403,11 +403,11 @@ function calculate_B_from_ψ!(G::GridGeometry{FT}, ψ::Matrix{FT}, BR::Matrix{FT
     # BZ = (1/R)*(∂ψ/∂R)
 
     # Interior points: use second-order central differences
-    @inbounds for j in 2:NZ-1
-        for i in 2:NR-1
+    @inbounds for j in 2:(NZ - 1)
+        for i in 2:(NR - 1)
             inv_R = one(FT) / G.R1D[i]
-            BR[i,j] = inv_R * (- (ψ[i, j+1] - ψ[i, j-1]) * half * inv_dZ)
-            BZ[i,j] = inv_R * ((ψ[i+1, j] - ψ[i-1, j]) * half * inv_dR)
+            BR[i, j] = inv_R * (- (ψ[i, j + 1] - ψ[i, j - 1]) * half * inv_dZ)
+            BZ[i, j] = inv_R * ((ψ[i + 1, j] - ψ[i - 1, j]) * half * inv_dR)
         end
     end
 
@@ -419,42 +419,42 @@ function calculate_B_from_ψ!(G::GridGeometry{FT}, ψ::Matrix{FT}, BR::Matrix{FT
             # BZ component: use forward/backward difference in R
             if i == 1
                 # Left boundary: forward difference in R
-                BZ[i,j] = inv_R * ((ψ[i+1, j] - ψ[i, j]) * inv_dR)
+                BZ[i, j] = inv_R * ((ψ[i + 1, j] - ψ[i, j]) * inv_dR)
             else  # i == NR
                 # Right boundary: backward difference in R
-                BZ[i,j] = inv_R * ((ψ[i, j] - ψ[i-1, j]) * inv_dR)
+                BZ[i, j] = inv_R * ((ψ[i, j] - ψ[i - 1, j]) * inv_dR)
             end
 
             # BR component: use appropriate difference in Z
             if j == 1
                 # Bottom corner: forward difference in Z
-                BR[i,j] = inv_R * (- (ψ[i, j+1] - ψ[i, j]) * inv_dZ)
+                BR[i, j] = inv_R * (- (ψ[i, j + 1] - ψ[i, j]) * inv_dZ)
             elseif j == NZ
                 # Top corner: backward difference in Z
-                BR[i,j] = inv_R * (- (ψ[i, j] - ψ[i, j-1]) * inv_dZ)
+                BR[i, j] = inv_R * (- (ψ[i, j] - ψ[i, j - 1]) * inv_dZ)
             else
                 # Interior in Z: central difference in Z
-                BR[i,j] = inv_R * (- (ψ[i, j+1] - ψ[i, j-1]) * half * inv_dZ)
+                BR[i, j] = inv_R * (- (ψ[i, j + 1] - ψ[i, j - 1]) * half * inv_dZ)
             end
         end
     end
 
     # Z-direction boundaries (bottom and top edges, excluding corners already handled)
-    @inbounds for i in 2:NR-1
+    return @inbounds for i in 2:(NR - 1)
         for j in [1, NZ]
             inv_R = one(FT) / G.R1D[i]
 
             # BR component: use forward/backward difference in Z
             if j == 1
                 # Bottom boundary: forward difference in Z
-                BR[i,j] = inv_R * (- (ψ[i, j+1] - ψ[i, j]) * inv_dZ)
+                BR[i, j] = inv_R * (- (ψ[i, j + 1] - ψ[i, j]) * inv_dZ)
             else  # j == NZ
                 # Top boundary: backward difference in Z
-                BR[i,j] = inv_R * (- (ψ[i, j] - ψ[i, j-1]) * inv_dZ)
+                BR[i, j] = inv_R * (- (ψ[i, j] - ψ[i, j - 1]) * inv_dZ)
             end
 
             # BZ component: central difference in R (interior points)
-            BZ[i,j] = inv_R * ((ψ[i+1, j] - ψ[i-1, j]) * half * inv_dR)
+            BZ[i, j] = inv_R * ((ψ[i + 1, j] - ψ[i - 1, j]) * half * inv_dR)
         end
     end
 end
@@ -476,7 +476,7 @@ This is a convenience wrapper around `calculate_B_from_ψ!` that allocates outpu
 # See also
 - [`calculate_B_from_ψ!`](@ref): In-place version for better performance
 """
-function calculate_B_from_ψ(G::GridGeometry{FT}, ψ::Matrix{FT}) where {FT<:AbstractFloat}
+function calculate_B_from_ψ(G::GridGeometry{FT}, ψ::Matrix{FT}) where {FT <: AbstractFloat}
     @assert size(ψ) == (G.NR, G.NZ) "ψ must match grid size (NR=$(G.NR), NZ=$(G.NZ))"
 
     # Initialize BR and BZ matrices

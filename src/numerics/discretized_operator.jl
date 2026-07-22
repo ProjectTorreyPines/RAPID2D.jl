@@ -10,26 +10,26 @@ Represents a discretized operator in a two-dimensional domain.
 - `matrix::SparseMatrixCSC{FT,Int}`: Sparse matrix representation of the discretized operator
 - `k2csc::Vector{Int}`: Mapping from k-indices to CSC indices for efficient sparse matrix updates
 """
-@kwdef mutable struct DiscretizedOperator{FT<:AbstractFloat}
-    dims_rz::Tuple{Int,Int} # (NR, NZ)
+@kwdef mutable struct DiscretizedOperator{FT <: AbstractFloat}
+    dims_rz::Tuple{Int, Int} # (NR, NZ)
 
     # sparse matrix for the discretized operator
-    matrix::SparseMatrixCSC{FT,Int} = spzeros(FT, prod(dims_rz), prod(dims_rz))
+    matrix::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims_rz), prod(dims_rz))
 
     # Mapping from k-index to CSC index (not always used)
     # (for more efficient update of non-zero elements of CSC matrix)
     k2csc::Vector{Int} = Int[]
 end
 
-function DiscretizedOperator{FT}(dimensions::Tuple{Int,Int}) where {FT<:AbstractFloat}
-    return DiscretizedOperator{FT}(dims_rz=dimensions)
+function DiscretizedOperator{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return DiscretizedOperator{FT}(dims_rz = dimensions)
 end
 
-function DiscretizedOperator{FT}(NR::Int, NZ::Int) where {FT<:AbstractFloat}
-    return DiscretizedOperator{FT}(dims_rz=(NR, NZ))
+function DiscretizedOperator{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
+    return DiscretizedOperator{FT}(dims_rz = (NR, NZ))
 end
 
-function DiscretizedOperator(dims_rz::Tuple{Int,Int}, I::Vector{Int}, J::Vector{Int}, V::Vector{FT}) where {FT<:AbstractFloat}
+function DiscretizedOperator(dims_rz::Tuple{Int, Int}, I::Vector{Int}, J::Vector{Int}, V::Vector{FT}) where {FT <: AbstractFloat}
     dop = DiscretizedOperator{FT}(dims_rz)
 
     oriV = copy(V)
@@ -64,55 +64,59 @@ struct DOStyle <: BroadcastStyle end
 BroadcastStyle(::Type{<:DiscretizedOperator}) = DOStyle()
 
 
-function Base.:(==)(dop1::DiscretizedOperator{FT1},
-                    dop2::DiscretizedOperator{FT2}) where {FT1<:AbstractFloat, FT2<:AbstractFloat}
-    return (dop1.dims_rz == dop2.dims_rz
+function Base.:(==)(
+        dop1::DiscretizedOperator{FT1},
+        dop2::DiscretizedOperator{FT2}
+    ) where {FT1 <: AbstractFloat, FT2 <: AbstractFloat}
+    return (
+        dop1.dims_rz == dop2.dims_rz
             && dop1.matrix == dop2.matrix
-            && dop1.k2csc == dop2.k2csc)
+            && dop1.k2csc == dop2.k2csc
+    )
 end
 
-function *(dop::DiscretizedOperator{FT}, mat::AbstractMatrix{FT}) where {FT<:AbstractFloat}
+function *(dop::DiscretizedOperator{FT}, mat::AbstractMatrix{FT}) where {FT <: AbstractFloat}
     return reshape(dop.matrix * @view(mat[:]), dop.dims_rz)
 end
 
-function *(dop::DiscretizedOperator{FT}, vec::AbstractVector{FT}) where {FT<:AbstractFloat}
+function *(dop::DiscretizedOperator{FT}, vec::AbstractVector{FT}) where {FT <: AbstractFloat}
     return dop.matrix * vec
 end
 
 # Unary negation & inverse —
 -(A::DiscretizedOperator) = DiscretizedOperator(dims_rz = A.dims_rz, matrix = -A.matrix)
-inv(A::DiscretizedOperator)  = DiscretizedOperator(dims_rz = A.dims_rz, matrix = inv(A.matrix))
+inv(A::DiscretizedOperator) = DiscretizedOperator(dims_rz = A.dims_rz, matrix = inv(A.matrix))
 
 # — Binary combination (same dims only) —
 function +(A::DiscretizedOperator, B::DiscretizedOperator)
     A.dims_rz == B.dims_rz || throw(DimensionMismatch("dims_rz of A=$(A.dims_rz) and B=$(B.dims_rz) do not match"))
-    DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix + B.matrix)
+    return DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix + B.matrix)
 end
 function +(A::DiscretizedOperator, B::AbstractMatrix)
-    DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix + B)
+    return DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix + B)
 end
 function +(A::AbstractMatrix, B::DiscretizedOperator)
-    DiscretizedOperator(dims_rz = B.dims_rz, matrix = A + B.matrix)
+    return DiscretizedOperator(dims_rz = B.dims_rz, matrix = A + B.matrix)
 end
 
 function -(A::DiscretizedOperator, B::DiscretizedOperator)
-    DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix - B.matrix)
+    return DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix - B.matrix)
 end
 function -(A::DiscretizedOperator, B::AbstractMatrix)
-    DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix - B)
+    return DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix - B)
 end
 function -(A::AbstractMatrix, B::DiscretizedOperator)
-    DiscretizedOperator(dims_rz = B.dims_rz, matrix = A - B.matrix)
+    return DiscretizedOperator(dims_rz = B.dims_rz, matrix = A - B.matrix)
 end
 
 function *(A::DiscretizedOperator, B::DiscretizedOperator)
-    DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix * B.matrix)
+    return DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix * B.matrix)
 end
 function *(A::DiscretizedOperator, B::AbstractMatrix)
-    DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix * B)
+    return DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix * B)
 end
 function *(A::AbstractMatrix, B::DiscretizedOperator)
-    DiscretizedOperator(dims_rz = B.dims_rz, matrix = A * B.matrix)
+    return DiscretizedOperator(dims_rz = B.dims_rz, matrix = A * B.matrix)
 end
 
 
@@ -122,39 +126,39 @@ end
 
 # — Division by scalar and exponentiation —
 function /(A::DiscretizedOperator, α::Number)
-    DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix / α)
+    return DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix / α)
 end
 function /(α::Number, A::DiscretizedOperator)
-    DiscretizedOperator(dims_rz = A.dims_rz, matrix = α / A.matrix )
+    return DiscretizedOperator(dims_rz = A.dims_rz, matrix = α / A.matrix)
 end
 ^(A::DiscretizedOperator, n::Integer) = DiscretizedOperator(dims_rz = A.dims_rz, matrix = A.matrix^n)
 
 ## === Copy operator ===
 import Base: copyto!
 
-function Base.copy(src::DiscretizedOperator{FT}) where {FT<:AbstractFloat}
+function Base.copy(src::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
     new_op = DiscretizedOperator{FT}(dims_rz = src.dims_rz) # Assigns the tuple
     new_op.matrix = copy(src.matrix) # Deep copy the matrix
     new_op.k2csc = copy(src.k2csc)   # Deep copy the vector
     return new_op
 end
 
-function copyto!(dest::DiscretizedOperator{FT}, src::DiscretizedOperator{FT}) where {FT<:AbstractFloat}
-	@assert dest.dims_rz == src.dims_rz "Dimensions of dest=$(dest.dims_rz) and src=$(src.dims_rz) do not match"
+function copyto!(dest::DiscretizedOperator{FT}, src::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
+    @assert dest.dims_rz == src.dims_rz "Dimensions of dest=$(dest.dims_rz) and src=$(src.dims_rz) do not match"
     copyto!(dest.matrix, src.matrix)
-	dest.k2csc = copy(src.k2csc)
-	return dest
+    dest.k2csc = copy(src.k2csc)
+    return dest
 end
 
-function copyto!(dest::DiscretizedOperator{FT}, src::AbstractMatrix{FT}) where {FT<:AbstractFloat}
+function copyto!(dest::DiscretizedOperator{FT}, src::AbstractMatrix{FT}) where {FT <: AbstractFloat}
     copyto!(dest.matrix, src)
-	empty!(dest.k2csc) # reset k2csc
-	return dest
+    empty!(dest.k2csc) # reset k2csc
+    return dest
 end
 
 # Special Broadcasted type handler for .= operations
 function copyto!(dest::DiscretizedOperator{FT}, bc::Broadcasted{DOStyle}) where {FT}
-	src_dops = filter(x -> x isa DiscretizedOperator, bc.args)
+    src_dops = filter(x -> x isa DiscretizedOperator, bc.args)
     @assert !isempty(src_dops) "No DiscretizedOperator found in broadcast args"
     src = first(src_dops)
     @assert src.dims_rz == dest.dims_rz "Dimensions of dest=$(dest.dims_rz) and src=$(src.dims_rz) do not match"
@@ -166,7 +170,7 @@ function copyto!(dest::DiscretizedOperator{FT}, bc::Broadcasted{DOStyle}) where 
     M = materialize(bc_mat)
 
     copyto!(dest.matrix, M)
-	dest.k2csc = copy(src.k2csc)
+    dest.k2csc = copy(src.k2csc)
     return dest
 end
 
@@ -193,10 +197,10 @@ end
 
 ## === Backlash operator for solving linear systems ===
 import Base: \
-function \(A::DiscretizedOperator{T}, b::AbstractVector{T}) where {T<:AbstractFloat}
+function \(A::DiscretizedOperator{T}, b::AbstractVector{T}) where {T <: AbstractFloat}
     return A.matrix \ b
 end
-function \(A::DiscretizedOperator{T}, b::AbstractMatrix{T}) where {T<:AbstractFloat}
+function \(A::DiscretizedOperator{T}, b::AbstractMatrix{T}) where {T <: AbstractFloat}
     A.dims_rz == size(b) || throw(DimensionMismatch("A.dims_rz=$(A.dims_rz) and size(b)=$(size(b)) do not match"))
     return reshape(A.matrix \ @view(b[:]), A.dims_rz)
 end
@@ -217,9 +221,9 @@ combine_styles(::DOStyle, ::BroadcastStyle) = DOStyle()
 combine_styles(::BroadcastStyle, ::DOStyle) = DOStyle()
 
 function broadcasted(::DOStyle, f, ops::DiscretizedOperator...)
-    mats = map(o->o.matrix, ops)
-    bc   = broadcasted(f, mats...)
-    M    = materialize(bc)
+    mats = map(o -> o.matrix, ops)
+    bc = broadcasted(f, mats...)
+    M = materialize(bc)
     return DiscretizedOperator(dims_rz = first(ops).dims_rz, matrix = M)
 end
 

@@ -2,33 +2,33 @@
 # Each testitem builds and mutates its OWN RAPID object; the shared
 # SimulationConfig factories live in setup_numerics.jl.
 
-@testitem "Basic differential operators" setup=[NumericsFixtures] begin
+@testitem "Basic differential operators" setup = [NumericsFixtures] begin
     # Define test parameters
     NR, NZ = 50, 100  # Small grid for testing
     FT = Float64    # Floating point type
 
     # Create a proper RAPID object for testing using create_rapid_object
-    config = gas_filled_config(FT; NR=NR, NZ=NZ)
+    config = gas_filled_config(FT; NR = NR, NZ = NZ)
     # Create the RAPID object
-    RP = create_rapid_object(; config=config)
+    RP = create_rapid_object(; config = config)
 
 
-    FR  = zeros(FT, NR, NZ)
-    FZ  = zeros(FT, NR, NZ)
+    FR = zeros(FT, NR, NZ)
+    FZ = zeros(FT, NR, NZ)
     # Create a vortex-like flow vector field
     for j in 1:NZ, i in 1:NR
         # Centered coordinates
-        x = i - NR/2
-        y = j - NZ/2
+        x = i - NR / 2
+        y = j - NZ / 2
         r = sqrt(x^2 + y^2)
 
         if r > 0
             # Circular flow around center
-            FR[i,j] = -0.1 * y / r
-            FZ[i,j] = 0.1 * x / r
+            FR[i, j] = -0.1 * y / r
+            FZ[i, j] = 0.1 * x / r
         else
-            FR[i,j] = 0.0
-            FZ[i,j] = 0.0
+            FR[i, j] = 0.0
+            FZ[i, j] = 0.0
         end
     end
 
@@ -40,7 +40,7 @@
     # using operators matrix-vector multiplication
     div_numerical_2 = OP.𝐽⁻¹∂R_𝐽 * FR .+ OP.∂Z * FZ
 
-    @test isapprox(div_numerical_1, div_numerical_2, rtol=1e-14)
+    @test isapprox(div_numerical_1, div_numerical_2, rtol = 1.0e-14)
 
     # Test convient dispatches
     @test div_numerical_2 == reshape(calculate_divergence(OP, FR[:], FZ[:]), NR, NZ)
@@ -61,7 +61,7 @@
         # Get grid coordinates
         R2D = RP.G.R2D
         Z2D = RP.G.Z2D
-        interior_points = 2:NR-1, 2:NZ-1
+        interior_points = 2:(NR - 1), 2:(NZ - 1)
 
         # Test Case 1: Radial Flow (FR = R, FZ = 0)
         let
@@ -70,9 +70,9 @@
             FZ = zeros(FT, NR, NZ)
 
             div_numerical = RAPID2D.calculate_divergence(RP.G, FR, FZ)  # Using central differencing
-            div_analytical = fill(2*k, (NR, NZ))
+            div_analytical = fill(2 * k, (NR, NZ))
 
-            @test isapprox(div_numerical[interior_points...], div_analytical[interior_points...], rtol=1e-4)
+            @test isapprox(div_numerical[interior_points...], div_analytical[interior_points...], rtol = 1.0e-4)
         end
 
         # Test Case 2: Linear Flow (FR = a·R, FZ = b·Z)
@@ -83,38 +83,38 @@
             FZ = b .* Z2D
 
             div_numerical = RAPID2D.calculate_divergence(RP.G, FR, FZ)  # Using central differencing
-            div_analytical = fill(2*a + b, (NR, NZ))
+            div_analytical = fill(2 * a + b, (NR, NZ))
 
-            @test isapprox(div_numerical[interior_points...], div_analytical[interior_points...], rtol=1e-2)
+            @test isapprox(div_numerical[interior_points...], div_analytical[interior_points...], rtol = 1.0e-2)
         end
 
         # Test Case 3 (divergence-free): (FR = R²-Z², FZ = -3*R*Z + Z³/(3*R))
         let
             FR = @. R2D^2 - Z2D^2
-            FZ = @. -3 * R2D * Z2D + Z2D^3/(3*R2D)
+            FZ = @. -3 * R2D * Z2D + Z2D^3 / (3 * R2D)
             div_numerical = RAPID2D.calculate_divergence(RP.G, FR, FZ)  # Using central differencing
 
-            @test maximum(abs.(div_numerical[interior_points...])) < 1e-2
+            @test maximum(abs.(div_numerical[interior_points...])) < 1.0e-2
         end
     end
 end
 
-@testitem "Diffusion operator [∇𝐃∇]" setup=[NumericsFixtures] begin
+@testitem "Diffusion operator [∇𝐃∇]" setup = [NumericsFixtures] begin
     # Define test parameters
     NR, NZ = 15, 30  # Small grid for testing
     FT = Float64    # Floating point type
 
     # Create a proper RAPID object for testing using create_rapid_object
-    config = gas_filled_config(FT; NR=NR, NZ=NZ)
+    config = gas_filled_config(FT; NR = NR, NZ = NZ)
 
     # Create the RAPID object
-    RP = create_rapid_object(; config=config)
+    RP = create_rapid_object(; config = config)
 
     # Create mock diffusion coefficients with spatial variation
     for j in 1:NZ, i in 1:NR
-        RP.transport.DRR[i,j] = 0.1 + 0.01 * (i + j)  # Vary with position
-        RP.transport.DZZ[i,j] = 0.2 + 0.01 * (i + j)  # Vary with position
-        RP.transport.DRZ[i,j] = 0.01 * (i - j)        # Vary with position, can be negative
+        RP.transport.DRR[i, j] = 0.1 + 0.01 * (i + j)  # Vary with position
+        RP.transport.DZZ[i, j] = 0.2 + 0.01 * (i + j)  # Vary with position
+        RP.transport.DRZ[i, j] = 0.01 * (i - j)        # Vary with position, can be negative
     end
 
     # Create mock density field with a smooth Gaussian-like profile
@@ -122,7 +122,7 @@ end
     for j in 1:NZ, i in 1:NR
         r_norm = (RP.G.R1D[i] - 1.5)^2 / 0.3^2
         z_norm = RP.G.Z1D[j]^2 / 0.2^2
-        test_density[i,j] = exp(-(r_norm + z_norm))
+        test_density[i, j] = exp(-(r_norm + z_norm))
     end
 
     # Explicit method
@@ -143,8 +143,8 @@ end
     @test !(∇𝐃∇ === RP.operators.∇𝐃∇)
 
     # Comparison
-    @test isapprox(explicit_result, implicit_result, rtol=1e-10)
-    @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
+    @test isapprox(explicit_result, implicit_result, rtol = 1.0e-10)
+    @test isapprox(explicit_result, implicit_result2, rtol = 1.0e-10)
 
 
     # Additional test: Verify that matrix multiplication operations don't error
@@ -152,23 +152,23 @@ end
     @test_nowarn ∇𝐃∇ * (∇𝐃∇ * test_density)
 end
 
-@testitem "Convective-flux divergence operator [∇⋅(𝐮 f)]" setup=[NumericsFixtures] begin
+@testitem "Convective-flux divergence operator [∇⋅(𝐮 f)]" setup = [NumericsFixtures] begin
     # Define test parameters
     NR, NZ = 15, 30  # Small grid for testing
     FT = Float64     # Floating point type
 
     # Create a proper RAPID object for testing using create_rapid_object
-    config = gas_filled_config(FT; NR=NR, NZ=NZ)
+    config = gas_filled_config(FT; NR = NR, NZ = NZ)
 
     # Create the RAPID object
-    RP = create_rapid_object(; config=config)
+    RP = create_rapid_object(; config = config)
 
     # Create mock density field with a smooth Gaussian-like profile
     test_density = zeros(FT, NR, NZ)
     for j in 1:NZ, i in 1:NR
         r_norm = (RP.G.R1D[i] - 1.5)^2 / 0.3^2
         z_norm = RP.G.Z1D[j]^2 / 0.2^2
-        test_density[i,j] = exp(-(r_norm + z_norm))
+        test_density[i, j] = exp(-(r_norm + z_norm))
     end
 
     # Create mock velocity fields with spatial variation to test all code paths
@@ -178,17 +178,17 @@ end
 
     for j in 1:NZ, i in 1:NR
         # R-direction velocity: varies from negative to positive
-        uR[i,j] = 0.2 * (i - NR/2) / (NR/2)
+        uR[i, j] = 0.2 * (i - NR / 2) / (NR / 2)
 
         # Z-direction velocity: radial pattern from center
-        uZ[i,j] = 0.1 * (j - NZ/2) / (NZ/2)
+        uZ[i, j] = 0.1 * (j - NZ / 2) / (NZ / 2)
 
         # Create some regions with near-zero velocity to test that case
-        if abs(uR[i,j]) < 0.05
-            uR[i,j] = 0.0
+        if abs(uR[i, j]) < 0.05
+            uR[i, j] = 0.0
         end
-        if abs(uZ[i,j]) < 0.05
-            uZ[i,j] = 0.0
+        if abs(uZ[i, j]) < 0.05
+            uZ[i, j] = 0.0
         end
     end
 
@@ -215,16 +215,16 @@ end
             @test ∇𝐮 == RP.operators.∇𝐮
 
             # Compare the results
-            @test isapprox(explicit_result, implicit_result, rtol=1e-10)
-            @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
+            @test isapprox(explicit_result, implicit_result, rtol = 1.0e-10)
+            @test isapprox(explicit_result, implicit_result2, rtol = 1.0e-10)
 
             # Additional test: Verify that matrix multiplication operations don't error
             result1 = ∇𝐮 * (∇𝐮 * test_density)
             result2 = (∇𝐮 * ∇𝐮) * test_density
             result3 = (∇𝐮^2) * test_density
 
-            @test isapprox(result1, result2, rtol=1e-10)
-            @test isapprox(result1, result3, rtol=1e-10)
+            @test isapprox(result1, result2, rtol = 1.0e-10)
+            @test isapprox(result1, result3, rtol = 1.0e-10)
         end
     end
 
@@ -233,17 +233,17 @@ end
         # Create a vortex-like flow pattern
         for j in 1:NZ, i in 1:NR
             # Centered coordinates
-            x = i - NR/2
-            y = j - NZ/2
+            x = i - NR / 2
+            y = j - NZ / 2
             r = sqrt(x^2 + y^2)
 
             if r > 0
                 # Circular flow around center
-                uR[i,j] = -0.1 * y / r
-                uZ[i,j] = 0.1 * x / r
+                uR[i, j] = -0.1 * y / r
+                uZ[i, j] = 0.1 * x / r
             else
-                uR[i,j] = 0.0
-                uZ[i,j] = 0.0
+                uR[i, j] = 0.0
+                uZ[i, j] = 0.0
             end
         end
 
@@ -259,14 +259,14 @@ end
             RP.operators.∇𝐮 = RAPID2D.construct_∇𝐮_operator(RP; flag_upwind)
             implicit_result2 = RP.operators.∇𝐮 * test_density
 
-            @test isapprox(explicit_result, implicit_result, rtol=1e-10)
-            @test isapprox(explicit_result, implicit_result2, rtol=1e-10)
+            @test isapprox(explicit_result, implicit_result, rtol = 1.0e-10)
+            @test isapprox(explicit_result, implicit_result2, rtol = 1.0e-10)
         end
     end
 end
 
 
-@testitem "Directional derivative operator [𝐮⋅∇f]" setup=[NumericsFixtures] begin
+@testitem "Directional derivative operator [𝐮⋅∇f]" setup = [NumericsFixtures] begin
 
     FT = Float64
     # Create simulation configuration
@@ -279,8 +279,8 @@ end
     NR, NZ = RP.G.NR, RP.G.NZ
 
     # Set up a specific siutation for testing
-    RP.fields.BR_ext .= 20e-4
-    RP.fields.BZ_ext .= 10e-4
+    RP.fields.BR_ext .= 20.0e-4
+    RP.fields.BZ_ext .= 10.0e-4
     RAPID2D.combine_external_and_self_fields!(RP)
 
     R0 = (config.R_min + config.R_max) / 2
@@ -289,8 +289,8 @@ end
     sigma_Z = 0.2
     test_f = zeros(FT, NR, NZ)
     for i in 1:RP.G.NR, j in 1:RP.G.NZ
-        R, Z= RP.G.R2D[i, j], RP.G.Z2D[i, j]
-        test_f[i, j] = exp(-((R-R0)^2/(2*sigma_R^2) + (Z-Z0)^2/(2*sigma_Z^2)))
+        R, Z = RP.G.R2D[i, j], RP.G.Z2D[i, j]
+        test_f[i, j] = exp(-((R - R0)^2 / (2 * sigma_R^2) + (Z - Z0)^2 / (2 * sigma_Z^2)))
     end
 
 
@@ -300,15 +300,15 @@ end
     uZ = zeros(FT, NR, NZ)
     for j in 1:NZ, i in 1:NR
         # R-direction velocity: varies from negative to positive
-        uR[i,j] = 0.2 * (i - NR/2) / (NR/2)
+        uR[i, j] = 0.2 * (i - NR / 2) / (NR / 2)
         # Z-direction velocity: radial pattern from center
-        uZ[i,j] = 0.1 * (j - NZ/2) / (NZ/2)
+        uZ[i, j] = 0.1 * (j - NZ / 2) / (NZ / 2)
         # Create some regions with near-zero velocity to test that case
-        if abs(uR[i,j]) < 0.05
-            uR[i,j] = 0.0
+        if abs(uR[i, j]) < 0.05
+            uR[i, j] = 0.0
         end
-        if abs(uZ[i,j]) < 0.05
-            uZ[i,j] = 0.0
+        if abs(uZ[i, j]) < 0.05
+            uZ[i, j] = 0.0
         end
     end
     # Set velocities in the RAPID object
@@ -320,8 +320,8 @@ end
     for flag_upwind in [true, false]
         @testset "Upwind = $flag_upwind" begin
             # Calculate explicit convection term
-            ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, test_f; upwind=flag_upwind)
-            explicit_result = @. (RP.plasma.ueR*∇ud_R + RP.plasma.ueZ*∇ud_Z)
+            ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, test_f; upwind = flag_upwind)
+            explicit_result = @. (RP.plasma.ueR * ∇ud_R + RP.plasma.ueZ * ∇ud_Z)
 
             explicit_result2 = compute_𝐮∇f_directly(RP, test_f; flag_upwind)
 
@@ -338,10 +338,10 @@ end
             @test 𝐮∇ == RP.operators.𝐮∇
 
             # Compare the results
-            interior_points = (2:NR-1, 2:NZ-1)
-            @test isapprox(explicit_result[interior_points...], explicit_result2[interior_points...], rtol=1e-10)
-            @test isapprox(explicit_result[interior_points...], implicit_result[interior_points...], rtol=1e-10)
-            @test isapprox(explicit_result[interior_points...], implicit_result2[interior_points...], rtol=1e-10)
+            interior_points = (2:(NR - 1), 2:(NZ - 1))
+            @test isapprox(explicit_result[interior_points...], explicit_result2[interior_points...], rtol = 1.0e-10)
+            @test isapprox(explicit_result[interior_points...], implicit_result[interior_points...], rtol = 1.0e-10)
+            @test isapprox(explicit_result[interior_points...], implicit_result2[interior_points...], rtol = 1.0e-10)
 
             # Additional test: Verify that matrix multiplication operations don't error
             @test_nowarn 𝐮∇ * (𝐮∇ * RP.plasma.ue_para[:])

@@ -21,7 +21,7 @@ end
     tokamak_wall = WallGeometry{Float64}(tokamak_wall_R, tokamak_wall_Z)
 end
 
-@testitem "Utils Wall Status Functions" setup=[RectWallFixture, TokamakWallFixture] begin
+@testitem "Utils Wall Status Functions" setup = [RectWallFixture, TokamakWallFixture] begin
 
     @testset "get_wall_status - Basic Tests" begin
         # Test for points inside the wall
@@ -49,10 +49,10 @@ end
 
     @testset "get_wall_status - Edge Cases" begin
         # Test with extreme values
-        @test RAPID2D.get_wall_status(1e6, 1e6, wall_R, wall_Z) == -1  # Very large values
-        @test RAPID2D.get_wall_status(1e6, 1e6, rect_wall) == -1  # Very large values
-        @test RAPID2D.get_wall_status(-1e6, -1e6, wall_R, wall_Z) == -1  # Very small values
-        @test RAPID2D.get_wall_status(-1e6, -1e6, rect_wall) == -1  # Very small values
+        @test RAPID2D.get_wall_status(1.0e6, 1.0e6, wall_R, wall_Z) == -1  # Very large values
+        @test RAPID2D.get_wall_status(1.0e6, 1.0e6, rect_wall) == -1  # Very large values
+        @test RAPID2D.get_wall_status(-1.0e6, -1.0e6, wall_R, wall_Z) == -1  # Very small values
+        @test RAPID2D.get_wall_status(-1.0e6, -1.0e6, rect_wall) == -1  # Very small values
 
         # Test with a very small polygon
         tiny_wall_R = Float64[0.0, 0.001, 0.001, 0.0, 0.0]

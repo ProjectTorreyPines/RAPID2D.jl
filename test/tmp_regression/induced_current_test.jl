@@ -23,11 +23,11 @@ if visualize
     using Dates
 end
 
-function run_induced_current_test(; verbose=false, visualize=false)
+function run_induced_current_test(; verbose = false, visualize = false)
     if verbose
-        println("=" ^ 60)
+        println("="^60)
         println("RAPID2D.jl Induced Current Test")
-        println("=" ^ 60)
+        println("="^60)
     end
 
     # Run baseline case without coils
@@ -52,7 +52,7 @@ end
 
 function run_baseline_case(verbose::Bool)
     """Run simulation without external coils as baseline"""
-    config = create_induced_current_config(with_coils=false)
+    config = create_induced_current_config(with_coils = false)
     RP = RAPID{Float64}(config)
 
     setup_induced_current_flags!(RP)
@@ -71,7 +71,7 @@ end
 
 function run_coil_case(verbose::Bool)
     """Run simulation with external coils"""
-    config = create_induced_current_config(with_coils=true)
+    config = create_induced_current_config(with_coils = true)
     RP = RAPID{Float64}(config)
 
     setup_induced_current_flags!(RP)
@@ -92,7 +92,7 @@ function run_coil_case(verbose::Bool)
     return run_simulation!(RP)
 end
 
-function create_induced_current_config(; with_coils=false)
+function create_induced_current_config(; with_coils = false)
     """Create configuration for induced current testing"""
     config = SimulationConfig{Float64}()
 
@@ -101,15 +101,15 @@ function create_induced_current_config(; with_coils=false)
     config.NZ = 50
 
     # Physical parameters
-    config.prefilled_gas_pressure = 1e-3  # Pa
+    config.prefilled_gas_pressure = 1.0e-3  # Pa
     config.R0B0 = 3.0  # Tesla⋅meter
 
     # Time parameters - shorter simulation to focus on initial motion
-    config.dt = 5e-6
-    config.snap0D_Δt_s = 10e-6
-    config.snap2D_Δt_s = 20e-6
+    config.dt = 5.0e-6
+    config.snap0D_Δt_s = 10.0e-6
+    config.snap2D_Δt_s = 20.0e-6
     # config.t_end_s = 500e-6  # Shorter than force balance test
-    config.t_end_s = 1e-3  # Shorter than force balance test
+    config.t_end_s = 1.0e-3  # Shorter than force balance test
 
     # Device parameters
     config.device_Name = "manual"
@@ -148,10 +148,10 @@ function setup_induced_current_flags!(RP::RAPID)
     RP.flags.FLF_nstep = 10
     RP.flags.Implicit = true
     RP.flags.Damp_Transp_outWall = true
-    RP.flags.Global_JxB_Force = true
+    return RP.flags.Global_JxB_Force = true
 end
 
-function setup_magnetic_field!(RP::RAPID; verbose::Bool=false)
+function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     """Set up pure toroidal magnetic field"""
     # Zero poloidal field components
     fill!(RP.fields.BR, 0.0)
@@ -181,18 +181,18 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool=false)
     @. RP.fields.Eϕ_ext = RP.fields.Eϕ
     @. RP.fields.E_para_ext = RP.fields.Eϕ * RP.fields.bϕ
 
-    if verbose
+    return if verbose
         println("  ✓ Magnetic field configuration set")
     end
 end
 
-function setup_plasma!(RP::RAPID; verbose::Bool=false)
+function setup_plasma!(RP::RAPID; verbose::Bool = false)
     """Set up initial plasma density distribution"""
     # Plasma parameters - same as force balance test
     cenR = 1.3  # m
     cenZ = 0.0  # m
     radius = 0.2  # m
-    n0 = 1e18  # m⁻³
+    n0 = 1.0e18  # m⁻³
 
     # Create Gaussian plasma profile
     ini_n = @. n0 * exp(-(((RP.G.R2D - cenR)^2 + (RP.G.Z2D - cenZ)^2) / (2 * radius^2)))
@@ -211,15 +211,15 @@ function setup_plasma!(RP::RAPID; verbose::Bool=false)
 
     # Zero initial velocities
     fill!(RP.plasma.ue_para, 0.0)
-    fill!(RP.plasma.ue_para, 1e6)
+    fill!(RP.plasma.ue_para, 1.0e6)
     fill!(RP.plasma.ui_para, 0.0)
 
-    if verbose
+    return if verbose
         println("  ✓ Initial plasma configuration set")
     end
 end
 
-function setup_external_coils!(RP::RAPID; verbose::Bool=false)
+function setup_external_coils!(RP::RAPID; verbose::Bool = false)
     """Set up external coils near the outer wall to create opposing currents"""
 
     RP.coil_system = CoilSystem{Float64}()
@@ -231,30 +231,30 @@ function setup_external_coils!(RP::RAPID; verbose::Bool=false)
 
     # Place coils just outside the outer wall
     N_coils = 10
-    coils_R = (wall_R_outer + 0.1)*ones(N_coils)  # 10 cm outside wall
+    coils_R = (wall_R_outer + 0.1) * ones(N_coils)  # 10 cm outside wall
     # coils_Z = collect(range(-0.3, 0.3, length=N_coils))
-    coils_Z = collect(range(-1.0, 1.0, length=N_coils))
+    coils_Z = collect(range(-1.0, 1.0, length = N_coils))
     # coils_Z = [-0.3, 0.0, 0.3]  # Three coils at different Z positions
 
     # Create external coils that will oppose plasma motion
     # When plasma moves outward and creates changing flux, these coils will induce currents
 
     # Coil specifications
-    coil_resistivity = 1e4*csys.cu_resistivity
+    coil_resistivity = 1.0e4 * csys.cu_resistivity
     coil_area = π * 0.05^2  # 5 cm radius coil area
     # coil_area = π * 0.01^2  # 5 cm radius coil area
-    coil_resistance = 1e-3  # 1 mΩ resistance (low resistance for strong currents)
-    coil_resistance = 1e-4  # 1 mΩ resistance (low resistance for strong currents)
+    coil_resistance = 1.0e-3  # 1 mΩ resistance (low resistance for strong currents)
+    coil_resistance = 1.0e-4  # 1 mΩ resistance (low resistance for strong currents)
     coil_resistance = 100.0  # 1 mΩ resistance (low resistance for strong currents)
-    coil_self_inductance = 1e-6  # 1 μH self-inductance
-    coil_self_inductance = 1e-8  # 1 μH self-inductance
+    coil_self_inductance = 1.0e-6  # 1 μH self-inductance
+    coil_self_inductance = 1.0e-8  # 1 μH self-inductance
 
     initial_current = 0.0  # Start with zero current
 
     # Create coils and add to system
     for i in 1:N_coils
         coil_name = "braking_coil_$(i)"
-        coil_location = (r=coils_R[i], z=coils_Z[i])
+        coil_location = (r = coils_R[i], z = coils_Z[i])
 
         # Create passive coil (not externally powered, but can carry induced currents)
         braking_coil = Coil(
@@ -277,7 +277,7 @@ function setup_external_coils!(RP::RAPID; verbose::Bool=false)
 
     initialize_coil_system!(RP)
 
-    if verbose
+    return if verbose
         println("  ✓ External coils configured")
         println("    Number of coils: $(length(coils_Z))")
         println("    Coil Z positions: $(coils_Z) m")
@@ -316,18 +316,20 @@ function analyze_induced_current_results(RP::RAPID, case_name::String)
         end
     end
 
-    return (; case_name, times, ne_cen_R, ne_cen_Z, avg_ueR, avg_aR_by_JxB,
-             total_ne, displacement_R, avg_velocity, avg_acceleration,
-             time_to_10pct, initial_R, final_R)
+    return (;
+        case_name, times, ne_cen_R, ne_cen_Z, avg_ueR, avg_aR_by_JxB,
+        total_ne, displacement_R, avg_velocity, avg_acceleration,
+        time_to_10pct, initial_R, final_R,
+    )
 end
 
 function compare_results(baseline, coil_case, verbose::Bool, visualize::Bool)
     """Compare baseline and coil case results"""
 
     if verbose
-        println("\n" * "=" ^ 60)
+        println("\n" * "="^60)
         println("INDUCED CURRENT COMPARISON")
-        println("=" ^ 60)
+        println("="^60)
     end
 
     # Calculate relative changes
@@ -347,7 +349,7 @@ function compare_results(baseline, coil_case, verbose::Bool, visualize::Bool)
         println(@sprintf("  Average velocity: %.1f m/s", baseline.avg_velocity))
         println(@sprintf("  Average acceleration: %.1f m/s²", baseline.avg_acceleration))
         if baseline.time_to_10pct !== nothing
-            println(@sprintf("  Time to 10%% displacement: %.1f μs", baseline.time_to_10pct * 1e6))
+            println(@sprintf("  Time to 10%% displacement: %.1f μs", baseline.time_to_10pct * 1.0e6))
         end
 
         println("\nWith external coils:")
@@ -355,7 +357,7 @@ function compare_results(baseline, coil_case, verbose::Bool, visualize::Bool)
         println(@sprintf("  Average velocity: %.1f m/s", coil_case.avg_velocity))
         println(@sprintf("  Average acceleration: %.1f m/s²", coil_case.avg_acceleration))
         if coil_case.time_to_10pct !== nothing
-            println(@sprintf("  Time to 10%% displacement: %.1f μs", coil_case.time_to_10pct * 1e6))
+            println(@sprintf("  Time to 10%% displacement: %.1f μs", coil_case.time_to_10pct * 1.0e6))
         end
 
         println("\nCoil effects:")
@@ -363,7 +365,7 @@ function compare_results(baseline, coil_case, verbose::Bool, visualize::Bool)
         println(@sprintf("  Acceleration reduction: %.1f%%", 100 * acceleration_reduction))
         println(@sprintf("  Displacement reduction: %.1f%%", 100 * displacement_reduction))
         if time_delay !== nothing
-            println(@sprintf("  Time delay: %.1f μs", time_delay * 1e6))
+            println(@sprintf("  Time delay: %.1f μs", time_delay * 1.0e6))
         end
     end
 
@@ -372,54 +374,72 @@ function compare_results(baseline, coil_case, verbose::Bool, visualize::Bool)
         create_comparison_plots(baseline, coil_case)
     end
 
-    return (; baseline, coil_case, velocity_reduction, acceleration_reduction,
-             displacement_reduction, time_delay)
+    return (;
+        baseline, coil_case, velocity_reduction, acceleration_reduction,
+        displacement_reduction, time_delay,
+    )
 end
 
 function create_comparison_plots(baseline, coil_case)
     """Create comparison plots for baseline vs coil cases"""
 
-    times_ms_base = baseline.times * 1e3
-    times_ms_coil = coil_case.times * 1e3
+    times_ms_base = baseline.times * 1.0e3
+    times_ms_coil = coil_case.times * 1.0e3
 
     # 1. Centroid position comparison
-    p1 = plot(times_ms_base, baseline.ne_cen_R,
-              label="Baseline (no coils)", linewidth=2, color=:blue,
-              xlabel="Time (ms)", ylabel="Radial Position (m)",
-              title="Plasma Centroid Motion")
-    plot!(p1, times_ms_coil, coil_case.ne_cen_R,
-          label="With external coils", linewidth=2, color=:red)
+    p1 = plot(
+        times_ms_base, baseline.ne_cen_R,
+        label = "Baseline (no coils)", linewidth = 2, color = :blue,
+        xlabel = "Time (ms)", ylabel = "Radial Position (m)",
+        title = "Plasma Centroid Motion"
+    )
+    plot!(
+        p1, times_ms_coil, coil_case.ne_cen_R,
+        label = "With external coils", linewidth = 2, color = :red
+    )
 
     # 2. Velocity comparison
-    p2 = plot(times_ms_base, baseline.avg_ueR,
-              label="Baseline", linewidth=2, color=:blue,
-              xlabel="Time (ms)", ylabel="Radial Velocity (m/s)",
-              title="Plasma Velocity")
-    plot!(p2, times_ms_coil, coil_case.avg_ueR,
-          label="With coils", linewidth=2, color=:red)
+    p2 = plot(
+        times_ms_base, baseline.avg_ueR,
+        label = "Baseline", linewidth = 2, color = :blue,
+        xlabel = "Time (ms)", ylabel = "Radial Velocity (m/s)",
+        title = "Plasma Velocity"
+    )
+    plot!(
+        p2, times_ms_coil, coil_case.avg_ueR,
+        label = "With coils", linewidth = 2, color = :red
+    )
 
     # 3. Acceleration comparison
-    p3 = plot(times_ms_base, baseline.avg_aR_by_JxB,
-              label="Baseline", linewidth=2, color=:blue,
-              xlabel="Time (ms)", ylabel="Acceleration (m/s²)",
-              title="JxB Acceleration")
-    plot!(p3, times_ms_coil, coil_case.avg_aR_by_JxB,
-          label="With coils", linewidth=2, color=:red)
+    p3 = plot(
+        times_ms_base, baseline.avg_aR_by_JxB,
+        label = "Baseline", linewidth = 2, color = :blue,
+        xlabel = "Time (ms)", ylabel = "Acceleration (m/s²)",
+        title = "JxB Acceleration"
+    )
+    plot!(
+        p3, times_ms_coil, coil_case.avg_aR_by_JxB,
+        label = "With coils", linewidth = 2, color = :red
+    )
 
     # 4. Phase space comparison
     if length(baseline.ne_cen_R) > 1 && length(coil_case.ne_cen_R) > 1
-        p4 = plot(baseline.ne_cen_R, baseline.avg_ueR,
-                  label="Baseline", linewidth=2, color=:blue,
-                  xlabel="Radial Position (m)", ylabel="Radial Velocity (m/s)",
-                  title="Phase Space (R vs vR)")
-        plot!(p4, coil_case.ne_cen_R, coil_case.avg_ueR,
-              label="With coils", linewidth=2, color=:red)
+        p4 = plot(
+            baseline.ne_cen_R, baseline.avg_ueR,
+            label = "Baseline", linewidth = 2, color = :blue,
+            xlabel = "Radial Position (m)", ylabel = "Radial Velocity (m/s)",
+            title = "Phase Space (R vs vR)"
+        )
+        plot!(
+            p4, coil_case.ne_cen_R, coil_case.avg_ueR,
+            label = "With coils", linewidth = 2, color = :red
+        )
     else
-        p4 = plot(title="Phase Space\n(Insufficient data)")
+        p4 = plot(title = "Phase Space\n(Insufficient data)")
     end
 
     # Combined plot
-    plot_combined = plot(p1, p2, p3, p4, layout=(2,2), size=(1200, 900))
+    plot_combined = plot(p1, p2, p3, p4, layout = (2, 2), size = (1200, 900))
 
     # Save plot
     timestamp = Dates.format(now(), "yyyy-mm-dd_HH_MM_SS")
@@ -434,7 +454,7 @@ end
 
 @testset "RAPID2D.jl Induced Current Test" begin
     # Run the induced current test
-    comparison, RP_baseline, RP_with_coils = run_induced_current_test(verbose=verbose, visualize=visualize)
+    comparison, RP_baseline, RP_with_coils = run_induced_current_test(verbose = verbose, visualize = visualize)
 
     @test comparison !== nothing
 
@@ -502,7 +522,7 @@ end
             println(@sprintf("  ✓ Velocity reduction: %.1f%%", 100 * comparison.velocity_reduction))
             println(@sprintf("  ✓ Displacement reduction: %.1f%%", 100 * comparison.displacement_reduction))
             if comparison.time_delay !== nothing
-                println(@sprintf("  ✓ Motion delay: %.1f μs", comparison.time_delay * 1e6))
+                println(@sprintf("  ✓ Motion delay: %.1f μs", comparison.time_delay * 1.0e6))
             end
         end
     end
@@ -513,23 +533,23 @@ if abspath(PROGRAM_FILE) == @__FILE__
     println("Starting RAPID2D.jl Induced Current Test...")
 
     try
-        comparison, RP_baseline, RP_with_coils = run_induced_current_test(verbose=verbose, visualize=visualize)
+        comparison, RP_baseline, RP_with_coils = run_induced_current_test(verbose = verbose, visualize = visualize)
 
         if comparison !== nothing && comparison.velocity_reduction > 0.05
-            println("\n" * "=" ^ 60)
+            println("\n" * "="^60)
             println("✓ INDUCED CURRENT TEST COMPLETED SUCCESSFULLY")
             println("✓ Electromagnetic braking effect confirmed")
-            println("=" ^ 60)
+            println("="^60)
         else
-            println("\n" * "=" ^ 60)
+            println("\n" * "="^60)
             println("✗ INDUCED CURRENT TEST FAILED - Insufficient braking effect")
-            println("=" ^ 60)
+            println("="^60)
         end
     catch e
-        println("\n" * "=" ^ 60)
+        println("\n" * "="^60)
         println("✗ INDUCED CURRENT TEST FAILED")
         println("Error: $(e)")
-        println("=" ^ 60)
+        println("="^60)
         rethrow(e)
     end
 end

@@ -24,7 +24,7 @@ Returns `true` if the time matches a 0D snapshot timing, `false` otherwise.
 """
 function is_snap0D_time(RP)
     RP_Δt_s = RP.time_s - RP.t_start_s
-    return abs(RP_Δt_s - round(RP_Δt_s/RP.config.snap0D_Δt_s) * RP.config.snap0D_Δt_s) < 0.1 * RP.dt
+    return abs(RP_Δt_s - round(RP_Δt_s / RP.config.snap0D_Δt_s) * RP.config.snap0D_Δt_s) < 0.1 * RP.dt
 end
 
 """
@@ -36,7 +36,7 @@ Returns `true` if the time matches a 2D snapshot timing, `false` otherwise.
 """
 function is_snap2D_time(RP)
     RP_Δt_s = RP.time_s - RP.t_start_s
-    return abs(RP_Δt_s- round(RP_Δt_s/RP.config.snap2D_Δt_s) * RP.config.snap2D_Δt_s) < 0.1 * RP.dt
+    return abs(RP_Δt_s - round(RP_Δt_s / RP.config.snap2D_Δt_s) * RP.config.snap2D_Δt_s) < 0.1 * RP.dt
 end
 
 
@@ -59,7 +59,7 @@ This function represents the core time-stepping algorithm of RAPID2D.
 3. Energy transport (temperature evolution)
 4. Transport coefficient updates
 """
-function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
+function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "advance_timestep!" begin
 
         # Update vacuum fields from external sources
@@ -72,7 +72,7 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT=RP.dt) where FT<:AbstractFloat
             pla = RP.plasma
             F = RP.fields
             @unpack qe, ee = RP.config.constants
-            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Zeff) * pla.ui_para ) * F.bϕ
+            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
             I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
         end
 
@@ -150,7 +150,7 @@ Handles time stepping, diagnostics output, and snapshot generation.
 # Returns
 - `RP`: The updated RAPID object after completion of the simulation
 """
-function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT}}=nothing) where FT<:AbstractFloat
+function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT}} = nothing) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "run_simulation!" begin
         # Simulation parameters
         dt = RP.dt
@@ -168,7 +168,7 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
 
         # Main time loop
         @timeit RAPID_TIMER "main_time_loop" begin
-            while RP.time_s < t_end - 0.1*dt
+            while RP.time_s < t_end - 0.1 * dt
 
                 # Advance simulation one time step
                 advance_timestep!(RP, dt)
@@ -182,7 +182,7 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
                     treat_ion_outside_wall!(RP)
                 end
 
-                if RP.step==1 || mod(RP.step, RP.flags.FLF_nstep)==0
+                if RP.step == 1 || mod(RP.step, RP.flags.FLF_nstep) == 0
                     @timeit RAPID_TIMER "field_line_following" begin
                         flf_analysis_field_lines_rz_plane!(RP)
                         # if !isempty(RP.flf.closed_surface_nids)
@@ -249,10 +249,9 @@ Print detailed timing results from the RAPID simulation.
 """
 function print_timer_results()
     println("")
-    show(RAPID_TIMER; title="RAPID2D Timing Results", allocations=true, sortby=:time, linechars=:unicode, compact=false)
-    println("")
+    show(RAPID_TIMER; title = "RAPID2D Timing Results", allocations = true, sortby = :time, linechars = :unicode, compact = false)
+    return println("")
 end
-
 
 
 """
@@ -263,12 +262,12 @@ Save timing results to a file.
 # Arguments
 - `filename::String`: Output filename (will be saved in current directory)
 """
-function save_timer_results(filename::String="rapid_timing_results.txt")
+function save_timer_results(filename::String = "rapid_timing_results.txt")
     open(filename, "w") do io
         println(io, "RAPID2D Performance Timing Results")
         println(io, "Generated at: $(now())")
         println(io, "="^60)
         print_timer(io, RAPID_TIMER)
     end
-    println("Timing results saved to: $filename")
+    return println("Timing results saved to: $filename")
 end

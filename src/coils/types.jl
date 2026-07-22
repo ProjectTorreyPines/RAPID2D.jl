@@ -32,7 +32,7 @@ Represents a single toroidal current loop, which can be either a powered coil or
 """
 @kwdef mutable struct Coil{FT <: AbstractFloat}
     # Immutable properties
-    location::NamedTuple{(:r, :z), Tuple{FT, FT}} = (r=zero(FT), z=zero(FT))
+    location::NamedTuple{(:r, :z), Tuple{FT, FT}} = (r = zero(FT), z = zero(FT))
     area::FT = zero(FT)
     resistance::FT = zero(FT)
     self_inductance::FT = zero(FT)
@@ -47,7 +47,7 @@ Represents a single toroidal current loop, which can be either a powered coil or
     voltage_ext::Union{FT, Function} = zero(FT)
 
     # Inner constructor with validation
-    function Coil{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage=nothing, max_current=nothing, current=zero(FT), voltage_ext=zero(FT)) where {FT <: AbstractFloat}
+    function Coil{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage = nothing, max_current = nothing, current = zero(FT), voltage_ext = zero(FT)) where {FT <: AbstractFloat}
         @assert area > 0 "Coil area must be positive"
         @assert resistance >= 0 "Coil resistance must be non-negative"
         @assert self_inductance >= 0 "Self-inductance must be non-negative"
@@ -59,17 +59,21 @@ Represents a single toroidal current loop, which can be either a powered coil or
 end
 
 # Constructor with positional arguments
-function Coil(location::NamedTuple{(:r, :z), Tuple{FT, FT}}, area::FT, resistance::FT,
-              self_inductance::FT, is_powered::Bool, is_controllable::Bool, name::String,
-              max_voltage::Union{FT, Nothing}=nothing,
-              max_current::Union{FT, Nothing}=nothing,
-              current::FT=zero(FT), voltage_ext=zero(FT)) where {FT <: AbstractFloat}
-    return Coil{FT}(; location, area, resistance, self_inductance,
-                    is_powered, is_controllable, name,
-                    max_voltage, max_current, current, voltage_ext)
+function Coil(
+        location::NamedTuple{(:r, :z), Tuple{FT, FT}}, area::FT, resistance::FT,
+        self_inductance::FT, is_powered::Bool, is_controllable::Bool, name::String,
+        max_voltage::Union{FT, Nothing} = nothing,
+        max_current::Union{FT, Nothing} = nothing,
+        current::FT = zero(FT), voltage_ext = zero(FT)
+    ) where {FT <: AbstractFloat}
+    return Coil{FT}(;
+        location, area, resistance, self_inductance,
+        is_powered, is_controllable, name,
+        max_voltage, max_current, current, voltage_ext
+    )
 end
 
-function Base.getproperty(coil::Coil{FT}, sym::Symbol) where {FT<:AbstractFloat}
+function Base.getproperty(coil::Coil{FT}, sym::Symbol) where {FT <: AbstractFloat}
     if hasfield(Coil, sym)
         return getfield(coil, sym)
     else
@@ -85,7 +89,7 @@ end
 """
 Extend propertynames to include computed properties for tab completion
 """
-function Base.propertynames(coil::Coil{FT}) where {FT<:AbstractFloat}
+function Base.propertynames(coil::Coil{FT}) where {FT <: AbstractFloat}
     return (fieldnames(Coil)..., :τ_LR)
 end
 
@@ -246,8 +250,8 @@ mutable struct CoilSystem{FT <: AbstractFloat}
     # System matrices for circuit equations
     mutual_inductance::Matrix{FT}
     time_s::FT
-	Δt::FT
-	θimp::FT
+    Δt::FT
+    θimp::FT
     A_LR_circuit::Matrix{FT}
     inv_A_LR_circuit::Matrix{FT}
 
@@ -265,9 +269,11 @@ mutable struct CoilSystem{FT <: AbstractFloat}
     cu_resistivity::FT
 
     # Inner constructor
-    function CoilSystem{FT}(coils::Vector{Coil{FT}},
-                           μ0::FT = FT(1.25663706212e-6),
-                           cu_resistivity::FT = FT(1.68e-8)) where {FT <: AbstractFloat}
+    function CoilSystem{FT}(
+            coils::Vector{Coil{FT}},
+            μ0::FT = FT(1.25663706212e-6),
+            cu_resistivity::FT = FT(1.68e-8)
+        ) where {FT <: AbstractFloat}
         n_total = length(coils)
 
         # Separate powered, controllable, and passive coils
@@ -290,8 +296,8 @@ mutable struct CoilSystem{FT <: AbstractFloat}
         # Initialize matrices (will be computed later)
         mutual_inductance = zeros(FT, n_total, n_total)
         time_s = FT(0.0) # Simulation time, to be set later
-		Δt = FT(0.0)  # Time step for solving circuit equations, to be set later
-		θimp = FT(1.0) # Implicit factor for circuit equations (θimp=1.0 for implicit Euler)
+        Δt = FT(0.0)  # Time step for solving circuit equations, to be set later
+        θimp = FT(1.0) # Implicit factor for circuit equations (θimp=1.0 for implicit Euler)
         A_LR_circuit = zeros(FT, n_total, n_total)
         inv_A_LR_circuit = zeros(FT, n_total, n_total)
 
@@ -303,23 +309,29 @@ mutable struct CoilSystem{FT <: AbstractFloat}
 
         inside_domain_indices = Int[]
 
-        new{FT}(coils, n_total, n_powered, n_controllable, powered_indices, controllable_indices, passive_indices,
-                mutual_inductance, time_s, Δt, θimp, A_LR_circuit, inv_A_LR_circuit,
-                Green_coils2bdy, Green_grid2coils,
-                dGreen_dRg_grid2coils, dGreen_dZg_grid2coils,
-                inside_domain_indices, μ0, cu_resistivity)
+        return new{FT}(
+            coils, n_total, n_powered, n_controllable, powered_indices, controllable_indices, passive_indices,
+            mutual_inductance, time_s, Δt, θimp, A_LR_circuit, inv_A_LR_circuit,
+            Green_coils2bdy, Green_grid2coils,
+            dGreen_dRg_grid2coils, dGreen_dZg_grid2coils,
+            inside_domain_indices, μ0, cu_resistivity
+        )
     end
 end
 
 # Convenience constructor with empty coils
-function CoilSystem{FT}(μ0::FT = FT(1.25663706212e-6),
-                       cu_resistivity::FT = FT(1.68e-8)) where {FT <: AbstractFloat}
+function CoilSystem{FT}(
+        μ0::FT = FT(1.25663706212e-6),
+        cu_resistivity::FT = FT(1.68e-8)
+    ) where {FT <: AbstractFloat}
     return CoilSystem{FT}(Coil{FT}[], μ0, cu_resistivity)
 end
 
 # Type inference constructor
-function CoilSystem(coils::Vector{Coil{FT}},
-                   μ0::FT = FT(1.25663706212e-6),
-                   cu_resistivity::FT = FT(1.68e-8)) where {FT <: AbstractFloat}
+function CoilSystem(
+        coils::Vector{Coil{FT}},
+        μ0::FT = FT(1.25663706212e-6),
+        cu_resistivity::FT = FT(1.68e-8)
+    ) where {FT <: AbstractFloat}
     return CoilSystem{FT}(coils, μ0, cu_resistivity)
 end

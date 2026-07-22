@@ -12,7 +12,7 @@ This is the interface function between RAPID2D and the current controller.
 
 Returns the total toroidal current in Amperes.
 """
-function extract_plasma_current(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function extract_plasma_current(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Calculate toroidal current: Itor = ∫∫ Jϕ * dR * dZ
 
     return sum(RP.plasma.Jϕ) * RP.G.dR * RP.G.dZ
@@ -25,7 +25,7 @@ Extract current plasma position (current-weighted average R position).
 
 Returns the plasma center R position in meters.
 """
-function extract_plasma_position(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function extract_plasma_position(RP::RAPID{FT}) where {FT <: AbstractFloat}
     total_Jϕ = sum(RP.plasma.Jϕ)
     if total_Jϕ != 0
         plasma_center_R = sum(RP.plasma.Jϕ .* RP.G.R2D) / total_Jϕ
@@ -42,7 +42,7 @@ Extract average plasma temperature.
 
 Returns the volume-averaged plasma temperature in eV.
 """
-function extract_plasma_temperature(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function extract_plasma_temperature(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Volume-weighted average temperature
     total_volume = sum(RP.G.inVol2D)
     if total_volume > 0
@@ -64,7 +64,7 @@ This is the main interface function called from the simulation loop.
 - `RP`: RAPID simulation object
 - `controller`: Controller instance
 """
-function update_controller!(RP::RAPID{FT}, controller::Controller{FT}) where {FT<:AbstractFloat}
+function update_controller!(RP::RAPID{FT}, controller::Controller{FT}) where {FT <: AbstractFloat}
     # Extract measurement based on control type
     current_value = if controller.control_type == "current"
         extract_plasma_current(RP)
@@ -88,4 +88,4 @@ end
 
 # Export interface functions
 export extract_plasma_current, extract_plasma_position, extract_plasma_temperature,
-       update_controller!
+    update_controller!

@@ -30,7 +30,7 @@
     @test nnz(empty_dop.matrix) == 0
 end
 
-@testitem "DiscretizedOperator Basic Operations" setup=[DiscretizedOperatorFixtures] begin
+@testitem "DiscretizedOperator Basic Operations" setup = [DiscretizedOperatorFixtures] begin
     using RAPID2D.LinearAlgebra  # norm
 
     id_op, dr_op = create_test_operators()
@@ -52,7 +52,7 @@ end
 
     # Test that dR operator zeros out constant field
     const_vec = ones(9)
-    @test norm(dr_op * const_vec) ≈ 0 atol=1e-10
+    @test norm(dr_op * const_vec) ≈ 0 atol = 1.0e-10
 
     # Test dR operator on a linear field
     linear_field = reshape(1.0:9.0, 3, 3)
@@ -63,12 +63,12 @@ end
     # Check that central difference for interior points is correct
     # For our simple case, the derivative of the linear field should be constant 1.0
     # in interior points
-    @test dr_result[2] ≈ 1.0 atol=1e-10
-    @test dr_result[5] ≈ 1.0 atol=1e-10
-    @test dr_result[8] ≈ 1.0 atol=1e-10
+    @test dr_result[2] ≈ 1.0 atol = 1.0e-10
+    @test dr_result[5] ≈ 1.0 atol = 1.0e-10
+    @test dr_result[8] ≈ 1.0 atol = 1.0e-10
 end
 
-@testitem "DiscretizedOperator Arithmetic Operations" setup=[DiscretizedOperatorFixtures] begin
+@testitem "DiscretizedOperator Arithmetic Operations" setup = [DiscretizedOperatorFixtures] begin
     using RAPID2D.SparseArrays  # findnz
 
     id_op, dr_op = create_test_operators()
@@ -179,7 +179,7 @@ end
     end
 end
 
-@testitem "DiscretizedOperator Complex Operations" setup=[DiscretizedOperatorFixtures] begin
+@testitem "DiscretizedOperator Complex Operations" setup = [DiscretizedOperatorFixtures] begin
     id_op, dr_op = create_test_operators()
 
     # Test a complex expression combining multiple operations
@@ -198,7 +198,7 @@ end
     @test op1 == op2
 end
 
-@testitem "DiscretizedOperator Fused Operations with @. Macro" setup=[DiscretizedOperatorFixtures] begin
+@testitem "DiscretizedOperator Fused Operations with @. Macro" setup = [DiscretizedOperatorFixtures] begin
     id_op, dr_op = create_test_operators()
 
     # Test fused operations with the @. macro

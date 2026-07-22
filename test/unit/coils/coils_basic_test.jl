@@ -1,16 +1,18 @@
-@testitem "Coils Basic Types and Constructors" setup=[CoilFactories] begin
+@testitem "Coils Basic Types and Constructors" setup = [CoilFactories] begin
     FT = Float64
 
     @testset "Coil Constructor and Fields" begin
         # Test basic Coil construction
-        pos = (r=2.5, z=0.0)
+        pos = (r = 2.5, z = 0.0)
         area = π * 0.02^2
         resistance = 0.001
-        self_inductance = 1e-6
+        self_inductance = 1.0e-6
 
         # Test powered controllable coil
-        coil_powered = Coil(pos, area, resistance, self_inductance,
-                           true, true, "PF1", 1000.0, 50000.0, 100.0, 500.0)
+        coil_powered = Coil(
+            pos, area, resistance, self_inductance,
+            true, true, "PF1", 1000.0, 50000.0, 100.0, 500.0
+        )
 
         @test coil_powered.location.r == 2.5
         @test coil_powered.location.z == 0.0
@@ -26,8 +28,10 @@
         @test coil_powered.voltage_ext == 500.0
 
         # Test passive coil
-        coil_passive = Coil(pos, area, resistance, self_inductance,
-                           false, false, "wall_1", nothing, nothing, -50.0, 0.0)
+        coil_passive = Coil(
+            pos, area, resistance, self_inductance,
+            false, false, "wall_1", nothing, nothing, -50.0, 0.0
+        )
 
         @test coil_passive.is_powered == false
         @test coil_passive.is_controllable == false
@@ -37,8 +41,10 @@
         @test coil_passive.voltage_ext == 0.0
 
         # Test powered but not controllable coil
-        coil_powered_nc = Coil(pos, area, resistance, self_inductance,
-                              true, false, "heating_coil", 500.0, 10000.0)
+        coil_powered_nc = Coil(
+            pos, area, resistance, self_inductance,
+            true, false, "heating_coil", 500.0, 10000.0
+        )
 
         @test coil_powered_nc.is_powered == true
         @test coil_powered_nc.is_controllable == false
@@ -46,31 +52,41 @@
     end
 
     @testset "Coil Constructor Validation" begin
-        pos = (r=2.5, z=0.0)
+        pos = (r = 2.5, z = 0.0)
         area = π * 0.02^2
         resistance = 0.001
-        self_inductance = 1e-6
+        self_inductance = 1.0e-6
 
         # Test invalid area
-        @test_throws AssertionError Coil(pos, -0.1, resistance, self_inductance,
-                                         true, true, "test", 1000.0, 50000.0)
+        @test_throws AssertionError Coil(
+            pos, -0.1, resistance, self_inductance,
+            true, true, "test", 1000.0, 50000.0
+        )
 
         # Test invalid resistance
-        @test_throws AssertionError Coil(pos, area, -0.1, self_inductance,
-                                         true, true, "test", 1000.0, 50000.0)
+        @test_throws AssertionError Coil(
+            pos, area, -0.1, self_inductance,
+            true, true, "test", 1000.0, 50000.0
+        )
 
         # Test invalid self-inductance
-        @test_throws AssertionError Coil(pos, area, resistance, -1e-6,
-                                         true, true, "test", 1000.0, 50000.0)
+        @test_throws AssertionError Coil(
+            pos, area, resistance, -1.0e-6,
+            true, true, "test", 1000.0, 50000.0
+        )
 
         # Test invalid R coordinate
-        invalid_position = (r=-1.0, z=0.0)
-        @test_throws AssertionError Coil(invalid_position, area, resistance, self_inductance,
-                                         true, true, "test", 1000.0, 50000.0)
+        invalid_position = (r = -1.0, z = 0.0)
+        @test_throws AssertionError Coil(
+            invalid_position, area, resistance, self_inductance,
+            true, true, "test", 1000.0, 50000.0
+        )
 
         # Test controllable coil must be powered
-        @test_throws AssertionError Coil(pos, area, resistance, self_inductance,
-                                         false, true, "test", nothing, nothing)
+        @test_throws AssertionError Coil(
+            pos, area, resistance, self_inductance,
+            false, true, "test", nothing, nothing
+        )
     end
     @testset "CoilSystem Constructor" begin
         # Test empty CoilSystem
@@ -87,8 +103,10 @@
 
         # Test CoilSystem with coils
         coil1 = pf_coil("PF1")
-        coil2 = pf_coil("heating"; z=-0.5, is_controllable=false,
-                        max_voltage=500.0, max_current=10000.0)
+        coil2 = pf_coil(
+            "heating"; z = -0.5, is_controllable = false,
+            max_voltage = 500.0, max_current = 10000.0
+        )
         coil3 = wall_coil("wall")
 
         coils = [coil1, coil2, coil3]
@@ -120,9 +138,11 @@
         @test self_L ≈ expected_L
 
         # Test create_coil_from_parameters
-        coil = create_coil_from_parameters(2.0, 1.0, area, "test_coil", true,
-                                          μ0, resistivity; is_controllable=false,
-                                          max_voltage=800.0, max_current=30000.0)
+        coil = create_coil_from_parameters(
+            2.0, 1.0, area, "test_coil", true,
+            μ0, resistivity; is_controllable = false,
+            max_voltage = 800.0, max_current = 30000.0
+        )
 
         @test coil.location.r == 2.0
         @test coil.location.z == 1.0
@@ -139,10 +159,12 @@
     @testset "Vector Property Access" begin
         # Test getproperty and setproperty! for Vector{Coil}
         coils = [
-            pf_coil("PF1"; current=100.0, voltage_ext=200.0),
-            pf_coil("PF2"; z=-0.5, is_controllable=false, max_voltage=800.0,
-                    max_current=40000.0, current=150.0, voltage_ext=300.0),
-            wall_coil("wall"; current=-50.0)
+            pf_coil("PF1"; current = 100.0, voltage_ext = 200.0),
+            pf_coil(
+                "PF2"; z = -0.5, is_controllable = false, max_voltage = 800.0,
+                max_current = 40000.0, current = 150.0, voltage_ext = 300.0
+            ),
+            wall_coil("wall"; current = -50.0),
         ]
 
         # Test getproperty
@@ -180,7 +202,7 @@
 
         # Test that we recover the original area within tolerance
         relative_error = abs(recovered_area - original_area) / original_area
-        @test relative_error < 1e-10  # Very tight tolerance for round-trip calculation
+        @test relative_error < 1.0e-10  # Very tight tolerance for round-trip calculation
 
         # Test with different sizes
         test_radii = [0.01, 0.03, 0.05, 0.1, 0.2]  # Various coil radii in meters
@@ -191,7 +213,7 @@
             recovered_test_area = calculate_area_from_inductance(test_inductance, major_radius, μ0)
 
             test_error = abs(recovered_test_area - test_area) / test_area
-            @test test_error < 1e-9  # Allow slightly looser tolerance for edge cases
+            @test test_error < 1.0e-9  # Allow slightly looser tolerance for edge cases
         end
     end
 
@@ -212,7 +234,7 @@
 
         # Test that we recover the original resistivity within tolerance
         relative_error = abs(recovered_resistivity - original_resistivity) / original_resistivity
-        @test relative_error < 1e-15  # Very tight tolerance for simple calculation
+        @test relative_error < 1.0e-15  # Very tight tolerance for simple calculation
 
         # Test with different materials (resistivities)
         test_resistivities = [1.59e-8, 1.68e-8, 2.44e-8, 9.71e-8, 1.0e-6]  # Silver, Copper, Gold, Platinum, Graphite
@@ -222,7 +244,7 @@
             recovered_test_resistivity = calculate_resistivity_from_resistance(test_resistance, original_area, major_radius)
 
             test_error = abs(recovered_test_resistivity - test_resistivity) / test_resistivity
-            @test test_error < 1e-15  # Very tight tolerance for linear relationship
+            @test test_error < 1.0e-15  # Very tight tolerance for linear relationship
         end
 
         # Test with different coil sizes
@@ -233,7 +255,7 @@
             recovered_test_resistivity = calculate_resistivity_from_resistance(test_resistance, test_area, major_radius)
 
             test_error = abs(recovered_test_resistivity - copper_resistivity) / copper_resistivity
-            @test test_error < 1e-15  # Very tight tolerance for linear relationship
+            @test test_error < 1.0e-15  # Very tight tolerance for linear relationship
         end
     end
 end

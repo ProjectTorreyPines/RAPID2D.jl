@@ -21,7 +21,7 @@ export evaluate_voltage_ext
 
 Add a new coil to the system and update internal indices.
 """
-function add_coil!(csys::CoilSystem{FT}, coil::Coil{FT}) where FT<:AbstractFloat
+function add_coil!(csys::CoilSystem{FT}, coil::Coil{FT}) where {FT <: AbstractFloat}
     push!(csys.coils, coil)
     csys.n_total += 1
 
@@ -46,7 +46,7 @@ end
 
 Return vector of powered coils only.
 """
-function get_powered_coils(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_powered_coils(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return csys.coils[csys.powered_indices]
 end
 
@@ -55,7 +55,7 @@ end
 
 Return vector of passive coils/conductors only.
 """
-function get_passive_coils(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_passive_coils(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return csys.coils[csys.passive_indices]
 end
 
@@ -64,7 +64,7 @@ end
 
 Return vector of controllable coils only.
 """
-function get_controllable_coils(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_controllable_coils(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return csys.coils[csys.controllable_indices]
 end
 
@@ -87,7 +87,7 @@ end
 
 Set external voltage for a powered coil by name.
 """
-function set_coil_voltage!(csys::CoilSystem{FT}, coil_name::String, voltage::FT) where FT<:AbstractFloat
+function set_coil_voltage!(csys::CoilSystem{FT}, coil_name::String, voltage::FT) where {FT <: AbstractFloat}
     coil_idx = find_coil_by_name(csys, coil_name)
     if isnothing(coil_idx)
         error("Coil '$coil_name' not found")
@@ -135,7 +135,7 @@ end
 Update all external voltages for powered coils.
 Length of `new_voltages` must match number of powered coils.
 """
-function update_all_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) where FT<:AbstractFloat
+function update_all_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) where {FT <: AbstractFloat}
     if length(new_voltages) != csys.n_powered
         error("Length of new_voltages ($(length(new_voltages))) must match number of powered coils ($(csys.n_powered))")
     end
@@ -152,7 +152,7 @@ end
 Update external voltages for controllable coils only.
 Length of `new_voltages` must match number of controllable coils.
 """
-function update_controllable_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) where FT<:AbstractFloat
+function update_controllable_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) where {FT <: AbstractFloat}
     if length(new_voltages) != csys.n_controllable
         error("Length of new_voltages ($(length(new_voltages))) must match number of controllable coils ($(csys.n_controllable))")
     end
@@ -168,7 +168,7 @@ end
 
 Return R and Z coordinates of all coils as separate vectors.
 """
-function get_coil_positions(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_coil_positions(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     R = [coil.location.r for coil in csys.coils]
     Z = [coil.location.z for coil in csys.coils]
     return R, Z
@@ -179,7 +179,7 @@ end
 
 Return R and Z coordinates of powered coils only.
 """
-function get_powered_coil_positions(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_powered_coil_positions(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     powered_coils = get_powered_coils(csys)
     R = [coil.location.r for coil in powered_coils]
     Z = [coil.location.z for coil in powered_coils]
@@ -191,7 +191,7 @@ end
 
 Calculate resistance of a toroidal coil.
 """
-function calculate_coil_resistance(area::FT, major_radius::FT, resistivity::FT) where FT<:AbstractFloat
+function calculate_coil_resistance(area::FT, major_radius::FT, resistivity::FT) where {FT <: AbstractFloat}
     path_length = 2π * major_radius
     return resistivity * path_length / area
 end
@@ -205,7 +205,7 @@ This is the inverse of calculate_coil_resistance function.
 From R = ρ * L / A where L = 2π * major_radius, we get:
 ρ = R * A / L = R * A / (2π * major_radius)
 """
-function calculate_resistivity_from_resistance(resistance::FT, area::FT, major_radius::FT) where FT<:AbstractFloat
+function calculate_resistivity_from_resistance(resistance::FT, area::FT, major_radius::FT) where {FT <: AbstractFloat}
     path_length = 2π * major_radius
     return resistance * area / path_length
 end
@@ -215,7 +215,7 @@ end
 
 Calculate self-inductance of a toroidal coil using Neumann's formula approximation.
 """
-function calculate_self_inductance(area::FT, major_radius::FT, μ0::FT) where FT<:AbstractFloat
+function calculate_self_inductance(area::FT, major_radius::FT, μ0::FT) where {FT <: AbstractFloat}
     # From MATLAB: YY = 1.0; coil_radius = sqrt(area/π)
     # self_L = μ₀ * R * (log(8*R/a) - 2 + 0.25*YY)
     YY = one(FT)
@@ -230,8 +230,10 @@ end
 Calculate coil area from given self-inductance using iterative Newton-Raphson method.
 This is the inverse of calculate_self_inductance function.
 """
-function calculate_area_from_inductance(self_inductance::FT, major_radius::FT, μ0::FT;
-                                       rtol::FT = FT(1e-12), max_iter::Int = 100) where FT<:AbstractFloat
+function calculate_area_from_inductance(
+        self_inductance::FT, major_radius::FT, μ0::FT;
+        rtol::FT = FT(1.0e-12), max_iter::Int = 100
+    ) where {FT <: AbstractFloat}
     # Solve: L = μ₀ * R * (log(8*R/a) - 1.75) for coil_radius 'a'
     # where L is self_inductance, R is major_radius
 
@@ -284,17 +286,21 @@ end
 
 Create a coil with calculated resistance and self-inductance.
 """
-function create_coil_from_parameters(r::FT, z::FT, area::FT, name::String, is_powered::Bool,
-                                   μ0::FT, resistivity::FT;
-                                   is_controllable=is_powered,
-                                   max_voltage=nothing, max_current=nothing,
-                                   current=zero(FT), voltage_ext=zero(FT)) where FT<:AbstractFloat
-    location = (r=r, z=z)
+function create_coil_from_parameters(
+        r::FT, z::FT, area::FT, name::String, is_powered::Bool,
+        μ0::FT, resistivity::FT;
+        is_controllable = is_powered,
+        max_voltage = nothing, max_current = nothing,
+        current = zero(FT), voltage_ext = zero(FT)
+    ) where {FT <: AbstractFloat}
+    location = (r = r, z = z)
     resistance = calculate_coil_resistance(area, r, resistivity)
     self_inductance = calculate_self_inductance(area, r, μ0)
 
-    return Coil(location, area, resistance, self_inductance, is_powered, is_controllable, name,
-                max_voltage, max_current, current, voltage_ext)
+    return Coil(
+        location, area, resistance, self_inductance, is_powered, is_controllable, name,
+        max_voltage, max_current, current, voltage_ext
+    )
 end
 
 """
@@ -302,7 +308,7 @@ end
 
 Return resistances of all coils as a vector.
 """
-function get_all_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_all_resistances(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return [coil.resistance for coil in csys.coils]
 end
 
@@ -311,7 +317,7 @@ end
 
 Return resistances of powered coils only as a vector.
 """
-function get_powered_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_powered_resistances(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return [csys.coils[idx].resistance for idx in csys.powered_indices]
 end
 
@@ -320,7 +326,7 @@ end
 
 Return resistances of controllable coils only as a vector.
 """
-function get_controllable_resistances(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_controllable_resistances(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return [csys.coils[idx].resistance for idx in csys.controllable_indices]
 end
 
@@ -329,7 +335,7 @@ end
 
 Return currents of all coils as a vector.
 """
-function get_all_currents(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_all_currents(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return [coil.current for coil in csys.coils]
 end
 
@@ -338,7 +344,7 @@ end
 
 Return currents of powered coils only as a vector.
 """
-function get_powered_currents(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_powered_currents(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return [csys.coils[idx].current for idx in csys.powered_indices]
 end
 
@@ -347,7 +353,7 @@ end
 
 Return currents of controllable coils only as a vector.
 """
-function get_controllable_currents(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_controllable_currents(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return [csys.coils[idx].current for idx in csys.controllable_indices]
 end
 
@@ -357,7 +363,7 @@ end
 Return external voltages of all coils as a vector at t=0.
 For time-dependent voltages, use get_all_voltages_at_time(csys, t) instead.
 """
-function get_all_voltages(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_all_voltages(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return get_all_voltages_at_time(csys, zero(FT))
 end
 
@@ -367,7 +373,7 @@ end
 Return external voltages of powered coils only as a vector at t=0.
 For time-dependent voltages, use get_powered_voltages_at_time(csys, t) instead.
 """
-function get_powered_voltages(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_powered_voltages(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return get_powered_voltages_at_time(csys, zero(FT))
 end
 
@@ -377,7 +383,7 @@ end
 Return external voltages of controllable coils only as a vector at t=0.
 For time-dependent voltages, use get_controllable_voltages_at_time(csys, t) instead.
 """
-function get_controllable_voltages(csys::CoilSystem{FT}) where FT<:AbstractFloat
+function get_controllable_voltages(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
     return get_controllable_voltages_at_time(csys, zero(FT))
 end
 
@@ -386,7 +392,7 @@ end
 
 Set currents for all coils. Length of `currents` must match total number of coils.
 """
-function set_all_currents!(csys::CoilSystem{FT}, currents::Vector{FT}) where FT<:AbstractFloat
+function set_all_currents!(csys::CoilSystem{FT}, currents::Vector{FT}) where {FT <: AbstractFloat}
     if length(currents) != csys.n_total
         error("Length of currents ($(length(currents))) must match total number of coils ($(csys.n_total))")
     end
@@ -402,7 +408,7 @@ end
 
 Set currents for powered coils only. Length of `currents` must match number of powered coils.
 """
-function set_powered_currents!(csys::CoilSystem{FT}, currents::Vector{FT}) where FT<:AbstractFloat
+function set_powered_currents!(csys::CoilSystem{FT}, currents::Vector{FT}) where {FT <: AbstractFloat}
     if length(currents) != csys.n_powered
         error("Length of currents ($(length(currents))) must match number of powered coils ($(csys.n_powered))")
     end
@@ -418,7 +424,7 @@ end
 
 Set currents for controllable coils only. Length of `currents` must match number of controllable coils.
 """
-function set_controllable_currents!(csys::CoilSystem{FT}, currents::Vector{FT}) where FT<:AbstractFloat
+function set_controllable_currents!(csys::CoilSystem{FT}, currents::Vector{FT}) where {FT <: AbstractFloat}
     if length(currents) != csys.n_controllable
         error("Length of currents ($(length(currents))) must match number of controllable coils ($(csys.n_controllable))")
     end
@@ -434,7 +440,7 @@ end
 
 Set current for a specific coil by name.
 """
-function set_coil_current!(csys::CoilSystem{FT}, coil_name::String, current::FT) where FT<:AbstractFloat
+function set_coil_current!(csys::CoilSystem{FT}, coil_name::String, current::FT) where {FT <: AbstractFloat}
     coil_idx = find_coil_by_name(csys, coil_name)
     if isnothing(coil_idx)
         error("Coil '$coil_name' not found")
@@ -512,7 +518,7 @@ end
 Return external voltages of all coils as a vector at time t.
 For constant voltages, returns the constant value. For time-dependent voltages, evaluates at time t.
 """
-function get_all_voltages_at_time(csys::CoilSystem{FT}, t::FT=csys.time_s) where FT<:AbstractFloat
+function get_all_voltages_at_time(csys::CoilSystem{FT}, t::FT = csys.time_s) where {FT <: AbstractFloat}
     return [get_coil_voltage_at_time(coil, t) for coil in csys.coils]
 end
 
@@ -521,7 +527,7 @@ end
 
 Return external voltages of powered coils only as a vector at time t.
 """
-function get_powered_voltages_at_time(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
+function get_powered_voltages_at_time(csys::CoilSystem{FT}, t::FT) where {FT <: AbstractFloat}
     return [get_coil_voltage_at_time(csys.coils[idx], t) for idx in csys.powered_indices]
 end
 
@@ -530,7 +536,7 @@ end
 
 Return external voltages of controllable coils only as a vector at time t.
 """
-function get_controllable_voltages_at_time(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
+function get_controllable_voltages_at_time(csys::CoilSystem{FT}, t::FT) where {FT <: AbstractFloat}
     return [get_coil_voltage_at_time(csys.coils[idx], t) for idx in csys.controllable_indices]
 end
 
@@ -602,7 +608,7 @@ Create a sinusoidal voltage function: V(t) = amplitude * sin(2π * frequency * t
 # Returns
 - Function f(t) -> voltage
 """
-function create_sinusoidal_voltage(amplitude::FT, frequency::FT, phase::FT=zero(FT), offset::FT=zero(FT)) where {FT <: AbstractFloat}
+function create_sinusoidal_voltage(amplitude::FT, frequency::FT, phase::FT = zero(FT), offset::FT = zero(FT)) where {FT <: AbstractFloat}
     return t -> amplitude * sin(2π * frequency * t + phase) + offset
 end
 
@@ -640,7 +646,7 @@ function create_piecewise_linear_voltage(times::Vector{FT}, voltages::Vector{FT}
     @assert length(times) >= 2 "Need at least 2 points for piecewise linear"
     @assert issorted(times) "times must be sorted"
 
-    return function(t)
+    return function (t)
         if t <= times[1]
             return voltages[1]
         elseif t >= times[end]
@@ -649,8 +655,8 @@ function create_piecewise_linear_voltage(times::Vector{FT}, voltages::Vector{FT}
             # Find the interval
             i = searchsortedlast(times, t)
             # Linear interpolation
-            t1, t2 = times[i], times[i+1]
-            v1, v2 = voltages[i], voltages[i+1]
+            t1, t2 = times[i], times[i + 1]
+            v1, v2 = voltages[i], voltages[i + 1]
             return v1 + (v2 - v1) * (t - t1) / (t2 - t1)
         end
     end

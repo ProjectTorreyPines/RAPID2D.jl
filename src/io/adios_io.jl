@@ -1,10 +1,10 @@
 using ADIOS2
 
 export write_to_adiosBP!,
-		write_latest_snap0D!,
-		write_latest_snap2D!,
-        adiosBP_to_snap0D,
-        adiosBP_to_snap2D
+    write_latest_snap0D!,
+    write_latest_snap2D!,
+    adiosBP_to_snap0D,
+    adiosBP_to_snap2D
 
 # Convinience dispatches
 """
@@ -12,7 +12,7 @@ export write_to_adiosBP!,
 
 Write the latest 0D snapshot data to ADIOS2 file.
 """
-function write_latest_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function write_latest_snap0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     snap0D = RP.diagnostics.snaps0D[RP.diagnostics.tid_0D]
     write_to_adiosBP!(RP.AW_snap0D, snap0D)
     return RP
@@ -23,7 +23,7 @@ end
 
 Write the latest 2D snapshot data to ADIOS2 file.
 """
-function write_latest_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+function write_latest_snap2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     snap2D = RP.diagnostics.snaps2D[RP.diagnostics.tid_2D]
     write_to_adiosBP!(RP.AW_snap2D, snap2D)
     return RP
@@ -35,36 +35,36 @@ end
 
 Write a data object to an open ADIOS2 file in BP format.
 """
-function write_to_adiosBP!(Afile::AdiosFile, data; data_name::AbstractString="")
-	data_type = typeof(data)
+function write_to_adiosBP!(Afile::AdiosFile, data; data_name::AbstractString = "")
+    data_type = typeof(data)
 
-	# Schedule the ADIOS2 file for writing
-	if data_type <: Union{AbstractString, Number, AbstractArray{<:Number}}
-		if isempty(data_name)
-			error("Must provide a name for non-struct type data object")
-		end
-		begin_step(Afile.engine)
-		adios_put!(Afile, data_name, data)
-		end_step(Afile.engine)
-	elseif isstructtype(data_type)
-		if data_type <: AbstractArray
-			for i in eachindex(data)
-				begin_step(Afile.engine)
-				_adios_put_recursive!(Afile, data[i], data_name)
-				end_step(Afile.engine)
-			end
-		else
-			begin_step(Afile.engine)
-			_adios_put_recursive!(Afile, data, data_name)
-			end_step(Afile.engine)
-		end
-	else
-		error("Type: $(typeof(data)) is not supported for ADIOS2 writing")
-	end
+    # Schedule the ADIOS2 file for writing
+    if data_type <: Union{AbstractString, Number, AbstractArray{<:Number}}
+        if isempty(data_name)
+            error("Must provide a name for non-struct type data object")
+        end
+        begin_step(Afile.engine)
+        adios_put!(Afile, data_name, data)
+        end_step(Afile.engine)
+    elseif isstructtype(data_type)
+        if data_type <: AbstractArray
+            for i in eachindex(data)
+                begin_step(Afile.engine)
+                _adios_put_recursive!(Afile, data[i], data_name)
+                end_step(Afile.engine)
+            end
+        else
+            begin_step(Afile.engine)
+            _adios_put_recursive!(Afile, data, data_name)
+            end_step(Afile.engine)
+        end
+    else
+        error("Type: $(typeof(data)) is not supported for ADIOS2 writing")
+    end
 
-	# Write the data to the ADIOS2 file
-	adios_perform_puts!(Afile)
-	return Afile
+    # Write the data to the ADIOS2 file
+    adios_perform_puts!(Afile)
+    return Afile
 end
 
 """
@@ -102,14 +102,14 @@ write_to_adiosBP!("output/mesh_data.bp", grid; data_name="computational_mesh")
 write_to_adiosBP!("output/snapshots.bp", snapshot_array; data_name="time_series")
 ```
 """
-function write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractString="")
-	@assert !isempty(fileName) "File name cannot be empty"
-	@assert endswith(fileName, ".bp") "File name must end with '.bp'"
+function write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractString = "")
+    @assert !isempty(fileName) "File name cannot be empty"
+    @assert endswith(fileName, ".bp") "File name must end with '.bp'"
 
-	# Create new ADIOS2 file handle (overwriting if exists)
-	Afile = adios_open_serial(fileName, mode_write)
-	write_to_adiosBP!(Afile, data; data_name)
-	close(Afile)
+    # Create new ADIOS2 file handle (overwriting if exists)
+    Afile = adios_open_serial(fileName, mode_write)
+    write_to_adiosBP!(Afile, data; data_name)
+    return close(Afile)
 end
 
 
@@ -119,8 +119,8 @@ end
 Write a data object to an open ADIOS2 file through an AdiosFileWrapper.
 This method forwards the call to the underlying AdiosFile.
 """
-function write_to_adiosBP!(wrapper::AdiosFileWrapper, data; data_name::AbstractString="")
-    return write_to_adiosBP!(wrapper.file, data; data_name=data_name)
+function write_to_adiosBP!(wrapper::AdiosFileWrapper, data; data_name::AbstractString = "")
+    return write_to_adiosBP!(wrapper.file, data; data_name = data_name)
 end
 
 
@@ -142,7 +142,7 @@ Nested structs are represented with "/" path separators.
 # "grid/nodes/state" if G is passed with data_name="grid"
 ```
 """
-function _adios_put_recursive!(Afile::AdiosFile, data, data_name::AbstractString="")
+function _adios_put_recursive!(Afile::AdiosFile, data, data_name::AbstractString = "")
     obj_type = typeof(data)
 
     # Skip if this is a primitive type that we can directly write
@@ -169,7 +169,7 @@ function _adios_put_recursive!(Afile::AdiosFile, data, data_name::AbstractString
         if field_type <: Union{AbstractString, Number, AbstractArray{<:Number}}
             # Direct write for primitive types and arrays
             if field_type <: Union{AbstractString, Number}
-                adios_put!(Afile, new_path, field_value; global_value=true)
+                adios_put!(Afile, new_path, field_value; global_value = true)
             else
                 adios_put!(Afile, new_path, field_value)
             end
@@ -179,6 +179,7 @@ function _adios_put_recursive!(Afile::AdiosFile, data, data_name::AbstractString
         end
         # Skip other types (functions, modules, etc.)
     end
+    return
 end
 
 
@@ -265,7 +266,7 @@ function adiosBP_to_snap2D(bpPath::AbstractString)
     dims_RZ = (Adict["dims_RZ/1"][1], Adict["dims_RZ/2"][1])
 
     # Create snapshot array
-    snaps2D = [Snapshot2D{FT}(;dims_RZ) for _ in 1:dim_tt]
+    snaps2D = [Snapshot2D{FT}(; dims_RZ) for _ in 1:dim_tt]
 
     # Pre-process symbol paths once (O(N_keys) complexity)
     symbol_paths = create_symbol_path_mapping(Snapshot2D{FT}, Adict)
@@ -312,7 +313,7 @@ function is_dict_internal_key(key::String)
         # Nested Dictionary internal fields
         r"/keys/",
         r"/vals/",
-        r"/slots/"
+        r"/slots/",
     ]
 
     for pattern in dict_internal_patterns
@@ -445,7 +446,7 @@ function process_symbol_based_snapshots!(snapshots, Adict, symbol_paths, dim_tt)
                         setfield!(snap, symbols[1], extracted_value)
                     else
                         # Nested field access: snap.parent.field = value
-                        parent = foldl(getfield, symbols[1:end-1]; init=snap)
+                        parent = foldl(getfield, symbols[1:(end - 1)]; init = snap)
                         target_type = fieldtype(typeof(parent), symbols[end])
                         setfield!(parent, symbols[end], extracted_value)
                     end
@@ -455,7 +456,5 @@ function process_symbol_based_snapshots!(snapshots, Adict, symbol_paths, dim_tt)
             end
         end
     end
+    return
 end
-
-
-
