@@ -244,7 +244,7 @@ Contains the plasma state variables including density, temperature, and velocity
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
     ν_ei_eff::Matrix{FT} = zeros(FT, dims) # Effective electron-ion collision frequency [1/s]
     ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
-    ν_en_mom::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
+    ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 

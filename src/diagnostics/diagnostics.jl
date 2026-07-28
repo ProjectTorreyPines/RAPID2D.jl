@@ -65,11 +65,11 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     # Electron collision frequencies
     if RP.flags.Atomic_Collision
         eRRC_iz = get_electron_RRC(RP, :Ionization)
-        eRRC_mom = get_electron_RRC(RP, :Momentum)
+        eRRC_mom_tot = get_electron_RRC(RP, :Total_Momentum)
         eRRC_Hα = get_electron_RRC(RP, :Halpha)
 
         snap0D.ν_en_iz = sum(@. pla.n_H2_gas * eRRC_iz * Ne2D) / total_Ne
-        snap0D.ν_en_mom = sum(@. pla.n_H2_gas * eRRC_mom * Ne2D) / total_Ne
+        snap0D.ν_en_mom_tot = sum(@. pla.n_H2_gas * eRRC_mom_tot * Ne2D) / total_Ne
         snap0D.ν_en_Hα = sum(@. pla.n_H2_gas * eRRC_Hα * Ne2D) / total_Ne
     end
 
@@ -164,7 +164,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
         snap0D.tot_W_mag += 0.5 * sum(@. RP.plasma.Jϕ * RP.fields.ψ_self / RP.G.R2D * RP.G.inVol2D)
 
         # Ohmic dissipation [W]
-        ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom + pla.ν_en_iz
+        ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom_tot + pla.ν_en_iz
         @unpack me, ee = RP.config.constants
 
         σ_conductivity = @. pla.ne * ee^2 / (me * ν_eff)
@@ -338,11 +338,11 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     # Collision frequencies using RRC methods
     if RP.flags.Atomic_Collision
-        eRRC_mom = get_electron_RRC(RP, :Momentum)
+        eRRC_mom_tot = get_electron_RRC(RP, :Total_Momentum)
         eRRC_iz = get_electron_RRC(RP, :Ionization)
         eRRC_Halpha = get_electron_RRC(RP, :Halpha)
 
-        @. snap2D.ν_en_mom = pla.n_H2_gas * eRRC_mom
+        @. snap2D.ν_en_mom_tot = pla.n_H2_gas * eRRC_mom_tot
         @. snap2D.ν_en_iz = pla.n_H2_gas * eRRC_iz
         @. snap2D.ν_en_Hα = pla.n_H2_gas * eRRC_Halpha
     end
@@ -367,7 +367,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.Pi_atomic .= pla.iPowers.atomic
     snap2D.Pi_equi .= pla.iPowers.equi
 
-    ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom + pla.ν_en_iz
+    ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom_tot + pla.ν_en_iz
     @. snap2D.η_resistivity = (me * ν_eff) / (pla.ne * ee^2)
 
     # Handle near-zero density regions

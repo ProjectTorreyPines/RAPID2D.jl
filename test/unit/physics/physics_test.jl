@@ -75,11 +75,11 @@ end
     initialize!(RP)
 
     RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-    RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
+    RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
     @test size(RRC_iz) == (RP.G.NR, RP.G.NZ)
-    @test size(RRC_mom) == (RP.G.NR, RP.G.NZ)
+    @test size(RRC_mom_tot) == (RP.G.NR, RP.G.NZ)
     @test all(RRC_iz .>= 0.0)
-    @test all(RRC_mom .>= 0.0)
+    @test all(RRC_mom_tot .>= 0.0)
 
     iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
     iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
@@ -616,7 +616,7 @@ end
 
 @testitem "Te relaxes to room_T_eV over ~tau_E, from both directions" setup = [PhysicsFixtures] begin
     # Elastic electron-neutral collisions equilibrate Te with the gas on
-    #     tau_E = 1/(2·(me/mi)·nu_en_mom),   nu_en_mom = n_gas·RRC_mom
+    #     tau_E = 1/(2·(me/mi)·nu_en_mom),   nu_en_mom = n_gas·RRC_mom_tot
     # Measured: nu_en_mom ≈ 1.70e4 /s, 2me/mi = 5.44e-4 ⇒ tau_E ≈ 0.108 s.
     # Both starting temperatures are far below the ionization threshold, so ne is
     # untouched and only the energy exchange is exercised. dt=1 ms is safe: the
@@ -669,7 +669,7 @@ end
         update_transport_quantities!(RP0)
         me, mi = RP0.config.constants.me, RP0.config.constants.mi
         inw = RP0.G.nodes.in_wall_nids
-        ν_mom = sum(RP0.plasma.ν_en_mom[inw]) / length(inw)
+        ν_mom = sum(RP0.plasma.ν_en_mom_tot[inw]) / length(inw)
         τ_E = 1 / (2 * (me / mi) * ν_mom)
         @test ν_mom > 0.0
         @test 0.01 < τ_E < 1.0        # measured ≈ 0.108 s

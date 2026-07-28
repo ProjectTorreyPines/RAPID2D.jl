@@ -100,12 +100,13 @@ Stores various reaction models for electron-neutral and electron-ion interaction
 
 # Fields
 - `Ionization`: Rate coefficient for electron impact ionization
-- `Momentum`: Drift-friction rate coefficient — the v_z-weighted moment
+- `Total_Momentum`: Drift-friction rate coefficient — the SUM over all electron-neutral
+  channels (elastic + excitation + ionization) — the v_z-weighted moment
   ⟨σ_mom·|v|·v_z⟩/⟨v_z⟩, NOT the density-weighted collision frequency ⟨σ_mom·|v|⟩
-- `Momentum_by_ela`: the ELASTIC share of `Momentum`. Elastic energy transfer to the
+- `Momentum_by_ela`: the ELASTIC share of `Total_Momentum`. Elastic energy transfer to the
   neutrals is ~2mₑ/M per *elastic* momentum-transfer collision only; the inelastic
-  share of `Momentum` carries its momentum into excitation/ionization, which are
-  accounted separately. Using total `Momentum` for that term therefore over-counts it
+  share of `Total_Momentum` carries its momentum into excitation/ionization, which are
+  accounted separately. Using `Total_Momentum` for that term therefore over-counts it
   (~1.4× at E/p ≈ 100, ~4.4× at E/p ≈ 1000). Required — tables predating the
   per-channel split are not supported; regenerate with BreakdownDynamics'
   `postprocessing/make_envelope_h5.jl`.
@@ -120,7 +121,7 @@ Stores various reaction models for electron-neutral and electron-ion interaction
 """
 struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
     Ionization::RRC_EoverP_Erg{FT}
-    Momentum::RRC_EoverP_Erg{FT}
+    Total_Momentum::RRC_EoverP_Erg{FT}
     Momentum_by_ela::RRC_EoverP_Erg{FT}
     Total_Excitation::RRC_EoverP_Erg{FT}
 
@@ -140,7 +141,7 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
         EoverP = read(h5fid, "EoverP")
         Erg_eV = read(h5fid, "Erg_eV")
         Ionization = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Ionization"))
-        Momentum = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Momentum"))
+        Total_Momentum = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Total_Momentum"))
         Momentum_by_ela = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Momentum_by_ela"))
         Total_Excitation = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Total_Excitation"))
         # Excitation normalization the table was built with — kept as a field and
@@ -164,7 +165,7 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
         FT = eltype(EoverP)  # Determine the floating-point type from the data
 
         return new{FT}(
-            Ionization, Momentum, Momentum_by_ela, Total_Excitation,
+            Ionization, Total_Momentum, Momentum_by_ela, Total_Excitation,
             Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion,
             char_exc === nothing ? nothing : FT(char_exc)
         )
