@@ -455,12 +455,21 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
                     + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
             )
 
-            # Elastic energy loss to neutrals: each momentum-transfer collision hands
-            # a fraction ~2me/M of the electron energy to the gas molecule. This is
-            # the dominant electron cooling channel below the ~9 eV excitation
-            # threshold; without it Te saturates ~20% above the kinetic (BD) value
-            # at low E/p and cool-downs stall above the true saturation point.
-            @. ePowers.ela = (FT(2.0) * me / mi) * pla.n_H2_gas * RRC_mom *
+            # Elastic energy loss to neutrals: each ELASTIC momentum-transfer
+            # collision hands a fraction ~2me/M of the electron energy to the gas
+            # molecule. This is the dominant electron cooling channel below the ~9 eV
+            # excitation threshold; without it Te saturates ~20% above the kinetic
+            # (BD) value at low E/p and cool-downs stall above the true saturation
+            # point.
+            #
+            # The rate here must be the ELASTIC share of the drift friction, not the
+            # total: the inelastic share of `Momentum` carries its momentum into
+            # excitation/ionization, which are charged separately just below, and
+            # those channels do not also transfer 2me/M to the molecule. Using total
+            # `Momentum` over-counts this term by +42% at E/p ≈ 100 and +345% at
+            # E/p ≈ 1000, where elastic is only 71% and 22% of the drift friction.
+            RRC_mom_ela = get_electron_RRC(RP, :Momentum_by_ela)
+            @. ePowers.ela = (FT(2.0) * me / mi) * pla.n_H2_gas * RRC_mom_ela *
                 FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
 
             # Get excitation rate coefficient
