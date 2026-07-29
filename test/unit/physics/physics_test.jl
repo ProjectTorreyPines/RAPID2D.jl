@@ -701,6 +701,57 @@ end
     end
 end
 
+@testitem "P_ela is charged with the ELASTIC share of the drift friction" setup = [PhysicsFixtures] begin
+    # The 2me/mi recoil is handed to the molecule by ELASTIC momentum-transfer collisions
+    # only; the inelastic share of Total_Momentum carries its momentum into excitation and
+    # ionization, which the same function charges separately as P_exc / P_iz. Spending the
+    # total on P_ela counts those twice.
+    #
+    # The relaxation scenario above cannot catch this: it runs at Te ~ 0.026-0.1 eV, far
+    # below the ~9 eV excitation threshold, where no inelastic channel is open and the two
+    # moments coincide. This item picks a state where they demonstrably do not.
+    FT = Float64
+    p_gas = 5.0e-3                       # Pa; E/p = E_para / p_gas
+    config = SimulationConfig{FT}(
+        NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 1.0e-6, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = p_gas,
+        wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+    )
+    config.Output_path = scratch_output_dir()
+
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        Te_evolve = false, src = false, ud_evolve = false, ud_method = "Xsec",
+        Ti_evolve = false, diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        update_ni_independently = false, Include_ud_convec_term = false,
+        Coulomb_Collision = false, negative_n_correction = false,
+    )
+    RP.flags.Atomic_Collision = true
+    initialize!(RP)
+
+    # Erg = 1.5*Te (u_para = 0) ~ 14 eV, E/p = 0.5 / 5e-3 = 100 -> elastic share ~0.7
+    RP.plasma.Te_eV .= 9.3
+    RP.fields.E_para_tot .= 0.5
+    RAPID2D.update_electron_heating_powers!(RP)
+
+    K_tot = get_electron_RRC(RP, :Total_Momentum)
+    K_ela = get_electron_RRC(RP, :Momentum_by_ela)
+    inw = RP.G.nodes.in_wall_nids
+
+    # The chosen state must actually separate the two moments, or this test proves nothing.
+    @test all(K_ela[inw] .< K_tot[inw])
+    @test maximum(K_ela[inw] ./ K_tot[inw]) < 0.9
+
+    (; ee, me, mi) = RP.config.constants
+    pla = RP.plasma
+    recoil = @. (2 * me / mi) * pla.n_H2_gas * 1.5 * (pla.Te_eV - pla.T_gas_eV) * ee
+    @test pla.ePowers.ela[inw] ≈ (recoil .* K_ela)[inw]
+    # ...and is NOT the total-momentum version, which is what the bug computed.
+    @test !isapprox(pla.ePowers.ela[inw], (recoil .* K_tot)[inw]; rtol = 0.05)
+end
+
 # ── Ion energetics ───────────────────────────────────────────────────────────────────
 
 # SEQUENTIAL — do not split. The trailing blocks all `deepcopy(RP)` and therefore INHERIT
