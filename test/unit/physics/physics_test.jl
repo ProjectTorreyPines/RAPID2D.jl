@@ -75,11 +75,11 @@ end
     initialize!(RP)
 
     RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-    RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
+    RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
     @test size(RRC_iz) == (RP.G.NR, RP.G.NZ)
-    @test size(RRC_mom) == (RP.G.NR, RP.G.NZ)
+    @test size(RRC_mom_tot) == (RP.G.NR, RP.G.NZ)
     @test all(RRC_iz .>= 0.0)
-    @test all(RRC_mom .>= 0.0)
+    @test all(RRC_mom_tot .>= 0.0)
 
     iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
     iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
@@ -616,7 +616,7 @@ end
 
 @testitem "Te relaxes to room_T_eV over ~tau_E, from both directions" setup = [PhysicsFixtures] begin
     # Elastic electron-neutral collisions equilibrate Te with the gas on
-    #     tau_E = 1/(2·(me/mi)·nu_en_mom),   nu_en_mom = n_gas·RRC_mom
+    #     tau_E = 1/(2·(me/mi)·nu_en_mom),   nu_en_mom = n_gas·RRC_mom_tot
     # Measured: nu_en_mom ≈ 1.70e4 /s, 2me/mi = 5.44e-4 ⇒ tau_E ≈ 0.108 s.
     # Both starting temperatures are far below the ionization threshold, so ne is
     # untouched and only the energy exchange is exercised. dt=1 ms is safe: the
@@ -669,7 +669,7 @@ end
         update_transport_quantities!(RP0)
         me, mi = RP0.config.constants.me, RP0.config.constants.mi
         inw = RP0.G.nodes.in_wall_nids
-        ν_mom = sum(RP0.plasma.ν_en_mom[inw]) / length(inw)
+        ν_mom = sum(RP0.plasma.ν_en_mom_tot[inw]) / length(inw)
         τ_E = 1 / (2 * (me / mi) * ν_mom)
         @test ν_mom > 0.0
         @test 0.01 < τ_E < 1.0        # measured ≈ 0.108 s
@@ -699,6 +699,107 @@ end
             @test !any(isnan, RP.plasma.Te_eV)
         end
     end
+end
+
+@testitem "P_ela is charged with the ELASTIC share of the drift friction" setup = [PhysicsFixtures] begin
+    # The 2me/mi recoil is handed to the molecule by ELASTIC momentum-transfer collisions
+    # only; the inelastic share of Total_Momentum carries its momentum into excitation and
+    # ionization, which the same function charges separately as P_exc / P_iz. Spending the
+    # total on P_ela counts those twice.
+    #
+    # The relaxation scenario above cannot catch this: it runs at Te ~ 0.026-0.1 eV, far
+    # below the ~9 eV excitation threshold, where no inelastic channel is open and the two
+    # moments coincide. This item picks a state where they demonstrably do not.
+    FT = Float64
+    p_gas = 5.0e-3                       # Pa; E/p = E_para / p_gas
+    config = SimulationConfig{FT}(
+        NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 1.0e-6, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = p_gas,
+        wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+    )
+    config.Output_path = scratch_output_dir()
+
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        Te_evolve = false, src = false, ud_evolve = false, ud_method = "Xsec",
+        Ti_evolve = false, diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        update_ni_independently = false, Include_ud_convec_term = false,
+        Coulomb_Collision = false, negative_n_correction = false,
+    )
+    RP.flags.Atomic_Collision = true
+    initialize!(RP)
+
+    # Erg = 1.5*Te (u_para = 0) ~ 14 eV, E/p = 0.5 / 5e-3 = 100 -> elastic share ~0.7
+    RP.plasma.Te_eV .= 9.3
+    RP.fields.E_para_tot .= 0.5
+    RAPID2D.update_electron_heating_powers!(RP)
+
+    K_tot = get_electron_RRC(RP, :Total_Momentum)
+    K_ela = get_electron_RRC(RP, :Momentum_by_ela)
+    inw = RP.G.nodes.in_wall_nids
+
+    # The chosen state must actually separate the two moments, or this test proves nothing.
+    @test all(K_ela[inw] .< K_tot[inw])
+    @test maximum(K_ela[inw] ./ K_tot[inw]) < 0.9
+
+    (; ee, me, mi) = RP.config.constants
+    pla = RP.plasma
+    recoil = @. (2 * me / mi) * pla.n_H2_gas * 1.5 * (pla.Te_eV - pla.T_gas_eV) * ee
+    @test pla.ePowers.ela[inw] ≈ (recoil .* K_ela)[inw]
+    # ...and is NOT the total-momentum version, which is what the bug computed.
+    @test !isapprox(pla.ePowers.ela[inw], (recoil .* K_tot)[inw]; rtol = 0.05)
+end
+
+@testitem "ud_method = Xsec_fit solves the instantaneous Drude balance" setup = [PhysicsFixtures] begin
+    # The alternative drift method. Unlike "Xsec" it does not advance u_para; it solves
+    # qE = m ν u algebraically, and it omits the ν_iz dilution term — which is exactly
+    # what makes it useful for isolating that term. It had no test, so the whole branch
+    # was dark. Closed form, so the assertions are exact rather than tolerance-based.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 1.0e-6, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+    )
+    config.Output_path = scratch_output_dir()
+
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        ud_method = "Xsec_fit", ud_evolve = true,
+        Te_evolve = false, Ti_evolve = false, src = false,
+        diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        update_ni_independently = false, Include_ud_convec_term = false,
+        Coulomb_Collision = false, negative_n_correction = false,
+    )
+    RP.flags.Atomic_Collision = true
+    initialize!(RP)
+    RP.plasma.Te_eV .= 9.3
+    RP.fields.E_para_tot .= 0.5
+
+    inw = RP.G.nodes.in_wall_nids
+    drude(ν) = @. -RP.config.ee * RP.fields.E_para_tot / (RP.config.me * ν)
+    # The RRC is queried at Erg = 1.5*Te + 0.5*me*ue_para^2/e, so it must be re-read
+    # before each call: the drift energy from the previous solve moves the lookup.
+    ν_en_mom() = RP.plasma.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum)
+
+    ν1 = ν_en_mom()                       # ue_para is still 0 here
+    RAPID2D.update_ue_para!(RP)
+    @test RP.plasma.ue_para[inw] ≈ drude(ν1)[inw]
+    u_neutral_only = copy(RP.plasma.ue_para)
+
+    # Coulomb collisions add to the same denominator, Spitzer-weighted.
+    RP.flags.Coulomb_Collision = true
+    RP.flags.Spitzer_Resistivity = true
+    RP.plasma.ν_ei .= 1.0e5
+    RP.plasma.sptz_fac .= 0.5
+    ν2 = ν_en_mom() .+ 0.5 .* 1.0e5       # re-read: Erg now carries the drift energy
+    RAPID2D.update_ue_para!(RP)
+    @test RP.plasma.ue_para[inw] ≈ drude(ν2)[inw]
+    @test all(abs.(RP.plasma.ue_para[inw]) .< abs.(u_neutral_only[inw]))   # more drag, less drift
 end
 
 # ── Ion energetics ───────────────────────────────────────────────────────────────────

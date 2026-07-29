@@ -122,7 +122,7 @@ end
 
         # Test field types
         @test e_rrcs.Ionization isa RRC_EoverP_Erg
-        @test e_rrcs.Momentum isa RRC_EoverP_Erg
+        @test e_rrcs.Total_Momentum isa RRC_EoverP_Erg
         @test e_rrcs.Total_Excitation isa RRC_EoverP_Erg
 
         # Test data availability

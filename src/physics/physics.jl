@@ -52,10 +52,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             qe = -RP.config.ee
 
             # Get momentum transfer reaction rate coefficient
-            RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
+            RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
 
             # Calculate collision frequency
-            tot_coll_freq = @. RP.plasma.n_H2_gas * RRC_mom
+            tot_coll_freq = @. RP.plasma.n_H2_gas * RRC_mom_tot
 
             # Add Coulomb collisions if enabled
             if RP.flags.Coulomb_Collision
@@ -78,7 +78,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             F = RP.fields
 
             # Define sum of collision frequencies of ionization and momentum reactions
-            ν_iz_mom = @. pla.ν_en_iz + pla.ν_en_mom
+            ν_iz_mom = @. pla.ν_en_iz + pla.ν_en_mom_tot
 
             # Always use backward Euler for ue_para (θu=1.0) for better saturation
             # but keep the formula structure compatible with variable θ_imp
@@ -444,23 +444,32 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
         if RP.flags.Atomic_Collision
             # Get reaction rate coefficients for momentum transfer
-            RRC_mom = get_electron_RRC(RP, :Momentum)
+            RRC_mom_tot = get_electron_RRC(RP, :Total_Momentum)
 
             # Calculate velocity magnitudes for drag forces
             ue_mag_sq = @. pla.ueR^FT(2.0) .+ pla.ueϕ^FT(2.0) .+ pla.ueZ^FT(2.0)
             ue_dot_ui = @. pla.ueR * pla.uiR + pla.ueϕ * pla.uiϕ + pla.ueZ * pla.uiZ
 
             @. ePowers.drag = me * (
-                ue_mag_sq * pla.n_H2_gas * RRC_mom
+                ue_mag_sq * pla.n_H2_gas * RRC_mom_tot
                     + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
             )
 
-            # Elastic energy loss to neutrals: each momentum-transfer collision hands
-            # a fraction ~2me/M of the electron energy to the gas molecule. This is
-            # the dominant electron cooling channel below the ~9 eV excitation
-            # threshold; without it Te saturates ~20% above the kinetic (BD) value
-            # at low E/p and cool-downs stall above the true saturation point.
-            @. ePowers.ela = (FT(2.0) * me / mi) * pla.n_H2_gas * RRC_mom *
+            # Elastic energy loss to neutrals: each ELASTIC momentum-transfer
+            # collision hands a fraction ~2me/M of the electron energy to the gas
+            # molecule. This is the dominant electron cooling channel below the ~9 eV
+            # excitation threshold; without it Te saturates ~20% above the kinetic
+            # (BD) value at low E/p and cool-downs stall above the true saturation
+            # point.
+            #
+            # The rate here must be the ELASTIC share of the drift friction, not the
+            # total: the inelastic share of `Total_Momentum` carries its momentum into
+            # excitation/ionization, which are charged separately just below, and
+            # those channels do not also transfer 2me/M to the molecule. Using total
+            # `Total_Momentum` over-counts this term by +42% at E/p ≈ 100 and +345% at
+            # E/p ≈ 1000, where elastic is only 71% and 22% of the drift friction.
+            RRC_mom_ela = get_electron_RRC(RP, :Momentum_by_ela)
+            @. ePowers.ela = (FT(2.0) * me / mi) * pla.n_H2_gas * RRC_mom_ela *
                 FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
 
             # Get excitation rate coefficient
@@ -1313,7 +1322,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     end
 
     # Effective electron collision frequency
-    νe_eff = pla.ν_en_mom + pla.ν_en_iz + pla.ν_ei_eff
+    νe_eff = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
 
     @. accel_para_tilde += (
         facEM / dt * F.ψ_self
@@ -1660,7 +1669,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
 
         # Effective electron collision frequency
-        νe_eff = pla.ν_en_mom + pla.ν_en_iz + pla.ν_ei_eff
+        νe_eff = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
 
         @. accel_para_tilde += (
             facEM / dt * F.ψ_self

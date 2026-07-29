@@ -28,11 +28,11 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     # Calculate momentum transfer reaction rate coefficient and collision frequency
     if RP.flags.Atomic_Collision
-        RRC_mom = get_electron_RRC(RP, RP.eRRCs, :Momentum)
+        RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
         RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-        @. pla.ν_en_mom = pla.n_H2_gas * RRC_mom
+        @. pla.ν_en_mom_tot = pla.n_H2_gas * RRC_mom_tot
         @. pla.ν_en_iz = pla.n_H2_gas * RRC_iz
-        @. νe_eff += pla.ν_en_mom + pla.ν_en_iz
+        @. νe_eff += pla.ν_en_mom_tot + pla.ν_en_iz
 
         iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
         iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
