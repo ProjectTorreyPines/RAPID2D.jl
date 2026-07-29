@@ -22,6 +22,11 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp = RP.transport
     @unpack mi, me, ee = RP.config.constants
 
+    # The one RRC evaluation point of the step. Everything downstream — the rest of this
+    # function and the whole of the next advance_timestep! — reads plasma.ν_en_* instead
+    # of re-querying the tables, so a step cannot mix coefficients from two states.
+    update_RRCs!(RP)
+
     # Sum of the electron collision frequencies that randomize directed momentum.
     # Used below only as the ν in D∥ = vth²/(3ν): ionization is counted as a
     # momentum-randomizing event here because the newborn electron carries none of the
@@ -30,12 +35,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     ν_sum_mom_iz_ei = zeros(FT, size(pla.ne))
     νi_eff = zeros(FT, size(pla.ne))
 
-    # Calculate momentum transfer reaction rate coefficient and collision frequency
     if RP.flags.Atomic_Collision
-        RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
-        RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-        @. pla.ν_en_mom_tot = pla.n_H2_gas * RRC_mom_tot
-        @. pla.ν_en_iz = pla.n_H2_gas * RRC_iz
         @. ν_sum_mom_iz_ei += pla.ν_en_mom_tot + pla.ν_en_iz
 
         iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)

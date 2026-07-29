@@ -20,7 +20,6 @@ export update_ue_para!,
     update_coulomb_collision_parameters!,
     update_electron_heating_powers!,
     update_ion_heating_powers!,
-    calculate_ν_en_iz!,
     solve_electron_continuity_equation!,
     apply_electron_density_boundary_conditions!,
     calculate_para_grad_of_scalar_F,
@@ -624,40 +623,6 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    calculate_ν_en_iz!(RP::RAPID{FT}) where FT<:AbstractFloat
-
-Calculate the ionization frequency ν_en_iz = n_H2_gas * <σ_iz * v_e>
-"""
-function calculate_ν_en_iz!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    # Calculate ionization rate based on the method specified in flags
-    if RP.flags.Ionz_method == "Townsend_coeff"
-        # Compute source by electron avalanche using Townsend coefficient
-        # α = 3.88 * p * exp(-95 * p / |E_para|)
-        α = @. 3.88 * RP.config.prefilled_gas_pressure *
-            exp(-95 * RP.config.prefilled_gas_pressure / abs(RP.fields.E_para_tot))
-
-        # Electron ionization frequency
-        RP.plasma.ν_en_iz = @. α * abs(RP.plasma.ue_para)
-    elseif RP.flags.Ionz_method == "Xsec"
-        # Ionization frequency = (gas density) * (<σ_iz*v>)
-        eRRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-        @. RP.plasma.ν_en_iz = RP.plasma.n_H2_gas * eRRC_iz
-    else
-        error("Unknown ionization method: $(RP.flags.Ionz_method)")
-    end
-
-    # Zero out the ionization frequency outside the wall
-    RP.plasma.ν_en_iz[RP.G.nodes.on_out_wall_nids] .= 0.0
-
-    # Update sparse matrix operator for implicit methods if needed
-    if RP.flags.Implicit
-        RP.operators.ν_en_iz .= @views spdiagm(RP.plasma.ν_en_iz[:])
-    end
-
-    return RP
-end
-
-"""
     solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFloat
 
 Solve the electron continuity equation to update electron density.
@@ -677,9 +642,17 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # Calculate source terms for electron density
         fill!(op.RHS, zero(FT))  # Reset RHS to zero
         if RP.flags.src
-            # ne * ν_en_iz = ne * nH2_gas * eRRC_iz
-            calculate_ν_en_iz!(RP)
+            # ne * ν_en_iz, with ν_en_iz materialized by update_RRCs! at the step-entry
+            # state — do not re-query the table here (see update_RRCs! docstring).
             op.RHS += pla.ne .* pla.ν_en_iz
+
+            # The implicit half of the same source needs ν_en_iz as a diagonal operator.
+            # It is assembled here, under `src`, rather than in update_RRCs!: the LHS at
+            # the bottom of this function adds op.ν_en_iz unconditionally, so a rebuild
+            # outside this branch would inject ionization into a run that asked for none.
+            if RP.flags.Implicit
+                op.ν_en_iz .= @views spdiagm(pla.ν_en_iz[:])
+            end
         end
 
         if RP.flags.diffu

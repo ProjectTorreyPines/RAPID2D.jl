@@ -126,7 +126,7 @@ end
     @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -492253.1332931324
 
     op = RP.operators
-    calculate_ν_en_iz!(RP)
+    update_RRCs!(RP)
 
     # Ionization source is non-zero inside the wall and zero outside it
     @test !all(RP.plasma.ν_en_iz .== 0.0)
@@ -594,8 +594,15 @@ end
     end
 
     # (b) and (c) below CHAIN: (c) continues from (b)'s end state.
+    #
+    # `advance_timestep!` alone is NOT a complete step. The RRC-derived collision
+    # frequencies are materialized once per step by `update_RRCs!`, which runs from
+    # `update_transport_quantities!` — and `run_simulation!` calls that *after*
+    # `advance_timestep!`, not inside it. Drop it and ν_en_iz stays pinned at the initial
+    # Te = 10 eV, so the thermal ionization this test is about never shuts off.
     for _ in 1:100
         RAPID2D.advance_timestep!(RP, config.dt)
+        update_transport_quantities!(RP)
     end
     ne_1ms = sum(RP.plasma.ne)
     Te_1ms = sum(RP.plasma.ne .* RP.plasma.Te_eV) / sum(RP.plasma.ne)
@@ -604,6 +611,7 @@ end
 
     for _ in 1:100
         RAPID2D.advance_timestep!(RP, config.dt)
+        update_transport_quantities!(RP)
     end
     ne_2ms = sum(RP.plasma.ne)
     Te_2ms = sum(RP.plasma.ne .* RP.plasma.Te_eV) / sum(RP.plasma.ne)
@@ -681,8 +689,11 @@ end
         @testset "Te0 = $Te0 eV ($(is_hot ? "cools" : "heats")) onto room_T_eV" begin
             RP, config, ini_sum = build_relaxation_case(Te0)
             room = RP.config.constants.room_T_eV
+            # `update_transport_quantities!` is the other half of a step — it is what
+            # re-materializes ν_en_mom_tot, and here that rate sets the relaxation time.
             for _ in 1:nsteps
                 RAPID2D.advance_timestep!(RP, config.dt)
+                update_transport_quantities!(RP)
             end
             Te_end = weighted_Te(RP)
 

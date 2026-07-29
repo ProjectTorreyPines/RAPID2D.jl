@@ -243,8 +243,14 @@ Contains the plasma state variables including density, temperature, and velocity
     ν_ii::Matrix{FT} = zeros(FT, dims) # ion-ion collision frequency [1/s]
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
     ν_ei_eff::Matrix{FT} = zeros(FT, dims) # Effective electron-ion collision frequency [1/s]
+    # Electron-neutral reaction frequencies, ν = n_H2_gas · K(E/p, Ē).
+    # All four are written by `update_RRCs!` and by nothing else, at exactly one point per
+    # step, so every consumer within a step sees the same evaluation state. Read them; do
+    # not re-query the RRC tables (see claudedocs/design/rrc-single-evaluation-point.md).
     ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
+    ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction; drives P_ela [1/s]
+    ν_en_exc_eff::Matrix{FT} = zeros(FT, dims) # Excitation rate normalized to char_exc_erg_eV [1/s]
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
