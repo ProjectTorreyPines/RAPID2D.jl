@@ -77,8 +77,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             pla = RP.plasma
             F = RP.fields
 
-            # Define sum of collision frequencies of ionization and momentum reactions
-            ν_iz_mom = @. pla.ν_en_iz + pla.ν_en_mom_tot
+            # Rate at which the parallel drift decays. Ionization belongs here alongside
+            # the drift friction because each newborn electron enters at rest, diluting
+            # the mean drift at ν_iz without any momentum being transferred to the gas.
+            ν_sum_mom_iz = @. pla.ν_en_iz + pla.ν_en_mom_tot
 
             # Always use backward Euler for ue_para (θu=1.0) for better saturation
             # but keep the formula structure compatible with variable θ_imp
@@ -112,10 +114,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
 
                 # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom)*ue_para]
-                @. accel_para_tilde += (one_FT - θu) * (-ν_iz_mom * pla.ue_para)
+                @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz * pla.ue_para)
 
                 # Add collision frequency to diagonal elements using spdiagm
-                OP.A_LHS += @views spdiagm(θu * dt * ν_iz_mom[:])
+                OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz[:])
 
                 # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
                 @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
@@ -135,9 +137,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 end
             else
 
-                inv_factor = @. one_FT / (one_FT + θu * ν_iz_mom * dt)
+                inv_factor = @. one_FT / (one_FT + θu * ν_sum_mom_iz * dt)
                 @. pla.ue_para = inv_factor * (
-                    pla.ue_para * (one_FT - (one_FT - θu) * dt * ν_iz_mom)
+                    pla.ue_para * (one_FT - (one_FT - θu) * dt * ν_sum_mom_iz)
                         + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
                 )
 
@@ -383,10 +385,10 @@ Update electron heating power components for electron energy equation.
 function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_heating_powers!" begin
         # Extract physical constants + reaction energies (all in RP.config.constants).
-        # exc_erg_eV normalizes the Total_Excitation surface and is validated at load
+        # char_exc_erg_eV normalizes the Total_Excitation surface and is validated at load
         # against the table's characteristic_exc_erg_eV (Electron_RRCs), so P_exc
         # reproduces the kinetic loss exactly.
-        @unpack ee, qe, me, mi, exc_erg_eV, iz_erg_eV = RP.config.constants
+        @unpack ee, qe, me, mi, char_exc_erg_eV, iz_erg_eV = RP.config.constants
         OP = RP.operators
 
         # Alias common objects for readability
@@ -475,7 +477,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # Get excitation rate coefficient
             RRC_exc = get_electron_RRC(RP, :Total_Excitation)
             # Excitation power (energy lost to excite particles)
-            @. ePowers.exc = ee * exc_erg_eV * pla.n_H2_gas * RRC_exc
+            @. ePowers.exc = ee * char_exc_erg_eV * pla.n_H2_gas * RRC_exc
 
             # For ionization
             if RP.flags.src
@@ -1260,7 +1262,7 @@ Solve coupled electron momentum and Ampère equations with coil interactions usi
 
 Solves the coupled system:
 - Electron parallel momentum:
-    - Au ≡ [ 𝐈 + Δt*θimp*(νe_eff + 𝐮⋅∇)]
+    - Au ≡ [ 𝐈 + Δt*θimp*(ν_sum_mom_iz_ei + 𝐮⋅∇)]
     - Au * ue∥⁽ⁿ⁺¹⁾ = ue∥⁽ⁿ⁾ + Δt*ã∥⁽ⁿ⁾ - (qe*bϕ²/me*R)*ψ_self⁽ⁿ⁺¹⁾
 - Implicit Ampere's equation:
     - [Au*ΔGS - μ₀*ne*qe²*bϕ²/me]*ψ_self⁽ⁿ⁺¹⁾ = -μ₀R² J̃ϕ⁽ⁿ⁾
@@ -1322,19 +1324,19 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     end
 
     # Effective electron collision frequency
-    νe_eff = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
+    ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
 
     @. accel_para_tilde += (
         facEM / dt * F.ψ_self
-            - (one(FT) - θimp) * νe_eff * pla.ue_para
+            - (one(FT) - θimp) * ν_sum_mom_iz_ei * pla.ue_para
             + pla.ν_ei_eff * pla.ui_para
     )
 
 
     # 2. Define Au matrix for the electron parallel momentum equation
-    # Au ≡ [ 𝐈 + Δt*θimp*(νe_eff + 𝐮⋅∇)]
+    # Au ≡ [ 𝐈 + Δt*θimp*(ν_sum_mom_iz_ei + 𝐮⋅∇)]
     Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
-    Au .= OP.II + spdiagm(@views dt * θimp * νe_eff[:])
+    Au .= OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
     if flags.Include_ud_convec_term
         Au .+= dt * θimp * OP.𝐮∇
     end
@@ -1669,15 +1671,15 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
 
         # Effective electron collision frequency
-        νe_eff = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
+        ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
 
         @. accel_para_tilde += (
             facEM / dt * F.ψ_self
-                - (one(FT) - θimp) * νe_eff * pla.ue_para
+                - (one(FT) - θimp) * ν_sum_mom_iz_ei * pla.ue_para
                 + pla.ν_ei_eff * pla.ui_para
         )
 
-        A_u = OP.II + spdiagm(@views dt * θimp * νe_eff[:])
+        A_u = OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
         if flags.Include_ud_convec_term
             A_u += dt * θimp * (OP.𝐮∇.matrix)
         end
