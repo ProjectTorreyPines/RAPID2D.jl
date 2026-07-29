@@ -4,6 +4,11 @@ snaps2D.*mp4
 coverage/
 *.cov
 
+# Working notes, design drafts and issue write-ups produced while developing with
+# Claude. Kept in the checkout so they stay next to the code they describe, but not
+# part of the published repository.
+claudedocs/
+
 # Transient shadow tree built by test/runtests_parallel.jl (ReTestItems parallel runner).
 # Created and removed within a single run; only survives a hard kill. PID-suffixed so
 # concurrent runs in one checkout cannot clobber each other.
