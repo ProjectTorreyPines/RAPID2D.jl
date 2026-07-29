@@ -745,6 +745,9 @@ end
     # Erg = 1.5*Te (u_para = 0) ~ 14 eV, E/p = 0.5 / 5e-3 = 100 -> elastic share ~0.7
     RP.plasma.Te_eV .= 9.3
     RP.fields.E_para_tot .= 0.5
+    # The heating powers read the materialized ν_en_*, so hand-setting the state is not
+    # enough — update_RRCs! is what carries it onto the reaction-rate surfaces.
+    update_RRCs!(RP)
     RAPID2D.update_electron_heating_powers!(RP)
 
     K_tot = get_electron_RRC(RP, :Total_Momentum)
@@ -793,11 +796,15 @@ end
 
     inw = RP.G.nodes.in_wall_nids
     drude(ν) = @. -RP.config.ee * RP.fields.E_para_tot / (RP.config.me * ν)
-    # The RRC is queried at Erg = 1.5*Te + 0.5*me*ue_para^2/e, so it must be re-read
-    # before each call: the drift energy from the previous solve moves the lookup.
-    ν_en_mom() = RP.plasma.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum)
 
-    ν1 = ν_en_mom()                       # ue_para is still 0 here
+    # update_ue_para! reads the MATERIALIZED ν_en_mom_tot, so update_RRCs! is what moves
+    # the lookup — a step is [update_RRCs! ... update_ue_para!], and inside that step the
+    # frequency is frozen. Calling update_ue_para! twice without an update_RRCs! between
+    # them would solve the same Drude balance twice, which is the point of freezing it.
+    ν_en_mom() = copy(RP.plasma.ν_en_mom_tot)
+
+    update_RRCs!(RP)
+    ν1 = ν_en_mom()                       # queried at ue_para = 0
     RAPID2D.update_ue_para!(RP)
     @test RP.plasma.ue_para[inw] ≈ drude(ν1)[inw]
     u_neutral_only = copy(RP.plasma.ue_para)
@@ -807,10 +814,18 @@ end
     RP.flags.Spitzer_Resistivity = true
     RP.plasma.ν_ei .= 1.0e5
     RP.plasma.sptz_fac .= 0.5
-    ν2 = ν_en_mom() .+ 0.5 .* 1.0e5       # re-read: Erg now carries the drift energy
+    update_RRCs!(RP)                      # next step: Erg now carries the drift energy
+    ν2 = ν_en_mom() .+ 0.5 .* 1.0e5
     RAPID2D.update_ue_para!(RP)
     @test RP.plasma.ue_para[inw] ≈ drude(ν2)[inw]
     @test all(abs.(RP.plasma.ue_para[inw]) .< abs.(u_neutral_only[inw]))   # more drag, less drift
+
+    # Within a step the frequency does not respond to the drift it just produced: solving
+    # again without a new update_RRCs! reproduces the same u exactly. This is the
+    # single-evaluation-point invariant, stated where it is easiest to see.
+    u_frozen = copy(RP.plasma.ue_para)
+    RAPID2D.update_ue_para!(RP)
+    @test RP.plasma.ue_para[inw] == u_frozen[inw]
 end
 
 # ── Ion energetics ───────────────────────────────────────────────────────────────────

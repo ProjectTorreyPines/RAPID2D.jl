@@ -64,12 +64,14 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
 
     # Electron collision frequencies
     if RP.flags.Atomic_Collision
-        eRRC_iz = get_electron_RRC(RP, :Ionization)
-        eRRC_mom_tot = get_electron_RRC(RP, :Total_Momentum)
+        # ν_en_iz / ν_en_mom_tot are materialized by update_RRCs! and already carry the
+        # n_H2_gas factor, so a snapshot reports exactly what the step ran on. Halpha has
+        # no materialized field: it is diagnostic-only and lives on the (Te, u∥) surfaces
+        # rather than (E/p, Ē), so it stays a live query.
         eRRC_Hα = get_electron_RRC(RP, :Halpha)
 
-        snap0D.ν_en_iz = sum(@. pla.n_H2_gas * eRRC_iz * Ne2D) / total_Ne
-        snap0D.ν_en_mom_tot = sum(@. pla.n_H2_gas * eRRC_mom_tot * Ne2D) / total_Ne
+        snap0D.ν_en_iz = sum(@. pla.ν_en_iz * Ne2D) / total_Ne
+        snap0D.ν_en_mom_tot = sum(@. pla.ν_en_mom_tot * Ne2D) / total_Ne
         snap0D.ν_en_Hα = sum(@. pla.n_H2_gas * eRRC_Hα * Ne2D) / total_Ne
     end
 
@@ -338,12 +340,12 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     # Collision frequencies using RRC methods
     if RP.flags.Atomic_Collision
-        eRRC_mom_tot = get_electron_RRC(RP, :Total_Momentum)
-        eRRC_iz = get_electron_RRC(RP, :Ionization)
+        # Materialized frequencies (update_RRCs!); Halpha stays a live query, see the
+        # 0D snapshot above.
         eRRC_Halpha = get_electron_RRC(RP, :Halpha)
 
-        @. snap2D.ν_en_mom_tot = pla.n_H2_gas * eRRC_mom_tot
-        @. snap2D.ν_en_iz = pla.n_H2_gas * eRRC_iz
+        snap2D.ν_en_mom_tot .= pla.ν_en_mom_tot
+        snap2D.ν_en_iz .= pla.ν_en_iz
         @. snap2D.ν_en_Hα = pla.n_H2_gas * eRRC_Halpha
     end
 

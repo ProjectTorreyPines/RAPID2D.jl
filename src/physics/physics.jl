@@ -50,11 +50,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Cross section fit with simplified collisions
             qe = -RP.config.ee
 
-            # Get momentum transfer reaction rate coefficient
-            RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
-
-            # Calculate collision frequency
-            tot_coll_freq = @. RP.plasma.n_H2_gas * RRC_mom_tot
+            # Drift friction at the step-entry state (update_RRCs!). Note this now
+            # respects flags.Atomic_Collision, which the previous live query did not:
+            # with neutral collisions disabled the denominator is left to Coulomb alone.
+            tot_coll_freq = copy(RP.plasma.ν_en_mom_tot)
 
             # Add Coulomb collisions if enabled
             if RP.flags.Coulomb_Collision
@@ -194,18 +193,15 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
                 iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
 
-                # Add ionization contribution if source terms are enabled
-                if RP.flags.src
-                    eRRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-                else
-                    eRRC_iz = 0.0
-                end
-
                 # Calculate effective atomic collision frequency
                 # Note: 0.5 factor for elastic collisions because they only lose half of momentum
-                eff_atomic_coll_freq = @. pla.n_H2_gas * (
-                    FT(0.5) * iRRC_elastic + iRRC_cx + pla.Zeff * eRRC_iz
-                )
+                eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
+
+                # Add the ionization contribution if source terms are enabled, from the
+                # step-entry ν_en_iz that continuity and the energy equation also use.
+                if RP.flags.src
+                    @. eff_atomic_coll_freq += pla.Zeff * pla.ν_en_iz
+                end
 
                 # NOTE: convection and pressure contribution are ignored for ions
                 # TODO: Add pressure and convection terms for ions if needed, check Zeff effects
@@ -444,15 +440,17 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
 
         if RP.flags.Atomic_Collision
-            # Get reaction rate coefficients for momentum transfer
-            RRC_mom_tot = get_electron_RRC(RP, :Total_Momentum)
+            # Every ν_en_* below is materialized by update_RRCs! at the step-entry state.
+            # Reading them rather than re-querying is what makes the frictional heating
+            # credited here use the *same* coefficient the momentum equation used to
+            # remove that momentum, so the discrete energy budget closes.
 
             # Calculate velocity magnitudes for drag forces
             ue_mag_sq = @. pla.ueR^FT(2.0) .+ pla.ueϕ^FT(2.0) .+ pla.ueZ^FT(2.0)
             ue_dot_ui = @. pla.ueR * pla.uiR + pla.ueϕ * pla.uiϕ + pla.ueZ * pla.uiZ
 
             @. ePowers.drag = me * (
-                ue_mag_sq * pla.n_H2_gas * RRC_mom_tot
+                ue_mag_sq * pla.ν_en_mom_tot
                     + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
             )
 
@@ -469,26 +467,20 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # those channels do not also transfer 2me/M to the molecule. Using total
             # `Total_Momentum` over-counts this term by +42% at E/p ≈ 100 and +345% at
             # E/p ≈ 1000, where elastic is only 71% and 22% of the drift friction.
-            RRC_mom_ela = get_electron_RRC(RP, :Momentum_by_ela)
-            @. ePowers.ela = (FT(2.0) * me / mi) * pla.n_H2_gas * RRC_mom_ela *
+            @. ePowers.ela = (FT(2.0) * me / mi) * pla.ν_en_mom_ela *
                 FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
 
-            # Get excitation rate coefficient
-            RRC_exc = get_electron_RRC(RP, :Total_Excitation)
-            # Excitation power (energy lost to excite particles)
-            @. ePowers.exc = ee * char_exc_erg_eV * pla.n_H2_gas * RRC_exc
+            # Excitation power (energy lost to excite particles). ν_en_exc_eff is
+            # normalized to char_exc_erg_eV, so the product is the true kinetic loss.
+            @. ePowers.exc = ee * char_exc_erg_eV * pla.ν_en_exc_eff
 
             # For ionization
             if RP.flags.src
-                # Get ionization rate coefficient
-                RRC_iz = get_electron_RRC(RP, :Ionization)
-                freq_iz = @. pla.n_H2_gas * RRC_iz
-
                 # Ionization power (energy lost to ionize particles)
-                @. ePowers.iz = freq_iz * iz_erg_eV * ee
+                @. ePowers.iz = pla.ν_en_iz * iz_erg_eV * ee
 
                 # Dilution power (energy change due to density increase)
-                @. ePowers.dilution = freq_iz * (
+                @. ePowers.dilution = pla.ν_en_iz * (
                     FT(1.5) * pla.Te_eV * ee
                         - FT(0.5) * me * ue_mag_sq
                 )
@@ -571,14 +563,6 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         iPowers.equi .= zero_FT
 
         if RP.flags.Atomic_Collision
-            # Get reaction rate coefficients for ion reactions
-            if RP.flags.src
-                # Get electron ionization RRC (note: electron RRC is used for ionization)
-                eRRC_iz = get_electron_RRC(RP, :Ionization)
-            else
-                eRRC_iz = zero_FT
-            end
-
             # Get ion reaction rate coefficients
             iRRC_cx = get_H2_ion_RRC(RP, :Charge_Exchange)
             iRRC_elastic = get_H2_ion_RRC(RP, :Elastic)
@@ -594,9 +578,13 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # Calculate effective atomic collision frequency
             # Note: 0.5 factor for elastic collisions (momentum transfer efficiency)
-            eff_atomic_coll_freq = @. pla.n_H2_gas * (
-                FT(0.5) * iRRC_elastic + iRRC_cx + pla.Zeff * eRRC_iz
-            )
+            eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
+
+            # Ionization contribution, from the step-entry ν_en_iz (update_RRCs!) that the
+            # electron continuity and energy equations use — the electron rate governs it.
+            if RP.flags.src
+                @. eff_atomic_coll_freq += pla.Zeff * pla.ν_en_iz
+            end
 
             # Calculate atomic power: collision frequency times energy change
             @. iPowers.atomic = eff_atomic_coll_freq * avg_erg_change_by_atomic_collision
