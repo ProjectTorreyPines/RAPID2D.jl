@@ -828,6 +828,161 @@ end
     @test RP.plasma.ue_para[inw] == u_frozen[inw]
 end
 
+# ── RRC evaluation point ─────────────────────────────────────────────────────────────
+
+@testitem "update_RRCs! is the single RRC evaluation point of a step" setup = [PhysicsFixtures] begin
+    # The invariant: every (E/p, Ebar) surface is read exactly once per step, by
+    # update_RRCs!, and every consumer reads the materialized nu_en_* fields. Consumers
+    # used to re-query partway through advance_timestep!, at (Te^n, u^{n+1}, E(t_n)) --
+    # a state the plasma never occupies, because in Ebar = 1.5*Te + 0.5*me*u^2/e the
+    # drift term had advanced and the thermal term had not.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 1.0e-6, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+    )
+    config.Output_path = scratch_output_dir()
+
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        Te_evolve = true, src = true, ud_evolve = true, ud_method = "Xsec",
+        Ti_evolve = false, diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        update_ni_independently = false, Include_ud_convec_term = false,
+        Coulomb_Collision = false, negative_n_correction = false,
+    )
+    RP.flags.Atomic_Collision = true
+    RP.flags.Ionz_method = "Xsec"
+    initialize!(RP)
+
+    # Erg ~ 14 eV, E/p = 0.5 / 5e-3 = 100: high enough that inelastic channels are open,
+    # so the four surfaces are genuinely distinct.
+    RP.plasma.Te_eV .= 9.3
+    RP.fields.E_para_tot .= 0.5
+    RP.plasma.ue_para .= -3.0e5
+
+    pla = RP.plasma
+    inw = RP.G.nodes.in_wall_nids
+    ν_fields() = (
+        copy(pla.ν_en_iz), copy(pla.ν_en_mom_tot),
+        copy(pla.ν_en_mom_ela), copy(pla.ν_en_exc_eff),
+    )
+
+    @testset "all four surfaces are populated, and carry the n_gas factor" begin
+        update_RRCs!(RP)
+        for f in ν_fields()
+            @test all(f[inw] .> 0.0)
+        end
+        @test pla.ν_en_mom_tot[inw] ≈
+            (pla.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum))[inw]
+        # At E/p ~ 100 elastic is only ~70% of the drift friction, so the two momentum
+        # surfaces must not coincide -- otherwise the rest of this item proves nothing.
+        @test all(pla.ν_en_mom_ela[inw] .< pla.ν_en_mom_tot[inw])
+        @test all(pla.ν_en_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)
+    end
+
+    @testset "idempotent: a second call at the same state changes nothing" begin
+        update_RRCs!(RP)
+        before = ν_fields()
+        update_RRCs!(RP)
+        @test all(a == b for (a, b) in zip(before, ν_fields()))
+    end
+
+    @testset "the frequency does not follow the state within a step" begin
+        update_transport_quantities!(RP)     # materializes nu AND derives ueR/uephi/ueZ
+        ν_entry = copy(pla.ν_en_mom_tot)
+        ue_mag_sq = @. pla.ueR^2 + pla.ueϕ^2 + pla.ueZ^2
+        @test all(ue_mag_sq[inw] .> 0.0)     # or the drag assertion below is vacuous
+
+        # advance_timestep! advances u_para (update_ue_para!) before the energy equation
+        # runs, so mid-step the lookup coordinate has moved. Imitate that move directly.
+        pla.ue_para .*= 5.0
+        ν_mid = pla.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum)
+        @test !isapprox(ν_mid[inw], ν_entry[inw]; rtol = 1.0e-3)   # the state really moved
+        @test pla.ν_en_mom_tot == ν_entry                          # ...the field did not
+
+        # ePowers.drag adds a Spitzer term regardless of flags.Coulomb_Collision, and
+        # initialize! leaves nu_ei/sptz_fac populated, so it contributes ~6e-8 of the
+        # total here. Zero it to isolate the neutral drag this item is about.
+        pla.ν_ei .= 0.0
+
+        update_electron_heating_powers!(RP)
+        (; me, ee, char_exc_erg_eV, iz_erg_eV) = RP.config.constants
+
+        # P_drag is charged at the entry-state frequency -- the same number the momentum
+        # equation used to remove that momentum.
+        @test pla.ePowers.drag[inw] ≈ (me .* ue_mag_sq .* ν_entry)[inw]
+        @test !isapprox(
+            pla.ePowers.drag[inw], (me .* ue_mag_sq .* ν_mid)[inw]; rtol = 1.0e-3
+        )
+
+        # The inelastic channels read their own materialized frequencies. nu_en_exc_eff is
+        # normalized to char_exc_erg_eV, which is why that constant appears bare here.
+        @test pla.ePowers.exc[inw] ≈ (ee * char_exc_erg_eV .* pla.ν_en_exc_eff)[inw]
+        @test pla.ePowers.iz[inw] ≈ (ee * iz_erg_eV .* pla.ν_en_iz)[inw]
+    end
+
+    @testset "advance_timestep! does not move the frequencies" begin
+        update_transport_quantities!(RP)
+        before = ν_fields()
+        RAPID2D.advance_timestep!(RP, config.dt)
+        @test all(a == b for (a, b) in zip(before, ν_fields()))
+
+        # ...and the transport update that closes the step does move them, because Te and
+        # u_para advanced. Without this the assertion above could pass on a frozen state.
+        update_transport_quantities!(RP)
+        @test any(a != b for (a, b) in zip(before, ν_fields()))
+    end
+end
+
+@testitem "update_RRCs! covers Atomic_Collision and src independently" setup = [PhysicsFixtures] begin
+    # nu_en_iz feeds two consumers behind two DIFFERENT flags: the parallel momentum drag
+    # (Atomic_Collision) and the continuity source (src). Its only unconditional writer
+    # used to sit under Atomic_Collision, so with just `src` set the field held whatever
+    # the previous iteration's mid-step query had left there. Nothing covered that
+    # combination.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 1.0e-6, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+    )
+    config.Output_path = scratch_output_dir()
+
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        Te_evolve = false, src = true, ud_evolve = false, ud_method = "Xsec",
+        Ti_evolve = false, diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        update_ni_independently = false, Include_ud_convec_term = false,
+        Coulomb_Collision = false, negative_n_correction = false,
+    )
+    RP.flags.Atomic_Collision = false     # ← ionization on, neutral collisions off
+    RP.flags.Ionz_method = "Xsec"
+    initialize!(RP)
+    @test !RP.flags.Atomic_Collision      # gas is present, so initialize! left it off
+
+    pla = RP.plasma
+    inw = RP.G.nodes.in_wall_nids
+    pla.Te_eV .= 9.3
+    update_RRCs!(RP)
+
+    @test all(pla.ν_en_iz[inw] .> 0.0)                            # still evaluated
+    @test all(pla.ν_en_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)
+    @test all(pla.ν_en_mom_tot .== 0.0)                           # neutral drag stays off
+    @test all(pla.ν_en_mom_ela .== 0.0)
+    @test all(pla.ν_en_exc_eff .== 0.0)
+
+    # ...and it tracks the state instead of going stale.
+    ν1 = copy(pla.ν_en_iz)
+    pla.Te_eV .= 20.0
+    update_RRCs!(RP)
+    @test all(pla.ν_en_iz[inw] .> ν1[inw])
+end
+
 # ── Ion energetics ───────────────────────────────────────────────────────────────────
 
 # SEQUENTIAL — do not split. The trailing blocks all `deepcopy(RP)` and therefore INHERIT
