@@ -752,6 +752,56 @@ end
     @test !isapprox(pla.ePowers.ela[inw], (recoil .* K_tot)[inw]; rtol = 0.05)
 end
 
+@testitem "ud_method = Xsec_fit solves the instantaneous Drude balance" setup = [PhysicsFixtures] begin
+    # The alternative drift method. Unlike "Xsec" it does not advance u_para; it solves
+    # qE = m ν u algebraically, and it omits the ν_iz dilution term — which is exactly
+    # what makes it useful for isolating that term. It had no test, so the whole branch
+    # was dark. Closed form, so the assertions are exact rather than tolerance-based.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+        dt = 1.0e-6, t_end_s = 1.0e-6, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
+        prefilled_gas_pressure = 5.0e-3,
+        wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+    )
+    config.Output_path = scratch_output_dir()
+
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        ud_method = "Xsec_fit", ud_evolve = true,
+        Te_evolve = false, Ti_evolve = false, src = false,
+        diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        update_ni_independently = false, Include_ud_convec_term = false,
+        Coulomb_Collision = false, negative_n_correction = false,
+    )
+    RP.flags.Atomic_Collision = true
+    initialize!(RP)
+    RP.plasma.Te_eV .= 9.3
+    RP.fields.E_para_tot .= 0.5
+
+    inw = RP.G.nodes.in_wall_nids
+    drude(ν) = @. -RP.config.ee * RP.fields.E_para_tot / (RP.config.me * ν)
+    # The RRC is queried at Erg = 1.5*Te + 0.5*me*ue_para^2/e, so it must be re-read
+    # before each call: the drift energy from the previous solve moves the lookup.
+    ν_en_mom() = RP.plasma.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum)
+
+    ν1 = ν_en_mom()                       # ue_para is still 0 here
+    RAPID2D.update_ue_para!(RP)
+    @test RP.plasma.ue_para[inw] ≈ drude(ν1)[inw]
+    u_neutral_only = copy(RP.plasma.ue_para)
+
+    # Coulomb collisions add to the same denominator, Spitzer-weighted.
+    RP.flags.Coulomb_Collision = true
+    RP.flags.Spitzer_Resistivity = true
+    RP.plasma.ν_ei .= 1.0e5
+    RP.plasma.sptz_fac .= 0.5
+    ν2 = ν_en_mom() .+ 0.5 .* 1.0e5       # re-read: Erg now carries the drift energy
+    RAPID2D.update_ue_para!(RP)
+    @test RP.plasma.ue_para[inw] ≈ drude(ν2)[inw]
+    @test all(abs.(RP.plasma.ue_para[inw]) .< abs.(u_neutral_only[inw]))   # more drag, less drift
+end
+
 # ── Ion energetics ───────────────────────────────────────────────────────────────────
 
 # SEQUENTIAL — do not split. The trailing blocks all `deepcopy(RP)` and therefore INHERIT
