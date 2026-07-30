@@ -20,7 +20,6 @@ export update_ue_para!,
     update_coulomb_collision_parameters!,
     update_electron_heating_powers!,
     update_ion_heating_powers!,
-    calculate_ν_en_iz!,
     solve_electron_continuity_equation!,
     apply_electron_density_boundary_conditions!,
     calculate_para_grad_of_scalar_F,
@@ -51,11 +50,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Cross section fit with simplified collisions
             qe = -RP.config.ee
 
-            # Get momentum transfer reaction rate coefficient
-            RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
-
-            # Calculate collision frequency
-            tot_coll_freq = @. RP.plasma.n_H2_gas * RRC_mom_tot
+            # Drift friction at the step-entry state (update_RRCs!). Note this now
+            # respects flags.Atomic_Collision, which the previous live query did not:
+            # with neutral collisions disabled the denominator is left to Coulomb alone.
+            tot_coll_freq = copy(RP.plasma.ν_en_mom_tot)
 
             # Add Coulomb collisions if enabled
             if RP.flags.Coulomb_Collision
@@ -77,8 +75,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             pla = RP.plasma
             F = RP.fields
 
-            # Define sum of collision frequencies of ionization and momentum reactions
-            ν_iz_mom = @. pla.ν_en_iz + pla.ν_en_mom_tot
+            # Rate at which the parallel drift decays. Ionization belongs here alongside
+            # the drift friction because each newborn electron enters at rest, diluting
+            # the mean drift at ν_iz without any momentum being transferred to the gas.
+            ν_sum_mom_iz = @. pla.ν_en_iz + pla.ν_en_mom_tot
 
             # Always use backward Euler for ue_para (θu=1.0) for better saturation
             # but keep the formula structure compatible with variable θ_imp
@@ -112,10 +112,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
 
                 # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom)*ue_para]
-                @. accel_para_tilde += (one_FT - θu) * (-ν_iz_mom * pla.ue_para)
+                @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz * pla.ue_para)
 
                 # Add collision frequency to diagonal elements using spdiagm
-                OP.A_LHS += @views spdiagm(θu * dt * ν_iz_mom[:])
+                OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz[:])
 
                 # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
                 @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
@@ -135,9 +135,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 end
             else
 
-                inv_factor = @. one_FT / (one_FT + θu * ν_iz_mom * dt)
+                inv_factor = @. one_FT / (one_FT + θu * ν_sum_mom_iz * dt)
                 @. pla.ue_para = inv_factor * (
-                    pla.ue_para * (one_FT - (one_FT - θu) * dt * ν_iz_mom)
+                    pla.ue_para * (one_FT - (one_FT - θu) * dt * ν_sum_mom_iz)
                         + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
                 )
 
@@ -193,18 +193,15 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
                 iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
 
-                # Add ionization contribution if source terms are enabled
-                if RP.flags.src
-                    eRRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-                else
-                    eRRC_iz = 0.0
-                end
-
                 # Calculate effective atomic collision frequency
                 # Note: 0.5 factor for elastic collisions because they only lose half of momentum
-                eff_atomic_coll_freq = @. pla.n_H2_gas * (
-                    FT(0.5) * iRRC_elastic + iRRC_cx + pla.Zeff * eRRC_iz
-                )
+                eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
+
+                # Add the ionization contribution if source terms are enabled, from the
+                # step-entry ν_en_iz that continuity and the energy equation also use.
+                if RP.flags.src
+                    @. eff_atomic_coll_freq += pla.Zeff * pla.ν_en_iz
+                end
 
                 # NOTE: convection and pressure contribution are ignored for ions
                 # TODO: Add pressure and convection terms for ions if needed, check Zeff effects
@@ -383,10 +380,10 @@ Update electron heating power components for electron energy equation.
 function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_heating_powers!" begin
         # Extract physical constants + reaction energies (all in RP.config.constants).
-        # exc_erg_eV normalizes the Total_Excitation surface and is validated at load
+        # char_exc_erg_eV normalizes the Total_Excitation surface and is validated at load
         # against the table's characteristic_exc_erg_eV (Electron_RRCs), so P_exc
         # reproduces the kinetic loss exactly.
-        @unpack ee, qe, me, mi, exc_erg_eV, iz_erg_eV = RP.config.constants
+        @unpack ee, qe, me, mi, char_exc_erg_eV, iz_erg_eV = RP.config.constants
         OP = RP.operators
 
         # Alias common objects for readability
@@ -443,15 +440,17 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
 
         if RP.flags.Atomic_Collision
-            # Get reaction rate coefficients for momentum transfer
-            RRC_mom_tot = get_electron_RRC(RP, :Total_Momentum)
+            # Every ν_en_* below is materialized by update_RRCs! at the step-entry state.
+            # Reading them rather than re-querying is what makes the frictional heating
+            # credited here use the *same* coefficient the momentum equation used to
+            # remove that momentum, so the discrete energy budget closes.
 
             # Calculate velocity magnitudes for drag forces
             ue_mag_sq = @. pla.ueR^FT(2.0) .+ pla.ueϕ^FT(2.0) .+ pla.ueZ^FT(2.0)
             ue_dot_ui = @. pla.ueR * pla.uiR + pla.ueϕ * pla.uiϕ + pla.ueZ * pla.uiZ
 
             @. ePowers.drag = me * (
-                ue_mag_sq * pla.n_H2_gas * RRC_mom_tot
+                ue_mag_sq * pla.ν_en_mom_tot
                     + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
             )
 
@@ -468,26 +467,20 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # those channels do not also transfer 2me/M to the molecule. Using total
             # `Total_Momentum` over-counts this term by +42% at E/p ≈ 100 and +345% at
             # E/p ≈ 1000, where elastic is only 71% and 22% of the drift friction.
-            RRC_mom_ela = get_electron_RRC(RP, :Momentum_by_ela)
-            @. ePowers.ela = (FT(2.0) * me / mi) * pla.n_H2_gas * RRC_mom_ela *
+            @. ePowers.ela = (FT(2.0) * me / mi) * pla.ν_en_mom_ela *
                 FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
 
-            # Get excitation rate coefficient
-            RRC_exc = get_electron_RRC(RP, :Total_Excitation)
-            # Excitation power (energy lost to excite particles)
-            @. ePowers.exc = ee * exc_erg_eV * pla.n_H2_gas * RRC_exc
+            # Excitation power (energy lost to excite particles). ν_en_exc_eff is
+            # normalized to char_exc_erg_eV, so the product is the true kinetic loss.
+            @. ePowers.exc = ee * char_exc_erg_eV * pla.ν_en_exc_eff
 
             # For ionization
             if RP.flags.src
-                # Get ionization rate coefficient
-                RRC_iz = get_electron_RRC(RP, :Ionization)
-                freq_iz = @. pla.n_H2_gas * RRC_iz
-
                 # Ionization power (energy lost to ionize particles)
-                @. ePowers.iz = freq_iz * iz_erg_eV * ee
+                @. ePowers.iz = pla.ν_en_iz * iz_erg_eV * ee
 
                 # Dilution power (energy change due to density increase)
-                @. ePowers.dilution = freq_iz * (
+                @. ePowers.dilution = pla.ν_en_iz * (
                     FT(1.5) * pla.Te_eV * ee
                         - FT(0.5) * me * ue_mag_sq
                 )
@@ -570,14 +563,6 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         iPowers.equi .= zero_FT
 
         if RP.flags.Atomic_Collision
-            # Get reaction rate coefficients for ion reactions
-            if RP.flags.src
-                # Get electron ionization RRC (note: electron RRC is used for ionization)
-                eRRC_iz = get_electron_RRC(RP, :Ionization)
-            else
-                eRRC_iz = zero_FT
-            end
-
             # Get ion reaction rate coefficients
             iRRC_cx = get_H2_ion_RRC(RP, :Charge_Exchange)
             iRRC_elastic = get_H2_ion_RRC(RP, :Elastic)
@@ -593,9 +578,13 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # Calculate effective atomic collision frequency
             # Note: 0.5 factor for elastic collisions (momentum transfer efficiency)
-            eff_atomic_coll_freq = @. pla.n_H2_gas * (
-                FT(0.5) * iRRC_elastic + iRRC_cx + pla.Zeff * eRRC_iz
-            )
+            eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
+
+            # Ionization contribution, from the step-entry ν_en_iz (update_RRCs!) that the
+            # electron continuity and energy equations use — the electron rate governs it.
+            if RP.flags.src
+                @. eff_atomic_coll_freq += pla.Zeff * pla.ν_en_iz
+            end
 
             # Calculate atomic power: collision frequency times energy change
             @. iPowers.atomic = eff_atomic_coll_freq * avg_erg_change_by_atomic_collision
@@ -622,40 +611,6 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    calculate_ν_en_iz!(RP::RAPID{FT}) where FT<:AbstractFloat
-
-Calculate the ionization frequency ν_en_iz = n_H2_gas * <σ_iz * v_e>
-"""
-function calculate_ν_en_iz!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    # Calculate ionization rate based on the method specified in flags
-    if RP.flags.Ionz_method == "Townsend_coeff"
-        # Compute source by electron avalanche using Townsend coefficient
-        # α = 3.88 * p * exp(-95 * p / |E_para|)
-        α = @. 3.88 * RP.config.prefilled_gas_pressure *
-            exp(-95 * RP.config.prefilled_gas_pressure / abs(RP.fields.E_para_tot))
-
-        # Electron ionization frequency
-        RP.plasma.ν_en_iz = @. α * abs(RP.plasma.ue_para)
-    elseif RP.flags.Ionz_method == "Xsec"
-        # Ionization frequency = (gas density) * (<σ_iz*v>)
-        eRRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-        @. RP.plasma.ν_en_iz = RP.plasma.n_H2_gas * eRRC_iz
-    else
-        error("Unknown ionization method: $(RP.flags.Ionz_method)")
-    end
-
-    # Zero out the ionization frequency outside the wall
-    RP.plasma.ν_en_iz[RP.G.nodes.on_out_wall_nids] .= 0.0
-
-    # Update sparse matrix operator for implicit methods if needed
-    if RP.flags.Implicit
-        RP.operators.ν_en_iz .= @views spdiagm(RP.plasma.ν_en_iz[:])
-    end
-
-    return RP
-end
-
-"""
     solve_electron_continuity_equation!(RP::RAPID{FT}) where FT<:AbstractFloat
 
 Solve the electron continuity equation to update electron density.
@@ -675,9 +630,17 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # Calculate source terms for electron density
         fill!(op.RHS, zero(FT))  # Reset RHS to zero
         if RP.flags.src
-            # ne * ν_en_iz = ne * nH2_gas * eRRC_iz
-            calculate_ν_en_iz!(RP)
+            # ne * ν_en_iz, with ν_en_iz materialized by update_RRCs! at the step-entry
+            # state — do not re-query the table here (see update_RRCs! docstring).
             op.RHS += pla.ne .* pla.ν_en_iz
+
+            # The implicit half of the same source needs ν_en_iz as a diagonal operator.
+            # It is assembled here, under `src`, rather than in update_RRCs!: the LHS at
+            # the bottom of this function adds op.ν_en_iz unconditionally, so a rebuild
+            # outside this branch would inject ionization into a run that asked for none.
+            if RP.flags.Implicit
+                op.ν_en_iz .= @views spdiagm(pla.ν_en_iz[:])
+            end
         end
 
         if RP.flags.diffu
@@ -1260,7 +1223,7 @@ Solve coupled electron momentum and Ampère equations with coil interactions usi
 
 Solves the coupled system:
 - Electron parallel momentum:
-    - Au ≡ [ 𝐈 + Δt*θimp*(νe_eff + 𝐮⋅∇)]
+    - Au ≡ [ 𝐈 + Δt*θimp*(ν_sum_mom_iz_ei + 𝐮⋅∇)]
     - Au * ue∥⁽ⁿ⁺¹⁾ = ue∥⁽ⁿ⁾ + Δt*ã∥⁽ⁿ⁾ - (qe*bϕ²/me*R)*ψ_self⁽ⁿ⁺¹⁾
 - Implicit Ampere's equation:
     - [Au*ΔGS - μ₀*ne*qe²*bϕ²/me]*ψ_self⁽ⁿ⁺¹⁾ = -μ₀R² J̃ϕ⁽ⁿ⁾
@@ -1322,19 +1285,19 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     end
 
     # Effective electron collision frequency
-    νe_eff = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
+    ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
 
     @. accel_para_tilde += (
         facEM / dt * F.ψ_self
-            - (one(FT) - θimp) * νe_eff * pla.ue_para
+            - (one(FT) - θimp) * ν_sum_mom_iz_ei * pla.ue_para
             + pla.ν_ei_eff * pla.ui_para
     )
 
 
     # 2. Define Au matrix for the electron parallel momentum equation
-    # Au ≡ [ 𝐈 + Δt*θimp*(νe_eff + 𝐮⋅∇)]
+    # Au ≡ [ 𝐈 + Δt*θimp*(ν_sum_mom_iz_ei + 𝐮⋅∇)]
     Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
-    Au .= OP.II + spdiagm(@views dt * θimp * νe_eff[:])
+    Au .= OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
     if flags.Include_ud_convec_term
         Au .+= dt * θimp * OP.𝐮∇
     end
@@ -1669,15 +1632,15 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
 
         # Effective electron collision frequency
-        νe_eff = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
+        ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
 
         @. accel_para_tilde += (
             facEM / dt * F.ψ_self
-                - (one(FT) - θimp) * νe_eff * pla.ue_para
+                - (one(FT) - θimp) * ν_sum_mom_iz_ei * pla.ue_para
                 + pla.ν_ei_eff * pla.ui_para
         )
 
-        A_u = OP.II + spdiagm(@views dt * θimp * νe_eff[:])
+        A_u = OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
         if flags.Include_ud_convec_term
             A_u += dt * θimp * (OP.𝐮∇.matrix)
         end

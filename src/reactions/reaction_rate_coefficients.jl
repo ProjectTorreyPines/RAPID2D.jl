@@ -146,7 +146,7 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
         Total_Excitation = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Total_Excitation"))
         # Excitation normalization the table was built with — kept as a field and
         # validated later in initialize_RRCs! (where RP.config is available) against
-        # config.constants.exc_erg_eV. `nothing` if the table omits it.
+        # config.constants.char_exc_erg_eV. `nothing` if the table omits it.
         char_exc = haskey(h5fid, "characteristic_exc_erg_eV") ?
             Float64(read(h5fid, "characteristic_exc_erg_eV")) : nothing
         close(h5fid)
@@ -173,24 +173,24 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
 end
 
 """
-    check_exc_erg_consistency(eRRCs::Electron_RRCs, exc_erg_eV)
+    check_exc_erg_consistency(eRRCs::Electron_RRCs, char_exc_erg_eV)
 
 Verify the loaded electron RRC table's excitation normalization matches RAPID2D's
-`exc_erg_eV` (`config.constants`). The `Total_Excitation` surface is energy-normalized
-to the table's `characteristic_exc_erg_eV`, so `P_exc = e·exc_erg_eV·n_gas·RRC` only
+`char_exc_erg_eV` (`config.constants`). The `Total_Excitation` surface is energy-normalized
+to the table's `characteristic_exc_erg_eV`, so `P_exc = e·char_exc_erg_eV·n_gas·RRC` only
 reproduces the kinetic loss if the two agree. Missing (`nothing`) → warn + assume our
 value; present but different → error. Called from `initialize_RRCs!`.
 """
-function check_exc_erg_consistency(eRRCs::Electron_RRCs, exc_erg_eV::Real)
+function check_exc_erg_consistency(eRRCs::Electron_RRCs, char_exc_erg_eV::Real)
     ch = eRRCs.characteristic_exc_erg_eV
     if ch === nothing
         @warn "Electron RRC table has no characteristic_exc_erg_eV; " *
-            "assuming $exc_erg_eV eV (RAPID2D's exc_erg_eV)."
+            "assuming $char_exc_erg_eV eV (RAPID2D's char_exc_erg_eV)."
     else
-        isapprox(ch, exc_erg_eV; rtol = 1.0e-6) || error(
+        isapprox(ch, char_exc_erg_eV; rtol = 1.0e-6) || error(
             "Electron RRC table is normalized to characteristic_exc_erg_eV = $ch eV, " *
-                "but RAPID2D uses exc_erg_eV = $exc_erg_eV eV. Regenerate the table or " *
-                "update PlasmaConstants.exc_erg_eV so they match."
+                "but RAPID2D uses char_exc_erg_eV = $char_exc_erg_eV eV. Regenerate the table or " *
+                "update PlasmaConstants.char_exc_erg_eV so they match."
         )
     end
     return nothing
@@ -305,7 +305,72 @@ function get_H2_ion_RRC(RP::RAPID{FT}, reaction::Symbol) where {FT <: AbstractFl
     return get_H2_ion_RRC(RP, RP.iRRCs, reaction)
 end
 
+"""
+    update_RRCs!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Evaluate the electron reaction rate coefficients on the `(E/p, Ē)` surfaces and store the
+corresponding collision frequencies `ν = n_H2_gas · K` on `RP.plasma`.
+
+**This is the only place those tables are queried during a simulation step.** Consumers
+read `plasma.ν_en_iz`, `ν_en_mom_tot`, `ν_en_mom_ela`, `ν_en_exc_eff`; they must not call
+[`get_electron_RRC`](@ref) themselves. A step that re-queries ends up with the same
+physical coefficient evaluated at two different plasma states — the momentum equation
+removing drag at one `ν_mom` while the energy equation credits frictional heating at
+another — so its discrete energy budget cannot close. See
+`claudedocs/design/rrc-single-evaluation-point.md`.
+
+Called from the top of [`update_transport_quantities!`](@ref), which runs at the end of a
+`run_simulation!` iteration — precisely the state the next `advance_timestep!` enters with.
+The frequencies are therefore lagged coefficients at the step-entry state: the standard
+semi-implicit choice, and what keeps `u∥` from overshooting at large `dt`.
+
+Frequencies are stored rather than rate coefficients so that a future time-varying
+`n_H2_gas` cannot desynchronize consumers within a step. `K` remains recoverable as
+`ν / n_H2_gas`.
+
+`Halpha` and the other `(Te, u∥)`-family surfaces are not materialized: they are
+diagnostic-only and are still fetched live at snapshot cadence.
+"""
+function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+
+    if RP.flags.Atomic_Collision
+        K_mom_tot = get_electron_RRC(RP, :Total_Momentum)
+        K_mom_ela = get_electron_RRC(RP, :Momentum_by_ela)
+        K_exc_eff = get_electron_RRC(RP, :Total_Excitation)
+        @. pla.ν_en_mom_tot = pla.n_H2_gas * K_mom_tot
+        @. pla.ν_en_mom_ela = pla.n_H2_gas * K_mom_ela
+        @. pla.ν_en_exc_eff = pla.n_H2_gas * K_exc_eff
+    end
+
+    # ν_en_iz is consumed by the parallel momentum drag (gated on Atomic_Collision) *and*
+    # by the continuity source (gated on src), which are independent flags — so cover the
+    # union. With only `src` set, this field previously held a mid-step value left over
+    # from the previous iteration, because its unconditional writer sat under
+    # Atomic_Collision while its mid-step writer sat under src.
+    if RP.flags.Atomic_Collision || RP.flags.src
+        if RP.flags.Ionz_method == "Townsend_coeff"
+            # Electron avalanche via the Townsend coefficient,
+            # α = 3.88 * p * exp(-95 * p / |E_para|)
+            α = @. 3.88 * RP.config.prefilled_gas_pressure *
+                exp(-95 * RP.config.prefilled_gas_pressure / abs(RP.fields.E_para_tot))
+            @. pla.ν_en_iz = α * abs(pla.ue_para)
+        elseif RP.flags.Ionz_method == "Xsec"
+            K_iz = get_electron_RRC(RP, :Ionization)
+            @. pla.ν_en_iz = pla.n_H2_gas * K_iz
+        else
+            error("Unknown ionization method: $(RP.flags.Ionz_method)")
+        end
+
+        # No ionization outside the wall
+        pla.ν_en_iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+    end
+
+    return RP
+end
+
 # Export types and functions for reaction rate coefficients
+export update_RRCs!
 export AbstractReactionRateCoefficient
 export RRC_EoverP_Erg, RRC_T_ud, RRC_T_ud_gFac
 export Electron_RRCs, H2_Ion_RRCs
