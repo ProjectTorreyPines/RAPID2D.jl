@@ -1524,8 +1524,10 @@ end
 
     for coulomb in (true, false)
         @testset "Coulomb_Collision = $coulomb" begin
-            runs = [(name, build(; ampere = amp, threshold = thr, coulomb = coulomb))
-                    for (name, amp, thr) in routings]
+            runs = [
+                (name, build(; ampere = amp, threshold = thr, coulomb = coulomb))
+                    for (name, amp, thr) in routings
+            ]
             for _ in 1:100, (_, RP) in runs
                 RAPID2D.advance_timestep!(RP)
             end
