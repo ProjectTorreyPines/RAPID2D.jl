@@ -31,6 +31,7 @@ const RAPID_TIMER = TimerOutput()
 # Include type definitions
 include("constants.jl")
 include("numerics/discretized_operator.jl")
+include("numerics/linear_solvers.jl")
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")
