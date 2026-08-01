@@ -78,7 +78,11 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Rate at which the parallel drift decays. Ionization belongs here alongside
             # the drift friction because each newborn electron enters at rest, diluting
             # the mean drift at ν_iz without any momentum being transferred to the gas.
-            ν_sum_mom_iz = @. pla.ν_en_iz + pla.ν_en_mom_tot
+            # ν_ei_eff (= ξ_sptz·ν_ei) is the Coulomb half of the SAME friction: the
+            # momentum equation carries -ξ_sptz·ν_ei·(u_e∥ - u_i∥), whose u_i∥ half is
+            # added as a source below. It is zero unless Coulomb_Collision is enabled,
+            # and the combined momentum-Ampère solvers build the identical sum.
+            ν_sum_mom_iz_ei = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
 
             # Always use backward Euler for ue_para (θu=1.0) for better saturation
             # but keep the formula structure compatible with variable θ_imp
@@ -111,11 +115,11 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 end
 
 
-                # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom)*ue_para]
-                @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz * pla.ue_para)
+                # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom + ν_ei_eff)*ue_para]
+                @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
 
                 # Add collision frequency to diagonal elements using spdiagm
-                OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz[:])
+                OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz_ei[:])
 
                 # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
                 @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
@@ -135,9 +139,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 end
             else
 
-                inv_factor = @. one_FT / (one_FT + θu * ν_sum_mom_iz * dt)
+                inv_factor = @. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt)
                 @. pla.ue_para = inv_factor * (
-                    pla.ue_para * (one_FT - (one_FT - θu) * dt * ν_sum_mom_iz)
+                    pla.ue_para * (one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
                         + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
                 )
 
