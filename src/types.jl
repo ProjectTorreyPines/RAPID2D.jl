@@ -428,6 +428,11 @@ Fields include various matrices for solving different parts of the model.
     # Operator for magnetic field solver
     ΔGS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Grad-Shafranov operator
 
+    # Cached linear solvers (numerics/linear_solvers.jl) — one per equation, so each
+    # sees a step-stable sparsity pattern and the lu! symbolic-reuse path stays valid
+    ne_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+    Te_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+
     # RHS vectors for electron continuity equation
     RHS::Matrix{FT} = zeros(FT, dims) # Generic RHS placeholder
     neRHS_diffu::Matrix{FT} = zeros(FT, dims)  # Diffusion term

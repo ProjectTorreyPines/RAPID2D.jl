@@ -27,7 +27,20 @@ SparseLUSolver{FT}() where {FT <: AbstractFloat} = SparseLUSolver{FT}(nothing)
 SparseLUSolver() = SparseLUSolver{Float64}()
 
 function factorize!(s::SparseLUSolver{FT}, A::SparseMatrixCSC{FT}; reuse::Bool = true) where {FT}
-    (s.F === nothing || !reuse) ? (s.F = lu(A)) : lu!(s.F, A)
+    if s.F === nothing || !reuse
+        s.F = lu(A)
+    else
+        try
+            lu!(s.F, A)
+        catch err
+            # Sparse broadcast drops numerical zeros, so a value turning on (e.g.
+            # convection starting from u=0) can GROW the assembled pattern between
+            # steps. lu! then throws "pattern of the matrix changed" — recover with
+            # a fresh symbolic analysis instead of failing the step.
+            err isa ArgumentError || rethrow()
+            s.F = lu(A)
+        end
+    end
     return s
 end
 

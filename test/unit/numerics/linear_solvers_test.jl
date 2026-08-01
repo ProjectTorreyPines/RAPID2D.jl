@@ -32,6 +32,54 @@
     end
 end
 
+@testitem "LinearSolvers SparseLU pattern change recovery" begin
+    # Broadcast-assembled θ-matrices can GROW their pattern when a physical value
+    # turns on (sparse broadcast drops numerical zeros). factorize! must recover
+    # with a fresh symbolic analysis instead of erroring the step.
+    using RAPID2D.SparseArrays
+    using RAPID2D: SparseLUSolver, factorize!, solve!
+
+    n = 200
+    A1 = spdiagm(0 => fill(3.0, n), 1 => fill(-1.0, n - 1), -1 => fill(-1.0, n - 1))
+    A2 = A1 + spdiagm(5 => fill(-0.5, n - 5), -5 => fill(-0.5, n - 5))   # pattern grew
+    b = [sin(0.1i) + 2.0 for i in 1:n]
+    x = zeros(n)
+
+    s = SparseLUSolver{Float64}()
+    solve!(x, factorize!(s, A1), b)
+    @test maximum(abs, x .- Matrix(A1) \ b) < 1e-12 * maximum(abs, x)
+    solve!(x, factorize!(s, A2), b)                    # different pattern → recovery path
+    @test maximum(abs, x .- Matrix(A2) \ b) < 1e-12 * maximum(abs, x)
+end
+
+@testitem "LinearSolvers electron continuity equivalence" begin
+    # The cached-solver path must reproduce `A_LHS \ RHS` exactly. After the solve
+    # call, op.A_LHS/op.RHS still hold the assembled system of that step, so the
+    # reference solution can be recomputed directly. Three steps exercise both the
+    # first-factorization (lu) and the symbolic-reuse (lu!) paths on live matrices.
+    using RAPID2D.SparseArrays
+    using RAPID2D.LinearAlgebra
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual",
+        NR = 40, NZ = 80,
+        prefilled_gas_pressure = 1.0e-2,
+        R0B0 = 1.0,
+        dt = 1.0e-8,
+        snap0D_Δt_s = 1.0e-7,
+        snap2D_Δt_s = 1.0e-6,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    for step in 1:3
+        RAPID2D.solve_electron_continuity_equation!(RP)
+        ne_ref = reshape(RP.operators.A_LHS.matrix \ vec(RP.operators.RHS),
+                         RP.G.NR, RP.G.NZ)
+        @test isapprox(RP.plasma.ne, ne_ref; rtol = 1e-12)
+    end
+end
+
 @testitem "LinearSolvers BandedLU residual fallback" begin
     using RAPID2D.SparseArrays
     using RAPID2D: BandedLUSolver, factorize!, solve!
