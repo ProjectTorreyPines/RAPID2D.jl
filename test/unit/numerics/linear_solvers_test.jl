@@ -97,3 +97,64 @@ end
     @test maximum(abs, X .- Xref) / maximum(abs, Xref) < 1e-12
     @test s.fallback.F !== nothing   # fallback actually engaged
 end
+
+@testitem "LinearSolvers Te theta-scheme equivalence" begin
+    # This commit routes BOTH solves through the cached factorization, but only
+    # the electron-continuity side had an equivalence test. `update_Te!` uses its
+    # own cached `OP.Te_solver` (physics.jl), so it needs its own check.
+    #
+    # Same contract as the continuity test: after the call, op.A_LHS/op.RHS still
+    # hold the assembled system of that step, so the reference can be recomputed
+    # directly. One difference — `update_Te!` clamps to [min_Te, max_Te] AFTER
+    # the solve, so the reference must be clamped too, or the comparison is
+    # against a quantity the function never claims to produce.
+    #
+    # Te MUST be given a non-uniform profile. A_LHS = II minus the dt-weighted
+    # transport operators, and a uniform field lies in the kernel of every one of
+    # them: A*(const) == (const) no matter how large dt is. Measured, with a flat
+    # Te the direct solve differs from RHS by 5e-16 at dt=1e-6 AND by 8e-16 at
+    # dt=1e-4 (where |A-I| is already 1e-2) — i.e. a solver that ignored the
+    # matrix entirely would pass. Raising dt does not fix this; breaking the
+    # symmetry does. With the Gaussian below the gap is 1e-2, ten orders above
+    # the tolerance. The final assertion pins that discriminating power so this
+    # test can never silently decay into a tautology.
+    using RAPID2D.SparseArrays
+    using RAPID2D.LinearAlgebra
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual",
+        NR = 40, NZ = 80,
+        prefilled_gas_pressure = 1.0e-2,
+        R0B0 = 1.0,
+        dt = 1.0e-5,
+        snap0D_Δt_s = 1.0,
+        snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    # the cached path is only reached through the implicit branch, and A_LHS is
+    # only non-trivial when at least one transport term is on
+    @test RP.flags.Implicit
+    @test RP.flags.Include_Te_diffu_term || RP.flags.Include_Te_convec_term
+    @test !RP.flags.evolve_Te_inWall_only        # the other branch is a stub
+
+    Rc = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
+    Zc = (RP.G.Z1D[1] + RP.G.Z1D[end]) / 2
+    @. RP.plasma.Te_eV = 5.0 +
+        4.0 * exp(-((RP.G.R2D - Rc)^2 + (RP.G.Z2D - Zc)^2) / 0.02)
+    RAPID2D.update_transport_quantities!(RP)
+
+    for step in 1:3
+        RAPID2D.update_Te!(RP)
+        Te_ref = reshape(RP.operators.A_LHS.matrix \ vec(RP.operators.RHS),
+                         RP.G.NR, RP.G.NZ)
+        clamp!(Te_ref, config.min_Te, config.max_Te)
+        @test isapprox(RP.plasma.Te_eV, Te_ref; rtol = 1e-12)
+
+        # discriminating power: how far the true solution sits from the answer a
+        # matrix-ignoring solver would return. Must stay far above the rtol above.
+        naive = clamp.(RP.operators.RHS, config.min_Te, config.max_Te)
+        @test maximum(abs, naive .- Te_ref) / maximum(abs, Te_ref) > 1.0e-6
+    end
+end
