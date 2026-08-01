@@ -1180,3 +1180,373 @@ end
 
     @test isapprox(RP.plasma.Te_eV[in_wall_nids], RP.plasma.Ti_eV[in_wall_nids], rtol = 1.0e-3)
 end
+
+# ── Parallel momentum: Coulomb drag in the time-evolving ("Xsec") method ─────────────
+#
+# `ud_method` picks HOW the parallel drift is obtained, not WHICH physics acts on it:
+#   "Lloyd_fit" — empirical  u∥ = 5719·(−E∥/p)
+#   "Xsec_fit"  — instantaneous force balance  u∥ = qe·E∥/(me·ν_tot)   (algebraic)
+#   "Xsec"      — the momentum ODE integrated in time                  (default)
+# The three must therefore agree on the STEADY STATE. The items below pin that
+# equivalence for "Xsec", which is the only method whose drag enters as a coefficient
+# rather than a denominator — and therefore the only one where a missing collision
+# channel fails silently instead of changing an obvious division.
+
+@testitem "Xsec momentum relaxes to the parallel force balance (Coulomb ON)" setup = [PhysicsFixtures] begin
+    # Governing equation (Yoo, IFPC 2024):
+    #   du∥/dt = qe·E∥/me − (ν_mom + ν_iz)·u∥ − ξ_sptz·ν_ei·(u∥ − u_i∥)
+    # Steady state with the ions held at rest is therefore exactly
+    #   u∥ = qe·E∥ / [ me·(ν_mom + ν_iz + ν_ei_eff) ]        , ν_ei_eff ≡ ξ_sptz·ν_ei
+    # i.e. the same balance "Xsec_fit" solves algebraically.
+    #
+    # The collision frequencies are frozen (update_transport_quantities! is called ONCE,
+    # never inside the loop), the ions are pinned at rest and every spatial term is off,
+    # so the relaxation is exactly linear and the drag is the only physics under test.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        device_Name = "manual",
+        NR = 12, NZ = 12,
+        prefilled_gas_pressure = 5.0e-3,
+        R0B0 = 1.0,
+        dt = 2.0e-6,
+    )
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        ud_evolve = true, ud_method = "Xsec", Implicit = true,
+        Atomic_Collision = true,          # ← ν_en_mom_tot: the neutral drag
+        Coulomb_Collision = true,         # ← ν_ei: the channel under test
+        Spitzer_Resistivity = true,       # ← ξ_sptz weighting
+        src = false,                      # no ionization: ν_iz = 0, ne stays put
+        Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
+        diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false,
+        update_ni_independently = false,
+        Include_ud_convec_term = false,
+        Include_ud_pressure_term = false,
+        Include_ud_diffu_term = false,
+    )
+    initialize!(RP)
+
+    RP.plasma.ne .= 1.0e18
+    RP.plasma.ni .= 1.0e18
+    RP.plasma.Te_eV .= 10.0
+    RP.plasma.Ti_eV .= 1.0
+    RP.fields.E_para_tot .= 1.0                  # uniform parallel field [V/m]
+
+    RAPID2D.update_transport_quantities!(RP)     # populate the ν's once, then freeze
+    ν_mom = copy(RP.plasma.ν_en_mom_tot)
+    ν_iz = copy(RP.plasma.ν_en_iz)
+    ν_ei_eff = copy(RP.plasma.ν_ei_eff)
+
+    inw = RP.G.nodes.in_wall_nids
+    # Regime check: this is the Coulomb-dominated corner, so a missing ν_ei cannot hide
+    # inside the neutral drag.
+    @test all(ν_ei_eff[inw] .> 0)
+    @test minimum(ν_ei_eff[inw]) > maximum(ν_mom[inw])
+
+    RP.plasma.ue_para .= 0.0
+    RP.plasma.ui_para .= 0.0
+    for _ in 1:400
+        RAPID2D.update_ue_para!(RP)
+        RP.plasma.ui_para .= 0.0                 # ions pinned: isolate the electron drag
+    end
+
+    qe, me = RP.config.constants.qe, RP.config.constants.me
+    expected = @. qe * RP.fields.E_para_tot / (me * (ν_mom + ν_iz + ν_ei_eff))
+    @test isapprox(RP.plasma.ue_para[inw], expected[inw]; rtol = 1.0e-6)
+end
+
+@testitem "Xsec momentum relaxes to the neutral-only balance (Coulomb OFF)" setup = [PhysicsFixtures] begin
+    # Same scenario with the Coulomb channel switched off: the steady state must drop
+    # the ν_ei term and land on the neutral-only balance, and must be strictly FASTER
+    # (less drag ⇒ more drift) than the Coulomb-on case above.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        device_Name = "manual",
+        NR = 12, NZ = 12,
+        prefilled_gas_pressure = 5.0e-3,
+        R0B0 = 1.0,
+        dt = 2.0e-6,
+    )
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        ud_evolve = true, ud_method = "Xsec", Implicit = true,
+        Atomic_Collision = true,
+        Coulomb_Collision = false,        # ← the only difference
+        src = false,
+        Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
+        diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false,
+        update_ni_independently = false,
+        Include_ud_convec_term = false,
+        Include_ud_pressure_term = false,
+        Include_ud_diffu_term = false,
+    )
+    initialize!(RP)
+
+    RP.plasma.ne .= 1.0e18
+    RP.plasma.ni .= 1.0e18
+    RP.plasma.Te_eV .= 10.0
+    RP.plasma.Ti_eV .= 1.0
+    RP.fields.E_para_tot .= 1.0
+
+    RAPID2D.update_transport_quantities!(RP)
+    ν_mom = copy(RP.plasma.ν_en_mom_tot)
+    ν_iz = copy(RP.plasma.ν_en_iz)
+
+    RP.plasma.ue_para .= 0.0
+    RP.plasma.ui_para .= 0.0
+    for _ in 1:400
+        RAPID2D.update_ue_para!(RP)
+        RP.plasma.ui_para .= 0.0
+    end
+
+    qe, me = RP.config.constants.qe, RP.config.constants.me
+    expected = @. qe * RP.fields.E_para_tot / (me * (ν_mom + ν_iz))
+    inw = RP.G.nodes.in_wall_nids
+    @test isapprox(RP.plasma.ue_para[inw], expected[inw]; rtol = 1.0e-6)
+end
+
+@testitem "Parallel momentum decays at 1/(nu_mom + nu_iz + nu_ei)" setup = [PhysicsFixtures] begin
+    # Same shape as the "Te relaxes over ~tau_E" item, for MOMENTUM: switch the drive
+    # off (E∥ = 0), give the electrons an initial drift and watch it decay. With the
+    # ions pinned at rest the momentum equation is exactly
+    #     du∥/dt = -(nu_mom + nu_iz + nu_ei_eff)·u∥  ==>  u∥(t) = u0·exp(-t/tau)
+    # so the decay time DIRECTLY measures the drag coefficient: a missing collision
+    # channel shows up as a decay that is too slow, at every sampled time.
+    #
+    # dt = tau/100 keeps the backward-Euler factor (1+dt/tau)^-n within ~1% of exp(-t/tau)
+    # out to 3 tau, so the +/-10% windows below are comfortably scheme-independent.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        device_Name = "manual",
+        NR = 12, NZ = 12,
+        prefilled_gas_pressure = 5.0e-3,
+        R0B0 = 1.0,
+        dt = 1.0e-9,                      # overwritten below once tau is known
+    )
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        ud_evolve = true, ud_method = "Xsec", Implicit = true,
+        Atomic_Collision = true,
+        Coulomb_Collision = true, Spitzer_Resistivity = true,
+        src = false,
+        Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
+        diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false,
+        update_ni_independently = false,
+        Include_ud_convec_term = false,
+        Include_ud_pressure_term = false,
+        Include_ud_diffu_term = false,
+    )
+    initialize!(RP)
+
+    RP.plasma.ne .= 1.0e18
+    RP.plasma.ni .= 1.0e18
+    RP.plasma.Te_eV .= 10.0
+    RP.plasma.Ti_eV .= 1.0
+    RP.fields.E_para_tot .= 1.0          # only to give update_RRCs! a sane E/p...
+    RAPID2D.update_transport_quantities!(RP)
+    RP.fields.E_para_tot .= 0.0          # ...then switch the drive OFF: pure decay
+
+    inw = RP.G.nodes.in_wall_nids
+    ν_tot = @. RP.plasma.ν_en_mom_tot + RP.plasma.ν_en_iz + RP.plasma.ν_ei_eff
+    τ = 1 / (sum(ν_tot[inw]) / length(inw))
+    @test minimum(RP.plasma.ν_ei_eff[inw]) > maximum(RP.plasma.ν_en_mom_tot[inw])
+    @test 1.0e-9 < τ < 1.0e-3            # sanity band for this regime
+
+    u0 = 1.0e5
+    RP.dt = τ / 100
+    RP.plasma.ue_para .= u0
+    RP.plasma.ui_para .= 0.0
+
+    # (t/tau, lower, upper) — +/-10% windows around exp(-t/tau)
+    checkpoints = [(0.5, 0.9, 1.1), (1.0, 0.9, 1.1), (2.0, 0.9, 1.1), (3.0, 0.9, 1.1)]
+    targets = [round(Int, n_tau * 100) for (n_tau, _, _) in checkpoints]
+    steps_each = [targets[1]; diff(targets)]      # no cross-iteration mutable state
+    for (k, (n_tau, lo, hi)) in enumerate(checkpoints)
+        for _ in 1:steps_each[k]
+            RAPID2D.update_ue_para!(RP)
+            RP.plasma.ui_para .= 0.0
+        end
+        ratio = sum(RP.plasma.ue_para[inw]) / length(inw) / u0
+        @test lo * exp(-n_tau) < ratio < hi * exp(-n_tau)
+    end
+    # and it really is a decay, not a sign flip or a stall
+    @test 0.0 < sum(RP.plasma.ue_para[inw]) / length(inw) < 0.1 * u0
+end
+
+@testitem "e-i Coulomb friction conserves momentum and equalises u_e, u_i" setup = [PhysicsFixtures] begin
+    # The most fundamental statement about the Coulomb term: it is an INTERNAL exchange.
+    # With E∥ = 0 and no neutral drag it is the only channel acting, so
+    #   d/dt [ me·ne·u_e + mi·ni·u_i ] = 0        (exactly, when ne = ni)
+    # and both species must relax onto the common centre-of-mass velocity
+    #   u_cm = (me·u_e0 + mi·u_i0)/(me + mi)
+    # on the timescale 1/nu_ei_eff.
+    #
+    # This is the check that a one-sided friction cannot survive: dropping the -nu_ei·u_e
+    # sink from the electron equation leaves du_e/dt = +nu_ei·u_i, which (i) never lets
+    # u_e decay and (ii) CREATES momentum at the rate me·n·nu_ei·u_e out of nothing.
+    #
+    # NOTE this is a zero-current relaxation. With E∥ != 0 the two velocities must NOT
+    # converge — the steady relative drift IS the plasma current, set by Spitzer
+    # resistivity, which the force-balance items above pin down.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        device_Name = "manual",
+        NR = 12, NZ = 12,
+        prefilled_gas_pressure = 5.0e-3,
+        R0B0 = 1.0,
+        dt = 1.0e-9,                      # rewritten below once tau is known
+    )
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        ud_evolve = true, ud_method = "Xsec", Implicit = true,
+        Atomic_Collision = false,         # ← no neutral drag: Coulomb is the ONLY channel
+        Coulomb_Collision = true, Spitzer_Resistivity = true,
+        src = false,
+        Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
+        diffu = false, convec = false, Ampere = false,
+        E_para_self_ES = false, E_para_self_EM = false,
+        update_ni_independently = false,
+        Include_ud_convec_term = false,
+        Include_ud_pressure_term = false,
+        Include_ud_diffu_term = false,
+    )
+    initialize!(RP)
+
+    n0 = 1.0e18
+    RP.plasma.ne .= n0
+    RP.plasma.ni .= n0                    # ne == ni is what makes the exchange exact
+    RP.plasma.Te_eV .= 10.0
+    RP.plasma.Ti_eV .= 1.0
+    RAPID2D.update_transport_quantities!(RP)
+    RP.fields.E_para_tot .= 0.0           # no drive: pure internal relaxation
+
+    inw = RP.G.nodes.in_wall_nids
+    @test all(RP.plasma.ν_en_mom_tot[inw] .== 0.0)   # neutral drag really is off
+    @test all(RP.plasma.ν_en_iz[inw] .== 0.0)
+    @test minimum(RP.plasma.ν_ei_eff[inw]) > 0.0
+
+    # The electron half is backward Euler (unconditionally stable) and the ion half is
+    # explicit with the tiny rate (me/mi)·nu_ei, so dt = tau is comfortably stable. The
+    # relative drift then shrinks by (1 - dt·(me/mi)·nu)/(1 + dt·nu) ~ 1/2 per step, i.e.
+    # this relaxation needs tens of steps, not thousands.
+    τ = 1 / (sum(RP.plasma.ν_ei_eff[inw]) / length(inw))
+    RP.dt = τ
+
+    me, mi = RP.config.constants.me, RP.config.constants.mi
+    ue0, ui0 = 1.0e5, 0.0
+    RP.plasma.ue_para .= ue0
+    RP.plasma.ui_para .= ui0
+    p0 = me * n0 * ue0 + mi * n0 * ui0
+    u_cm = (me * ue0 + mi * ui0) / (me + mi)
+
+    # The relative drift has to fall well BELOW u_cm (~27 m/s here) before u_e itself can
+    # be said to have landed on it; at ~1/2 per step, 60 steps leaves nothing of it.
+    for _ in 1:60
+        RAPID2D.update_ue_para!(RP)
+        RAPID2D.update_ui_para!(RP)
+    end
+
+    ue = sum(RP.plasma.ue_para[inw]) / length(inw)
+    ui = sum(RP.plasma.ui_para[inw]) / length(inw)
+    p1 = me * n0 * ue + mi * n0 * ui
+
+    # The mixed BE(electron)/explicit(ion) pair conserves momentum EXACTLY for any dt,
+    # because the ion half is charged with the already-updated u_e — so this is a
+    # machine-precision statement, not a discretisation-error one.
+    @test isapprox(p1, p0; rtol = 1.0e-10)         # momentum conserved
+    @test isapprox(ue, u_cm; rtol = 1.0e-3)        # electrons fell onto u_cm
+    @test isapprox(ui, u_cm; rtol = 1.0e-3)        # ions rose onto u_cm
+    @test abs(ue - ui) < 1.0e-6 * abs(ue0 - ui0)   # the relative drift is gone
+end
+
+@testitem "Physics is invariant to the Ampère routing, for Coulomb on AND off" setup = [PhysicsFixtures] begin
+    # Ampère's law is a FIELD solver, not a drag channel. When the plasma current is
+    # negligible it must not change the physics, whichever routing workflows.jl picks:
+    #
+    #   Ampere=false                    -> update_ue_para!
+    #   Ampere=true,  |I_tor| < thresh  -> update_ue_para!          (same path)
+    #   Ampere=true,  |I_tor| >= thresh -> solve_combined_momentum_Ampere_...!
+    #
+    # Run as a 2x3 matrix (Coulomb on/off) x (three routings). Two things are asserted:
+    # every routing agrees within a Coulomb setting, AND each setting lands on its OWN
+    # analytic force balance  u = qe·E∥/(me·(nu_mom + nu_iz [+ nu_ei_eff])) — so the two
+    # Coulomb settings are each verified to be RIGHT, not merely mutually consistent.
+    #
+    # NOTE on the density: this item runs at LOW ne on purpose. The inductive back-EMF
+    # and nu_ei both scale with ne, and the induced/applied field ratio is independent of
+    # E∥, so "Ampère negligible" and "Coulomb dominant" cannot be arranged together by
+    # tuning ne or E. The Coulomb-DOMINATED drag is therefore pinned by the force-balance,
+    # decay and momentum-conservation items above; this one pins routing invariance.
+    FT = Float64
+
+    function build(; ampere::Bool, threshold::FT, coulomb::Bool)
+        config = SimulationConfig{FT}(
+            device_Name = "manual",
+            NR = 12, NZ = 12,
+            prefilled_gas_pressure = 5.0e-3,
+            R0B0 = 1.0,
+            dt = 1.0e-6,
+        )
+        config.Output_path = scratch_output_dir()
+        RP = RAPID{FT}(config)
+        RP.flags = SimulationFlags{FT}(
+            ud_evolve = true, ud_method = "Xsec", Implicit = true,
+            Atomic_Collision = true,
+            Coulomb_Collision = coulomb, Spitzer_Resistivity = true,
+            src = false,
+            Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
+            diffu = false, convec = false,
+            Ampere = ampere,
+            Ampere_Itor_threshold = threshold,
+            E_para_self_ES = false, E_para_self_EM = true,
+            update_ni_independently = false,
+            Include_ud_convec_term = false,
+            Include_ud_pressure_term = false,
+            Include_ud_diffu_term = false,
+        )
+        initialize!(RP)
+        RP.plasma.ne .= 1.0e10          # negligible current => negligible self-field
+        RP.plasma.ni .= 1.0e10
+        RP.plasma.Te_eV .= 10.0
+        RP.plasma.Ti_eV .= 1.0
+        RAPID2D.update_transport_quantities!(RP)
+        return RP
+    end
+
+    routings = [
+        ("Ampere off", false, 1.0),
+        ("below threshold", true, 1.0e9),
+        ("coupled solver", true, 0.0),
+    ]
+
+    for coulomb in (true, false)
+        @testset "Coulomb_Collision = $coulomb" begin
+            runs = [(name, build(; ampere = amp, threshold = thr, coulomb = coulomb))
+                    for (name, amp, thr) in routings]
+            for _ in 1:100, (_, RP) in runs
+                RAPID2D.advance_timestep!(RP)
+            end
+
+            ref = runs[1][2]
+            inw = ref.G.nodes.in_wall_nids
+            qe, me = ref.config.constants.qe, ref.config.constants.me
+
+            @test maximum(abs, ref.plasma.ue_para[inw]) > 0.0
+            I_tor = sum(runs[3][2].plasma.Jϕ) * ref.G.dR * ref.G.dZ
+            @test abs(I_tor) < 1.0e-2                 # self-field really is negligible
+
+            # each Coulomb setting lands on ITS OWN analytic balance
+            ν_drag = @. ref.plasma.ν_en_mom_tot + ref.plasma.ν_en_iz + ref.plasma.ν_ei_eff
+            expected = @. qe * ref.fields.E_para_tot / (me * ν_drag)
+            @test isapprox(ref.plasma.ue_para[inw], expected[inw]; rtol = 1.0e-3)
+
+            # ...and every routing agrees with it
+            for (name, RP) in runs[2:end]
+                @test isapprox(RP.plasma.ue_para[inw], ref.plasma.ue_para[inw]; rtol = 1.0e-3)
+            end
+        end
+    end
+end
