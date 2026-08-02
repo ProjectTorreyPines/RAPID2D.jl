@@ -21,12 +21,6 @@
 # Both keep constants in the kernel by construction. Whether either keeps
 # Σ J·n — which needs J·A symmetric — is measured, not assumed.
 
-const WALL_DIFFU_CFG = (;
-    device_Name = "manual", NR = 25, NZ = 30,
-    prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
-    snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
-)
-
 @testitem "Wall diffusion: reduces to the reflective 5-point operator when isotropic" begin
     using RAPID2D: build_wall_diffusion_matrix, build_reflective_diffusion_matrix
 
