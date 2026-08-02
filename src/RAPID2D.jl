@@ -40,6 +40,7 @@ include("numerics/numerics.jl")
 include("numerics/operators.jl")
 
 # Include the field-related functionality
+include("physics/neutral_gas.jl")
 include("physics/fields.jl")
 include("physics/transport.jl")
 
