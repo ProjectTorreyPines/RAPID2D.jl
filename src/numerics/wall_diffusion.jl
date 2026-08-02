@@ -16,8 +16,36 @@ which is how the wall behaviour gets tested at anisotropies a real discharge wou
 take a long time to reach.
 
 Rows for nodes on or outside the wall are left empty, so those nodes never evolve.
-`v_absorb` is absent: this operator is purely reflective (`R = 1`). The Robin debit
-enters as a diagonal term on wall faces and is added separately.
+
+## The Robin debit
+
+Pass `faces` (from `wall_faces`) together with a per-face `v_absorb` and each wall
+face subtracts its absorption from the owning cell's diagonal:
+
+```
+    diag_i −= Σ_{f ∈ ∂wall i}  (A_f/V_i)·v_absorb_f
+```
+
+Omitting them — or passing `v_absorb = 0` — gives a purely reflective wall, and
+the resulting matrix is **bit-identical** to the version with no wall term at all,
+so everything Phase 2 established survives untouched at `R = 1`.
+
+`v_absorb ≥ 0` makes the diagonal only more negative, so `I − θΔt·A` gains nothing
+positive from this term and the operator drains rather than sources. The three
+familiar wall conditions are one formula: `0` is reflective, `→ ∞` is Dirichlet
+(`n_w → 0`), and `¼v̄(1−R)` is the physical case between them.
+
+**The debit is per face, not per cell.** A staircase corner owns two outward faces
+and takes both; with an oblique field their `v_absorb` generally differ, since
+`g = (b̂·n̂)²` is a face property. Nothing is written outside the wall at any
+albedo — the absorbed material leaves as a boundary term on the interior cell,
+which is what removes the outside-the-wall storage entirely.
+
+**What this replaces.** Today's schemes are already Robin conditions with
+`v_absorb = D/(2Δx)` — a discretisation artefact rather than a surface property.
+Measured against the kinetic ceiling it runs 15–21× too fast at production
+resolution and grows without bound as `Δx → 0`, which is why the absorbed rate
+never converged and why no albedo could be expressed.
 
 ## The stencil
 
@@ -95,10 +123,29 @@ function build_wall_diffusion_matrix(
         G::GridGeometry{FT},
         D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT};
         cross_terms::Symbol = :drop,
+        faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
+        v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
     ) where {FT <: AbstractFloat}
 
     cross_terms in (:drop, :reflect) ||
         throw(ArgumentError("cross_terms must be :drop or :reflect, got :$cross_terms"))
+    isnothing(faces) == isnothing(v_absorb) ||
+        throw(ArgumentError("`faces` and `v_absorb` must be given together"))
+    if !isnothing(faces)
+        length(faces) == length(v_absorb) ||
+            throw(DimensionMismatch("v_absorb must have one entry per wall face"))
+        any(<(zero(FT)), v_absorb) &&
+            throw(ArgumentError("v_absorb must be non-negative: a wall cannot emit here"))
+    end
+
+    # Accumulate the Robin debit per owning cell first, so the diagonal is written
+    # once. A staircase corner contributes through both of its faces.
+    debit = zeros(FT, G.NR * G.NZ)
+    if !isnothing(faces)
+        for (f, v) in zip(faces, v_absorb)
+            debit[f.nid] += f.area_per_volume * v
+        end
+    end
 
     NR, NZ = G.NR, G.NZ
     Ng = NR * NZ
@@ -176,9 +223,12 @@ function build_wall_diffusion_matrix(
             end
         end
 
+        # ── the Robin debit ────────────────────────────────────────────────
+        # v_absorb ≥ 0, so this only makes the diagonal more negative: the wall
+        # drains and never sources, and the term cannot cost positivity.
         push!(rows, row)
         push!(cols, row)
-        push!(vals, diag)
+        push!(vals, diag - debit[row])
     end
 
     return sparse(rows, cols, vals, Ng, Ng)
