@@ -9,8 +9,10 @@
     using RAPID2D: AbstractLinearSolver, SparseLUSolver, BandedLUSolver, factorize!, solve!
 
     n = 400
-    A = spdiagm(0 => fill(4.0, n), 1 => fill(-0.9, n - 1), -1 => fill(-0.9, n - 1),
-                20 => fill(-0.8, n - 20), -20 => fill(-0.8, n - 20))
+    A = spdiagm(
+        0 => fill(4.0, n), 1 => fill(-0.9, n - 1), -1 => fill(-0.9, n - 1),
+        20 => fill(-0.8, n - 20), -20 => fill(-0.8, n - 20)
+    )
     B = [sin(0.01i + j) + 2.0 for i in 1:n, j in 1:6]
     Xref = Matrix(A) \ B
 
@@ -18,17 +20,17 @@
         @test s isa AbstractLinearSolver{Float64}
         X = similar(B)
         solve!(X, factorize!(s, A), B)
-        @test maximum(abs, X .- Xref) / maximum(abs, Xref) < 1e-12
+        @test maximum(abs, X .- Xref) / maximum(abs, Xref) < 1.0e-12
 
         # same pattern, new values → symbolic-reuse refactorization path
         A2 = A .* 1.5
         solve!(X, factorize!(s, A2), B)
-        @test maximum(abs, X .- Matrix(A2) \ B) / maximum(abs, Xref) < 1e-12
+        @test maximum(abs, X .- Matrix(A2) \ B) / maximum(abs, Xref) < 1.0e-12
 
         # vector RHS path
         x = zeros(n)
         solve!(x, s, B[:, 1])
-        @test maximum(abs, x .- Matrix(A2) \ B[:, 1]) / maximum(abs, Xref) < 1e-12
+        @test maximum(abs, x .- Matrix(A2) \ B[:, 1]) / maximum(abs, Xref) < 1.0e-12
     end
 end
 
@@ -47,9 +49,9 @@ end
 
     s = SparseLUSolver{Float64}()
     solve!(x, factorize!(s, A1), b)
-    @test maximum(abs, x .- Matrix(A1) \ b) < 1e-12 * maximum(abs, x)
+    @test maximum(abs, x .- Matrix(A1) \ b) < 1.0e-12 * maximum(abs, x)
     solve!(x, factorize!(s, A2), b)                    # different pattern → recovery path
-    @test maximum(abs, x .- Matrix(A2) \ b) < 1e-12 * maximum(abs, x)
+    @test maximum(abs, x .- Matrix(A2) \ b) < 1.0e-12 * maximum(abs, x)
 end
 
 @testitem "LinearSolvers electron continuity equivalence" begin
@@ -74,9 +76,11 @@ end
 
     for step in 1:3
         RAPID2D.solve_electron_continuity_equation!(RP)
-        ne_ref = reshape(RP.operators.A_LHS.matrix \ vec(RP.operators.RHS),
-                         RP.G.NR, RP.G.NZ)
-        @test isapprox(RP.plasma.ne, ne_ref; rtol = 1e-12)
+        ne_ref = reshape(
+            RP.operators.A_LHS.matrix \ vec(RP.operators.RHS),
+            RP.G.NR, RP.G.NZ
+        )
+        @test isapprox(RP.plasma.ne, ne_ref; rtol = 1.0e-12)
     end
 end
 
@@ -91,10 +95,10 @@ end
 
     # unreachable tolerance → the residual check must trigger the SparseLU fallback,
     # which still returns the correct solution
-    s = BandedLUSolver(A; resid_tol=0.0)
+    s = BandedLUSolver(A; resid_tol = 0.0)
     X = similar(B)
     solve!(X, factorize!(s, A), B)
-    @test maximum(abs, X .- Xref) / maximum(abs, Xref) < 1e-12
+    @test maximum(abs, X .- Xref) / maximum(abs, Xref) < 1.0e-12
     @test s.fallback.F !== nothing   # fallback actually engaged
 end
 
@@ -147,10 +151,12 @@ end
 
     for step in 1:3
         RAPID2D.update_Te!(RP)
-        Te_ref = reshape(RP.operators.A_LHS.matrix \ vec(RP.operators.RHS),
-                         RP.G.NR, RP.G.NZ)
+        Te_ref = reshape(
+            RP.operators.A_LHS.matrix \ vec(RP.operators.RHS),
+            RP.G.NR, RP.G.NZ
+        )
         clamp!(Te_ref, config.min_Te, config.max_Te)
-        @test isapprox(RP.plasma.Te_eV, Te_ref; rtol = 1e-12)
+        @test isapprox(RP.plasma.Te_eV, Te_ref; rtol = 1.0e-12)
 
         # discriminating power: how far the true solution sits from the answer a
         # matrix-ignoring solver would return. Must stay far above the rtol above.

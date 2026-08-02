@@ -73,15 +73,17 @@ mutable struct BandedLUSolver{FT} <: AbstractLinearSolver{FT}
     fallback::SparseLUSolver{FT}
 end
 
-function BandedLUSolver(A::SparseMatrixCSC{FT, Int}; resid_tol::Real = 1e-10) where {FT}
+function BandedLUSolver(A::SparseMatrixCSC{FT, Int}; resid_tol::Real = 1.0e-10) where {FT}
     n = size(A, 1)
     rows = rowvals(A)
     p = 0
     for j in 1:n, k in nzrange(A, j)
         p = max(p, abs(rows[k] - j))
     end
-    return BandedLUSolver{FT}(p, n, zeros(FT, 2p + 1, n), zeros(FT, n),
-                              zeros(FT, 0, 0), FT(resid_tol), A, SparseLUSolver{FT}())
+    return BandedLUSolver{FT}(
+        p, n, zeros(FT, 2p + 1, n), zeros(FT, n),
+        zeros(FT, 0, 0), FT(resid_tol), A, SparseLUSolver{FT}()
+    )
 end
 
 function factorize!(s::BandedLUSolver{FT}, A::SparseMatrixCSC{FT}; reuse::Bool = true) where {FT}
@@ -100,13 +102,13 @@ function factorize!(s::BandedLUSolver{FT}, A::SparseMatrixCSC{FT}; reuse::Bool =
         kend = min(k + p, n)
         dinv = inv(AB[c, k])
         invd[k] = dinv
-        for i in k+1:kend
+        for i in (k + 1):kend
             AB[c + i - k, k] *= dinv               # multiplier l_ik stored in place
         end
-        for j in k+1:kend
+        for j in (k + 1):kend
             akj = AB[c + k - j, j]
             iszero(akj) && continue
-            @simd for i in k+1:kend
+            @simd for i in (k + 1):kend
                 AB[c + i - j, j] = muladd(-AB[c + i - k, k], akj, AB[c + i - j, j])
             end
         end
@@ -124,9 +126,9 @@ function solve!(X::AbstractMatrix{FT}, s::BandedLUSolver{FT}, B::AbstractMatrix{
     @inbounds for i in 1:n, r in 1:m
         Xt[r, i] = B[i, r]
     end
-    @inbounds for k in 1:n-1                       # L sweep (unit lower, column-wise)
+    @inbounds for k in 1:(n - 1)                       # L sweep (unit lower, column-wise)
         kend = min(k + p, n)
-        for i in k+1:kend
+        for i in (k + 1):kend
             l = AB[c + i - k, k]
             iszero(l) && continue
             @simd for r in 1:m
@@ -139,7 +141,7 @@ function solve!(X::AbstractMatrix{FT}, s::BandedLUSolver{FT}, B::AbstractMatrix{
         @simd for r in 1:m
             Xt[r, j] *= dj
         end
-        for k in max(1, j - p):j-1
+        for k in max(1, j - p):(j - 1)
             u = AB[c + k - j, j]
             iszero(u) && continue
             @simd for r in 1:m
