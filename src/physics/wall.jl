@@ -1,0 +1,146 @@
+# Wall face geometry, and the one-sided flux that bombards it.
+#
+# Every wall process — absorption, recycling, sputtering, secondary emission —
+# is an exchange across a FACE, not a property of a cell. A staircase corner has
+# two outward faces and must be debited on both; the R- and Z-faces of one cell
+# carry different spacings and different areas. Naming the faces once, here, is
+# what lets the three species (plasma, fill gas, impurities) stop each inventing
+# their own wall treatment.
+#
+# Nothing in this file solves anything. It answers two questions the solvers will
+# ask: *which faces are there and how big are they*, and *how hard is the gas
+# hitting them*.
+
+"""
+    WallFace{FT}
+
+One outward face of an in-wall cell — the interface across which that cell
+exchanges particles with the wall.
+
+- `rid`, `zid`, `nid`  the **in-wall** cell that owns the face (grid indices and
+  linear index). A face always belongs to the cell on the plasma side.
+- `outward`  index step `(ΔR, ΔZ)` from that cell across the face, one of
+  `(±1, 0)` or `(0, ±1)`. The cell it points at is on or outside the wall, and
+  may be off-grid entirely when the wall coincides with the grid frame.
+- `area`  `A_f` [m²], the true area of the surface of revolution.
+- `area_per_volume`  `A_f/V_i` [1/m], the factor a boundary flux is multiplied by
+  to become a rate in the owning cell: `∂n_i/∂t = −(A_f/V_i)·Γ_f`.
+
+Both `area` and `area_per_volume` are stored because they answer different
+questions. `area` converts a flux density into particles per second (a
+diagnostic, and the wall ledger); `area_per_volume` is the coefficient a Robin
+condition subtracts from the diagonal. Deriving one from the other at each call
+site is how they drift apart, and they must not — absorption and re-emission are
+only exactly reciprocal across a face if both use the same pair.
+"""
+struct WallFace{FT <: AbstractFloat}
+    rid::Int
+    zid::Int
+    nid::Int
+    outward::Tuple{Int, Int}
+    area::FT
+    area_per_volume::FT
+end
+
+"""
+    wall_faces(G) -> Vector{WallFace}
+
+Every outward face of every in-wall cell of `G`.
+
+A face exists wherever an in-wall cell has a cardinal neighbour that is *not*
+in-wall — on the wall, outside it, or off the grid. That is deliberately the same
+predicate `build_reflective_diffusion_matrix` uses to decide which stencil arm to
+omit, so the faces returned here are exactly the arms that operator drops: the
+places where the flux is currently forced to zero and where a Robin condition
+will instead put `v_absorb·n_w`.
+
+**Areas in cylindrical geometry.** With `Jacob = R` the cell volume is
+`V_i = 2π·R_i·ΔR·ΔZ`, and
+
+```
+    R-face at i±½ :  A_f = 2π·R_{i±½}·ΔZ    A_f/V_i = R_{i±½}/(R_i·ΔR)
+    Z-face at j±½ :  A_f = 2π·R_i·ΔR        A_f/V_i = 1/ΔZ
+```
+
+The Z-face factor is exactly `1/ΔZ`; the R-face one is **not** `1/ΔR`. The extra
+`R_{i±½}/R_i = 1 ± ΔR/(2R_i)` is not decoration. The diffusion operator already
+carries it — `invJ·½(CT_out + CT_in)` is `(1/J_i)·J_face·D/ΔR²`, and
+`½(R_i + R_{i±1}) = R_{i±½}` exactly because `Jacob = R` is linear in the index —
+so a boundary term without it would be inconsistent with the flux terms beside it
+in the same row. And the conserved measure is `Σ J_k·n_k`, which closes against
+the true face area and not against `1/ΔR`: dropping the factor turns an exact
+ledger into one that misses by `ΔR/(2R)`, small enough to look like round-off and
+large enough to be a leak.
+
+**Staircase walls over-count area on inclined segments.** A wall at 45° is
+represented by faces summing to `ΔR + ΔZ` per cell where the true surface is
+`√(ΔR² + ΔZ²)` — a factor `√2`, and unlike the half-cell offset of an
+axis-aligned wall it does **not** shrink under grid refinement. Every absorbed
+flux, and so every recycling and sputtering source, inherits it there. The
+measurement is pinned in `wall_test.jl` rather than corrected: correcting it means
+weighting each face by the wall-segment length it truly represents, which is a
+change to what `area` means and belongs with the machinery that consumes it.
+"""
+function wall_faces(G::GridGeometry{FT}) where {FT <: AbstractFloat}
+    NR, NZ = G.NR, G.NZ
+    state = G.nodes.state
+    # `state`: 1 inside, 0 on the wall, −1 outside. Only strictly-inside cells own
+    # faces, and off-grid counts as not-inside so a wall on the grid frame works.
+    is_inside(i, j) = 1 <= i <= NR && 1 <= j <= NZ && state[i, j] > FT(0.5)
+
+    faces = WallFace{FT}[]
+    for j in 1:NZ, i in 1:NR
+        is_inside(i, j) || continue
+        R = G.R2D[i, j]
+        vol = 2 * FT(π) * R * G.dR * G.dZ
+        for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
+            is_inside(i + di, j + dj) && continue
+            # R_face = R for a Z-face (di = 0), R ± ΔR/2 for an R-face
+            R_face = R + di * G.dR / 2
+            span = dj == 0 ? G.dZ : G.dR
+            area = 2 * FT(π) * R_face * span
+            push!(
+                faces,
+                WallFace{FT}(i, j, G.nodes.nid[i, j], (di, dj), area, area / vol)
+            )
+        end
+    end
+    return faces
+end
+
+"""
+    v_incident(T_eV, m)
+
+One-sided impingement speed `¼v̄` [m/s] of a Maxwellian at temperature `T_eV` [eV]
+and particle mass `m` [kg], with `v̄ = √(8kT/πm)` the **mean** speed.
+
+This is the velocity factor of the Hertz-Knudsen gross flux, `Γ = v_incident·n_w`
+— the rate at which particles arrive at a surface regardless of what the surface
+then does with them. It therefore does **not** depend on the boundary condition,
+and diagnostics built on it (sputtering, bombardment rates) need no change to the
+wall treatment to be evaluated. A reflective wall has `Γ_in = Γ_out = v_incident·n_w`
+with zero *net* flux; only the net flux is what a boundary condition sets.
+
+**`v̄`, not `v_th`.** `neutral_gas_thermal_speed` is `√(T/m)`, the convention the
+diffusivity `D = ½·v_th·λ` is written in. The two differ by `√(8/π) = 1.596`, so
+using `¼v_th` here would under-count every impact by 37 %. Nothing in a scaling
+test would reveal the swap — both go as `√(T/m)` — which is why the ratio is
+pinned to `0.3989 = ¼√(8/π)` in the tests.
+"""
+v_incident(T_eV, m) = sqrt(8 * T_eV * EE_GAS / (π * m)) / 4
+
+"""
+    gross_impingement(n_w, T_eV, m)
+
+Gross one-sided particle flux `Γ = ¼n_w·v̄` [m⁻²s⁻¹] onto a surface in contact
+with density `n_w` [m⁻³] at temperature `T_eV` [eV] (Hertz-Knudsen).
+
+For the standard `10⁻² Pa` H₂ fill at `T_gas = 0.026 eV` this is
+`1.07×10²¹ m⁻²s⁻¹` — a monolayer every 9 ms, which is why surface processes
+matter at breakdown densities even with small yields.
+
+The result is a flux **density**. Multiply by `WallFace.area` to get particles per
+second onto a given face; multiplying by `area_per_volume` instead gives the rate
+of change of density in the cell that owns it.
+"""
+gross_impingement(n_w, T_eV, m) = v_incident(T_eV, m) * n_w
