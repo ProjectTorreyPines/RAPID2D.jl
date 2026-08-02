@@ -300,9 +300,10 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
                 OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
 
-                # Solve the linear system
+                # Solve the linear system (cached factorization; pattern is step-stable)
                 @timeit RAPID_TIMER "Te_eV LinearSolve" begin
-                    pla.Te_eV .= OP.A_LHS \ OP.RHS
+                    factorize!(OP.Te_solver, OP.A_LHS.matrix)
+                    solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
                 end
             end
         else
@@ -668,9 +669,10 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # Build LHS operator
             @. op.A_LHS = op.II - θn * dt * (op.∇𝐃∇ - op.∇𝐮 + op.ν_en_iz)
 
-            # Solve the linear system
+            # Solve the linear system (cached factorization; pattern is step-stable)
             @timeit RAPID_TIMER "ne LinearSolve`" begin
-                pla.ne .= op.A_LHS \ op.RHS
+                factorize!(op.ne_solver, op.A_LHS.matrix)
+                solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
         else
             @. RP.plasma.ne += dt * op.RHS
