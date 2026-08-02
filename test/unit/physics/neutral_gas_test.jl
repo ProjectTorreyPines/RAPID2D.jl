@@ -333,3 +333,50 @@ end
     RAPID2D.advance_timestep!(RP)
     @test RP.plasma.n_H2_gas == frozen
 end
+
+@testitem "Neutral gas update: theta_gas selects the time scheme, BE by default" begin
+    using RAPID2D: update_neutral_H2_gas_density!
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 20, NZ = 24,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-5,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    # Backward Euler by default, and deliberately NOT tied to Implicit_weight:
+    # that global is 0.5, which is Crank-Nicolson. CN is A-stable but not
+    # L-stable, so its amplification factor tends to −1 as |λ|Δt grows and stiff
+    # modes ring instead of damping. D spans two orders of magnitude across the
+    # shielding layer, so the stiff end is always present here.
+    @test RP.flags.θ_gas == 1.0
+    @test RP.flags.Implicit_weight == 0.5
+
+    # the knob is honoured: θ = 0 is forward Euler, which on this operator must
+    # blow up at a Δt far above the explicit CFL limit min(dR,dZ)²/(4D)
+    RP.plasma.ne .= 0.0
+    RAPID2D.update_transport_quantities!(RP)
+    Rc = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
+    Zc = (RP.G.Z1D[1] + RP.G.Z1D[end]) / 2
+    bump() = @. 1.0e18 * (
+        1.0 + 3.0 *
+            exp(-((RP.G.R2D - Rc)^2 + (RP.G.Z2D - Zc)^2) / 0.02)
+    )
+
+    RP.plasma.n_H2_gas .= bump()
+    RP.flags.θ_gas = 1.0
+    for _ in 1:20
+        update_neutral_H2_gas_density!(RP)
+    end
+    @test all(isfinite, RP.plasma.n_H2_gas)
+    @test minimum(RP.plasma.n_H2_gas) ≥ 0.0
+
+    RP.plasma.n_H2_gas .= bump()
+    RP.flags.θ_gas = 0.0
+    for _ in 1:20
+        update_neutral_H2_gas_density!(RP)
+    end
+    @test !all(isfinite, RP.plasma.n_H2_gas) ||
+        minimum(RP.plasma.n_H2_gas) < 0.0
+end

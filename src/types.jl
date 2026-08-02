@@ -525,6 +525,14 @@ Contains boolean flags that control various aspects of the simulation.
     FLF_nstep::Int = 10                       # Steps between field line following updates
     Implicit::Bool = true                     # Use implicit methods
     Implicit_weight::FT = FT(0.5)            # Weight for implicit scheme
+    # θ-weight for the neutral gas diffusion solve, kept separate from
+    # Implicit_weight on purpose. 1 = backward Euler (default), ½ = Crank-Nicolson,
+    # 0 = forward Euler. BE is the default because CN is A-stable but not L-stable:
+    # its amplification factor tends to −1 as |λ|Δt grows, so stiff modes ring
+    # instead of damping, and the gas diffusivity spans two orders of magnitude
+    # across the shielding layer. Exposed so CN can be plugged in for a smooth,
+    # well-resolved problem where second-order accuracy is worth more than damping.
+    θ_gas::FT = FT(1.0)
     Adapt_dt::Bool = false                    # Use adaptive time stepping
 
     # Temperature limits

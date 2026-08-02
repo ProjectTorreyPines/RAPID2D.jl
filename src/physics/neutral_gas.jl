@@ -214,12 +214,16 @@ was explicit while the electron equation's source was implicit.
 
 Applied on in-wall nodes only, so gas outside the vessel is never consumed.
 
-**Backward Euler, deliberately, not the global `Implicit_weight`.** The MATLAB
+**Time scheme: `flags.θ_gas`, default 1 (backward Euler).** Deliberately its own
+knob rather than the global `Implicit_weight`, which is ½ — Crank-Nicolson. CN is
+A-stable but not L-stable: its amplification factor tends to −1 as |λ|Δt grows,
+so stiff modes ring instead of damping, and D varies by two orders of magnitude
+across the shielding layer so the stiff end is always present. The MATLAB
 hard-codes the same choice with the note *"safer choice to prevent from
-oscillation"*, and the reason is L-stability: Crank-Nicolson is A-stable but its
-amplification factor tends to −1 as |λ|Δt grows, so stiff modes ring instead of
-damping. Here D varies by two orders of magnitude across the shielding layer, so
-the stiff end is always present.
+oscillation"*. Exposed as a knob so CN (θ = ½) can be plugged in for a smooth,
+well-resolved problem where second-order accuracy outweighs damping; θ = 0 gives
+forward Euler and skips the solve, but is bound by the explicit CFL limit
+`min(dR,dZ)²/(4D)`.
 
 The diffusivity is evaluated per cell against the *molecular* destruction rate
 `n_e·K_iz = n_e·ν_en_iz/n_H2`, not the electron's `ν_en_iz`. Those differ by
@@ -254,20 +258,25 @@ function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloa
             D[k] = neutral_gas_diffusivity(n, pla.T_gas_eV, ν_iz_gas, L_char)
         end
 
-        # ── reflective diffusion, backward Euler ────────────────────────────
+        # ── reflective diffusion, θ-scheme (BE by default) ──────────────────
         A = build_reflective_diffusion_matrix(G, D)
+        θ = RP.flags.θ_gas
         # rows outside the wall are empty in A, so this leaves them as identity
-        M = sparse(I, size(A, 1), size(A, 2)) - dt * A
+        M = sparse(I, size(A, 1), size(A, 2)) - θ * dt * A
         # The RHS is copied out rather than solved in place. UMFPACK rejects an
         # aliased (X, B) outright for a Vector argument; `view(matrix, :)` builds a
         # different SubArray wrapper that slips past that check while still sharing
         # storage, so an in-place call here would ride on an explicitly forbidden
         # path — correct today only because UMFPACK happens to buffer B internally,
         # and silent if that ever changes or if BandedLUSolver is used instead.
-        rhs = vec(copy(pla.n_H2_gas))
+        rhs = vec(pla.n_H2_gas) + (one(FT) - θ) * dt * (A * vec(pla.n_H2_gas))
         @timeit RAPID_TIMER "n_H2_gas LinearSolve" begin
-            factorize!(OP.gas_solver, M)
-            solve!(view(pla.n_H2_gas, :), OP.gas_solver, rhs)
+            if θ == zero(FT)
+                copyto!(view(pla.n_H2_gas, :), rhs)   # explicit: no solve needed
+            else
+                factorize!(OP.gas_solver, M)
+                solve!(view(pla.n_H2_gas, :), OP.gas_solver, rhs)
+            end
         end
 
         return RP
