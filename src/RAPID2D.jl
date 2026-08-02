@@ -42,6 +42,7 @@ include("numerics/operators.jl")
 # Include the field-related functionality
 include("physics/neutral_gas.jl")
 include("physics/wall.jl")   # wall face geometry; reuses EE_GAS from neutral_gas.jl
+include("physics/transport_channels.jl")   # the (v∥, λ∥, v⊥, λ⊥) basis
 include("physics/fields.jl")
 include("physics/transport.jl")
 

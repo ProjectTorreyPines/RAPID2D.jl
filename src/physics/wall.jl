@@ -43,6 +43,26 @@ struct WallFace{FT <: AbstractFloat}
 end
 
 """
+    is_in_wall(G, i, j) -> Bool
+
+Whether node `(i, j)` is strictly inside the wall and therefore part of the
+problem being solved.
+
+`nodes.state` is 1 inside, 0 **on** the wall, −1 outside; only `> 0.5` counts, so
+an on-wall node is treated as outside. Off-grid indices are false, which is what
+makes a wall coinciding with the grid frame work — there is simply no outside
+region to reach.
+
+This is the single predicate that decides where the boundary is. `wall_faces`
+uses it to decide which cardinal arms are wall faces, and any wall-aware operator
+must use the same one, or the boundary term would land on faces the flux terms did
+not omit.
+"""
+function is_in_wall(G::GridGeometry{FT}, i::Integer, j::Integer) where {FT <: AbstractFloat}
+    return 1 <= i <= G.NR && 1 <= j <= G.NZ && G.nodes.state[i, j] > FT(0.5)
+end
+
+"""
     wall_faces(G) -> Vector{WallFace}
 
 Every outward face of every in-wall cell of `G`.
@@ -83,18 +103,14 @@ change to what `area` means and belongs with the machinery that consumes it.
 """
 function wall_faces(G::GridGeometry{FT}) where {FT <: AbstractFloat}
     NR, NZ = G.NR, G.NZ
-    state = G.nodes.state
-    # `state`: 1 inside, 0 on the wall, −1 outside. Only strictly-inside cells own
-    # faces, and off-grid counts as not-inside so a wall on the grid frame works.
-    is_inside(i, j) = 1 <= i <= NR && 1 <= j <= NZ && state[i, j] > FT(0.5)
 
     faces = WallFace{FT}[]
     for j in 1:NZ, i in 1:NR
-        is_inside(i, j) || continue
+        is_in_wall(G, i, j) || continue
         R = G.R2D[i, j]
         vol = 2 * FT(π) * R * G.dR * G.dZ
         for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
-            is_inside(i + di, j + dj) && continue
+            is_in_wall(G, i + di, j + dj) && continue
             # R_face = R for a Z-face (di = 0), R ± ΔR/2 for an R-face
             R_face = R + di * G.dR / 2
             span = dj == 0 ? G.dZ : G.dR
