@@ -44,6 +44,7 @@ include("physics/neutral_gas.jl")
 include("physics/wall.jl")   # wall face geometry; reuses EE_GAS from neutral_gas.jl
 include("physics/transport_channels.jl")   # the (v∥, λ∥, v⊥, λ⊥) basis
 include("numerics/wall_diffusion.jl")      # wall-aware 9-point tensor operator
+include("diagnostics/field_moments.jl")    # shape statistics, for direction checks
 include("physics/fields.jl")
 include("physics/transport.jl")
 
