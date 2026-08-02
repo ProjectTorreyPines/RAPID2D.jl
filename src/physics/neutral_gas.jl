@@ -4,9 +4,9 @@
 # with another molecule, destruction by electron impact, or arrival at the wall.
 # The three are summed as rates (Matthiessen), so the shortest one dominates:
 #
-#     1/λ = √2·n_gas·σ  +  ν_iz/v_th  +  1/L
-#            ‾‾‾‾‾‾‾‾‾     ‾‾‾‾‾‾‾‾‾     ‾‾‾
-#            gas-gas       ionization    wall (Knudsen)
+#     1/λ = v_th/(2·D_elastic)  +  ν_iz/v_th  +  1/L
+#            ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾      ‾‾‾‾‾‾‾‾‾     ‾‾‾
+#            gas-gas (NIST)        ionization    wall (Knudsen)
 #
 #     D = ½·v_th·λ
 #
@@ -23,11 +23,6 @@
 # commented out at this spot, which suggests the same wall was hit; a CFL cap is
 # a numerical band-aid that loosens as Δt shrinks, so it is not Δt-convergent.
 # The Knudsen term is Δt-independent and physical.
-#
-# **Why not the MATLAB's D = D_NTP·n_NTP/n_gas.** Written that way v_th cancels
-# from the elastic limit entirely, hard-coding 273 K; D then carries no
-# temperature dependence at all. Deriving λ from a cross-section keeps D ∝ √T.
-# See claudedocs/impurity_model_equations_v2.md.
 
 "H2 molecular mass [kg]."
 const M_H2_GAS = 2.01594 * 1.660539e-27
@@ -37,23 +32,51 @@ const M_H2_GAS = 2.01594 * 1.660539e-27
 # as `PlasmaConstants.ee`.
 const EE_GAS = 1.602176634e-19
 
-# Reference state for the effective collision cross-section.
+const KB_EV_PER_K = 8.617333262e-5      # CODATA Boltzmann constant [eV/K]
+const KB_J_PER_K = 1.380649e-23         # CODATA Boltzmann constant [J/K]
+
+# ── H2 self-diffusion: NIST TN 2279 ─────────────────────────────────────────
 #
-# SOURCE (⚠ UNVERIFIED — confirm against CRC Handbook / NIST before relying on the
-# absolute value): H2 self-diffusion coefficient at 273.15 K, 101325 Pa.
+# REFERENCE
+#   Burgess DR Jr. (2024). *Self-Diffusion and Binary-Diffusion Coefficients in
+#   Gases.* NIST Technical Note (TN) 2279. National Institute of Standards and
+#   Technology, Gaithersburg, MD.
+#   DOI:  https://doi.org/10.6028/NIST.TN.2279
+#   PDF:  https://nvlpubs.nist.gov/nistpubs/TechnicalNotes/NIST.TN.2279.pdf
+#   Data: §3.1.2 Table 1a "Small Molecules", *Hydrogen-Oxygen* block, row 1
+#         (p. 8 of the Technical Note).
 #
-# σ is calibrated from a measured TRANSPORT property rather than taken from a
-# tabulated molecular diameter, because it is the transport mean free path that
-# enters D. The geometric routes disagree badly: the kinetic diameter 2.89 Å and
-# the Lennard-Jones σ 2.83 Å both give D ≈ 0.61e-4 m²/s, a factor 2 below the
-# measured self-diffusion, i.e. an effective diameter near 1.9 Å.
+#   Substance  Bath  T_range/K  T_ref/K  D_ref/cm²·s⁻¹     A       B       C   Ref
+#   H2         H2    115-295    298      1.309          -9.309  -8.028  1.686   4
 #
-# The factor-2 uncertainty is second order for burn-through: wherever the gas
-# actually matters, ν_iz exceeds the elastic rate by 3.5-120×, and where it does
-# not, λ already exceeds the vessel so the wall term sets D regardless.
-const D_H2_SELF_REF = 1.3e-4                  # [m²/s] @ (T_REF, N_REF)
-const N_H2_REF = 2.505e25                     # [m⁻³] Loschmidt @ 273.15 K, 101325 Pa
-const T_H2_REF_EV = 273.15 * 8.617333262e-5   # [eV]
+#   Recommended values are quoted at 101.325 kPa (TN 2279 §1). The temperature
+#   dependence is the report's extended form
+#       ln(D [cm²/s]) = A + B/T + C·ln(T),   T in K
+#   (TN 2279 §1, fit form 1 of 3). Checked: T = 298.15 K reproduces 1.310 cm²/s
+#   against the tabulated D_ref = 1.309.
+#
+# **Self-diffusion (H2 in H2), which is the right quantity for a pure fill.** The
+# MATLAB original uses 0.61e-4 m²/s — the H2-in-AIR binary coefficient, a factor
+# 2.1 lower. No scaling law would expose that swap, so the test pins the absolute
+# value against the number above.
+#
+# **Why the fit rather than a hard-sphere σ.** C = 1.686 gives D ∝ T^1.69, the
+# usual real-gas behaviour once the attractive potential is included; a
+# hard-sphere mean free path would give √T and fall ~2.5× low across the fit's
+# span. Feeding the measured fit into the elastic channel leaves both limits
+# correct on their own terms: elastic-dominated recovers the measured D(T), and
+# wall-dominated tends to ½·v_th·L, which scales as √T because free streaming is
+# what it describes.
+#
+# Our T_gas (0.026 eV ≈ 302 K) sits just past the fit's 115-295 K window — the
+# same mild extrapolation NIST itself makes in quoting D_298.
+const NIST_TN2279_H2_A = -9.309
+const NIST_TN2279_H2_B = -8.028
+const NIST_TN2279_H2_C = 1.686
+"Reference temperature [K] of the TN 2279 recommended value."
+const NIST_H2_T_REF_K = 298.15
+"Number density [m⁻³] at 298.15 K and 101.325 kPa — the state TN 2279 quotes at."
+const NIST_H2_N_REF = 101325.0 / (KB_J_PER_K * NIST_H2_T_REF_K)
 
 """
     neutral_gas_thermal_speed(T_gas_eV)
@@ -63,11 +86,18 @@ diffusivity uses (`D = ½·v_th·λ`), not the mean speed `√(8T/πm)`.
 """
 neutral_gas_thermal_speed(T_gas_eV) = sqrt(T_gas_eV * EE_GAS / M_H2_GAS)
 
-# Effective cross-section, inverted from the reference diffusivity under the same
-# ½·v_th·λ convention used below, so the model reproduces D_H2_SELF_REF exactly at
-# the reference state.
-const SIGMA_H2_GAS = let λ_ref = 2 * D_H2_SELF_REF / neutral_gas_thermal_speed(T_H2_REF_EV)
-    1 / (sqrt(2) * N_H2_REF * λ_ref)
+"""
+    h2_self_diffusivity(T_gas_eV)
+
+H2 self-diffusion coefficient [m²/s] at the reference density `NIST_H2_N_REF`,
+evaluated from the NIST TN 2279 Table 1a fit `ln(D) = A + B/T + C·ln(T)`. Being a
+dilute-gas transport coefficient it scales as `1/n` away from that density.
+"""
+function h2_self_diffusivity(T_gas_eV)
+    T_K = T_gas_eV / KB_EV_PER_K
+    return 1.0e-4 * exp(
+        NIST_TN2279_H2_A + NIST_TN2279_H2_B / T_K + NIST_TN2279_H2_C * log(T_K)
+    )
 end
 
 """
@@ -75,17 +105,20 @@ end
 
 Isotropic diffusivity [m²/s] of the neutral H2 fill.
 
-- `n_gas`   molecular density [m⁻³]; may be 0 on burnt-out cells
+- `n_gas`    molecular density [m⁻³]; may be 0 on burnt-out cells
 - `T_gas_eV` gas temperature [eV]
-- `ν_iz`    electron-impact ionization frequency seen by a molecule [1/s],
-            i.e. `n_e·K_iz` — the rate at which molecules are destroyed
-- `L_char`  characteristic vessel dimension [m]; `Inf` disables the wall term
+- `ν_iz`     electron-impact ionization frequency seen by a molecule [1/s],
+             i.e. `n_e·K_iz` — the rate at which molecules are destroyed
+- `L_char`   characteristic vessel dimension [m]; `Inf` disables the wall term
 
 Pass `ν_iz = 0` and `L_char = Inf` to obtain the pure gas-gas value.
 """
 function neutral_gas_diffusivity(n_gas, T_gas_eV, ν_iz, L_char)
     v_th = neutral_gas_thermal_speed(T_gas_eV)
-    inv_λ = sqrt(2) * n_gas * SIGMA_H2_GAS + ν_iz / v_th + 1 / L_char
+    # measured elastic diffusivity, scaled to the local density, then inverted
+    # under this file's D = ½·v_th·λ convention to give a rate
+    D_elastic = h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
+    inv_λ = v_th / (2 * D_elastic) + ν_iz / v_th + 1 / L_char
     return 0.5 * v_th / inv_λ
 end
 

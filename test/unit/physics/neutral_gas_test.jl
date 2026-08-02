@@ -15,16 +15,36 @@
     @test D2 / D1 ≈ 2.0 rtol = 1.0e-12
 end
 
-@testitem "Neutral gas diffusivity: D scales as sqrt(T_gas)" begin
-    using RAPID2D: neutral_gas_diffusivity
+@testitem "Neutral gas diffusivity: reproduces the NIST reference value" begin
+    using RAPID2D: neutral_gas_diffusivity, NIST_H2_T_REF_K, NIST_H2_N_REF
 
-    # λ = 1/(√2·n·σ) carries no temperature, so all of D's T-dependence comes from
-    # v_th ∝ √T. This is the assertion that fails for the MATLAB formulation, where
-    # D is written as D_NTP·n_NTP/n and v_th cancels out of the elastic limit
-    # entirely — leaving 273 K hard-coded. See claudedocs/impurity_model_equations_v2.md.
-    Da = neutral_gas_diffusivity(1.0e18, 0.026, 0.0, Inf)
-    Db = neutral_gas_diffusivity(1.0e18, 4 * 0.026, 0.0, Inf)
-    @test Db / Da ≈ 2.0 rtol = 1.0e-12
+    # NIST TN 2279 (Burgess 2024), Table 1a "Small Molecules", Hydrogen-Oxygen:
+    #   H2 in H2, T_range 115-295 K, T_ref 298 K, D_ref = 1.309 cm²/s
+    # at 101.325 kPa. Pinning the absolute value is what stops the MATLAB's
+    # 0.61e-4 m²/s from being transcribed in: that number is the H2-in-AIR binary
+    # coefficient, a factor 2.1 below self-diffusion, and no scaling law would
+    # reveal the swap.
+    T_ref_eV = NIST_H2_T_REF_K * 8.617333262e-5
+    D = neutral_gas_diffusivity(NIST_H2_N_REF, T_ref_eV, 0.0, Inf)
+    @test D ≈ 1.309e-4 rtol = 1.0e-3
+end
+
+@testitem "Neutral gas diffusivity: follows the NIST temperature fit, not sqrt(T)" begin
+    using RAPID2D: neutral_gas_diffusivity, NIST_H2_N_REF
+
+    # ln(D) = A + B/T + C·ln(T) with C = 1.686 means D ∝ T^1.69, the usual real-gas
+    # behaviour once the attractive potential is included. A hard-sphere mean free
+    # path would give √T and land 2.5× low over this span, so this assertion
+    # separates "calibrated to NIST" from "hard sphere normalised at one point".
+    kB_eV = 8.617333262e-5
+    Ta, Tb = 150.0, 290.0                       # inside the fit's 115-295 K range
+    Da = neutral_gas_diffusivity(NIST_H2_N_REF, Ta * kB_eV, 0.0, Inf)
+    Db = neutral_gas_diffusivity(NIST_H2_N_REF, Tb * kB_eV, 0.0, Inf)
+
+    A, B, C = -9.309, -8.028, 1.686
+    nist(T) = 1.0e-4 * exp(A + B / T + C * log(T))
+    @test Db / Da ≈ nist(Tb) / nist(Ta) rtol = 1.0e-6
+    @test Db / Da > 1.5 * sqrt(Tb / Ta)         # decisively not the √T law
 end
 
 @testitem "Neutral gas diffusivity: ionization shortens the mean free path" begin
