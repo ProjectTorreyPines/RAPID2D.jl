@@ -73,3 +73,134 @@ end
     @test isfinite(D)
     @test D ≈ 0.5 * neutral_gas_thermal_speed(T) * L rtol = 1.0e-12
 end
+
+# ── reflective diffusion operator ───────────────────────────────────────────
+# The shared ∇𝐃∇ builder is not reusable here: it sweeps every interior node
+# without wall awareness, so zeroing D outside the wall still leaves a coupling
+# coefficient inv_J·½·CT_in to the outside neighbour and the gas leaks out. A
+# reflective wall must OMIT the outside neighbour, which is a different stencil.
+
+@testitem "Reflective diffusion operator: rows sum to zero" begin
+    using RAPID2D: build_reflective_diffusion_matrix
+    using RAPID2D.SparseArrays
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    D = fill(50.0, RP.G.NR, RP.G.NZ)
+    A = build_reflective_diffusion_matrix(RP.G, D)
+
+    # zero row sum is what makes the stencil a divergence: no node manufactures
+    # or destroys gas on its own. The residual is pure cancellation round-off, so
+    # it must be judged against the size of the coefficients being cancelled —
+    # an absolute bound would silently track the grid spacing and D.
+    @test maximum(abs, sum(A, dims = 2)) < 1.0e-13 * maximum(abs, A)
+end
+
+@testitem "Reflective diffusion operator: uniform gas produces no flux" begin
+    using RAPID2D: build_reflective_diffusion_matrix
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    # spatially varying D, so a passing test cannot be an artefact of constant D
+    D = [
+        30.0 + 20.0 * sin(3.0 * RP.G.R1D[i]) * cos(2.0 * RP.G.Z1D[j])
+            for i in 1:RP.G.NR, j in 1:RP.G.NZ
+    ]
+    A = build_reflective_diffusion_matrix(RP.G, D)
+
+    # A·const is the row sum times n, so the tolerance has to carry BOTH factors.
+    # A genuine leak (an absorbing wall) lands near 0.25 in these relative units,
+    # thirteen orders above the bound below, so this cannot pass by accident.
+    n_val = 7.0e18
+    n_uniform = fill(n_val, RP.G.NR * RP.G.NZ)
+    @test maximum(abs, A * n_uniform) < 1.0e-13 * maximum(abs, A) * n_val
+end
+
+@testitem "Reflective diffusion operator: no coupling across the wall" begin
+    using RAPID2D: build_reflective_diffusion_matrix
+    using RAPID2D.SparseArrays
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    D = fill(50.0, RP.G.NR, RP.G.NZ)
+    A = build_reflective_diffusion_matrix(RP.G, D)
+
+    # THE defining property. An absorbing wall would show non-zero entries here,
+    # and the gas would drain into nodes nothing ever solves for.
+    outside = RP.G.nodes.on_out_wall_nids
+    inside = RP.G.nodes.in_wall_nids
+    @test maximum(abs, A[inside, outside]) == 0.0
+
+    # and nothing outside the wall evolves at all
+    @test maximum(abs, A[outside, :]) == 0.0
+end
+
+@testitem "Reflective diffusion operator: conserves Jacobian-weighted particles" begin
+    using RAPID2D: build_reflective_diffusion_matrix
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    D = [
+        30.0 + 20.0 * sin(3.0 * RP.G.R1D[i]) * cos(2.0 * RP.G.Z1D[j])
+            for i in 1:RP.G.NR, j in 1:RP.G.NZ
+    ]
+    A = build_reflective_diffusion_matrix(RP.G, D)
+
+    # In cylindrical geometry the conserved quantity is Σ J·n, not Σ n — the same
+    # invariant the impurity wall ledger uses. d/dt(Σ J n) = (Jᵀ A) n must vanish
+    # for EVERY n, i.e. the Jacobian-weighted column sums are zero.
+    Jv = vec(RP.G.Jacob)
+    colsum = vec(Jv' * A)
+    @test maximum(abs, colsum[RP.G.nodes.in_wall_nids]) < 1.0e-8 * maximum(Jv)
+end
+
+@testitem "Reflective diffusion operator: smooths a peak" begin
+    using RAPID2D: build_reflective_diffusion_matrix
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    D = fill(50.0, RP.G.NR, RP.G.NZ)
+    A = build_reflective_diffusion_matrix(RP.G, D)
+
+    Rc = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
+    Zc = (RP.G.Z1D[1] + RP.G.Z1D[end]) / 2
+    n = [
+        exp(-((RP.G.R2D[i, j] - Rc)^2 + (RP.G.Z2D[i, j] - Zc)^2) / 0.02)
+            for i in 1:RP.G.NR, j in 1:RP.G.NZ
+    ]
+    rhs = reshape(A * vec(n), RP.G.NR, RP.G.NZ)
+
+    # diffusion drains the peak into its surroundings
+    ipk, jpk = Tuple(argmax(n))
+    @test rhs[ipk, jpk] < 0
+end

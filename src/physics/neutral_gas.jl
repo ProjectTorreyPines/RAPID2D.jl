@@ -88,3 +88,73 @@ function neutral_gas_diffusivity(n_gas, T_gas_eV, ν_iz, L_char)
     inv_λ = sqrt(2) * n_gas * SIGMA_H2_GAS + ν_iz / v_th + 1 / L_char
     return 0.5 * v_th / inv_λ
 end
+
+"""
+    build_reflective_diffusion_matrix(G, D) -> SparseMatrixCSC
+
+Isotropic 5-point diffusion operator `∇·(D∇·)` with a **reflective** (zero-flux)
+wall, on the full `NR·NZ` node indexing.
+
+```
+    A[p, q] = (1/J_p)·½·(CT_q + CT_p)     q a cardinal neighbour of p, both in-wall
+    A[p, p] = −Σ_q A[p, q]
+```
+with `CT = J·D/dR²` (radial) and `J·D/dZ²` (vertical). Rows for nodes on or
+outside the wall are left empty, so those nodes never evolve.
+
+**Reflective, not absorbing.** A neighbour contributes only when it is itself
+in-wall; otherwise the term is *omitted*, not zeroed. That distinction is the
+whole boundary condition. Zeroing `D` outside instead — the natural thing to try
+with the shared `∇𝐃∇` builder, which sweeps every interior node without wall
+awareness — still leaves the coefficient `(1/J)·½·CT_inside` on the outward face,
+and the gas drains into nodes nothing solves for. The fill gas is not consumed by
+the wall; it bounces.
+
+**What is conserved.** Zero row sums make the stencil a divergence, so constants
+lie in its kernel and no node manufactures gas. Weighting by the Jacobian makes
+`M = J·A` symmetric, hence its column sums vanish too, so `Σ J·n` is conserved
+exactly — the same invariant the impurity wall ledger uses. Plain `Σ n` is not
+conserved in cylindrical geometry.
+
+Ported from `Construct_An_H2_gas_diffu_reflective.m`. The MATLAB splits the sweep
+into deep-in-wall and near-wall passes; that is a performance split only, and the
+uniform neighbour test here produces the same matrix.
+"""
+function build_reflective_diffusion_matrix(G, D::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    NR, NZ = G.NR, G.NZ
+    Ng = NR * NZ
+    CTRR = @. G.Jacob * D / (G.dR * G.dR)
+    CTZZ = @. G.Jacob * D / (G.dZ * G.dZ)
+    state, nid = G.nodes.state, G.nodes.nid
+
+    rows = Int[]
+    cols = Int[]
+    vals = FT[]
+    sizehint!(rows, 5 * Ng)
+    sizehint!(cols, 5 * Ng)
+    sizehint!(vals, 5 * Ng)
+
+    is_inside(i, j) = 1 <= i <= NR && 1 <= j <= NZ && state[i, j] > FT(0.5)
+
+    @inbounds for j in 1:NZ, i in 1:NR
+        is_inside(i, j) || continue
+        row = nid[i, j]
+        invJ = one(FT) / G.Jacob[i, j]
+        diag = zero(FT)
+        for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
+            ii, jj = i + di, j + dj
+            is_inside(ii, jj) || continue          # reflective: omit, do not zero
+            CT = dj == 0 ? CTRR : CTZZ
+            c = invJ * FT(0.5) * (CT[ii, jj] + CT[i, j])
+            push!(rows, row)
+            push!(cols, nid[ii, jj])
+            push!(vals, c)
+            diag -= c
+        end
+        push!(rows, row)
+        push!(cols, row)
+        push!(vals, diag)
+    end
+
+    return sparse(rows, cols, vals, Ng, Ng)
+end
