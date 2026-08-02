@@ -4,11 +4,11 @@
 # catches a leak but cannot say where it came from, and it cannot answer the
 # question every surface process reduces to: how much did *this* tile absorb?
 #
-# Today electrons and ions are booked per NODE (`cum2D_Ne_loss[on_out_wall_nids]`,
-# `physics.jl:731`), recording what an outside cell held at the moment it was
-# zeroed. Those are cells the Robin form removes entirely, and a node is not a
-# face: it cannot say which way the material went, nor which wall segment it
-# belongs to.
+# Today electrons and ions are booked per NODE (`cum2D_Ne_loss[on_out_wall_nids]`
+# in `treat_electron_outside_wall!`), recording what an outside cell held at the
+# moment it was zeroed. Those are cells the Robin form removes entirely, and a
+# node is not a face: it cannot say which way the material went, nor which wall
+# segment it belongs to.
 
 """
     WallLedger{FT}(n_faces)
@@ -60,7 +60,7 @@ therefore points at a *face*, not at the whole domain.
 
 A staircase corner owns two faces and books each on its own area — the R-face and
 the Z-face sweep different areas and generally carry different `v_absorb`, since
-`g = (b̂·n̂)²` is a face property.
+that depends on `b̂·n̂`, a face property.
 """
 function accumulate_wall_absorption!(
         ledger::WallLedger{FT},
@@ -95,13 +95,12 @@ which catches the entire "created at the wall and silently lost" class:
 > re-emitting everything absorbed (`Y = 1`, same species) must reproduce the
 > reflective result to machine precision.
 
-**Never deposit outside the wall.** The existing secondary-electron path does the
-opposite — `treat_ion_outside_wall!` adds `γ_2nd·n_i` to cells *outside* and relies
-on diffusion to carry them back, but `treat_electron_outside_wall!` books that band
-as loss and zeroes it at the top of the next step. The measured yield reaching the
-interior is ≈ 0 at production settings and varies by 1800× with Δt and ΔR, because
-the controlling group is `D⊥Δt/Δx² ≈ 5e-5` rather than `γ_2nd`. Returning material
-to the interior cell is that fix.
+**Never deposit outside the wall.** `treat_ion_outside_wall!` does the opposite —
+it adds `γ_2nd·n_i` to cells *outside* and relies on diffusion to carry them back,
+but `treat_electron_outside_wall!` books that band as loss and zeroes it at the top
+of the next step. The measured yield reaching the interior is ≈ 0, controlled by
+`D⊥Δt/Δx²` rather than by `γ_2nd` (`secondary_electron_test.jl`). Returning
+material to the interior cell is that fix.
 
 For cross-species return (recycling, sputtering, secondary electrons) scale
 `emitted` by the yield before calling; this function only moves particles back

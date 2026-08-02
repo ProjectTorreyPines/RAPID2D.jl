@@ -129,7 +129,7 @@ end
 end
 
 @testitem "Channel adapter: summed channels reproduce the solver's own tensor" begin
-    using RAPID2D: TransportChannel, diffusion_tensor, total_tensor,
+    using RAPID2D: DiffusionChannel, diffusion_tensor, total_tensor,
         turbulent_ExB_channel, parallel_collisional_channel, bohm_channel
 
     # The integration test that makes the adapters binding. RAPID2D assembles
@@ -155,7 +155,7 @@ end
     # base channel: whatever Dpara/Dperp the solver arrived at, expressed in the
     # basis — one speed is enough here because we only need the tensor back
     v_ref = fill(1.0e6, NR, NZ)
-    base = TransportChannel(
+    base = DiffusionChannel(
         v_ref, @.(2 * tp.Dpara / v_ref),
         v_ref, @.(2 * tp.Dperp / v_ref)
     )
@@ -165,7 +165,7 @@ end
         fpara = RP.config.turbulent_diffusion_fraction_along_bpol
         fperp = 1 - fpara
         v_t = fill(1.0e3, NR, NZ)
-        turb = TransportChannel(
+        turb = DiffusionChannel(
             v_t, @.(2 * tp.Dpol_turb * fpara / v_t),
             v_t, @.(2 * tp.Dpol_turb * fperp / v_t)
         )
@@ -187,7 +187,7 @@ end
         fpara = RP.config.turbulent_diffusion_fraction_along_bpol
         fperp = 1 - fpara
         v_t = fill(1.0e3, NR, NZ)
-        turb = TransportChannel(
+        turb = DiffusionChannel(
             v_t, @.(2 * tp.Dpol_turb * fpara / v_t),
             v_t, @.(2 * tp.Dpol_turb * fperp / v_t)
         )

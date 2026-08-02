@@ -4,8 +4,7 @@
 # is an exchange across a FACE, not a property of a cell. A staircase corner has
 # two outward faces and must be debited on both; the R- and Z-faces of one cell
 # carry different spacings and different areas. Naming the faces once, here, is
-# what lets the three species (plasma, fill gas, impurities) stop each inventing
-# their own wall treatment.
+# what lets every species share one wall treatment instead of inventing its own.
 #
 # Nothing in this file solves anything. It answers two questions the solvers will
 # ask: *which faces are there and how big are they*, and *how hard is the gas
@@ -83,23 +82,16 @@ will instead put `v_absorb·n_w`.
 ```
 
 The Z-face factor is exactly `1/ΔZ`; the R-face one is **not** `1/ΔR`. The extra
-`R_{i±½}/R_i = 1 ± ΔR/(2R_i)` is not decoration. The diffusion operator already
-carries it — `invJ·½(CT_out + CT_in)` is `(1/J_i)·J_face·D/ΔR²`, and
-`½(R_i + R_{i±1}) = R_{i±½}` exactly because `Jacob = R` is linear in the index —
-so a boundary term without it would be inconsistent with the flux terms beside it
-in the same row. And the conserved measure is `Σ J_k·n_k`, which closes against
-the true face area and not against `1/ΔR`: dropping the factor turns an exact
-ledger into one that misses by `ΔR/(2R)`, small enough to look like round-off and
-large enough to be a leak.
+`R_{i±½}/R_i = 1 ± ΔR/(2R_i)` is load-bearing twice over: the diffusion operator
+already carries it in `invJ·½(CT_out + CT_in)`, so a boundary term without it
+would contradict the flux terms in its own row; and the conserved measure
+`Σ J_k·n_k` closes against the true face area, so dropping it leaks by `ΔR/(2R)`
+— small enough to look like round-off, large enough to matter.
 
-**Staircase walls over-count area on inclined segments.** A wall at 45° is
-represented by faces summing to `ΔR + ΔZ` per cell where the true surface is
-`√(ΔR² + ΔZ²)` — a factor `√2`, and unlike the half-cell offset of an
-axis-aligned wall it does **not** shrink under grid refinement. Every absorbed
-flux, and so every recycling and sputtering source, inherits it there. The
-measurement is pinned in `wall_test.jl` rather than corrected: correcting it means
-weighting each face by the wall-segment length it truly represents, which is a
-change to what `area` means and belongs with the machinery that consumes it.
+**Staircase walls over-count area on inclined segments** by `√2` at 45°, and
+unlike the half-cell offset of an axis-aligned wall it does not shrink under grid
+refinement. Measured and pinned in `wall_test.jl` rather than corrected; the fix
+changes what `area` means and belongs with the machinery that consumes it.
 """
 function wall_faces(G::GridGeometry{FT}) where {FT <: AbstractFloat}
     NR, NZ = G.NR, G.NZ
@@ -130,18 +122,16 @@ end
 One-sided impingement speed `¼v̄` [m/s] of a Maxwellian at temperature `T_eV` [eV]
 and particle mass `m` [kg], with `v̄ = √(8kT/πm)` the **mean** speed.
 
-This is the velocity factor of the Hertz-Knudsen gross flux, `Γ = v_incident·n_w`
-— the rate at which particles arrive at a surface regardless of what the surface
-then does with them. It therefore does **not** depend on the boundary condition,
-and diagnostics built on it (sputtering, bombardment rates) need no change to the
-wall treatment to be evaluated. A reflective wall has `Γ_in = Γ_out = v_incident·n_w`
-with zero *net* flux; only the net flux is what a boundary condition sets.
+The velocity factor of the Hertz-Knudsen gross flux `Γ = v_incident·n_w` — the
+rate at which particles arrive regardless of what the surface then does with them.
+It does **not** depend on the boundary condition, so diagnostics built on it
+(sputtering, bombardment rates) are unaffected by the wall treatment: a reflective
+wall still has `Γ_in = Γ_out = v_incident·n_w`, with only the *net* flux zero.
 
-**`v̄`, not `v_th`.** `neutral_gas_thermal_speed` is `√(T/m)`, the convention the
-diffusivity `D = ½·v_th·λ` is written in. The two differ by `√(8/π) = 1.596`, so
-using `¼v_th` here would under-count every impact by 37 %. Nothing in a scaling
-test would reveal the swap — both go as `√(T/m)` — which is why the ratio is
-pinned to `0.3989 = ¼√(8/π)` in the tests.
+**`v̄`, not `v_th`.** `neutral_gas_thermal_speed` is `√(T/m)`, the convention
+`D = ½·v_th·λ` is written in; the two differ by `√(8/π) = 1.596`, so `¼v_th` here
+would under-count every impact by 37 %. Both go as `√(T/m)`, so no scaling test
+would reveal the swap — hence the ratio is pinned to `0.3989 = ¼√(8/π)`.
 """
 v_incident(T_eV, m) = sqrt(8 * T_eV * EE_GAS / (π * m)) / 4
 

@@ -12,12 +12,12 @@
 # ── the tensor ──────────────────────────────────────────────────────────────
 
 @testitem "Transport channel: an isotropic channel has no preferred direction" begin
-    using RAPID2D: TransportChannel, diffusion_tensor
+    using RAPID2D: DiffusionChannel, diffusion_tensor
 
     # v∥ = v⊥ and λ∥ = λ⊥ must erase b̂ entirely, for EVERY b̂ — not just the
     # axis-aligned ones where D_RZ happens to vanish anyway.
     v, λ = fill(800.0, 2, 3), fill(0.05, 2, 3)
-    ch = TransportChannel(v, λ, v, λ)
+    ch = DiffusionChannel(v, λ, v, λ)
     D = 0.5 * 800.0 * 0.05
 
     for θ in (0.0, 0.3, π / 4, 1.1, π / 2, 2.7)
@@ -32,9 +32,9 @@
 end
 
 @testitem "Transport channel: an axis-aligned field puts D_para on that axis" begin
-    using RAPID2D: TransportChannel, diffusion_tensor
+    using RAPID2D: DiffusionChannel, diffusion_tensor
 
-    ch = TransportChannel(
+    ch = DiffusionChannel(
         fill(1000.0, 1, 1), fill(0.2, 1, 1),   # D∥ = 100
         fill(10.0, 1, 1), fill(0.02, 1, 1)
     )    # D⊥ = 0.1
@@ -54,12 +54,12 @@ end
 end
 
 @testitem "Transport channel: only an oblique field produces a cross term" begin
-    using RAPID2D: TransportChannel, diffusion_tensor
+    using RAPID2D: DiffusionChannel, diffusion_tensor
 
     # THE discriminating case. With b̂ on an axis D_RZ vanishes, so every
     # axis-aligned test would still pass with the cross term deleted from the
     # code. Only an oblique field exercises it.
-    ch = TransportChannel(
+    ch = DiffusionChannel(
         fill(1000.0, 1, 1), fill(0.2, 1, 1),
         fill(10.0, 1, 1), fill(0.02, 1, 1)
     )
@@ -86,12 +86,12 @@ end
 end
 
 @testitem "Transport channel: the tensor's eigenvectors are the field direction" begin
-    using RAPID2D: TransportChannel, diffusion_tensor
+    using RAPID2D: DiffusionChannel, diffusion_tensor
     using RAPID2D.LinearAlgebra
 
     # The strongest single statement of "the tensor means what we think": its
     # principal axes ARE b̂ and its normal, with eigenvalues D∥ and D⊥.
-    ch = TransportChannel(
+    ch = DiffusionChannel(
         fill(1000.0, 1, 1), fill(0.2, 1, 1),
         fill(10.0, 1, 1), fill(0.02, 1, 1)
     )
@@ -113,7 +113,7 @@ end
 end
 
 @testitem "Transport channel: the basis varies node by node" begin
-    using RAPID2D: TransportChannel, diffusion_tensor, channel_D_para, channel_D_perp
+    using RAPID2D: DiffusionChannel, diffusion_tensor, channel_D_para, channel_D_perp
 
     # Not a global constant. A scalar-broadcast bug reproduces every uniform test
     # above and fails only here, so this is the guard for the whole design.
@@ -122,7 +122,7 @@ end
     λ_para = [0.01 * j for i in 1:NR, j in 1:NZ]
     v_perp = [3.0 * i for i in 1:NR, j in 1:NZ]
     λ_perp = fill(0.002, NR, NZ)
-    ch = TransportChannel(v_para, λ_para, v_perp, λ_perp)
+    ch = DiffusionChannel(v_para, λ_para, v_perp, λ_perp)
 
     @test channel_D_para(ch) ≈ 0.5 .* v_para .* λ_para rtol = 1.0e-14
     @test channel_D_perp(ch) ≈ 0.5 .* v_perp .* λ_perp rtol = 1.0e-14
@@ -147,7 +147,7 @@ end
 # ── the kinetic ceiling ─────────────────────────────────────────────────────
 
 @testitem "Channel ceiling: uses the MEAN speed, not the D-convention speed" begin
-    using RAPID2D: TransportChannel, channel_ceiling, MEAN_SPEED_FACTOR
+    using RAPID2D: DiffusionChannel, channel_ceiling, MEAN_SPEED_FACTOR
 
     # The trap. A channel declares v in the convention D = ½·v·λ, but a one-sided
     # flux needs the MEAN speed v̄ = √(8/π)·v — a factor 1.596. Both scale as
@@ -156,20 +156,20 @@ end
     @test MEAN_SPEED_FACTOR ≈ 1.5958 rtol = 1.0e-4
 
     v = 1000.0
-    ch = TransportChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.2, 1, 1))
+    ch = DiffusionChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.2, 1, 1))
     # isotropic, so g is irrelevant; ceiling = ¼·v̄ = ¼·√(8/π)·v
     @test channel_ceiling(ch, 1.0, 0.0, (1, 0))[1] ≈ 0.25 * sqrt(8 / π) * v rtol = 1.0e-14
     @test channel_ceiling(ch, 1.0, 0.0, (1, 0))[1] ≈ 0.3989 * v rtol = 1.0e-3
 end
 
 @testitem "Channel ceiling: an isotropic channel ignores the face orientation" begin
-    using RAPID2D: TransportChannel, channel_ceiling
+    using RAPID2D: DiffusionChannel, channel_ceiling
 
     # When v∥ = v⊥ the ceiling must not depend on n̂ at all. This is the guard
     # against double-counting the anisotropy: the supply side already carries it
     # through D_nn, so putting a directional factor on the ceiling too is wrong.
     v = 1000.0
-    ch = TransportChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.05, 1, 1))
+    ch = DiffusionChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.05, 1, 1))
     bR, bZ = cos(0.4), sin(0.4)
 
     c = [channel_ceiling(ch, bR, bZ, o)[1] for o in ((1, 0), (-1, 0), (0, 1), (0, -1))]
@@ -177,12 +177,12 @@ end
 end
 
 @testitem "Channel ceiling: a perpendicular-only channel cannot reach a head-on wall" begin
-    using RAPID2D: TransportChannel, channel_ceiling
+    using RAPID2D: DiffusionChannel, channel_ceiling
 
     # Bohm is the case: it has no parallel transport at all. A wall the field
     # points straight into (g = 1) can only be reached along B, so a cross-field
     # channel must contribute exactly nothing there.
-    ch = TransportChannel(
+    ch = DiffusionChannel(
         fill(0.0, 1, 1), fill(0.0, 1, 1),      # v∥ = 0
         fill(2500.0, 1, 1), fill(4.0e-4, 1, 1)
     )
@@ -194,14 +194,14 @@ end
 end
 
 @testitem "Channel ceiling: a grazing field recovers the sin(alpha) projection" begin
-    using RAPID2D: TransportChannel, channel_ceiling
+    using RAPID2D: DiffusionChannel, channel_ceiling
 
     # The magnetic projection that a presheath model is usually invoked for falls
     # straight out of the basis. A parallel-only channel meeting the wall at α
     # delivers ¼·v̄∥·sin α, and at RAPID2D's B_pol/B_φ ≈ 8e-3 that is a 125×
     # suppression — obtained with no sheath model anywhere.
     v_para = 1.5e6
-    ch = TransportChannel(
+    ch = DiffusionChannel(
         fill(v_para, 1, 1), fill(1.0, 1, 1),
         fill(0.0, 1, 1), fill(0.0, 1, 1)
     )       # v⊥ = 0
@@ -217,12 +217,12 @@ end
 end
 
 @testitem "Channel ceiling: the two faces of one cell differ under an oblique field" begin
-    using RAPID2D: TransportChannel, channel_ceiling
+    using RAPID2D: DiffusionChannel, channel_ceiling
 
     # g = (b̂·n̂)² is a FACE property, not a cell property. A staircase corner cell
     # owns one R-face and one Z-face, and they must not share a ceiling unless the
     # field happens to bisect them.
-    ch = TransportChannel(
+    ch = DiffusionChannel(
         fill(1.0e5, 1, 1), fill(1.0, 1, 1),
         fill(100.0, 1, 1), fill(0.01, 1, 1)
     )
@@ -244,18 +244,18 @@ end
 end
 
 @testitem "Channel ceiling: independent channels add their diffusivities and ceilings" begin
-    using RAPID2D: TransportChannel, channel_ceiling, diffusion_tensor,
+    using RAPID2D: DiffusionChannel, channel_ceiling, diffusion_tensor,
         channel_D_para, channel_D_perp, total_ceiling, total_tensor
 
     # §2.2: channels with DIFFERENT characteristic speeds are independent arrival
     # mechanisms, so both fluxes and ceilings add. (Sub-processes that share one
     # speed combine by Matthiessen *inside* a channel and are counted once — that
     # is the gas's three-way λ, already handled by neutral_gas.jl.)
-    fast = TransportChannel(
+    fast = DiffusionChannel(
         fill(1.0e6, 1, 1), fill(1.0, 1, 1),
         fill(0.0, 1, 1), fill(0.0, 1, 1)
     )
-    slow = TransportChannel(
+    slow = DiffusionChannel(
         fill(0.0, 1, 1), fill(0.0, 1, 1),
         fill(60.0, 1, 1), fill(1.0, 1, 1)
     )

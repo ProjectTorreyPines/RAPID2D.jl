@@ -16,68 +16,59 @@ which is how the wall behaviour gets tested at anisotropies a real discharge wou
 take a long time to reach.
 
 Rows for nodes on or outside the wall are left empty, so those nodes never evolve.
+Nodes off the grid count as not-in-wall, so a wall coinciding with the grid frame
+works with no outside region at all.
 
 ## The Robin debit
 
-Pass `faces` (from `wall_faces`) together with a per-face `v_absorb` and each wall
-face subtracts its absorption from the owning cell's diagonal:
+Pass `faces` (from `wall_faces`) with a per-face `v_absorb`, and each wall face
+subtracts its absorption from the owning cell's diagonal:
 
 ```
     diag_i −= Σ_{f ∈ ∂wall i}  (A_f/V_i)·v_absorb_f
 ```
 
-Omitting them — or passing `v_absorb = 0` — gives a purely reflective wall, and
-the resulting matrix is **bit-identical** to the version with no wall term at all,
-so everything Phase 2 established survives untouched at `R = 1`.
+Omitting them — or passing `v_absorb = 0` — gives a reflective wall, and the
+matrix is then **bit-identical** to the version with no wall term at all.
 
-`v_absorb ≥ 0` makes the diagonal only more negative, so `I − θΔt·A` gains nothing
-positive from this term and the operator drains rather than sources. The three
-familiar wall conditions are one formula: `0` is reflective, `→ ∞` is Dirichlet
-(`n_w → 0`), and `¼v̄(1−R)` is the physical case between them.
+`v_absorb ≥ 0` makes the diagonal only more negative, so the operator drains
+rather than sources. The three familiar wall conditions become one formula: `0` is
+reflective, `→ ∞` is Dirichlet, and `¼v̄(1−R)` is the physical case between them.
 
 **The debit is per face, not per cell.** A staircase corner owns two outward faces
-and takes both; with an oblique field their `v_absorb` generally differ, since
-`g = (b̂·n̂)²` is a face property. Nothing is written outside the wall at any
-albedo — the absorbed material leaves as a boundary term on the interior cell,
-which is what removes the outside-the-wall storage entirely.
+and takes both; with an oblique field their `v_absorb` generally differ, since it
+depends on `b̂·n̂`, a face property. Nothing is ever written outside the wall — the
+absorbed material leaves as a boundary term on the interior cell.
 
-**What this replaces.** Today's schemes are already Robin conditions with
-`v_absorb = D/(2Δx)` — a discretisation artefact rather than a surface property.
-Measured against the kinetic ceiling it runs 15–21× too fast at production
-resolution and grows without bound as `Δx → 0`, which is why the absorbed rate
-never converged and why no albedo could be expressed.
+This replaces an implicit `v_absorb = D/(2Δx)`, a discretisation artefact rather
+than a surface property: measured against the kinetic ceiling it runs 15–21× too
+fast at production resolution and grows without bound as `Δx → 0`.
 
-## The stencil
+## The stencil, and what happens at the wall
 
 Same conservative, `J`-weighted, face-averaged discretisation as
-`compute_∇𝐃∇f_directly`, with `CT_RR = J·D_RR/ΔR²`, `CT_RZ = J·D_RZ/(ΔR·ΔZ)`,
-`CT_ZZ = J·D_ZZ/ΔZ²`. The cardinal part is the familiar five-point operator. The
-cross-derivative part adds four groups, one per cardinal **face**, each reaching
-diagonal neighbours.
-
-## What happens at the wall
-
-Two rules, and the second is the interesting one.
+`compute_∇𝐃∇f_directly` (`CT_RR = J·D_RR/ΔR²`, `CT_RZ = J·D_RZ/(ΔR·ΔZ)`,
+`CT_ZZ = J·D_ZZ/ΔZ²`). The cardinal part is the usual five-point operator; the
+cross-derivative part adds four groups, one per cardinal **face**, reaching
+diagonal neighbours. Two rules handle them:
 
 **A cross group belongs to its face.** Group `i+½` is the cross-derivative
-contribution to the flux through the `i+½` face. If that face is a wall face, the
-entire flux through it is the boundary condition's business, so the whole group is
-dropped. This confines the remaining ambiguity to groups whose *own* face is
-interior but whose stencil arms still reach outside — in practice, the
-neighbourhood of a staircase corner.
+contribution to the flux through the `i+½` face, so if that face is a wall face
+the whole group is the boundary condition's business and is dropped. What remains
+ambiguous is only groups whose own face is interior but whose arms reach outside —
+the neighbourhood of a staircase corner.
 
-**A group is two centred-difference pairs, and pairs are indivisible.** Written out,
+**A group is two centred-difference pairs, and pairs are indivisible:**
 
 ```
     group(i+½) = C·[ (f[i,j+1] − f[i,j−1]) + (f[i+1,j+1] − f[i+1,j−1]) ]
                       ‾‾‾‾‾‾ pair A ‾‾‾‾‾‾    ‾‾‾‾‾‾‾ pair B ‾‾‾‾‾‾‾
 ```
 
-Dropping a single **arm** is not an option. On a constant field a pair contributes
-`1 − 1 = 0`, but one arm alone contributes `1`, so the row sum stops vanishing and
-the operator manufactures material out of a uniform state. Both treatments
-therefore act on whole pairs, and both keep constants in the kernel by
-construction:
+Dropping a single **arm** is not an option: a pair contributes `1 − 1 = 0` on a
+constant field, but one arm alone contributes `1`, so the row sum stops vanishing
+and the operator manufactures material out of a uniform state. Both treatments act
+on whole pairs, and both keep constants in the kernel:
 
 | `cross_terms` | rule |
 |---|---|
@@ -86,38 +77,32 @@ construction:
 
 ## Measured: `:drop` conserves, `:reflect` does not
 
-Zero row sums do **not** imply that `Σ J·n` is conserved — that needs `J·A`
-symmetric, and it is exactly what a wall treatment can break. Measured as
-`max|JᵀA|` over in-wall columns, normalised by `max(J)·max|A|`:
+Zero row sums do **not** imply `Σ J·n` is conserved — that needs `J·A` symmetric,
+which is exactly what a wall treatment can break. Measured as `max|JᵀA|` over
+in-wall columns, normalised by `max(J)·max|A|`, at `D∥/D⊥ = 10 / 1000`:
 
-| wall | `D∥/D⊥` | `:drop` | `:reflect` |
-|---|---|---|---|
-| axis-aligned box | 10 / 1000 | 1.7e-16 / 2.0e-16 | **0.169 / 0.206** |
-| 45° diamond | 10 / 1000 | 1.7e-16 / 2.0e-16 | **0.077 / 0.092** |
-| L-shape, re-entrant corner | 10 / 1000 | 2.3e-16 / 1.8e-16 | **0.171 / 0.209** |
+| wall | `:drop` | `:reflect` |
+|---|---|---|
+| axis-aligned box | 1.7e-16 / 2.0e-16 | **0.169 / 0.206** |
+| 45° diamond | 1.7e-16 / 2.0e-16 | **0.077 / 0.092** |
+| L-shape, re-entrant corner | 2.3e-16 / 1.8e-16 | **0.171 / 0.209** |
 
-Fifteen orders apart, on every wall shape and every anisotropy. At `D∥/D⊥ = 1`
-the two coincide exactly: with `D_RZ = 0` there is no cross term and no question.
+Fifteen orders apart on every wall shape and anisotropy. At `D∥/D⊥ = 1` the two
+coincide: with `D_RZ = 0` there is no cross term and no question.
 
-**The design note's claim that reflection "conserves by construction" is wrong.**
-Substituting the owning cell keeps the pair a difference, so constants stay in the
-kernel and row sums still vanish — but it moves `±C` onto the diagonal with no
-matching change in any other row, and `J·A` stops being symmetric. Row-sum
-conservation is a strictly weaker property than `Σ J·n` conservation, and only the
-latter is the invariant this code needs.
-
-`:reflect` is kept rather than deleted so the comparison stays reproducible and
-the default has a recorded reason. It must not be used for production transport.
+Reflection is *not* conservative by construction, contrary to what its name
+suggests. Substituting the owning cell keeps the pair a difference, so constants
+stay in the kernel and row sums still vanish — but it moves `±C` onto the diagonal
+with no matching change in any other row, and `J·A` stops being symmetric. Row-sum
+conservation is strictly weaker than `Σ J·n` conservation, and only the latter is
+the invariant this code needs. `:reflect` is kept so the comparison stays
+reproducible; it must not be used for production transport.
 
 **Not a strict M-matrix once `D_RZ ≠ 0`.** The cross terms carry the sign of
-`D_RZ`, so roughly a quarter of the off-diagonals of `A` go negative (1054 of 4312
-at `D∥/D⊥ = 10`) and `I − θΔt·A` picks up positive off-diagonals. That is a
-property of the standard 9-point cross-derivative stencil, not of the wall
-treatment, and it is why positivity is asserted by *solving* rather than by
-inspecting signs.
-
-Nodes off the grid are "not in-wall", so a wall coinciding with the grid frame
-works with no outside region at all, diagonal arms included.
+`D_RZ`, so roughly a quarter of the off-diagonals go negative (1054 of 4312 at
+`D∥/D⊥ = 10`) and `I − θΔt·A` picks up positive off-diagonals. That is a property
+of the standard 9-point cross-derivative stencil, not of the wall treatment, and
+it is why positivity is asserted by *solving* rather than by inspecting signs.
 """
 function build_wall_diffusion_matrix(
         G::GridGeometry{FT},
