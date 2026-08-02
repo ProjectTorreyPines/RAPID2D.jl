@@ -204,3 +204,112 @@ end
     ipk, jpk = Tuple(argmax(n))
     @test rhs[ipk, jpk] < 0
 end
+
+# ── the update itself ───────────────────────────────────────────────────────
+
+@testitem "Neutral gas update: pure diffusion conserves Jacobian-weighted gas" begin
+    using RAPID2D: update_neutral_H2_gas_density!
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-5,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    RP.plasma.ne .= 0.0                     # no ionization sink: diffusion alone
+    RAPID2D.update_transport_quantities!(RP)
+
+    Rc = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
+    Zc = (RP.G.Z1D[1] + RP.G.Z1D[end]) / 2
+    @. RP.plasma.n_H2_gas = 1.0e18 *
+        (1.0 + 3.0 * exp(-((RP.G.R2D - Rc)^2 + (RP.G.Z2D - Zc)^2) / 0.02))
+
+    inw = RP.G.nodes.in_wall_nids
+    Jv = vec(RP.G.Jacob)
+    total(x) = sum(Jv[k] * x[k] for k in inw)
+    before = total(RP.plasma.n_H2_gas)
+
+    for _ in 1:20
+        update_neutral_H2_gas_density!(RP)
+    end
+
+    # Σ J·n is the invariant of the reflective stencil; plain Σ n is not conserved
+    # in cylindrical geometry. Twenty steps so any per-step leak accumulates.
+    @test total(RP.plasma.n_H2_gas) ≈ before rtol = 1.0e-10
+    @test !(RP.plasma.n_H2_gas ≈ fill(RP.plasma.n_H2_gas[inw[1]], size(RP.plasma.n_H2_gas)))
+end
+
+@testitem "Neutral gas update: the sink is exactly the electron source" begin
+    using RAPID2D: update_neutral_H2_gas_density!
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-7,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    # One electron born per molecule destroyed. The gas must lose exactly what
+    # solve_electron_continuity_equation! adds, i.e. dt·ne·ν_en_iz with the SAME
+    # ν the electron equation reads — otherwise nuclei are created or destroyed.
+    # A uniform state makes diffusion a no-op, isolating the sink arithmetic.
+    RP.plasma.ne .= 1.0e18
+    RAPID2D.update_transport_quantities!(RP)
+    RP.plasma.ν_en_iz .= 5.0e5
+
+    n_before = copy(RP.plasma.n_H2_gas)
+    update_neutral_H2_gas_density!(RP)
+
+    inw = RP.G.nodes.in_wall_nids
+    expected = @. n_before - RP.dt * RP.plasma.ne * RP.plasma.ν_en_iz
+    @test RP.plasma.n_H2_gas[inw] ≈ expected[inw] rtol = 1.0e-10
+end
+
+@testitem "Neutral gas update: density never goes negative" begin
+    using RAPID2D: update_neutral_H2_gas_density!
+
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 20, NZ = 24,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-3,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    # a step long enough that an unguarded explicit sink would overshoot into
+    # negative density, which would then poison every ν = n_H2·K downstream
+    RP.plasma.ne .= 1.0e19
+    RAPID2D.update_transport_quantities!(RP)
+    RP.plasma.ν_en_iz .= 1.0e6
+
+    update_neutral_H2_gas_density!(RP)
+    @test minimum(RP.plasma.n_H2_gas) ≥ 0.0
+end
+
+@testitem "Neutral gas update: the Gas_evolve path is alive" begin
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 20, NZ = 24,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-7,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.plasma.ne .= 1.0e18
+    RP.plasma.Te_eV .= 20.0
+    RAPID2D.update_transport_quantities!(RP)
+
+    # This branch used to call a function that did not exist anywhere in src, so
+    # advance_timestep! threw UndefVarError with the DEFAULT flag set.
+    RP.flags.Gas_evolve = true
+    before = copy(RP.plasma.n_H2_gas)
+    RAPID2D.advance_timestep!(RP)
+    @test RP.plasma.n_H2_gas != before
+
+    RP.flags.Gas_evolve = false
+    frozen = copy(RP.plasma.n_H2_gas)
+    RAPID2D.advance_timestep!(RP)
+    @test RP.plasma.n_H2_gas == frozen
+end

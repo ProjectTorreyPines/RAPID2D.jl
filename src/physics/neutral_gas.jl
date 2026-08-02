@@ -158,3 +158,85 @@ function build_reflective_diffusion_matrix(G, D::AbstractMatrix{FT}) where {FT <
 
     return sparse(rows, cols, vals, Ng, Ng)
 end
+
+"""
+    update_neutral_H2_gas_density!(RP)
+
+Advance the neutral H2 fill one step: burn-out by electron impact, then
+reflective diffusion.
+
+```
+    ∂n_H2/∂t = ∇·(D∇n_H2) − n_e·ν_iz^{H2}
+```
+
+The two halves are operator-split, sink first, matching the MATLAB original.
+
+**The sink is the electron source, not a copy of it.** It reads the very same
+`plasma.ν_en_iz` that `solve_electron_continuity_equation!` uses, because one
+electron is born for each molecule destroyed. Recomputing the rate here — or
+letting a driver script subtract its own estimate — breaks nuclei conservation:
+the scenario scripts that did exactly that overshot the electron supply limit by
+7% at dt = 1e-5, an error that only vanishes as dt → 0 because the script's sink
+was explicit while the electron equation's source was implicit.
+
+Applied on in-wall nodes only, so gas outside the vessel is never consumed.
+
+**Backward Euler, deliberately, not the global `Implicit_weight`.** The MATLAB
+hard-codes the same choice with the note *"safer choice to prevent from
+oscillation"*, and the reason is L-stability: Crank-Nicolson is A-stable but its
+amplification factor tends to −1 as |λ|Δt grows, so stiff modes ring instead of
+damping. Here D varies by two orders of magnitude across the shielding layer, so
+the stiff end is always present.
+
+The diffusivity is evaluated per cell against the *molecular* destruction rate
+`n_e·K_iz = n_e·ν_en_iz/n_H2`, not the electron's `ν_en_iz`. Those differ by
+`n_e/n_H2` and it is the molecule's fate that sets its free path.
+"""
+function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "update_neutral_H2_gas_density!" begin
+        pla = RP.plasma
+        G = RP.G
+        dt = RP.dt
+        OP = RP.operators
+        zero_FT = zero(FT)
+
+        # ── burn-out ────────────────────────────────────────────────────────
+        @inbounds for k in G.nodes.in_wall_nids
+            pla.n_H2_gas[k] = max(
+                pla.n_H2_gas[k] - dt * pla.ne[k] * pla.ν_en_iz[k], zero_FT
+            )
+        end
+
+        # ── diffusivity ─────────────────────────────────────────────────────
+        # Vessel scale for the Knudsen term: the shorter extent bounds a free path.
+        L_char = min(
+            maximum(RP.wall.R) - minimum(RP.wall.R),
+            maximum(RP.wall.Z) - minimum(RP.wall.Z),
+        )
+        D = similar(pla.n_H2_gas)
+        @inbounds for k in eachindex(D)
+            n = pla.n_H2_gas[k]
+            # ν seen by a MOLECULE, not by an electron
+            ν_iz_gas = n > zero_FT ? pla.ne[k] * pla.ν_en_iz[k] / n : zero_FT
+            D[k] = neutral_gas_diffusivity(n, pla.T_gas_eV, ν_iz_gas, L_char)
+        end
+
+        # ── reflective diffusion, backward Euler ────────────────────────────
+        A = build_reflective_diffusion_matrix(G, D)
+        # rows outside the wall are empty in A, so this leaves them as identity
+        M = sparse(I, size(A, 1), size(A, 2)) - dt * A
+        # The RHS is copied out rather than solved in place. UMFPACK rejects an
+        # aliased (X, B) outright for a Vector argument; `view(matrix, :)` builds a
+        # different SubArray wrapper that slips past that check while still sharing
+        # storage, so an in-place call here would ride on an explicitly forbidden
+        # path — correct today only because UMFPACK happens to buffer B internally,
+        # and silent if that ever changes or if BandedLUSolver is used instead.
+        rhs = vec(copy(pla.n_H2_gas))
+        @timeit RAPID_TIMER "n_H2_gas LinearSolve" begin
+            factorize!(OP.gas_solver, M)
+            solve!(view(pla.n_H2_gas, :), OP.gas_solver, rhs)
+        end
+
+        return RP
+    end # @timeit
+end
