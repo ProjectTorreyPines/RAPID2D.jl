@@ -1,0 +1,185 @@
+# Wall-aware anisotropic diffusion operator.
+#
+# Neither existing builder does this job. `compute_∇𝐃∇f_directly` and the assembled
+# `∇𝐃∇` carry the full tensor but sweep 2:N-1 with no wall awareness, so material
+# diffuses past the wall and is removed afterwards. `build_reflective_diffusion_matrix`
+# knows about the wall but is 5-point and isotropic. This one is both.
+
+"""
+    build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms = :drop)
+
+Nine-point `∇·(𝐃∇·)` with a **reflective** wall, on the full `NR·NZ` indexing.
+
+Takes the tensor directly rather than a `RAPID` object, so the operator can be
+driven from a manufactured `(D_RR, D_RZ, D_ZZ)` with no physics model behind it —
+which is how the wall behaviour gets tested at anisotropies a real discharge would
+take a long time to reach.
+
+Rows for nodes on or outside the wall are left empty, so those nodes never evolve.
+`v_absorb` is absent: this operator is purely reflective (`R = 1`). The Robin debit
+enters as a diagonal term on wall faces and is added separately.
+
+## The stencil
+
+Same conservative, `J`-weighted, face-averaged discretisation as
+`compute_∇𝐃∇f_directly`, with `CT_RR = J·D_RR/ΔR²`, `CT_RZ = J·D_RZ/(ΔR·ΔZ)`,
+`CT_ZZ = J·D_ZZ/ΔZ²`. The cardinal part is the familiar five-point operator. The
+cross-derivative part adds four groups, one per cardinal **face**, each reaching
+diagonal neighbours.
+
+## What happens at the wall
+
+Two rules, and the second is the interesting one.
+
+**A cross group belongs to its face.** Group `i+½` is the cross-derivative
+contribution to the flux through the `i+½` face. If that face is a wall face, the
+entire flux through it is the boundary condition's business, so the whole group is
+dropped. This confines the remaining ambiguity to groups whose *own* face is
+interior but whose stencil arms still reach outside — in practice, the
+neighbourhood of a staircase corner.
+
+**A group is two centred-difference pairs, and pairs are indivisible.** Written out,
+
+```
+    group(i+½) = C·[ (f[i,j+1] − f[i,j−1]) + (f[i+1,j+1] − f[i+1,j−1]) ]
+                      ‾‾‾‾‾‾ pair A ‾‾‾‾‾‾    ‾‾‾‾‾‾‾ pair B ‾‾‾‾‾‾‾
+```
+
+Dropping a single **arm** is not an option. On a constant field a pair contributes
+`1 − 1 = 0`, but one arm alone contributes `1`, so the row sum stops vanishing and
+the operator manufactures material out of a uniform state. Both treatments
+therefore act on whole pairs, and both keep constants in the kernel by
+construction:
+
+| `cross_terms` | rule |
+|---|---|
+| `:drop` (default) | remove any pair containing a node that is not in-wall |
+| `:reflect` | substitute the owning cell for a not-in-wall node |
+
+## Measured: `:drop` conserves, `:reflect` does not
+
+Zero row sums do **not** imply that `Σ J·n` is conserved — that needs `J·A`
+symmetric, and it is exactly what a wall treatment can break. Measured as
+`max|JᵀA|` over in-wall columns, normalised by `max(J)·max|A|`:
+
+| wall | `D∥/D⊥` | `:drop` | `:reflect` |
+|---|---|---|---|
+| axis-aligned box | 10 / 1000 | 1.7e-16 / 2.0e-16 | **0.169 / 0.206** |
+| 45° diamond | 10 / 1000 | 1.7e-16 / 2.0e-16 | **0.077 / 0.092** |
+| L-shape, re-entrant corner | 10 / 1000 | 2.3e-16 / 1.8e-16 | **0.171 / 0.209** |
+
+Fifteen orders apart, on every wall shape and every anisotropy. At `D∥/D⊥ = 1`
+the two coincide exactly: with `D_RZ = 0` there is no cross term and no question.
+
+**The design note's claim that reflection "conserves by construction" is wrong.**
+Substituting the owning cell keeps the pair a difference, so constants stay in the
+kernel and row sums still vanish — but it moves `±C` onto the diagonal with no
+matching change in any other row, and `J·A` stops being symmetric. Row-sum
+conservation is a strictly weaker property than `Σ J·n` conservation, and only the
+latter is the invariant this code needs.
+
+`:reflect` is kept rather than deleted so the comparison stays reproducible and
+the default has a recorded reason. It must not be used for production transport.
+
+**Not a strict M-matrix once `D_RZ ≠ 0`.** The cross terms carry the sign of
+`D_RZ`, so roughly a quarter of the off-diagonals of `A` go negative (1054 of 4312
+at `D∥/D⊥ = 10`) and `I − θΔt·A` picks up positive off-diagonals. That is a
+property of the standard 9-point cross-derivative stencil, not of the wall
+treatment, and it is why positivity is asserted by *solving* rather than by
+inspecting signs.
+
+Nodes off the grid are "not in-wall", so a wall coinciding with the grid frame
+works with no outside region at all, diagonal arms included.
+"""
+function build_wall_diffusion_matrix(
+        G::GridGeometry{FT},
+        D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT};
+        cross_terms::Symbol = :drop,
+    ) where {FT <: AbstractFloat}
+
+    cross_terms in (:drop, :reflect) ||
+        throw(ArgumentError("cross_terms must be :drop or :reflect, got :$cross_terms"))
+
+    NR, NZ = G.NR, G.NZ
+    Ng = NR * NZ
+    CTRR = @. G.Jacob * D_RR / (G.dR * G.dR)
+    CTRZ = @. G.Jacob * D_RZ / (G.dR * G.dZ)
+    CTZZ = @. G.Jacob * D_ZZ / (G.dZ * G.dZ)
+    nid = G.nodes.nid
+
+    rows = Int[]
+    cols = Int[]
+    vals = FT[]
+    sizehint!(rows, 9 * Ng)
+    sizehint!(cols, 9 * Ng)
+    sizehint!(vals, 9 * Ng)
+
+    @inbounds for j in 1:NZ, i in 1:NR
+        is_in_wall(G, i, j) || continue
+        row = nid[i, j]
+        invJ = one(FT) / G.Jacob[i, j]
+        diag = zero(FT)
+
+        # ── cardinal arms: the five-point part ──────────────────────────────
+        for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
+            ii, jj = i + di, j + dj
+            is_in_wall(G, ii, jj) || continue     # reflective: omit, do not zero
+            CT = dj == 0 ? CTRR : CTZZ
+            c = invJ * FT(0.5) * (CT[ii, jj] + CT[i, j])
+            push!(rows, row)
+            push!(cols, nid[ii, jj])
+            push!(vals, c)
+            diag -= c
+        end
+
+        # ── cross-derivative groups, one per cardinal face ──────────────────
+        for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
+            ii, jj = i + di, j + dj
+            # a wall face's flux belongs entirely to the boundary condition
+            is_in_wall(G, ii, jj) || continue
+            sgn = (di + dj) > 0 ? one(FT) : -one(FT)
+            c = sgn * invJ * FT(0.125) * (CTRZ[ii, jj] + CTRZ[i, j])
+            iszero(c) && continue                 # isotropic tensor: nothing to add
+
+            # the pair direction is transverse to the face
+            ti, tj = dj == 0 ? (0, 1) : (1, 0)
+            for (oi, oj) in ((i, j), (ii, jj))
+                pi_, pj_ = oi + ti, oj + tj
+                mi_, mj_ = oi - ti, oj - tj
+                in_p = is_in_wall(G, pi_, pj_)
+                in_m = is_in_wall(G, mi_, mj_)
+
+                if cross_terms === :drop
+                    (in_p && in_m) || continue    # the pair goes as a unit
+                    push!(rows, row)
+                    push!(cols, nid[pi_, pj_])
+                    push!(vals, c)
+                    push!(rows, row)
+                    push!(cols, nid[mi_, mj_])
+                    push!(vals, -c)
+                else
+                    if in_p
+                        push!(rows, row)
+                        push!(cols, nid[pi_, pj_])
+                        push!(vals, c)
+                    else
+                        diag += c
+                    end
+                    if in_m
+                        push!(rows, row)
+                        push!(cols, nid[mi_, mj_])
+                        push!(vals, -c)
+                    else
+                        diag -= c
+                    end
+                end
+            end
+        end
+
+        push!(rows, row)
+        push!(cols, row)
+        push!(vals, diag)
+    end
+
+    return sparse(rows, cols, vals, Ng, Ng)
+end
