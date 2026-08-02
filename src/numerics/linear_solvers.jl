@@ -5,11 +5,31 @@
 # with a vector or matrix RHS. Multi-RHS batch: the factorization is paid once,
 # each extra RHS adds only a backsolve.
 #
-# Design record: Burnthrough0D claudedocs/transport2d_results.md §(b′) — with
-# BLAS pinned to 1 thread (done at RAPID2D module load), `lu!` reuse beats the
-# per-solve `\` path by ~25% and an Ng×6 batch costs ~1.2× a single solve.
-# BandedLUSolver wins only on small grids (≲64²); it is kept as a per-problem
-# selectable alternative with a residual-checked fallback.
+# Measured on the real electron-continuity matrix (default configuration, so the
+# anisotropy Dpara/Dperp ≈ 1.7e5 is the one production actually assembles),
+# `factorize!` + `solve!` against the per-step `\`:
+#
+#   grid      n       direct    SparseLU        BandedLU
+#   40×80     3200    2897 µs   1989 µs 1.46×   1201 µs 2.41×
+#   64×64     4096    4277 µs   2967 µs 1.44×   3000 µs 1.43×
+#   80×160    12800  15553 µs  10475 µs 1.48×  13265 µs 1.17×
+#   128×128   16384  20695 µs  14025 µs 1.48×  38223 µs 0.54×
+#
+# SparseLUSolver holds ~1.45× at every size and reproduces `\` to exactly zero
+# relative error (it is the same UMFPACK factorization). BandedLUSolver wins only
+# on small grids — it ties at 64² and is 1.9× SLOWER at 128² — so it is kept as a
+# per-problem selectable alternative, not the default.
+#
+# For an extra RHS in a batch (`solve!` alone) SparseLU is 5-11× faster
+# (68/95/354/488 µs vs 358/636/2628/5371 µs): BandedLU verifies its residual on
+# every solve, and a single RHS cannot amortize that sparse matvec.
+#
+# BLAS thread count is immaterial here — 1 vs 8 threads gives 1.46× vs 1.49×
+# (40×80) and 0.50× vs 0.53× (128²), because UMFPACK on these matrices is
+# dominated by sparse bookkeeping rather than dense BLAS3 kernels. Note that the
+# `LinearAlgebra.BLAS.set_num_threads(1)` at RAPID2D.jl top level sits outside an
+# `__init__`, so it runs at precompile time only and does not take effect at
+# runtime; that is a separate issue, and the numbers above hold either way.
 
 abstract type AbstractLinearSolver{FT <: AbstractFloat} end
 
