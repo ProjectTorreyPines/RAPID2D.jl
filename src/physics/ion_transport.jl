@@ -287,8 +287,25 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         )
     end
 
-    return isnothing(shared_turb) ? [collisional, bohm] : [collisional, bohm, shared_turb]
+    channels = isnothing(shared_turb) ? [collisional, bohm] : [collisional, bohm, shared_turb]
+    for (name, ch) in zip(ION_MECHANISMS, channels)
+        _finite_channel(ch) || throw(
+            ArgumentError(
+                "the $name channel of $(species.name) is not finite. A field line that " *
+                    "never reaches a wall gives an unbounded L_mixing, and a cell with no " *
+                    "collisions gives an unbounded mean free path; both make D = ½vλ diverge"
+            )
+        )
+    end
+    return channels
 end
+
+"Mechanism names, in the order [`ion_transport_channels`](@ref) returns them."
+const ION_MECHANISMS = ("collisional", "Bohm", "turbulent ExB")
+
+_finite_channel(ch::DiffusionChannel) =
+    all(isfinite, ch.v_para) && all(isfinite, ch.λ_para) &&
+    all(isfinite, ch.v_perp) && all(isfinite, ch.λ_perp)
 
 """
     ion_channel_directions(RP) -> Vector{Tuple}
