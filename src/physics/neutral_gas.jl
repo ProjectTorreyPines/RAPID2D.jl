@@ -140,11 +140,11 @@ so they combine by Matthiessen *inside* `λ` and their kinetic ceiling is counte
 once, not summed.
 """
 function neutral_gas_channel(n_gas, T_gas_eV, ν_iz, L_char)
-    v_th = neutral_gas_thermal_speed(T_gas_eV)
-    D_elastic = h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
-    inv_λ = v_th / (2 * D_elastic) + ν_iz / v_th + 1 / L_char
-    λ = 1 / inv_λ
-    return (v_para = v_th, λ_para = λ, v_perp = v_th, λ_perp = λ)
+    v_th = neutral_gas_thermal_speed.(T_gas_eV)
+    D_elastic = @. h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
+    inv_λ = @. v_th / (2 * D_elastic) + ν_iz / v_th + 1 / L_char
+    λ = @. 1 / inv_λ
+    return DiffusionChannel(v_th, λ, v_th, λ)
 end
 
 """

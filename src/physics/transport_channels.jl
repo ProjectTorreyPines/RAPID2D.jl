@@ -70,7 +70,7 @@ struct DiffusionChannel{FT <: AbstractFloat} <: TransportChannel{FT}
     v_perp::Matrix{FT}
     λ_perp::Matrix{FT}
 
-    function DiffusionChannel(
+    function DiffusionChannel{FT}(
             v_para::Matrix{FT}, λ_para::Matrix{FT},
             v_perp::Matrix{FT}, λ_perp::Matrix{FT}
         ) where {FT <: AbstractFloat}
@@ -79,6 +79,35 @@ struct DiffusionChannel{FT <: AbstractFloat} <: TransportChannel{FT}
             throw(DimensionMismatch("all four channel fields must share a size"))
         return new{FT}(v_para, λ_para, v_perp, λ_perp)
     end
+end
+
+"""
+    DiffusionChannel(v_para, λ_para, v_perp, λ_perp)
+
+Build a channel from any mix of fields and scalars, expanded to their common
+broadcast shape.
+
+Mixing is the normal case rather than a convenience: a channel's speed is a field
+(`v_E = E_pol/B_tot`) while its step length is usually a configuration scalar
+(`L_mixing`), and a cross-field channel's parallel quantities are identically
+zero. Broadcasting decides the shape, so a genuine mismatch raises
+`DimensionMismatch` from Julia itself rather than being silently reshaped.
+
+At least one argument must be a matrix — a channel lives on the `NR×NZ` grid, and
+an all-scalar call is more likely a mistake than a request for a 0-dimensional
+channel.
+"""
+function DiffusionChannel(v_para, λ_para, v_perp, λ_perp)
+    ax = Broadcast.combine_axes(v_para, λ_para, v_perp, λ_perp)
+    length(ax) == 2 || throw(
+        ArgumentError(
+            "a channel lives on the NR×NZ grid, but these arguments broadcast to " *
+                "$(length(ax)) dimension(s); pass the field quantities as matrices"
+        )
+    )
+    FT = float(promote_type(map(eltype, (v_para, λ_para, v_perp, λ_perp))...))
+    z = zeros(FT, map(length, ax))
+    return DiffusionChannel{FT}(z .+ v_para, z .+ λ_para, z .+ v_perp, z .+ λ_perp)
 end
 
 "Parallel diffusivity `D∥ = ½·v∥·λ∥` [m²/s], per node."
@@ -197,6 +226,12 @@ end
 # Adapters, not models. Each already existed in the code as a `v × λ` product
 # collapsed into a single D; these stop the return from being lossy, and each is
 # pinned by a round-trip test against the diffusivity the solver already computes.
+#
+# All arithmetic here is elementwise. These take fields, and `/` between two
+# matrices is right-division, not division — `E_pol / B_tot` on a square grid
+# throws `SingularException`, and on a non-square one it silently returns an
+# array of the wrong shape. Every expression below is written under `@.` for that
+# reason, and the non-square case is a regression test.
 
 """
     turbulent_ExB_channel(E_pol, B_tot, L_mixing, f_para, f_perp)
@@ -212,11 +247,8 @@ Aligned with `b̂_pol`, **not** the full `b̂`: use the per-channel-direction
 `total_tensor` when combining it with a collisional channel.
 """
 function turbulent_ExB_channel(E_pol, B_tot, L_mixing, f_para, f_perp)
-    v_E = E_pol / B_tot
-    return (
-        v_para = v_E, λ_para = f_para * L_mixing,
-        v_perp = v_E, λ_perp = f_perp * L_mixing,
-    )
+    v_E = @. E_pol / B_tot
+    return DiffusionChannel(v_E, (@. f_para * L_mixing), v_E, (@. f_perp * L_mixing))
 end
 
 """
@@ -230,10 +262,7 @@ a cross-field mechanism are two channels rather than one anisotropic channel: th
 do not share a speed, so their ceilings add.
 """
 function parallel_collisional_channel(v_p, D_para)
-    return (
-        v_para = v_p, λ_para = 2 * D_para / v_p,
-        v_perp = zero(v_p), λ_perp = zero(v_p),
-    )
+    return DiffusionChannel(v_p, (@. 2 * D_para / v_p), zero.(v_p), zero.(v_p))
 end
 
 """
@@ -262,11 +291,8 @@ ever unified.
 `v_para = 0`: a cross-field channel cannot reach a wall the field points into.
 """
 function bohm_channel(Te_eV, B, m_i)
-    c_s = sqrt(Te_eV * EE_GAS / m_i)      # EE_GAS is the elementary charge
-    ω_ci = EE_GAS * B / m_i
-    ρ_s = c_s / ω_ci
-    return (
-        v_para = zero(c_s), λ_para = zero(c_s),
-        v_perp = c_s / 8, λ_perp = ρ_s,
-    )
+    c_s = @. sqrt(Te_eV * EE_GAS / m_i)      # EE_GAS is the elementary charge
+    ω_ci = @. EE_GAS * B / m_i
+    ρ_s = @. c_s / ω_ci
+    return DiffusionChannel(zero.(c_s), zero.(c_s), (@. c_s / 8), ρ_s)
 end

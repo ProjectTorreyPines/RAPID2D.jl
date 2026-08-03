@@ -277,19 +277,46 @@ end
     D_RZ = fill((Dpara - Dperp) * bR * bZ, G.NR, G.NZ)
     D_ZZ = fill(Dperp + (Dpara - Dperp) * bZ^2, G.NR, G.NZ)
 
+    # It is NOT an M-matrix here, and the data has to be able to show that. A
+    # field that is uniform inside the wall is an exact kernel mode of a
+    # reflective diffusion operator — the solve returns it untouched, so any
+    # positivity assertion on it is vacuous. Use a localized blob on a ZERO
+    # background instead, which is what an undershoot needs in order to be
+    # negative rather than merely a dip.
     inw = G.nodes.in_wall_nids
+    Rc = (G.R1D[1] + G.R1D[end]) / 2
+    Zc = (G.Z1D[1] + G.Z1D[end]) / 2
+    n0 = zeros(G.NR * G.NZ)
+    for k in inw
+        i, j = G.nodes.rid[k], G.nodes.zid[k]
+        n0[k] = 1.0e18 * exp(-((G.R2D[i, j] - Rc)^2 + (G.Z2D[i, j] - Zc)^2) / 0.02)
+    end
+    Jv = vec(G.Jacob)
+    total_Jn(v) = sum(Jv[k] * v[k] for k in inw)
+
     for treatment in (:drop, :reflect)
         A = build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms = treatment)
 
         # the diagonal drains, never sources
         @test all(A[k, k] <= 0 for k in inw)
 
-        # a long implicit step must not produce a negative density from a
-        # non-negative one — the property backward Euler is chosen for
-        M = sparse(I, size(A, 1), size(A, 2)) - 1.0e-3 * A
-        n0 = zeros(G.NR * G.NZ)
-        n0[inw] .= 1.0e18
-        n1 = M \ n0
-        @test minimum(n1[inw]) >= -1.0e-6 * maximum(n0)
+        # the undershoot is real, grows with Δt, and shrinks as Δt does. Values
+        # measured at D∥/D⊥ = 1000: −7.3e-11 at Δt = 1e-6 rising to −1.7e-2 at
+        # Δt = 1e-3. Bounded and transient, not accumulating — see
+        # claudedocs/TODO/anisotropic-positivity.md before "fixing" the stencil.
+        unders = map((1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3)) do dt
+            n1 = (sparse(I, size(A, 1), size(A, 2)) - dt * A) \ n0
+            return -min(minimum(n1[inw]), 0.0) / maximum(n1[inw])
+        end
+        @test issorted(unders)                    # more implicit time, more undershoot
+        @test unders[1] < 1.0e-9                  # negligible at a production step
+        @test unders[end] < 0.1                   # and bounded even at Δt = 1e-3
+
+        # conservation is untouched by any of it — this is a monotonicity defect,
+        # not a leak. `:reflect` is the exception, and that is its own test.
+        if treatment === :drop
+            n1 = (sparse(I, size(A, 1), size(A, 2)) - 1.0e-3 * A) \ n0
+            @test abs(total_Jn(n1) - total_Jn(n0)) / total_Jn(n0) < 1.0e-13
+        end
     end
 end
