@@ -116,6 +116,23 @@ end
     @test !all(≈(0.510469472194728), RP.plasma.sptz_fac)
 end
 
+@testitem "The new collision and charge fields reach the 2D snapshot" setup = [ChargeCase] begin
+    using RAPID2D: measure_snap2D
+
+    # `ν_ii` now carries its own logarithm, and that correction moves the ion AND
+    # (through the ambipolar coupling) the ELECTRON parallel diffusivity by tens
+    # of percent. A user whose run moves has to be able to see why, so the two
+    # new fields have to be observable, not just internal.
+    RP = charge_case()
+    update_transport_quantities!(RP)
+    snap = measure_snap2D(RP)
+
+    @test snap.lnΛ_ii == RP.plasma.lnΛ_ii
+    @test snap.Z_mean == RP.plasma.Z_mean
+    @test snap.lnΛ_ii != snap.lnΛ                 # Te ≠ Ti ⇒ genuinely different
+    @test all(>(0.0), snap.lnΛ_ii)
+end
+
 @testitem "Quasineutrality slaves ions with the mean charge" setup = [ChargeCase] begin
     using RAPID2D: slave_ions_to_electrons!
 

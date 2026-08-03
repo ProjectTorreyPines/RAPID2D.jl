@@ -328,8 +328,12 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.mean_aR_by_JxB .= pla.mean_aR_by_JxB
     snap2D.mean_aZ_by_JxB .= pla.mean_aZ_by_JxB
 
-    # Coulomb logarithm
+    # Coulomb logarithms — the electron-ion one and the ion-ion one, which are
+    # different formulas (NRL p.34b vs p.34c) and differ by tens of percent
+    # whenever Te ≠ Ti.
     snap2D.lnΛ .= pla.lnΛ
+    snap2D.lnΛ_ii .= pla.lnΛ_ii
+    snap2D.Z_mean .= pla.Z_mean
 
     # Neutral gas
     snap2D.n_H2_gas .= pla.n_H2_gas

@@ -189,7 +189,13 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     mean_aZ_by_JxB::Matrix{FT} = zeros(FT, dims_RZ) # JxB acceleration Z component
 
     # Physics parameters
-    lnΛ::Matrix{FT} = zeros(FT, dims_RZ)            # Coulomb logarithm
+    lnΛ::Matrix{FT} = zeros(FT, dims_RZ)            # ELECTRON-ion Coulomb logarithm
+    # Ion-ion Coulomb logarithm, and the mean ion charge. Both are here because
+    # they are the levers behind changes a user would otherwise have to guess at:
+    # `lnΛ_ii` sets ν_ii, which moves the ion AND (ambipolarly) the electron
+    # parallel diffusivity, and `Z_mean` sets the ion charge density.
+    lnΛ_ii::Matrix{FT} = zeros(FT, dims_RZ)
+    Z_mean::Matrix{FT} = ones(FT, dims_RZ)
     L_mixing::Matrix{FT} = zeros(FT, dims_RZ)       # Mixing length
     nc_para::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel critical density
     nc_perp::Matrix{FT} = zeros(FT, dims_RZ)        # Perpendicular critical density
