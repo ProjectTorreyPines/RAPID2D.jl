@@ -271,3 +271,41 @@ end
     @test ratios[2] ≈ 1.0 rtol = 1.0e-12
     @test ratios[1] > 1.0
 end
+
+@testitem "Bohm's 1/Z is a modelling choice, so it has a flag" setup = [IonRun] begin
+    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+        channel_D_perp
+
+    # D_B = Te/(16 Z e B) follows from reading Bohm as a random walk of ρ_s per
+    # ~1.3 gyro-periods, and it is consistent with NRL p.28's r_i ∝ Z⁻¹. But NRL
+    # p.29 states Bohm itself as D_B = ckT/16eB — an ELECTRON quantity with no Z
+    # in it. Bohm is an anomalous coefficient, not a derivation, so the per-charge
+    # 1/Z is a modelling choice and belongs behind a flag rather than baked in.
+    m_p = 1.6726e-27
+    D⊥(RP, turb, Z) = channel_D_perp(
+        ion_transport_channels(RP, IonSpecies(:probe, 2m_p, Z), turb)[2]
+    )
+    v⊥(RP, turb, Z) = ion_transport_channels(RP, IonSpecies(:probe, 2m_p, Z), turb)[2].v_perp
+
+    RP = ion_case()
+    @test RP.flags.bohm_charge_scaling            # default: unchanged behaviour
+    update_transport_quantities!(RP)
+    turb = shared_turbulent_channel(RP)
+    inw = RP.G.nodes.in_wall_nids
+    @test D⊥(RP, turb, 6)[inw] ≈ D⊥(RP, turb, 1)[inw] ./ 6 rtol = 1.0e-12
+
+    off = ion_case()
+    off.flags.bohm_charge_scaling = false
+    update_transport_quantities!(off)
+    turb_off = shared_turbulent_channel(off)
+    @test D⊥(off, turb_off, 6)[inw] ≈ D⊥(off, turb_off, 1)[inw] rtol = 1.0e-12
+
+    # The flag moves λ⊥ only. v⊥ = c_s/8 has no Z in it either way, so the wall
+    # ceiling — which depends on speeds alone — must not notice the flag at all.
+    for Z in (1, 6)
+        @test v⊥(off, turb_off, Z)[inw] ≈ v⊥(RP, turb, Z)[inw] rtol = 1.0e-12
+    end
+
+    # …and at Z = 1 the flag is a no-op, so no existing single-species result moves
+    @test D⊥(off, turb_off, 1)[inw] ≈ D⊥(RP, turb, 1)[inw] rtol = 1.0e-12
+end

@@ -524,6 +524,14 @@ Contains boolean flags that control various aspects of the simulation.
     # else, so no solver contains a branch on it.
     ion_transport_policy::IonTransportPolicy = SharedEffectiveTransport()
 
+    # Whether the Bohm channel carries a per-charge 1/Z. Reading Bohm as a random
+    # walk of ρ_s gives D_B = Te/(16 Z e B), but NRL p.29 states Bohm itself as
+    # ckT/16eB — an electron quantity with no Z. Bohm is an anomalous coefficient,
+    # not a derivation, so this is a modelling choice; it is a flag rather than a
+    # constant. Default `true` reproduces the existing behaviour, and at Z = 1 the
+    # flag is a no-op either way.
+    bohm_charge_scaling::Bool = true
+
     # secondary electron emission by ion impact
     secondary_electron::Bool = true           # Include secondary electron emission
     γ_2nd_electron::FT = FT(0.1)         # Secondary electron emission coefficient

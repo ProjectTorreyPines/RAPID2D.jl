@@ -298,7 +298,13 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     end
     collisional = DiffusionChannel(v_p, λ_para, zero.(v_p), zero.(v_p))
 
-    bohm = bohm_channel(pla.Te_eV, F.Bϕ, species.mass, species.charge)
+    # `bohm_charge_scaling = false` hands the channel Z = 1 instead of the species
+    # charge, so D⊥ loses its 1/Z and every species shares the textbook Bohm value.
+    # It is expressed as the charge PASSED IN rather than a branch inside
+    # `bohm_channel`, so the adapter keeps stating one relation and the modelling
+    # choice stays visible at the point where it is made.
+    Z_bohm = RP.flags.bohm_charge_scaling ? species.charge : 1
+    bohm = bohm_channel(pla.Te_eV, F.Bϕ, species.mass, Z_bohm)
     if !all(isfinite, bohm.λ_perp)
         # ρ_s = c_s/ω_ci is 0/0 wherever B vanishes; no field means no gyro-step
         bohm = DiffusionChannel(
