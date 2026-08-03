@@ -1,85 +1,8 @@
-# How many transport equations do the ion species need?
+# From a set of ion species to an advanced density.
 #
-# Ions exchange momentum with each other far faster than they are transported:
-# at ne = 1e15 m⁻³, Ti = 1 eV, τ_ii = 1.51 ms against τ_transport ≈ 0.515 s, a
-# ratio of 342. Friction damps any relative drift between species 342× faster
-# than transport can build one, so ion species do not diffuse independently —
-# they drag each other, which is the same physics as impurity pinch and
-# screening. On that reading one effective equation is not a shortcut but the
-# correct limit.
-#
-# Against that: D∥ carries 73 % of the ion flux that reaches the wall at those
-# conditions (convection 11 %, D⊥ 15 %), and D∥ is the one mechanism where the
-# species genuinely differ. So the mixing error lands on the dominant term.
-#
-# Both readings are therefore implemented, and which one runs is a matter of
-# TYPE. No call site below the dispatch point asks which policy is in force.
-
-"""
-    IonSpecies{FT}
-
-One ion species: what its transport channels need to know about it.
-
-`mass` and `charge` vary independently across the periodic table — C⁶⁺ and H₂⁺
-differ 6× in both, but O⁸⁺ and H₂⁺ differ 8× in charge and 8× in mass while C⁴⁺
-and He²⁺ share neither ratio. That independence is why `Zeff` alone cannot stand
-in for a species: one scalar cannot carry two independent numbers.
-"""
-struct IonSpecies{FT <: AbstractFloat}
-    name::Symbol
-    mass::FT
-    charge::Int
-
-    function IonSpecies{FT}(name::Symbol, mass::FT, charge::Int) where {FT <: AbstractFloat}
-        mass > zero(FT) || throw(ArgumentError("$name: mass must be positive, got $mass"))
-        charge > 0 || throw(ArgumentError("$name: an ion carries charge ≥ 1, got $charge"))
-        return new{FT}(name, mass, charge)
-    end
-end
-
-IonSpecies(name::Symbol, mass::Real, charge::Integer) =
-    IonSpecies{float(typeof(mass))}(name, float(mass), Int(charge))
-
-"""
-    IonTransportPolicy
-
-Whether ion species share a transport operator, and which one.
-
-The choice is a type rather than a flag value so that it resolves at
-[`ion_transport_groups`](@ref) and nowhere else. Everything downstream —
-assembly, factorization, the solve — is written once against the groups and
-never learns which policy produced them.
-"""
-abstract type IonTransportPolicy end
-
-"""
-    SharedEffectiveTransport()
-
-One operator for every ion species, built from density-weighted effective
-channels.
-
-Justified by `τ_ii ≪ τ_transport`: friction couples the species into a single
-fluid long before transport can separate them. Costs one factorization for any
-number of species, with the species entering as extra right-hand sides.
-
-Mixing happens **mechanism by mechanism**, not on the assembled tensor. That
-keeps each mechanism's wall ceiling separable — ceilings *add* across mechanisms
-while densities *average* across species, and collapsing to a tensor first would
-lose the distinction.
-"""
-struct SharedEffectiveTransport <: IonTransportPolicy end
-
-"""
-    PerSpeciesTransport()
-
-Each ion species gets its own operator, from its own channels, with nothing
-averaged.
-
-The reference against which [`SharedEffectiveTransport`](@ref) is measured, and
-the fallback if the mixing error ever turns out to matter. Costs one
-factorization per species.
-"""
-struct PerSpeciesTransport <: IonTransportPolicy end
+# The policy types and `IonSpecies` are declared in `ion_species.jl`, ahead of
+# `types.jl`; this file is everything that consumes them — grouping, assembly and
+# the batch solve.
 
 """
     IonTransportGroup{FT}
@@ -211,6 +134,16 @@ function ion_transport_operator(
             for m in eachindex(group.channels)
     ]
     D_RR, D_RZ, D_ZZ = total_tensor(cwd)
+    # A non-finite diffusivity reaches the solver as `SingularException(0)` from a
+    # factorization several calls away, which says nothing about which channel
+    # produced it. Collisionless cells are the way in — `D = ½v²/ν` diverges — so
+    # the check is worth one pass over the grid.
+    all(isfinite, D_RR) && all(isfinite, D_RZ) && all(isfinite, D_ZZ) || throw(
+        ArgumentError(
+            "ion diffusivity is not finite on $(count(!isfinite, D_RR)) node(s); a " *
+                "channel produced Inf or NaN, most likely a collisionless cell"
+        )
+    )
 
     isnothing(faces) &&
         return build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms), FT[]
@@ -282,4 +215,248 @@ function _check_species_channels(channels_per_species, weights)
         )
     )
     return nmech
+end
+
+# ── the production ion equation ─────────────────────────────────────────────
+
+"""
+    ion_transport_channels(RP, species) -> Vector{DiffusionChannel}
+
+The transport mechanisms `species` participates in, in the order
+[`ion_channel_directions`](@ref) lists their axes.
+
+Three mechanisms, and their species dependence is the whole argument for having a
+policy at all:
+
+| mechanism | axis | depends on the species? |
+|---|---|---|
+| collisional | `b̂` | **yes** — `D∥ = ½v_p²/ν` with `v_p = √(2T_i/m)` |
+| Bohm | `b̂` | `D⊥ = T_e/16B` is mass-free; only the `v`/`λ` split moves |
+| turbulent ExB | `b̂_pol` | no — `v_E = E_pol/B_tot` has neither mass nor charge in it |
+
+The ExB channel is therefore built once and handed to every species as the same
+object, which is what lets the mixture return it untouched.
+
+`ν` is the bulk ion collision frequency for every species. Species-resolved
+`ν_ss'` is a refinement the per-species policy could use; it is not what
+separates the two policies today.
+"""
+function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_turb) where {FT <: AbstractFloat}
+    pla, tp, F = RP.plasma, RP.transport, RP.fields
+    ee = RP.config.constants.ee
+
+    # λ∥ is built directly as a length, not recovered from a diffusivity. Going
+    # through `D∥ = ½v²/ν` and back through `λ = 2D/v` is exactly the lossy round
+    # trip the channel basis exists to avoid, and it is what turns a collisionless
+    # cell into `Inf/0`. Written as an inverse length, every degenerate limit falls
+    # out instead of needing a case:
+    #
+    #   T_i = 0            v_p = 0 → ν/v_p = Inf → λ∥ = 0, and D∥ = ½v∥λ∥ = 0
+    #   no collisions      λ∥ = L_field: free streaming to the wall along B
+    #   no field length    nothing bounds a parallel step, so the COLLISIONAL
+    #                      channel is absent. Free streaming is convection, and the
+    #                      equation already carries it as −∇·(n𝐮_i).
+    # max(0, ·): the Ti equation is free to land microscopically below zero
+    # (−1.3e-61 was observed), and `sqrt` of that is a DomainError, not a NaN.
+    v_p = @. sqrt(max(zero(FT), 2 * pla.Ti_eV * ee / species.mass))
+    inv_λ = @. tp.νi_eff / v_p + ifelse(tp.L_mixing > 0, 1 / tp.L_mixing, zero(FT))
+    # `inv_λ > 0` is false for both Inf⁻¹ = 0 and for a NaN out of 0/0, so the two
+    # degenerate cases above land on λ∥ = 0 without being enumerated.
+    λ_para = @. ifelse(inv_λ > 0, 1 / inv_λ, zero(FT))
+    if tp.Dpara0 > zero(FT)
+        # A base diffusivity adds a step length, because ½v(λ + λ₀) = D + ½vλ₀
+        @. λ_para += ifelse(v_p > 0, 2 * tp.Dpara0 / v_p, zero(FT))
+    end
+    collisional = DiffusionChannel(v_p, λ_para, zero.(v_p), zero.(v_p))
+
+    bohm = bohm_channel(pla.Te_eV, F.Bϕ, species.mass)
+    if !all(isfinite, bohm.λ_perp)
+        # ρ_s = c_s/ω_ci is 0/0 wherever B vanishes; no field means no gyro-step
+        bohm = DiffusionChannel(
+            bohm.v_para, bohm.λ_para, bohm.v_perp,
+            (@. ifelse(isfinite(bohm.λ_perp), bohm.λ_perp, zero(FT)))
+        )
+    end
+    if tp.Dperp0 > zero(FT)
+        # A constant floor has no speed of its own, so it rides at the Bohm speed:
+        # D⊥ picks it up exactly and the kinetic ceiling, which depends only on v,
+        # is left alone.
+        bohm = DiffusionChannel(
+            bohm.v_para, bohm.λ_para, bohm.v_perp,
+            (@. bohm.λ_perp + ifelse(bohm.v_perp > 0, 2 * tp.Dperp0 / bohm.v_perp, zero(FT)))
+        )
+    end
+
+    return isnothing(shared_turb) ? [collisional, bohm] : [collisional, bohm, shared_turb]
+end
+
+"""
+    ion_channel_directions(RP) -> Vector{Tuple}
+
+The `(bR, bZ)` each mechanism of [`ion_transport_channels`](@ref) is aligned
+with. Directions are field properties, identical for every species, so they are
+built once per step rather than per species.
+"""
+function ion_channel_directions(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    F = RP.fields
+    dirs = [(F.bR, F.bZ), (F.bR, F.bZ)]
+    RP.flags.turb_ExB_mixing && push!(dirs, (F.bpol_R, F.bpol_Z))
+    return dirs
+end
+
+"The ExB channel every ion species shares, or `nothing` when it is switched off."
+function shared_turbulent_channel(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    RP.flags.turb_ExB_mixing || return nothing
+    f_para = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
+    return turbulent_ExB_channel(
+        RP.fields.Epol_self, RP.fields.Btot, RP.transport.L_mixing,
+        f_para, one(FT) - f_para
+    )
+end
+
+"""
+    solve_ion_continuity_equation!(RP)
+
+Advance every ion species one step of
+
+```
+    ∂nₛ/∂t = ∇·(𝐃ₛ∇nₛ) + Sₛ
+```
+
+under the θ-scheme, grouped by `RP.flags.ion_transport_policy`.
+
+The ionization source is `nₑ·ν_iz` — one ion per electron, at a rate set by the
+**electron** density, so for ions it is a pure explicit source with no diagonal
+counterpart. `ν_iz` is the value `update_RRCs!` materialized at the step-entry
+state; the tables are not re-queried here.
+
+The wall is the Robin condition of [`wall_absorption_speeds`](@ref) at
+`config.ion_wall_albedo`, and what it takes is booked at the face. That matters
+because the wall-aware operator never writes outside the wall, so the older
+accounting — read whatever density is found on out-of-wall nodes — would report
+exactly zero loss for a wall that is in fact draining.
+
+Convection is `−∇·(n𝐮_i)` from `operators.∇𝐮_i`, built from the **ion**
+velocities. It is shared by every group: `ν_ii` couples the species into one
+fluid far faster than transport separates them, so a species-resolved `𝐮` would
+be modelling a drift friction forbids.
+
+The two wall treatments differ by channel, which is deliberate. Diffusion leaves
+through the Robin face term at `¼v̄_n(1−R)` and is booked there; convection uses
+the interior-sweeping operator, deposits on out-of-wall nodes, and is booked by
+`treat_ion_outside_wall!`. The paths do not overlap — the Robin debit never
+writes outside the wall — and a surface reached at `n𝐮·n̂` is not the same
+boundary condition as one reached at `¼v̄n`.
+"""
+function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    return @timeit RAPID_TIMER "solve_ion_continuity_equation!" begin
+        tp, pla = RP.transport, RP.plasma
+        dt = RP.dt
+        θ = RP.flags.Implicit ? FT(RP.flags.Implicit_weight) : zero(FT)
+
+        N, S = tp.ion_N, tp.ion_S
+        N[:, 1] .= vec(pla.ni)
+        fill!(S, zero(FT))
+        if RP.flags.src
+            @views S[:, 1] .= vec(pla.ne) .* vec(pla.ν_en_iz)
+        end
+
+        if !RP.flags.diffu && !RP.flags.convec
+            N .+= dt .* S
+        else
+            groups, faces = ion_step_operators(RP)
+            while length(tp.ion_solvers) < length(groups)
+                push!(tp.ion_solvers, SparseLUSolver{FT}())
+            end
+            for (gi, (group, A, v_absorb)) in enumerate(groups)
+                n_prev = N[:, group.sids]
+                solve_ion_group!(N, group, A, tp.ion_solvers[gi], dt; θ = θ, S = S)
+                book_ion_wall_loss!(RP, group, faces, v_absorb, N, n_prev, θ)
+            end
+        end
+
+        vec(pla.ni) .= view(N, :, 1)
+        return RP
+    end
+end
+
+"""
+    ion_step_operators(RP) -> (Vector{Tuple{group, A, v_absorb}}, faces)
+
+The operators this step will invert, one per transport group, and the wall faces
+they were built against.
+
+With diffusion off there is nothing for a policy to partition — every species
+sees the same (null) diffusion — so a single group covers them all and carries
+only the convective term.
+"""
+function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    tp, G = RP.transport, RP.G
+    ns = length(tp.ion_species)
+    convection = RP.flags.convec ? RP.operators.∇𝐮_i.matrix : nothing
+
+    if !RP.flags.diffu
+        group = IonTransportGroup(collect(1:ns), DiffusionChannel{FT}[])
+        Ng = G.NR * G.NZ
+        A = isnothing(convection) ? spzeros(FT, Ng, Ng) : -convection
+        return [(group, A, FT[])], WallFace{FT}[]
+    end
+
+    turb = shared_turbulent_channel(RP)
+    per_species = [ion_transport_channels(RP, sp, turb) for sp in tp.ion_species]
+    dirs = ion_channel_directions(RP)
+    weights = [reshape(view(tp.ion_N, :, s), G.NR, G.NZ) for s in 1:ns]
+    faces = wall_faces(G)
+    albedo = FT(RP.config.ion_wall_albedo)
+
+    ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
+        A, v_absorb = ion_transport_operator(G, group, dirs; faces = faces, albedo = albedo)
+        return (group, isnothing(convection) ? A : A - convection, v_absorb)
+    end
+    return ops, faces
+end
+
+"Book what the Robin condition took this step, per face, into the ion tracker."
+function book_ion_wall_loss!(
+        RP::RAPID{FT}, group::IonTransportGroup{FT}, faces, v_absorb,
+        N::AbstractMatrix{FT}, n_prev::AbstractMatrix{FT}, θ
+    ) where {FT <: AbstractFloat}
+    isempty(faces) && return RP
+    ledger = WallLedger{FT}(length(faces))
+    for (c, s) in enumerate(group.sids)
+        accumulate_wall_absorption!(
+            ledger, faces, v_absorb, view(N, :, s), RP.dt;
+            n_prev = view(n_prev, :, c), θ = θ
+        )
+    end
+    Ntracker = RP.diagnostics.Ntracker
+    Ntracker.cum0D_Ni_loss += sum(ledger.absorbed)
+    for (k, f) in enumerate(faces)
+        Ntracker.cum2D_Ni_loss[f.nid] += ledger.absorbed[k]
+    end
+    return RP
+end
+
+"""
+    set_ion_species!(RP, species) -> RP
+
+Declare which ion species the transport solve advances, and size the work
+buffers to match.
+
+Species are columns of `ion_N`/`ion_S`, in the order given; column 1 is the
+species `plasma.ni` mirrors. Appending a species here is the whole cost of
+adding it to the transport solve — grouping, assembly and the batch solve are
+already written for a list.
+"""
+function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonSpecies{FT}}) where {FT <: AbstractFloat}
+    isempty(species) && throw(ArgumentError("at least one ion species is required"))
+    allunique(sp.name for sp in species) ||
+        throw(ArgumentError("ion species names must be unique, got $(map(sp -> sp.name, species))"))
+    tp = RP.transport
+    tp.ion_species = collect(species)
+    Ng = RP.G.NR * RP.G.NZ
+    tp.ion_N = zeros(FT, Ng, length(species))
+    tp.ion_S = zeros(FT, Ng, length(species))
+    empty!(tp.ion_solvers)
+    return RP
 end

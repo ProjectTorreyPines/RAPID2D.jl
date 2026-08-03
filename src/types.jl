@@ -74,6 +74,10 @@ Contains simulation configuration parameters.
 
     turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
 
+    # Fraction of ions the wall returns to the plasma. 0 = fully absorbing,
+    # 1 = perfectly reflecting; the Robin coefficient is ¼v̄_n(1 − R).
+    ion_wall_albedo::FT = FT(0.0)
+
     # Output intervals
     snap0D_Δt_s::FT = FT(20.0e-6)  # Time interval for 1D snapshots
     snap2D_Δt_s::FT = FT(100.0e-6)  # Time interval for 2D snapshots
@@ -360,6 +364,15 @@ Fields include diffusion coefficients in different directions.
     Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # Ion parallel diffusion coefficient due to collisions [m²/s]
     Dpara_amb::Matrix{FT} = zeros(FT, dims)  # Ambipolar diffusion coefficient [m²/s]
     Dpara_e_eff::Matrix{FT} = zeros(FT, dims)  # Effective electron parallel diffusion coefficient [m²/s]
+    νi_eff::Matrix{FT} = zeros(FT, dims)  # Ion momentum-randomizing collision frequency [1/s]
+
+    # Ion transport. The species axis is present from the start so that H⁺, H₃⁺ and
+    # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as
+    # COLUMNS, which is exactly the multi-RHS layout the batch solve wants.
+    ion_species::Vector{IonSpecies{FT}} = IonSpecies{FT}[]
+    ion_N::Matrix{FT} = zeros(FT, prod(dims), 1)   # working densities [m⁻³]
+    ion_S::Matrix{FT} = zeros(FT, prod(dims), 1)   # working sources [m⁻³s⁻¹]
+    ion_solvers::Vector{SparseLUSolver{FT}} = SparseLUSolver{FT}[]  # one per transport group
 
     # Spatially-varying diffusion coefficients
     Dpara::Matrix{FT} = zeros(FT, dims)  # Parallel diffusion coefficient [m²/s]
@@ -421,6 +434,11 @@ Fields include various matrices for solving different parts of the model.
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
+    # The same operator built from the ION velocities. A separate instance rather
+    # than a rebuild, because electrons and ions are advanced in the same step and
+    # `update_∇𝐮_operator!` defaults to `ueR`/`ueZ` — an ion solve that forgot to
+    # pass its own velocities would drift the ions the wrong way and still run.
+    ∇𝐮_i::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
 
     # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
     # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
@@ -491,6 +509,11 @@ Contains boolean flags that control various aspects of the simulation.
     # Ion dynamics
     update_ni_independently::Bool = true      # Update ion density independently
     Ti_evolve::Bool = true                   # Update ion temperature
+
+    # Whether ion species share one transport operator (see `ion_species.jl`).
+    # A TYPE, not a symbol: it dispatches at `ion_transport_groups` and nowhere
+    # else, so no solver contains a branch on it.
+    ion_transport_policy::IonTransportPolicy = SharedEffectiveTransport()
 
     # secondary electron emission by ion impact
     secondary_electron::Bool = true           # Include secondary electron emission

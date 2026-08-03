@@ -154,6 +154,11 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFl
     RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.G.NR, RP.G.NZ)
     RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.G.NR, RP.G.NZ)
 
+    # H₂⁺ is the only ion species the reaction set produces, but the machinery
+    # behind it is written for a list: appending H⁺ or Cᶻ⁺ here is what adds them
+    # to the transport solve.
+    set_ion_species!(RP, [IonSpecies(:H2⁺, FT(RP.config.constants.mi), 1)])
+
     # Set initial gas density
     RP.plasma.n_H2_gas .= RP.config.prefilled_gas_pressure ./
         (RP.plasma.T_gas_eV * RP.config.ee) .*
@@ -203,6 +208,7 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     if RP.flags.convec
         RP.operators.∇𝐮 = construct_∇𝐮_operator(RP)
+        RP.operators.∇𝐮_i = construct_∇𝐮_operator(RP, RP.plasma.uiR, RP.plasma.uiZ)
         RP.operators.𝐮∇ = construct_𝐮∇_operator(RP)
     end
 
@@ -766,21 +772,26 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
 
     # Calculate Coulomb logarithm based on different regimes
     # Very low Te case
+    # max(0, ·) on every sqrt below. The `!isreal` guard a few lines down shows the
+    # intent was for a bad density to fall through to the base value — but `sqrt` of
+    # a negative Float64 THROWS rather than returning NaN or a Complex, so the guard
+    # could never fire. A continuity solve is free to land at n = -1e-55, and that
+    # took down a whole run.
     @. pla.lnΛ[idx1] = 16.0 - log(
-        sqrt(pla.ni[idx1] * 1.0e-6) *
+        sqrt(max(zero(FT), pla.ni[idx1] * 1.0e-6)) *
             (pla.Ti_eV[idx1])^(-1.5) *
             pla.Zeff[idx1]^2 * μ
     )
 
     # Normal Te case (Te_eV > 10*Zeff^2)
     @. pla.lnΛ[idx2] = 24.0 - log(
-        sqrt(pla.ne[idx2] * 1.0e-6) /
+        sqrt(max(zero(FT), pla.ne[idx2] * 1.0e-6)) /
             pla.Te_eV[idx2]
     )
 
     # Low Te case
     @. pla.lnΛ[idx3] = 23.0 - log(
-        sqrt(pla.ne[idx3] * 1.0e-6) *
+        sqrt(max(zero(FT), pla.ne[idx3] * 1.0e-6)) *
             pla.Zeff[idx3] *
             (pla.Te_eV[idx3])^(-1.5)
     )

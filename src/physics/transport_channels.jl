@@ -389,7 +389,9 @@ ever unified.
 `v_para = 0`: a cross-field channel cannot reach a wall the field points into.
 """
 function bohm_channel(Te_eV, B, m_i)
-    c_s = @. sqrt(Te_eV * EE_GAS / m_i)      # EE_GAS is the elementary charge
+    # max(0, ·) because a temperature equation may land microscopically below
+    # zero, where `sqrt` raises rather than returning NaN
+    c_s = @. sqrt(max(zero(eltype(Te_eV)), Te_eV * EE_GAS / m_i))   # EE_GAS is the elementary charge
     ω_ci = @. EE_GAS * B / m_i
     ρ_s = @. c_s / ω_ci
     return DiffusionChannel(zero.(c_s), zero.(c_s), (@. c_s / 8), ρ_s)

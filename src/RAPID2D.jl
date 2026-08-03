@@ -32,6 +32,7 @@ const RAPID_TIMER = TimerOutput()
 include("constants.jl")
 include("numerics/discretized_operator.jl")
 include("numerics/linear_solvers.jl")
+include("physics/ion_species.jl")   # IonSpecies and the transport policies; types.jl needs both
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")

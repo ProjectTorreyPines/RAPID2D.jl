@@ -59,6 +59,11 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp.Dpara_e_coll = @. FT(0.5) * vp_e^2 / ν_sum_mom_iz_ei
     @. tp.Dpara_e_coll[isnan(tp.Dpara_e_coll)] = typemax(FT) # make NaN to Inf
 
+    # Kept as state, not a local: the ion continuity equation rebuilds D∥ per
+    # species from its own mass, so it needs the collision frequency rather than
+    # the H₂⁺ diffusivity this line happens to produce.
+    tp.νi_eff .= νi_eff
+
     tp.Dpara_i_coll = @. FT(0.5) * vp_i^2 / νi_eff
     @. tp.Dpara_i_coll[isnan(tp.Dpara_i_coll)] = typemax(FT) # make NaN to Inf
 
@@ -231,6 +236,10 @@ function update_transport_related_operators!(RP::RAPID{FT}) where {FT <: Abstrac
 
     if !isempty(OP.∇𝐮.k2csc)
         update_∇𝐮_operator!(RP)
+    end
+
+    if !isempty(OP.∇𝐮_i.k2csc)
+        update_∇𝐮_operator!(RP, RP.plasma.uiR, RP.plasma.uiZ; ∇𝐮 = OP.∇𝐮_i)
     end
 
     if !isempty(OP.∇𝐃∇.k2csc)
