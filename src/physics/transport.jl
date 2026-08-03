@@ -42,12 +42,16 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
         @. νi_eff += pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
     end
+    tp.νi_neutral .= νi_eff      # everything so far is ion-neutral
 
     # Calculate total collision frequency
     if RP.flags.Coulomb_Collision
         update_coulomb_collision_parameters!(RP)
         ν_sum_mom_iz_ei .+= pla.ν_ei_eff
         νi_eff .+= pla.ν_ii
+        tp.νi_coulomb .= pla.ν_ii
+    else
+        fill!(tp.νi_coulomb, zero(FT))
     end
 
     # Calculate parallel diffusion coefficient based on collision frequency

@@ -185,3 +185,83 @@ end
     end
     @test RP.plasma.ni == before
 end
+
+@testitem "Only mass and charge distinguish one ion species from another" setup = [IonRun] begin
+    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+        channel_D_para, channel_D_perp
+
+    # Ti and the fluid velocity are shared — the 0D reaction set carries one ion
+    # temperature and one ion drift, and density is the only per-species state.
+    # Everything that separates two ion species therefore has to come through m
+    # and Z, and it separates cleanly:
+    #
+    #   ν_s ∝ Z_s²/√m_s   and   v_p,s ∝ 1/√m_s
+    #     ⇒  λ∥ = v_p/ν ∝ 1/Z²        charge only
+    #     ⇒  v∥          ∝ 1/√m       mass only
+    #     ⇒  D∥ = ½v∥λ∥  ∝ 1/(Z²√m)
+    RP = ion_case()
+    update_transport_quantities!(RP)
+    turb = shared_turbulent_channel(RP)
+    m_p = RP.config.constants.mi / 2
+
+    coll(m, Z) = ion_transport_channels(RP, IonSpecies(:probe, m, Z), turb)[1]
+    bohm(m, Z) = ion_transport_channels(RP, IonSpecies(:probe, m, Z), turb)[2]
+    inw = RP.G.nodes.in_wall_nids
+    at(x) = x[inw]
+
+    ref = coll(2m_p, 1)
+
+    # mass alone: 6× heavier at the same charge
+    heavy = coll(12m_p, 1)
+    @test at(heavy.v_para) ≈ at(ref.v_para) ./ sqrt(6) rtol = 1.0e-12
+    @test at(heavy.λ_para) ≈ at(ref.λ_para) rtol = 1.0e-12          # λ∥ ignores mass
+    @test at(channel_D_para(heavy)) ≈ at(channel_D_para(ref)) ./ sqrt(6) rtol = 1.0e-12
+
+    # Charge alone: 6× more charged at the same mass. λ∥ does NOT simply fall by
+    # Z² — only the Coulomb term does, and λ∥ also carries the ion-neutral term
+    # and the free-streaming field-line length. What holds exactly is the identity
+    # on the inverse length, where the three add:
+    #
+    #     1/λ∥(Z) − 1/λ∥(1) = (Z² − 1)·ν_coulomb / v_p,ref
+    charged = coll(2m_p, 6)
+    v_ref = @. sqrt(2 * RP.plasma.Ti_eV * RP.config.constants.ee / RP.config.constants.mi)
+    @test at(charged.v_para) ≈ at(ref.v_para) rtol = 1.0e-12        # v∥ ignores charge
+    @test (1 ./ at(charged.λ_para) .- 1 ./ at(ref.λ_para)) ≈
+        35 .* at(RP.transport.νi_coulomb) ./ at(v_ref) rtol = 1.0e-9
+    @test all(at(charged.λ_para) .< at(ref.λ_para))                 # and it is shorter
+    @test all(at(channel_D_para(charged)) .< at(channel_D_para(ref)))
+
+    # both, as C⁶⁺ against H₂⁺: D∥ = ½v∥λ∥ picks up the mass through v∥ only
+    c6 = coll(12m_p, 6)
+    @test at(channel_D_para(c6)) ≈ at(channel_D_para(charged)) ./ sqrt(6) rtol = 1.0e-12
+
+    # Bohm is mass-free but NOT charge-free: ρ_s²ω_ci = Te/(ZeB)
+    @test at(channel_D_perp(bohm(12m_p, 1))) ≈ at(channel_D_perp(bohm(2m_p, 1))) rtol = 1.0e-12
+    @test at(channel_D_perp(bohm(2m_p, 6))) ≈ at(channel_D_perp(bohm(2m_p, 1))) ./ 6 rtol = 1.0e-12
+end
+
+@testitem "The Z² scaling applies to Coulomb collisions, not to the neutral gas" setup = [IonRun] begin
+    using RAPID2D.Statistics
+    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel
+
+    # νi_eff is ion-neutral plus ion-ion. Only the Coulomb half carries Z²; a
+    # charge-exchange or elastic collision with H₂ does not care that the ion is
+    # six times charged. Scaling the whole sum would overstate an impurity's
+    # collisionality by Z² through the entire gas-dominated early discharge —
+    # which is most of a burn-through.
+    m_p = 1.6726e-27
+    ratios = map((true, false)) do coulomb
+        RP = ion_case()
+        RP.flags.Coulomb_Collision = coulomb
+        update_transport_quantities!(RP)
+        turb = shared_turbulent_channel(RP)
+        λ(Z) = ion_transport_channels(RP, IonSpecies(:probe, 2m_p, Z), turb)[1].λ_para
+        inw = RP.G.nodes.in_wall_nids
+        return mean(λ(1)[inw] ./ λ(6)[inw])
+    end
+
+    # with Coulomb collisions the ratio moves toward 36; with none it must be 1,
+    # because then νi_eff is purely ion-neutral
+    @test ratios[2] ≈ 1.0 rtol = 1.0e-12
+    @test ratios[1] > 1.0
+end

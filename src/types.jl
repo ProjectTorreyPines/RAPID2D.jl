@@ -365,6 +365,10 @@ Fields include diffusion coefficients in different directions.
     Dpara_amb::Matrix{FT} = zeros(FT, dims)  # Ambipolar diffusion coefficient [m²/s]
     Dpara_e_eff::Matrix{FT} = zeros(FT, dims)  # Effective electron parallel diffusion coefficient [m²/s]
     νi_eff::Matrix{FT} = zeros(FT, dims)  # Ion momentum-randomizing collision frequency [1/s]
+    # Kept apart because they scale differently with the ion's charge: the Coulomb
+    # half carries Z², a charge-exchange or elastic hit on H₂ does not.
+    νi_neutral::Matrix{FT} = zeros(FT, dims)  # ion-neutral part of νi_eff [1/s]
+    νi_coulomb::Matrix{FT} = zeros(FT, dims)  # ion-ion part of νi_eff [1/s]
 
     # Ion transport. The species axis is present from the start so that H⁺, H₃⁺ and
     # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as

@@ -380,6 +380,10 @@ a random walk, `ρ_s²ω_ci = T_e/eB` gives `D_B = ¹⁄₁₆ρ_s²ω_ci`, and 
 — a step of one sound gyroradius per ≈1.3 gyro-periods, reproducing `D_B` exactly
 by construction. At `T_e = 5` eV, `B = 0.63` T, H⁺: `ρ_s = 0.36` mm, `v⊥ = 2.7` km/s.
 
+**Mass-free, but not charge-free.** `ρ_s²ω_ci = T_e/(ZeB)`, so `D_B = T_e/(16ZB)`:
+the mass cancels exactly and every ion species shares `D⊥` only at equal charge.
+A six-times-charged ion diffuses across the field six times more slowly.
+
 The alternatives are not absurd (`λ⊥ = ρ_i` gives `v⊥` 2.2× larger, a turbulent
 correlation length gives less), so the choice is recorded rather than buried. It is
 also not load-bearing: this channel contributes ~15 % of an ion's kinetic ceiling
@@ -388,11 +392,11 @@ ever unified.
 
 `v_para = 0`: a cross-field channel cannot reach a wall the field points into.
 """
-function bohm_channel(Te_eV, B, m_i)
+function bohm_channel(Te_eV, B, m_i, Z::Integer = 1)
     # max(0, ·) because a temperature equation may land microscopically below
     # zero, where `sqrt` raises rather than returning NaN
     c_s = @. sqrt(max(zero(eltype(Te_eV)), Te_eV * EE_GAS / m_i))   # EE_GAS is the elementary charge
-    ω_ci = @. EE_GAS * B / m_i
+    ω_ci = @. Z * EE_GAS * B / m_i
     ρ_s = @. c_s / ω_ci
     return DiffusionChannel(zero.(c_s), zero.(c_s), (@. c_s / 8), ρ_s)
 end

@@ -256,10 +256,31 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     #   no field length    nothing bounds a parallel step, so the COLLISIONAL
     #                      channel is absent. Free streaming is convection, and the
     #                      equation already carries it as −∇·(n𝐮_i).
+    # T_i and the fluid velocity are shared — the reaction set carries one ion
+    # temperature and one ion drift, and density is the only per-species state. So
+    # everything that separates two ion species arrives through m and Z, and it
+    # separates cleanly. For a test particle on a fixed background,
+    #
+    #     ν_s ∝ Z_s²/√m_s        v_p,s = √(2T_i/m_s) ∝ 1/√m_s
+    #       ⇒  λ∥ = v_p/ν ∝ 1/Z_s²          charge only
+    #       ⇒  v∥          ∝ 1/√m_s         mass only
+    #       ⇒  D∥ = ½v∥λ∥  ∝ 1/(Z_s²√m_s)
+    #
+    # so `inv_λ` is evaluated once at the REFERENCE thermal speed and the mass
+    # drops out of it algebraically rather than being cancelled numerically.
+    #
+    # Only the Coulomb half of ν carries Z²: a charge-exchange or elastic hit on H₂
+    # does not care that the ion is six times charged, and scaling the whole sum
+    # would overstate an impurity's collisionality by Z² through the entire
+    # gas-dominated early discharge — which is most of a burn-through.
+    #
     # max(0, ·): the Ti equation is free to land microscopically below zero
     # (−1.3e-61 was observed), and `sqrt` of that is a DomainError, not a NaN.
-    v_p = @. sqrt(max(zero(FT), 2 * pla.Ti_eV * ee / species.mass))
-    inv_λ = @. tp.νi_eff / v_p + ifelse(tp.L_mixing > 0, 1 / tp.L_mixing, zero(FT))
+    Z² = FT(species.charge^2)
+    v_p_ref = @. sqrt(max(zero(FT), 2 * pla.Ti_eV * ee / RP.config.constants.mi))
+    v_p = @. v_p_ref * sqrt(RP.config.constants.mi / species.mass)
+    inv_λ = @. (tp.νi_neutral + Z² * tp.νi_coulomb) / v_p_ref +
+        ifelse(tp.L_mixing > 0, 1 / tp.L_mixing, zero(FT))
     # `inv_λ > 0` is false for both Inf⁻¹ = 0 and for a NaN out of 0/0, so the two
     # degenerate cases above land on λ∥ = 0 without being enumerated.
     λ_para = @. ifelse(inv_λ > 0, 1 / inv_λ, zero(FT))
@@ -269,7 +290,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     end
     collisional = DiffusionChannel(v_p, λ_para, zero.(v_p), zero.(v_p))
 
-    bohm = bohm_channel(pla.Te_eV, F.Bϕ, species.mass)
+    bohm = bohm_channel(pla.Te_eV, F.Bϕ, species.mass, species.charge)
     if !all(isfinite, bohm.λ_perp)
         # ρ_s = c_s/ω_ci is 0/0 wherever B vanishes; no field means no gyro-step
         bohm = DiffusionChannel(
