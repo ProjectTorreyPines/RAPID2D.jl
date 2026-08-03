@@ -512,3 +512,73 @@ function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonSpecies{FT}}
     empty!(tp.ion_solvers)
     return RP
 end
+
+"""
+    bulk_ion_charge(RP) -> Int
+
+The charge state of the bulk ion — species 1, the one `plasma.ni` mirrors.
+
+This is what the NRL collision rates on p.28 and the logarithms on p.34 carry.
+They took `plasma.Zeff` before the two were distinguished, which was correct only
+because a single hydrogen species makes every charge average equal 1.
+"""
+bulk_ion_charge(RP::RAPID) =
+    isempty(RP.transport.ion_species) ? 1 : RP.transport.ion_species[1].charge
+
+"""
+    update_charge_states!(RP) -> RP
+
+Recompute `plasma.Z_mean` and `plasma.Zeff` from the species list and the
+per-species densities.
+
+Column 1 of `ion_N` is synced from `plasma.ni` first — it is that species by
+definition (see [`set_ion_species!`](@ref)), and the continuity solve does the
+same sync at its own entry. Species 2 and up carry their own state across steps.
+
+The two averages are genuinely different reductions of the same inventory
+([`mean_charge`](@ref), [`effective_charge`](@ref)); computing them in one sweep
+keeps them from ever disagreeing about which inventory they described.
+"""
+function update_charge_states!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    tp, pla = RP.transport, RP.plasma
+    isempty(tp.ion_species) && return RP
+
+    Z = FT[sp.charge for sp in tp.ion_species]
+    N = tp.ion_N
+    @views N[:, 1] .= vec(pla.ni)
+
+    Z_bulk = FT(tp.ion_species[1].charge)
+    Zm, Ze = vec(pla.Z_mean), vec(pla.Zeff)
+    @inbounds for k in axes(N, 1)
+        s0 = zero(FT)
+        s1 = zero(FT)
+        s2 = zero(FT)
+        for s in eachindex(Z)
+            n = max(N[k, s], zero(FT))
+            s0 += n
+            s1 += n * Z[s]
+            s2 += n * Z[s]^2
+        end
+        Zm[k] = s0 > zero(FT) ? s1 / s0 : Z_bulk
+        Ze[k] = s1 > zero(FT) ? s2 / s1 : Z_bulk
+    end
+    return RP
+end
+
+"""
+    slave_ions_to_electrons!(RP) -> RP
+
+Set `ni` from `ne` by quasineutrality: `n_e = Σ n_z Z_z = n_i Z̄`, so `n_i = n_e/Z̄`.
+
+The single definition behind both places that slave ions. They used to disagree —
+the step wrote `ni .= ne ./ Zeff` and the boundary pass then overwrote it with
+`ni .= ne`, so the Zeff-aware line was dead code in `run_simulation!` and which
+one was right depended on what `Zeff` meant. It means `Z̄` here, and with one
+hydrogen species `Z̄ = 1`, so the two former writers now agree exactly and no
+existing result moves.
+"""
+function slave_ions_to_electrons!(RP::RAPID)
+    pla = RP.plasma
+    @. pla.ni = pla.ne / pla.Z_mean
+    return RP
+end

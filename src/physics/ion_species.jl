@@ -45,6 +45,54 @@ IonSpecies(name::Symbol, mass::Real, charge::Integer) =
     IonSpecies{float(typeof(mass))}(name, float(mass), Int(charge))
 
 """
+    mean_charge(Z, n) -> Z̄
+
+Mean charge **per ion**, `Z̄ = Σ n_z Z_z / Σ n_z`.
+
+This is the average quasineutrality wants — `n_e = Σ n_z Z_z = n_i Z̄`, so the
+total ion density balancing a given `n_e` is `n_e/Z̄` — and the one the ion
+charge density `n_i Z̄ e` wants. It is NOT [`effective_charge`](@ref): at 10 %
+C⁶⁺ in H₂⁺ they are 1.5 and 3.0.
+
+Falls back to `Z[1]` where there are no ions at all; `Σn = 0` otherwise makes
+the average `0/0`, and that NaN would reach the collision rates, the current
+density and the quasineutrality slaving in the same step.
+"""
+function mean_charge(Z::AbstractVector, n::AbstractVector)
+    FT = float(promote_type(eltype(Z), eltype(n)))
+    s0 = zero(FT)
+    s1 = zero(FT)
+    for k in eachindex(Z, n)
+        nk = max(FT(n[k]), zero(FT))   # a continuity solve may hand back n ≤ 0
+        s0 += nk
+        s1 += nk * Z[k]
+    end
+    return s0 > zero(FT) ? s1 / s0 : FT(first(Z))
+end
+
+"""
+    effective_charge(Z, n) -> Z_eff
+
+Effective charge **per electron**, `Z_eff = Σ n_z Z_z² / n_e` with
+`n_e = Σ n_z Z_z`.
+
+The single-fluid closure quantity — Spitzer resistivity and the like. Squaring
+weights the high-Z tail far harder than [`mean_charge`](@ref) does, which is the
+whole reason a trace impurity can dominate `Z_eff` while barely moving `Z̄`.
+"""
+function effective_charge(Z::AbstractVector, n::AbstractVector)
+    FT = float(promote_type(eltype(Z), eltype(n)))
+    s1 = zero(FT)
+    s2 = zero(FT)
+    for k in eachindex(Z, n)
+        nk = max(FT(n[k]), zero(FT))
+        s1 += nk * Z[k]
+        s2 += nk * Z[k]^2
+    end
+    return s1 > zero(FT) ? s2 / s1 : FT(first(Z))
+end
+
+"""
     IonTransportPolicy
 
 Whether ion species share a transport operator, and which one.

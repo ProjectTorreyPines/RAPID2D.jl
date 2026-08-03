@@ -72,7 +72,7 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractF
             pla = RP.plasma
             F = RP.fields
             @unpack qe, ee = RP.config.constants
-            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
+            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Z_mean) * pla.ui_para) * F.bϕ
             I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
         end
 
@@ -109,7 +109,7 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractF
             solve_ion_continuity_equation!(RP)
         else
             # Set ion density from electron density with charge neutrality
-            RP.plasma.ni .= RP.plasma.ne ./ RP.plasma.Zeff
+            slave_ions_to_electrons!(RP)
         end
 
         if RP.flags.ud_evolve

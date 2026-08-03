@@ -22,6 +22,12 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp = RP.transport
     @unpack mi, me, ee = RP.config.constants
 
+    # Charge averages first: `Zeff` reaches the Spitzer factor a few lines below,
+    # and `Z_mean` reaches the current density and the quasineutrality slaving
+    # later in the step. Both are composition quantities, so one evaluation per
+    # step is the same discipline `update_RRCs!` follows for the rate tables.
+    update_charge_states!(RP)
+
     # The one RRC evaluation point of the step. Everything downstream — the rest of this
     # function and the whole of the next advance_timestep! — reads plasma.ν_en_* instead
     # of re-querying the tables, so a step cannot mix coefficients from two states.

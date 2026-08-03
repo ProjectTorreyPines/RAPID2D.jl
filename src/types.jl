@@ -263,7 +263,12 @@ Contains the plasma state variables including density, temperature, and velocity
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
-    Zeff::Matrix{FT} = ones(FT, dims) # Effective ion charge
+    # Two DIFFERENT charge averages, both written by `update_charge_states!`.
+    # A single-species hydrogen plasma has Z_mean = Zeff = 1, which is why one
+    # field could stand in for both — and for the per-species charge state — until
+    # a second species existed. At 10 % C⁶⁺ they are 1.5 and 3.0.
+    Z_mean::Matrix{FT} = ones(FT, dims) # Σ n_z Z_z / Σ n_z — per ION: charge density, quasineutrality
+    Zeff::Matrix{FT} = ones(FT, dims)   # Σ n_z Z_z² / n_e — per ELECTRON: single-fluid closures
     # Current densities
     Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
 

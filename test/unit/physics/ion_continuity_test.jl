@@ -52,21 +52,22 @@ end
     # The default path in every existing test. Whatever the ion solver does, this
     # branch must keep behaving exactly as it did, or the whole suite moves.
     #
-    # What it does is `ni = ne`, NOT `ne/Zeff`. Two places slave ions to
-    # electrons and they disagree: `workflows.jl` writes `ni .= ne ./ Zeff`
-    # inside the step, then `treat_electron_outside_wall!` overwrites it with
-    # `ni .= ne` after the step. The last write wins, so the Zeff-aware one is
-    # dead code whenever the step is followed by the boundary pass — i.e. always,
-    # in `run_simulation!`. Pinned here rather than fixed: changing which one
-    # wins is a physics decision about what Zeff means, and it moves every
-    # existing result.
+    # It used to be ambiguous which behaviour that was. Two places slaved ions and
+    # they disagreed: the step wrote `ni .= ne ./ Zeff`, then
+    # `treat_electron_outside_wall!` overwrote it with `ni .= ne`, so the
+    # Zeff-aware line was dead code in `run_simulation!`. Both now call
+    # `slave_ions_to_electrons!`, which is `ne/Z̄` — and a single hydrogen species
+    # has Z̄ = 1 exactly, so what actually runs is still `ni = ne`.
     RP = ion_case()
     RP.flags.update_ni_independently = false
+    # A hand-set Z_eff is a statement about the single-fluid closure. It is not
+    # what quasineutrality balances against, so it must not move `ni` at all.
     RP.plasma.Zeff .= 1.3
     run_simulation!(RP)
 
     @test RP.plasma.ni == RP.plasma.ne
-    @test !(RP.plasma.ni ≈ RP.plasma.ne ./ RP.plasma.Zeff)
+    @test all(==(1.0), RP.plasma.Z_mean)
+    @test RP.plasma.ni == RP.plasma.ne ./ RP.plasma.Z_mean
 end
 
 @testitem "Ionization enters the ion equation at the electron rate" setup = [IonRun] begin
