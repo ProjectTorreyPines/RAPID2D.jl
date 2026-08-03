@@ -123,6 +123,31 @@ function neutral_gas_diffusivity(n_gas, T_gas_eV, ν_iz, L_char)
 end
 
 """
+    neutral_gas_channel(n_gas, T_gas_eV, ν_iz, L_char)
+
+The same physics as `neutral_gas_diffusivity`, returned as the four numbers of the
+transport-channel basis instead of collapsed into one diffusivity.
+
+`neutral_gas_diffusivity` computes `λ` explicitly and then destroys it by
+returning `½·v_th·λ`. A diffusivity cannot state a wall condition — `D = ½vλ` is
+one equation in two unknowns, and the wall needs the *speed* — so this returns the
+pair rather than the product. Nothing new is modelled: `½·v_para·λ_para`
+reproduces `neutral_gas_diffusivity` exactly.
+
+**Isotropic**, so `⊥ ≡ ∥`: a neutral molecule has no preferred axis. The three
+competing processes — elastic, ionization, wall — all happen at the same `v_th`,
+so they combine by Matthiessen *inside* `λ` and their kinetic ceiling is counted
+once, not summed.
+"""
+function neutral_gas_channel(n_gas, T_gas_eV, ν_iz, L_char)
+    v_th = neutral_gas_thermal_speed.(T_gas_eV)
+    D_elastic = @. h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
+    inv_λ = @. v_th / (2 * D_elastic) + ν_iz / v_th + 1 / L_char
+    λ = @. 1 / inv_λ
+    return DiffusionChannel(v_th, λ, v_th, λ)
+end
+
+"""
     build_reflective_diffusion_matrix(G, D) -> SparseMatrixCSC
 
 Isotropic 5-point diffusion operator `∇·(D∇·)` with a **reflective** (zero-flux)
