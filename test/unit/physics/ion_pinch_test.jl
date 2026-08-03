@@ -204,6 +204,21 @@ end
     @test s_both ≈ s_alone rtol = 1.0e-12
 end
 
+@testitem "A full run survives the pinch being on" setup = [PinchRun] begin
+    # The other tests drive `solve_ion_continuity_equation!` directly. This one
+    # goes through `run_simulation!`, because that is where the operator's lazy
+    # allocation, the per-step rebuild and the wall bookkeeping actually meet.
+    RP = pinch_case(pinch = true)
+    RP.flags.convec = true                     # both convective operators live
+    RP.flags.src = true
+    run_simulation!(RP)
+
+    @test all(isfinite, RP.transport.ion_N)
+    @test all(isfinite, RP.plasma.ni)
+    @test all(≥(0.0), RP.transport.ion_N)      # upwinding must keep it positive
+    @test length(RP.transport.ion_solvers) == 1
+end
+
 @testitem "The pinch stays out of the factorized operator" setup = [PinchRun] begin
     using RAPID2D: ion_step_operators
 
