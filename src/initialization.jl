@@ -211,6 +211,10 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         RP.operators.∇𝐮_i = construct_∇𝐮_operator(RP, RP.plasma.uiR, RP.plasma.uiZ)
         RP.operators.𝐮∇ = construct_𝐮∇_operator(RP)
     end
+    # `∇𝐮_pinch` is NOT allocated here. The pinch is a diffusive-friction term, so
+    # it exists whether or not fluid convection is enabled and cannot ride on the
+    # `convec` allocation above; and `flags.ion_pinch` is routinely flipped after
+    # `initialize!`, like every other flag. It is allocated on first use instead.
 
     # Initialize specific operators based on flags
     if RP.flags.Ampere

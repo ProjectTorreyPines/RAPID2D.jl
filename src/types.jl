@@ -454,6 +454,12 @@ Fields include various matrices for solving different parts of the model.
     # pass its own velocities would drift the ions the wrong way and still run.
     ∇𝐮_i::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
 
+    # Impurity pinch, ∇⋅(n 𝐖) with 𝐖 = 𝐃∇n_i/(Z_i n_i). ONE operator for every
+    # species: the species enters only as the scalar Z_z multiplying 𝐖, and since
+    # Z_z > 0 it cannot flip an upwind direction either, so the coefficients are
+    # shared exactly and each species costs one sparse matvec.
+    ∇𝐮_pinch::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+
     # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
     # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
 
@@ -536,6 +542,14 @@ Contains boolean flags that control various aspects of the simulation.
     # constant. Default `true` reproduces the existing behaviour, and at Z = 1 the
     # flag is a no-op either way.
     bohm_charge_scaling::Bool = true
+
+    # Impurity pinch: keep the ion-ion friction term in the trace species' flux,
+    #     Γ_z = −𝐃[∇n_z − (Z_z/Z_i)(n_z/n_i)∇n_i]
+    # so a highly charged impurity is driven UP the bulk gradient. Off by default:
+    # the term is real but unvalidated here, and it is comparable to — not small
+    # against — the diffusive flux it accompanies (Z_z/Z_i = 6 for C⁶⁺), so
+    # turning it on moves results rather than nudging them.
+    ion_pinch::Bool = false
 
     # secondary electron emission by ion impact
     secondary_electron::Bool = true           # Include secondary electron emission

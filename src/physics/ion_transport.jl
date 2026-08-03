@@ -420,7 +420,8 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
             while length(tp.ion_solvers) < length(groups)
                 push!(tp.ion_solvers, SparseLUSolver{FT}())
             end
-            for (gi, (group, A, v_absorb)) in enumerate(groups)
+            for (gi, (group, A, v_absorb, P)) in enumerate(groups)
+                add_ion_pinch_source!(RP, group, P, N, S)
                 n_prev = N[:, group.sids]
                 solve_ion_group!(N, group, A, tp.ion_solvers[gi], dt; θ = θ, S = S)
                 book_ion_wall_loss!(RP, group, faces, v_absorb, N, n_prev, θ)
@@ -433,14 +434,17 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
 end
 
 """
-    ion_step_operators(RP) -> (Vector{Tuple{group, A, v_absorb}}, faces)
+    ion_step_operators(RP) -> (Vector{Tuple{group, A, v_absorb, P}}, faces)
 
 The operators this step will invert, one per transport group, and the wall faces
-they were built against.
+they were built against. `P` is the group's pinch divergence, or `nothing` when
+`flags.ion_pinch` is off — it is applied to the RIGHT-hand side, so it never
+reaches the factorization.
 
 With diffusion off there is nothing for a policy to partition — every species
 sees the same (null) diffusion — so a single group covers them all and carries
-only the convective term.
+only the convective term. There is no `𝐃` in that case either, hence no pinch:
+the pinch is a friction correction to a diffusive flux, not a flux of its own.
 """
 function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp, G = RP.transport, RP.G
@@ -451,7 +455,7 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
         group = IonTransportGroup(collect(1:ns), DiffusionChannel{FT}[])
         Ng = G.NR * G.NZ
         A = isnothing(convection) ? spzeros(FT, Ng, Ng) : -convection
-        return [(group, A, FT[])], WallFace{FT}[]
+        return [(group, A, FT[], nothing)], WallFace{FT}[]
     end
 
     turb = shared_turbulent_channel(RP)
@@ -463,9 +467,123 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
         A, v_absorb = ion_transport_operator(G, group, dirs; faces = faces, albedo = albedo)
-        return (group, isnothing(convection) ? A : A - convection, v_absorb)
+        P = ion_pinch_divergence(RP, group, dirs)
+        return (group, isnothing(convection) ? A : A - convection, v_absorb, P)
     end
     return ops, faces
+end
+
+"""
+    ion_pinch_velocity(RP, D_RR, D_RZ, D_ZZ) -> (W_R, W_Z)
+
+The **species-independent** part of the impurity pinch velocity,
+`𝐖 = 𝐃 ∇n_i/(Z_i n_i)`, so that species `z` moves at `Z_z 𝐖`.
+
+The factorization of `V_pinch,z` into `Z_z` times a shared field is what keeps
+the pinch from multiplying the work: one divergence operator covers every
+species, and since `Z_z > 0` it cannot even flip an upwind direction.
+
+`𝐃` enters as the full tensor, not as two scalars — the pinch is a correction to
+the same anisotropic flux the operator carries, so a bulk gradient along `R`
+drives a pinch along `Z` wherever `D_RZ ≠ 0`.
+
+Two guards:
+
+  * `n_i ≤ 0` gives `𝐖 = 0`. There is nothing to pinch in an empty cell, and
+    `0/0` would otherwise reach the operator assembly.
+  * `|∇n_i|/n_i` is capped at `1/Δx` per direction. A density scale length
+    shorter than one cell is not resolved, so the model cannot claim it; with the
+    cap `|W| ≤ D/Δx`, which makes the explicit pinch's CFL no stricter than the
+    limit explicit diffusion would have imposed. Without it a near-empty cell
+    next to a full one produces an unbounded velocity.
+"""
+function ion_pinch_velocity(
+        RP::RAPID{FT}, D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT},
+        D_ZZ::AbstractMatrix{FT}
+    ) where {FT <: AbstractFloat}
+    pla, G = RP.plasma, RP.G
+    # Central differences: this builds a COEFFICIENT field. The upwinding that
+    # matters for stability is in the divergence operator, which does it properly.
+    ∇n_R, ∇n_Z = calculate_grad_of_scalar_F(RP, pla.ni; upwind = false)
+
+    cap_R = one(FT) / G.dR
+    cap_Z = one(FT) / G.dZ
+    g_R = similar(∇n_R)
+    g_Z = similar(∇n_Z)
+    @inbounds for k in eachindex(g_R)
+        n = pla.ni[k]
+        if n > zero(FT)
+            g_R[k] = clamp(∇n_R[k] / n, -cap_R, cap_R)
+            g_Z[k] = clamp(∇n_Z[k] / n, -cap_Z, cap_Z)
+        else
+            g_R[k] = zero(FT)
+            g_Z[k] = zero(FT)
+        end
+    end
+
+    inv_Zi = one(FT) / FT(bulk_ion_charge(RP))
+    W_R = @. (D_RR * g_R + D_RZ * g_Z) * inv_Zi
+    W_Z = @. (D_RZ * g_R + D_ZZ * g_Z) * inv_Zi
+    return W_R, W_Z
+end
+
+"""
+    ion_pinch_divergence(RP, group, directions) -> P or nothing
+
+`P` such that `P * n_z = ∇⋅(n_z 𝐖)`, built from the group's own diffusion tensor.
+
+Returns `nothing` when the pinch is off, which is how the caller stays free of a
+branch. The operator is cached in `operators.∇𝐮_pinch` and allocated on first
+use — `flags.ion_pinch` is routinely set after `initialize!` — so every later
+step rebuilds values into a fixed sparsity pattern instead of a new matrix.
+"""
+function ion_pinch_divergence(
+        RP::RAPID{FT}, group::IonTransportGroup{FT}, directions
+    ) where {FT <: AbstractFloat}
+    RP.flags.ion_pinch || return nothing
+    isempty(group.channels) && return nothing
+
+    cwd = [
+        (group.channels[m], directions[m][1], directions[m][2])
+            for m in eachindex(group.channels)
+    ]
+    D_RR, D_RZ, D_ZZ = total_tensor(cwd)
+    W_R, W_Z = ion_pinch_velocity(RP, D_RR, D_RZ, D_ZZ)
+    if isempty(RP.operators.∇𝐮_pinch.matrix.nzval)
+        RP.operators.∇𝐮_pinch = construct_∇𝐮_operator(RP, W_R, W_Z)
+    else
+        update_∇𝐮_operator!(RP, W_R, W_Z; ∇𝐮 = RP.operators.∇𝐮_pinch)
+    end
+    return RP.operators.∇𝐮_pinch.matrix
+end
+
+"""
+    add_ion_pinch_source!(RP, group, P, N, S) -> S
+
+Add `−∇⋅(n_z V_pinch,z)` to each of the group's source columns, explicitly.
+
+`V_pinch,z = Z_z 𝐖`, so the whole species dependence is the scalar `Z_z` in front
+of one shared matvec. Nothing here touches the matrix that gets factorized —
+which is the point. Making the pinch implicit would put `Z_z` inside the operator
+and cost one factorization PER SPECIES, undoing the batch.
+
+The explicit treatment is safe on a CFL argument, not on a smallness argument:
+the pinch flux is `Z_z/Z_i` times the diffusive flux it accompanies, so for C⁶⁺
+it is six times LARGER. What makes it harmless is that a convective CFL scales as
+`Δx` while diffusion's scales as `Δx²`; the ratio of the two limits is
+`2L_n/(Z_z Δx)`, comfortably above 1 whenever the grid resolves the bulk profile.
+"""
+function add_ion_pinch_source!(
+        RP::RAPID{FT}, group::IonTransportGroup{FT}, P, N::AbstractMatrix{FT},
+        S::AbstractMatrix{FT}
+    ) where {FT <: AbstractFloat}
+    isnothing(P) && return S
+    species = RP.transport.ion_species
+    for s in group.sids
+        Z_z = FT(species[s].charge)
+        @views S[:, s] .-= Z_z .* (P * N[:, s])
+    end
+    return S
 end
 
 "Book what the Robin condition took this step, per face, into the ion tracker."
