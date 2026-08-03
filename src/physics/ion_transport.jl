@@ -133,6 +133,136 @@ function ion_transport_groups(::SharedEffectiveTransport, channels_per_species, 
     return [IonTransportGroup(collect(eachindex(channels_per_species)), mixed)]
 end
 
+"""
+    wall_absorption_speeds(channels_with_directions, faces, albedo) -> Vector
+
+Robin coefficient `v_absorb = ¼v̄_n·(1 − R)` [m/s] for every entry of `faces`,
+summed over the mechanisms in `channels_with_directions`.
+
+`albedo` is the fraction returned to the plasma: a scalar for a uniform surface,
+or one value per face where the surface is not uniform. `R = 1` gives exactly
+zero — a reflective wall, and a matrix bit-identical to one assembled with no
+wall term at all.
+
+**Sampled per face, not per cell.** The ceiling depends on `b̂·n̂`, so the two
+faces of a staircase corner generally carry different speeds even though they
+share an owning cell and its plasma state. There are only four possible
+outward normals, so the ceiling field is built once per direction and indexed,
+rather than recomputed for each of the thousands of faces.
+"""
+function wall_absorption_speeds(
+        channels_with_directions,
+        faces::AbstractVector{WallFace{FT}},
+        albedo
+    ) where {FT <: AbstractFloat}
+    in_range(r) = zero(FT) <= r <= one(FT)
+    if albedo isa AbstractVector
+        length(albedo) == length(faces) ||
+            throw(DimensionMismatch("got $(length(albedo)) albedos for $(length(faces)) faces"))
+        all(in_range, albedo) ||
+            throw(ArgumentError("every albedo must lie in [0, 1]"))
+    else
+        in_range(albedo) ||
+            throw(ArgumentError("albedo must lie in [0, 1], got $albedo"))
+    end
+
+    ceilings = Dict{Tuple{Int, Int}, Matrix{FT}}()
+    v_absorb = Vector{FT}(undef, length(faces))
+    for (k, f) in enumerate(faces)
+        c = get!(() -> total_ceiling(channels_with_directions, f.outward), ceilings, f.outward)
+        R = albedo isa AbstractVector ? albedo[k] : albedo
+        v_absorb[k] = (one(FT) - FT(R)) * c[f.nid]
+    end
+    return v_absorb
+end
+
+"""
+    ion_transport_operator(G, group, directions; faces, albedo, cross_terms) -> (A, v_absorb)
+
+Assemble the wall-aware `∇·(𝐃∇·)` a group of ion species will share, and the
+Robin coefficients that go with it.
+
+`directions[m]` is the `(bR, bZ)` the group's `m`-th channel is aligned with —
+the full `b̂` for a collisional mechanism, `b̂_pol` for a turbulent one. Directions
+are field properties, so they are the same for every species and live outside the
+group.
+
+The tensor and the wall ceiling are built from **one** channel list, which is the
+reason this exists as a function rather than two calls at each site: a matrix
+assembled from one set of channels and a boundary condition from another is a
+mismatch nothing downstream can detect.
+
+Omitting `faces` gives the reflective operator and an empty coefficient vector.
+"""
+function ion_transport_operator(
+        G::GridGeometry{FT}, group::IonTransportGroup{FT}, directions;
+        faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
+        albedo = zero(FT),
+        cross_terms::Symbol = :drop,
+    ) where {FT <: AbstractFloat}
+    length(directions) == length(group.channels) || throw(
+        ArgumentError(
+            "each of the group's $(length(group.channels)) mechanisms needs a direction, " *
+                "got $(length(directions))"
+        )
+    )
+    cwd = [
+        (group.channels[m], directions[m][1], directions[m][2])
+            for m in eachindex(group.channels)
+    ]
+    D_RR, D_RZ, D_ZZ = total_tensor(cwd)
+
+    isnothing(faces) &&
+        return build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms), FT[]
+
+    v_absorb = wall_absorption_speeds(cwd, faces, albedo)
+    A = build_wall_diffusion_matrix(
+        G, D_RR, D_RZ, D_ZZ;
+        cross_terms = cross_terms, faces = faces, v_absorb = v_absorb
+    )
+    return A, v_absorb
+end
+
+"""
+    solve_ion_group!(N, group, A, solver, dt; θ = 1, S = nothing) -> N
+
+Advance every species of `group` through the θ-scheme
+
+```
+    (𝐈 − θΔt𝐀)nⁿ⁺¹ = nⁿ + (1−θ)Δt𝐀nⁿ + ΔtS
+```
+
+with **one** factorization. `N` is `(NR·NZ) × Nspecies` with species as columns —
+the layout `reshape` gives an `(NR, NZ, Nspecies)` density array for free — and
+only the columns in `group.sids` are read or written.
+
+The batch is the whole point of grouping. A second species in a group costs a
+backsolve (68–488 µs across the measured grid sizes) against a factorization
+(2.0–14.0 ms), so a shared operator over ten species is roughly the price of one.
+"""
+function solve_ion_group!(
+        N::AbstractMatrix{FT}, group::IonTransportGroup{FT},
+        A::SparseMatrixCSC{FT}, solver::AbstractLinearSolver{FT}, dt::Real;
+        θ::Real = 1, S::Union{Nothing, AbstractMatrix{FT}} = nothing,
+    ) where {FT <: AbstractFloat}
+    Ng = size(N, 1)
+    size(A, 1) == Ng ||
+        throw(DimensionMismatch("operator is $(size(A, 1))×$(size(A, 2)) but N has $Ng rows"))
+    maximum(group.sids) <= size(N, 2) ||
+        throw(BoundsError(N, (:, maximum(group.sids))))
+
+    sids = group.sids
+    B = N[:, sids]
+    θ < 1 && (B .+= FT((1 - θ) * dt) .* (A * B))
+    isnothing(S) || (B .+= FT(dt) .* view(S, :, sids))
+
+    factorize!(solver, I - FT(θ * dt) * A)
+    X = similar(B)
+    solve!(X, solver, B)
+    @views N[:, sids] .= X
+    return N
+end
+
 "Validate the ragged-array contract shared by every policy; return the mechanism count."
 function _check_species_channels(channels_per_species, weights)
     isempty(channels_per_species) &&

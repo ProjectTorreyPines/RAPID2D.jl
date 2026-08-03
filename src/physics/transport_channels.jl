@@ -307,6 +307,18 @@ function total_ceiling(channels, bR, bZ, outward::Tuple{Int, Int})
     return sum(channel_ceiling(ch, bR, bZ, outward) for ch in channels)
 end
 
+"""
+    total_ceiling(channels_with_directions, outward) -> Matrix
+
+Sum of `channel_ceiling` over channels aligned with **different** axes, given as
+`((ch₁, bR₁, bZ₁), (ch₂, bR₂, bZ₂), …)` — the ceiling counterpart of the
+same-shaped [`total_tensor`](@ref) method, and the form to use whenever a
+collisional channel (along `b̂`) sits beside a turbulent one (along `b̂_pol`).
+"""
+function total_ceiling(channels_with_directions, outward::Tuple{Int, Int})
+    return sum(channel_ceiling(ch, bR, bZ, outward) for (ch, bR, bZ) in channels_with_directions)
+end
+
 # ── the physical channels ───────────────────────────────────────────────────
 #
 # Adapters, not models. Each already existed in the code as a `v × λ` product
