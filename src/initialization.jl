@@ -750,6 +750,55 @@ function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return RP
 end
 
+"""
+    ion_ion_coulomb_log(n, T_eV, Z, μ, n′, T′_eV, Z′, μ′)
+    ion_ion_coulomb_log(n, T_eV, Z, μ)
+
+Mixed ion–ion Coulomb logarithm, NRL Plasma Formulary 2023 p.34(c):
+
+```
+λ_ii' = 23 − ln[ (Z Z' (μ+μ') / (μ T' + μ' T)) · (n Z²/T + n' Z'²/T')^(1/2) ]
+```
+
+Densities are **SI (m⁻³)** and converted internally; NRL states the formula in
+cm⁻³. Temperatures are eV and `μ = m/m_p`.
+
+The one-species method is the self-collision case `i = i′`, which reduces to
+`23 − ln(√2 Z³ √n[cm⁻³] T^(−3/2))`. That is the logarithm belonging in the NRL
+p.28 self-collision rate `ν_i ∝ Z⁴ μ^(−1/2) n λ T^(−3/2)` — **not** the
+electron–ion logarithm, which carries `Te` where this carries `Ti`.
+
+Two guards, both load-bearing rather than cosmetic:
+
+  * the result is floored at 1. The raw expression goes NEGATIVE for cold dense
+    plasma (`n = 1e21`, `Ti = 0.026 eV` gives −0.09), and a negative logarithm
+    makes `ν_ii` negative — an anti-collision, which does not degrade a run so
+    much as invert it. Below `λ ≈ 1` the impact-parameter ratio is `≈ e` and the
+    Coulomb-log expansion has no meaning anyway.
+  * a non-finite result falls back to 10, matching the convention already used
+    for `lnΛ`. `n = 0` sends the argument to 0 and the logarithm to `+Inf`; the
+    value is irrelevant there because `ν ∝ n λ` vanishes regardless.
+"""
+function ion_ion_coulomb_log(
+        n::Real, T_eV::Real, Z::Real, μ::Real,
+        n′::Real, T′_eV::Real, Z′::Real, μ′::Real
+    )
+    FT = float(promote_type(typeof(n), typeof(T_eV), typeof(Z), typeof(μ)))
+    # A continuity solve is free to hand back n ≤ 0, and a temperature equation to
+    # land microscopically below zero; neither may reach `sqrt` or a division.
+    nc = max(FT(n) * FT(1.0e-6), zero(FT))
+    nc′ = max(FT(n′) * FT(1.0e-6), zero(FT))
+    T = max(FT(T_eV), eps(FT))
+    T′ = max(FT(T′_eV), eps(FT))
+
+    arg = (Z * Z′ * (μ + μ′) / (μ * T′ + μ′ * T)) * sqrt(nc * Z^2 / T + nc′ * Z′^2 / T′)
+    λ = FT(23) - log(arg)
+    return isfinite(λ) ? max(λ, one(FT)) : FT(10)
+end
+
+ion_ion_coulomb_log(n::Real, T_eV::Real, Z::Real, μ::Real) =
+    ion_ion_coulomb_log(n, T_eV, Z, μ, n, T_eV, Z, μ)
+
 function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # NRL formula for Coulomb logarithm
     # Note that NRL uses cgs units for density and eV for temperature
@@ -808,7 +857,15 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
 
     # Another way (NRL formula):
     # @. pla.ν_ei = 2.91e-6 * pla.ne*1e-6 *pla.lnΛ * pla.Te_eV^(-1.5)
-    @. pla.ν_ii = 4.8e-8 * pla.Zeff^4 * (mi / mp)^(-0.5) * pla.ni * 1.0e-6 * pla.lnΛ * pla.Ti_eV^(-1.5)
+
+    # The ion-ion rate gets its OWN logarithm (NRL p.34c). Everything above this
+    # line is an electron-ion quantity and keeps `lnΛ`; `ν_ii` is not, and reusing
+    # the electron form put `Te` where `Ti` belongs — a factor (Te/Ti)^(3/2)
+    # inside a log, worth tens of percent whenever the electrons run hot. Every
+    # per-species ion diffusivity is scaled from this one rate
+    # (`ion_transport_channels`), so the error propagated to all of them.
+    pla.lnΛ_ii .= ion_ion_coulomb_log.(pla.ni, pla.Ti_eV, pla.Zeff, μ)
+    @. pla.ν_ii = 4.8e-8 * pla.Zeff^4 * (mi / mp)^(-0.5) * pla.ni * 1.0e-6 * pla.lnΛ_ii * pla.Ti_eV^(-1.5)
 
     # # From lecture note (CH2_Fundamentals) of Prof. Hong
     # τ_ei = @.  (6.0 * sqrt(3.0)*π * eps0^2/ ee^4) * (sqrt(me)* (ee*pla.Te_eV)^(1.5)) / (pla.Zeff^4 * pla.ni * pla.lnΛ)

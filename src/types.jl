@@ -242,7 +242,12 @@ Contains the plasma state variables including density, temperature, and velocity
     γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
 
     # Collision parameters
-    lnΛ::Matrix{FT} = zeros(FT, dims)   # Coulomb logarithm
+    lnΛ::Matrix{FT} = zeros(FT, dims)   # ELECTRON-ion Coulomb logarithm (NRL p.34b)
+    # Ion-ion Coulomb logarithm (NRL p.34c). Separate from `lnΛ` because the two
+    # differ by the temperature they carry inside the log: with Te ≫ Ti the
+    # electron form overstates ν_ii by tens of percent, and ν_ii is what every
+    # per-species ion diffusivity is scaled from.
+    lnΛ_ii::Matrix{FT} = zeros(FT, dims)
     ν_ei::Matrix{FT} = zeros(FT, dims) # Electron-ion collision frequency [1/s]
     ν_ii::Matrix{FT} = zeros(FT, dims) # ion-ion collision frequency [1/s]
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
