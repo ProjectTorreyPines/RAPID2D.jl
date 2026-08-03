@@ -416,12 +416,15 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
         if !RP.flags.diffu && !RP.flags.convec
             N .+= dt .* S
         else
-            groups, faces = ion_step_operators(RP)
+            groups, faces, dirs = ion_step_operators(RP)
             while length(tp.ion_solvers) < length(groups)
                 push!(tp.ion_solvers, SparseLUSolver{FT}())
             end
-            for (gi, (group, A, v_absorb, P)) in enumerate(groups)
-                add_ion_pinch_source!(RP, group, P, N, S)
+            for (gi, (group, A, v_absorb)) in enumerate(groups)
+                # Built here, not in `ion_step_operators`: one cached operator
+                # serves every group, so it must be filled immediately before the
+                # group that consumes it.
+                add_ion_pinch_source!(RP, group, ion_pinch_divergence(RP, group, dirs), N, S)
                 n_prev = N[:, group.sids]
                 solve_ion_group!(N, group, A, tp.ion_solvers[gi], dt; θ = θ, S = S)
                 book_ion_wall_loss!(RP, group, faces, v_absorb, N, n_prev, θ)
@@ -434,12 +437,15 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
 end
 
 """
-    ion_step_operators(RP) -> (Vector{Tuple{group, A, v_absorb, P}}, faces)
+    ion_step_operators(RP) -> (Vector{Tuple{group, A, v_absorb}}, faces, directions)
 
-The operators this step will invert, one per transport group, and the wall faces
-they were built against. `P` is the group's pinch divergence, or `nothing` when
-`flags.ion_pinch` is off — it is applied to the RIGHT-hand side, so it never
-reaches the factorization.
+The operators this step will invert, one per transport group, the wall faces they
+were built against, and the per-mechanism directions they were built from.
+
+`directions` is returned rather than kept internal so the caller can build each
+group's pinch operator ([`ion_pinch_divergence`](@ref)) at the moment that group
+is solved. That operator is cached in a single slot, so building all of them here
+would leave every group holding a reference to the LAST group's tensor.
 
 With diffusion off there is nothing for a policy to partition — every species
 sees the same (null) diffusion — so a single group covers them all and carries
@@ -455,7 +461,7 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
         group = IonTransportGroup(collect(1:ns), DiffusionChannel{FT}[])
         Ng = G.NR * G.NZ
         A = isnothing(convection) ? spzeros(FT, Ng, Ng) : -convection
-        return [(group, A, FT[], nothing)], WallFace{FT}[]
+        return [(group, A, FT[])], WallFace{FT}[], ()
     end
 
     turb = shared_turbulent_channel(RP)
@@ -467,10 +473,9 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
         A, v_absorb = ion_transport_operator(G, group, dirs; faces = faces, albedo = albedo)
-        P = ion_pinch_divergence(RP, group, dirs)
-        return (group, isnothing(convection) ? A : A - convection, v_absorb, P)
+        return (group, isnothing(convection) ? A : A - convection, v_absorb)
     end
-    return ops, faces
+    return ops, faces, dirs
 end
 
 """

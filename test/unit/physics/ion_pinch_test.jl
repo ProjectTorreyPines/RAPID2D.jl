@@ -22,7 +22,10 @@
 
 @testsnippet PinchRun begin
     "A box-wall case with a peaked bulk and one or more flat trace impurities."
-    function pinch_case(; pinch::Bool, Z_traces = [6], NR = 21, NZ = 21)
+    function pinch_case(;
+            pinch::Bool, Z_traces = [6], NR = 21, NZ = 21,
+            policy = RAPID2D.SharedEffectiveTransport()
+        )
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = NR, NZ = NZ,
             R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
@@ -36,6 +39,7 @@
         RP.flags.ion_pinch = pinch
         RP.flags.convec = false            # isolate diffusion + pinch
         RP.flags.src = false
+        RP.flags.ion_transport_policy = policy
         mi = RP.config.constants.mi
         species = [RAPID2D.IonSpecies(:H2⁺, mi, 1)]
         for (k, Z) in enumerate(Z_traces)
@@ -153,17 +157,51 @@ end
     # front of a SHARED matvec. Asserted on the source term itself, not on the
     # solved density: the solve also differs with Z (a trace's own D∥ carries Z²
     # and its Bohm D⊥ carries 1/Z), so only the term is exactly linear.
+    using RAPID2D: ion_pinch_divergence
     RP = pinch_case(pinch = true, Z_traces = [1, 6])
     @test length(RP.transport.ion_species) == 3
-    groups, _ = ion_step_operators(RP)
+    groups, _, dirs = ion_step_operators(RP)
     @test length(groups) == 1                        # shared policy: one operator
-    group, _, _, P = groups[1]
+    group, _, _ = groups[1]
+    P = ion_pinch_divergence(RP, group, dirs)
     @test !isnothing(P)
 
     S = zero(RP.transport.ion_S)
     add_ion_pinch_source!(RP, group, P, RP.transport.ion_N, S)
     @test maximum(abs, S[:, 2]) > 0                  # the term does something
     @test S[:, 3] ≈ 6 .* S[:, 2] rtol = 1.0e-12      # equal density, 6× the charge
+end
+
+@testitem "Per-species groups each pinch with their OWN diffusion tensor" setup = [PinchRun] begin
+    using RAPID2D: ion_step_operators, add_ion_pinch_source!, PerSpeciesTransport
+
+    # Under the per-species policy every group carries its own 𝐃, hence its own
+    # 𝐖. The pinch operator lives in ONE cached slot, so building it for every
+    # group BEFORE any group consumes it leaves them all aliasing the last
+    # group's tensor — invisible under the shared policy, which has one group.
+    #
+    # Definitional check: per-species means nothing is shared, so species 1's
+    # pinch source must be exactly what species 1 gets when it is alone.
+    using RAPID2D: ion_pinch_divergence
+    function pinch_source(RP)
+        groups, _, dirs = ion_step_operators(RP)
+        S = zero(RP.transport.ion_S)
+        for (group, _, _) in groups
+            P = ion_pinch_divergence(RP, group, dirs)
+            add_ion_pinch_source!(RP, group, P, RP.transport.ion_N, S)
+        end
+        return S
+    end
+
+    both = pinch_case(pinch = true, Z_traces = [6], policy = PerSpeciesTransport())
+    alone = pinch_case(pinch = true, Z_traces = Int[], policy = PerSpeciesTransport())
+    @test length(ion_step_operators(both)[1]) == 2      # one group per species
+    @test length(ion_step_operators(alone)[1]) == 1
+
+    s_both = pinch_source(both)[:, 1]
+    s_alone = pinch_source(alone)[:, 1]
+    @test maximum(abs, s_alone) > 0
+    @test s_both ≈ s_alone rtol = 1.0e-12
 end
 
 @testitem "The pinch stays out of the factorized operator" setup = [PinchRun] begin
