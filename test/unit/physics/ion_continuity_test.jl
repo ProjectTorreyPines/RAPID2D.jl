@@ -186,54 +186,60 @@ end
     @test RP.plasma.ni == before
 end
 
-@testitem "Only mass and charge distinguish one ion species from another" setup = [IonRun] begin
+@testitem "A species collides with the BULK, not with itself" setup = [IonRun] begin
     using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
         channel_D_para, channel_D_perp
 
-    # Ti and the fluid velocity are shared — the 0D reaction set carries one ion
-    # temperature and one ion drift, and density is the only per-species state.
-    # Everything that separates two ion species therefore has to come through m
-    # and Z, and it separates cleanly:
+    # Ti and the fluid velocity are shared — the reaction set carries one ion
+    # temperature and one ion drift, and density is the only per-species state. So
+    # everything separating two ion species arrives through m and Z.
     #
-    #   ν_s ∝ Z_s²/√m_s   and   v_p,s ∝ 1/√m_s
-    #     ⇒  λ∥ = v_p/ν ∝ 1/Z²        charge only
-    #     ⇒  v∥          ∝ 1/√m       mass only
-    #     ⇒  D∥ = ½v∥λ∥  ∝ 1/(Z²√m)
+    # `transport.νi_coulomb` is the SELF-collision rate (NRL Plasma Formulary
+    # p.28, ν_i ∝ Z⁴μ^-1/2 n λ T^-3/2), which is what `initialization.jl` computes
+    # for the bulk. A trace species does not collide with itself — it collides
+    # with the bulk, and NRL's ion–ion test-particle rate (p.33) scales as
+    #
+    #     ν_z ∝ Z_z²Z_i² n_i (μ_i^½/μ_z)(1 + μ_i/μ_z)      v_z ∝ μ_z^-½
+    #
+    # so μ_z CANCELS out of the diffusivity in the heavy-impurity limit:
+    #
+    #     D∥_z / D∥_bulk = 2 / [ (Z_z/Z_i)² (1 + μ_i/μ_z) ]
+    #
+    # Using the self-collision μ^-½ instead makes C⁶⁺ 4.2× less diffusive than it
+    # should be.
     RP = ion_case()
+    RP.flags.Atomic_Collision = false          # Coulomb-only, so the ratio is clean
     update_transport_quantities!(RP)
     turb = shared_turbulent_channel(RP)
     m_p = RP.config.constants.mi / 2
+    μ_i, Z_i = 2, 1                            # H₂⁺, the bulk
 
     coll(m, Z) = ion_transport_channels(RP, IonSpecies(:probe, m, Z), turb)[1]
     bohm(m, Z) = ion_transport_channels(RP, IonSpecies(:probe, m, Z), turb)[2]
     inw = RP.G.nodes.in_wall_nids
     at(x) = x[inw]
-
     ref = coll(2m_p, 1)
+    D_ratio(μ_z, Z_z) = 2 / ((Z_z / Z_i)^2 * (1 + μ_i / μ_z))
 
-    # mass alone: 6× heavier at the same charge
-    heavy = coll(12m_p, 1)
-    @test at(heavy.v_para) ≈ at(ref.v_para) ./ sqrt(6) rtol = 1.0e-12
-    @test at(heavy.λ_para) ≈ at(ref.λ_para) rtol = 1.0e-12          # λ∥ ignores mass
-    @test at(channel_D_para(heavy)) ≈ at(channel_D_para(ref)) ./ sqrt(6) rtol = 1.0e-12
+    # v∥ still sees mass alone…
+    @test at(coll(12m_p, 1).v_para) ≈ at(ref.v_para) ./ sqrt(6) rtol = 1.0e-12
+    @test at(coll(2m_p, 6).v_para) ≈ at(ref.v_para) rtol = 1.0e-12
 
-    # Charge alone: 6× more charged at the same mass. λ∥ does NOT simply fall by
-    # Z² — only the Coulomb term does, and λ∥ also carries the ion-neutral term
-    # and the free-streaming field-line length. What holds exactly is the identity
-    # on the inverse length, where the three add:
-    #
-    #     1/λ∥(Z) − 1/λ∥(1) = (Z² − 1)·ν_coulomb / v_p,ref
-    charged = coll(2m_p, 6)
-    v_ref = @. sqrt(2 * RP.plasma.Ti_eV * RP.config.constants.ee / RP.config.constants.mi)
-    @test at(charged.v_para) ≈ at(ref.v_para) rtol = 1.0e-12        # v∥ ignores charge
-    @test (1 ./ at(charged.λ_para) .- 1 ./ at(ref.λ_para)) ≈
-        35 .* at(RP.transport.νi_coulomb) ./ at(v_ref) rtol = 1.0e-9
-    @test all(at(charged.λ_para) .< at(ref.λ_para))                 # and it is shorter
-    @test all(at(channel_D_para(charged)) .< at(channel_D_para(ref)))
+    # …but D∥ follows the ion–ion scaling, which is NOT separable in m and Z
+    for (μ_z, Z_z) in ((12, 1), (2, 6), (12, 6), (16, 8), (1, 1))
+        got = at(channel_D_para(coll(μ_z * m_p, Z_z))) ./ at(channel_D_para(ref))
+        @test got ≈ fill(D_ratio(μ_z, Z_z), length(got)) rtol = 1.0e-9
+    end
 
-    # both, as C⁶⁺ against H₂⁺: D∥ = ½v∥λ∥ picks up the mass through v∥ only
-    c6 = coll(12m_p, 6)
-    @test at(channel_D_para(c6)) ≈ at(channel_D_para(charged)) ./ sqrt(6) rtol = 1.0e-12
+    # the bulk reproduces itself exactly, so nothing about H₂⁺ moves
+    @test at(channel_D_para(coll(2m_p, 1))) == at(channel_D_para(ref))
+
+    # C⁶⁺ against the self-collision scaling this replaces: 1/21.0, not 1/88.2
+    @test D_ratio(12, 6) ≈ 1 / 21.0 rtol = 1.0e-3
+    @test 1 / (36 * sqrt(6)) ≈ 1 / 88.2 rtol = 1.0e-3
+
+    # a heavy impurity loses its mass dependence entirely
+    @test D_ratio(1000, 6) ≈ 2 / 36 rtol = 1.0e-2
 
     # Bohm is mass-free but NOT charge-free: ρ_s²ω_ci = Te/(ZeB)
     @test at(channel_D_perp(bohm(12m_p, 1))) ≈ at(channel_D_perp(bohm(2m_p, 1))) rtol = 1.0e-12

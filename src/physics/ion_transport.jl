@@ -257,29 +257,37 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     #                      channel is absent. Free streaming is convection, and the
     #                      equation already carries it as −∇·(n𝐮_i).
     # T_i and the fluid velocity are shared — the reaction set carries one ion
-    # temperature and one ion drift, and density is the only per-species state. So
-    # everything that separates two ion species arrives through m and Z, and it
-    # separates cleanly. For a test particle on a fixed background,
+    # temperature and one ion drift, and density is the only per-species state, so
+    # everything separating two ion species arrives through m and Z.
     #
-    #     ν_s ∝ Z_s²/√m_s        v_p,s = √(2T_i/m_s) ∝ 1/√m_s
-    #       ⇒  λ∥ = v_p/ν ∝ 1/Z_s²          charge only
-    #       ⇒  v∥          ∝ 1/√m_s         mass only
-    #       ⇒  D∥ = ½v∥λ∥  ∝ 1/(Z_s²√m_s)
+    # `νi_coulomb` is the SELF-collision rate (NRL Plasma Formulary p.28,
+    # ν_i ∝ Z⁴μ^-½ n λ T^-3/2), which is what `update_coulomb_collision_parameters!`
+    # computes for the bulk. A trace species does not collide with itself: it
+    # collides with the BULK, and NRL's ion–ion test-particle rate (p.33) is
     #
-    # so `inv_λ` is evaluated once at the REFERENCE thermal speed and the mass
-    # drops out of it algebraically rather than being cancelled numerically.
+    #     ν_s^{z|i} ∝ n_i Z_z²Z_i² λ (μ_i^½/μ_z)(1 + μ_i/μ_z) T^-3/2
     #
-    # Only the Coulomb half of ν carries Z²: a charge-exchange or elastic hit on H₂
-    # does not care that the ion is six times charged, and scaling the whole sum
-    # would overstate an impurity's collisionality by Z² through the entire
-    # gas-dominated early discharge — which is most of a burn-through.
+    # Dividing that by the same expression at z = i gives `coulomb_scale` below,
+    # which is exactly 1 for the bulk. With v_p,z ∝ μ_z^-½ the mass then CANCELS
+    # out of the diffusivity for a heavy impurity,
+    #
+    #     D∥_z / D∥_bulk = 2 / [ (Z_z/Z_i)² (1 + μ_i/μ_z) ]
+    #
+    # — using the self-collision μ^-½ instead makes C⁶⁺ 4.2× less diffusive.
+    #
+    # Only the Coulomb half of ν is scaled this way. An ion–neutral collision rate
+    # goes as n₀σ√(T/m) (NRL p.39), so its contribution to 1/λ = ν/v is
+    # species-independent outright, and scaling it by Z² would overstate an
+    # impurity's collisionality through the whole gas-dominated early discharge.
     #
     # max(0, ·): the Ti equation is free to land microscopically below zero
     # (−1.3e-61 was observed), and `sqrt` of that is a DomainError, not a NaN.
-    Z² = FT(species.charge^2)
-    v_p_ref = @. sqrt(max(zero(FT), 2 * pla.Ti_eV * ee / RP.config.constants.mi))
-    v_p = @. v_p_ref * sqrt(RP.config.constants.mi / species.mass)
-    inv_λ = @. (tp.νi_neutral + Z² * tp.νi_coulomb) / v_p_ref +
+    m_ref = RP.config.constants.mi
+    mass_ratio = FT(m_ref / species.mass)
+    coulomb_scale = FT(species.charge^2) * sqrt(mass_ratio) * (1 + mass_ratio) / 2
+    v_p_ref = @. sqrt(max(zero(FT), 2 * pla.Ti_eV * ee / m_ref))
+    v_p = @. v_p_ref * sqrt(mass_ratio)
+    inv_λ = @. (tp.νi_neutral + coulomb_scale * tp.νi_coulomb) / v_p_ref +
         ifelse(tp.L_mixing > 0, 1 / tp.L_mixing, zero(FT))
     # `inv_λ > 0` is false for both Inf⁻¹ = 0 and for a NaN out of 0/0, so the two
     # degenerate cases above land on λ∥ = 0 without being enumerated.
