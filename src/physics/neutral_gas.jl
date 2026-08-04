@@ -144,7 +144,11 @@ function neutral_gas_channel(n_gas, T_gas_eV, ν_iz, L_char)
     D_elastic = @. h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
     inv_λ = @. v_th / (2 * D_elastic) + ν_iz / v_th + 1 / L_char
     λ = @. 1 / inv_λ
-    return DiffusionChannel(v_th, λ, v_th, λ)
+    # This channel declares v = √(T/m), so its mean speed is √(8/π)·v_th — the value
+    # it has always contributed. Taken from (T, m) rather than scaled from `v_th` so
+    # that a later change of speed convention here cannot move the wall.
+    v̄ = maxwellian_mean_speed.(T_gas_eV, M_H2_GAS)
+    return DiffusionChannel(v_th, λ, v_th, λ; v̄_para = v̄, v̄_perp = v̄)
 end
 
 """

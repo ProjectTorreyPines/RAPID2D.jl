@@ -332,3 +332,32 @@ end
     # …and at Z = 1 the flag is a no-op, so no existing single-species result moves
     @test D⊥(off, turb_off, 1)[inw] ≈ D⊥(RP, turb, 1)[inw] rtol = 1.0e-12
 end
+
+@testitem "The wall speed is the population's MEAN speed, not the D-convention speed" setup = [IonRun] begin
+    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+        channel_ceiling
+
+    # Γ = ¼·n·v̄·|b̂·n̂| is an integral over the Maxwellian, so it needs ⟨|v|⟩ —
+    # a function of (T, m) and of nothing else. The channel's own `v` is
+    # bookkeeping married to `λ` so that ½vλ reproduces D, and which split was
+    # chosen is a property of how the code got D, not of the population. Deriving
+    # v̄ from it makes the wall depend on that choice: the collisional channel
+    # declares v_p = √(2T/m) while the gas channel declares √(T/m), and one
+    # global v̄/v ratio cannot be right for both.
+    RP = ion_case()
+    update_transport_quantities!(RP)
+    turb = shared_turbulent_channel(RP)
+    mi = RP.config.constants.mi
+    ee = RP.config.constants.ee
+    coll = ion_transport_channels(RP, IonSpecies(:H2⁺, mi, 1), turb)[1]
+
+    inw = RP.G.nodes.in_wall_nids
+    v̄ = @. sqrt(8 * RP.plasma.Ti_eV * ee / (π * mi))
+    @test channel_ceiling(coll, 1.0, 0.0, (1, 0))[inw] ≈ 0.25 .* v̄[inw] rtol = 1.0e-12
+
+    # …and the magnetic projection rides on top of it unchanged: v⊥ = 0 for a
+    # collisional channel, so a grazing face sees ¼v̄∥·|b̂·n̂| and nothing else.
+    @test all(iszero, coll.v_perp)
+    b = 0.6
+    @test channel_ceiling(coll, b, 0.0, (1, 0))[inw] ≈ 0.25 .* v̄[inw] .* b rtol = 1.0e-12
+end

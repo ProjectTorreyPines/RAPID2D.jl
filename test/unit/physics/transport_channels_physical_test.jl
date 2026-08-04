@@ -24,8 +24,14 @@
         # ½·v·λ must be the diffusivity the solver already computes — exactly
         @test only(@. 0.5 * ch.v_para * ch.λ_para) ≈
             neutral_gas_diffusivity(n, T, νiz, L) rtol = 1.0e-14
-        # the speed is the D-convention one this module already defines
+        # the speed is the D-convention one this module already defines…
         @test only(ch.v_para) ≈ neutral_gas_thermal_speed(T) rtol = 1.0e-14
+        # …and the wall speed is ⟨|v|⟩, which for THIS channel's √(T/m) convention
+        # happens to be √(8/π) times it. That coincidence is why one shared ratio
+        # was right here and wrong for every collisional channel; the value below
+        # is unchanged by carrying v̄ explicitly, and this pins that.
+        @test only(ch.v̄_para) ≈ sqrt(8 / π) * neutral_gas_thermal_speed(T) rtol = 1.0e-14
+        @test ch.v̄_perp == ch.v̄_para
         # a neutral gas has no preferred axis
         @test ch.v_perp == ch.v_para
         @test ch.λ_perp == ch.λ_para
@@ -210,13 +216,11 @@ end
 
     # A channel lives on the grid. Accepting an all-scalar call would build a
     # 0-dimensional channel that fails much later, somewhere less obvious.
-    @test_throws ArgumentError DiffusionChannel(1.0, 2.0, 3.0, 4.0)
+    @test_throws ArgumentError DiffusionChannel(1.0, 2.0, 3.0, 4.0; v̄_para = 1.0, v̄_perp = 3.0)
     # a genuine shape clash is Julia's own error, not a silent reshape
-    @test_throws DimensionMismatch DiffusionChannel(
-        zeros(2, 3), zeros(4, 5), zeros(2, 3), zeros(2, 3)
-    )
+    @test_throws DimensionMismatch DiffusionChannel(zeros(2, 3), zeros(4, 5), zeros(2, 3), zeros(2, 3); v̄_para = zeros(2, 3), v̄_perp = zeros(2, 3))
     # mixing one field with scalars is the normal case and must work
-    ch = DiffusionChannel(fill(1.0, 2, 3), 2.0, 3.0, 4.0)
+    ch = DiffusionChannel(fill(1.0, 2, 3), 2.0, 3.0, 4.0; v̄_para = fill(1.0, 2, 3), v̄_perp = 3.0)
     @test size(ch.v_para) == (2, 3)
     @test all(==(2.0), ch.λ_para)
 end
@@ -243,20 +247,14 @@ end
     NR, NZ = G.NR, G.NZ
 
     v_ref = fill(1.0e6, NR, NZ)
-    base = DiffusionChannel(
-        v_ref, @.(2 * tp.Dpara / v_ref),
-        v_ref, @.(2 * tp.Dperp / v_ref)
-    )
+    base = DiffusionChannel(v_ref, @.(2 * tp.Dpara / v_ref), v_ref, @.(2 * tp.Dperp / v_ref); v̄_para = v_ref, v̄_perp = v_ref)
     base_T = diffusion_tensor(base, F.bR, F.bZ)
 
     if RP.flags.turb_ExB_mixing
         fpara = RP.config.turbulent_diffusion_fraction_along_bpol
         fperp = 1 - fpara
         v_t = fill(1.0e3, NR, NZ)
-        turb = DiffusionChannel(
-            v_t, @.(2 * tp.Dpol_turb * fpara / v_t),
-            v_t, @.(2 * tp.Dpol_turb * fperp / v_t)
-        )
+        turb = DiffusionChannel(v_t, @.(2 * tp.Dpol_turb * fpara / v_t), v_t, @.(2 * tp.Dpol_turb * fperp / v_t); v̄_para = v_t, v̄_perp = v_t)
         turb_T = diffusion_tensor(turb, F.bpol_R, F.bpol_Z)
         DRR = base_T[1] .+ turb_T[1]
         DRZ = base_T[2] .+ turb_T[2]

@@ -298,7 +298,15 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         # A base diffusivity adds a step length, because ½v(λ + λ₀) = D + ½vλ₀
         @. λ_para += ifelse(v_p > 0, 2 * tp.Dpara0 / v_p, zero(FT))
     end
-    collisional = DiffusionChannel(v_p, λ_para, zero.(v_p), zero.(v_p))
+    # The wall wants ⟨|v|⟩ of THIS species' Maxwellian, which is (Ti, m) and nothing
+    # else — not a rescaling of `v_p`, whose √2 exists only because `λ = v_p/ν`
+    # was the route to D. Both are Maxwellian speeds and they differ by √2, which
+    # is exactly the size of the error a shared v̄/v ratio produced here.
+    v̄_p = maxwellian_mean_speed.(pla.Ti_eV, species.mass)
+    collisional = DiffusionChannel(
+        v_p, λ_para, zero.(v_p), zero.(v_p);
+        v̄_para = v̄_p, v̄_perp = zero.(v_p)
+    )
 
     # `bohm_charge_scaling = false` hands the channel Z = 1 instead of the species
     # charge, so D⊥ loses its 1/Z and every species shares the textbook Bohm value.
@@ -311,7 +319,8 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         # ρ_s = c_s/ω_ci is 0/0 wherever B vanishes; no field means no gyro-step
         bohm = DiffusionChannel(
             bohm.v_para, bohm.λ_para, bohm.v_perp,
-            (@. ifelse(isfinite(bohm.λ_perp), bohm.λ_perp, zero(FT)))
+            (@. ifelse(isfinite(bohm.λ_perp), bohm.λ_perp, zero(FT)));
+            v̄_para = bohm.v̄_para, v̄_perp = bohm.v̄_perp
         )
     end
     if tp.Dperp0 > zero(FT)
@@ -320,7 +329,8 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         # is left alone.
         bohm = DiffusionChannel(
             bohm.v_para, bohm.λ_para, bohm.v_perp,
-            (@. bohm.λ_perp + ifelse(bohm.v_perp > 0, 2 * tp.Dperp0 / bohm.v_perp, zero(FT)))
+            (@. bohm.λ_perp + ifelse(bohm.v_perp > 0, 2 * tp.Dperp0 / bohm.v_perp, zero(FT)));
+            v̄_para = bohm.v̄_para, v̄_perp = bohm.v̄_perp
         )
     end
 
@@ -342,7 +352,8 @@ const ION_MECHANISMS = ("collisional", "Bohm", "turbulent ExB")
 
 _finite_channel(ch::DiffusionChannel) =
     all(isfinite, ch.v_para) && all(isfinite, ch.λ_para) &&
-    all(isfinite, ch.v_perp) && all(isfinite, ch.λ_perp)
+    all(isfinite, ch.v_perp) && all(isfinite, ch.λ_perp) &&
+    all(isfinite, ch.v̄_para) && all(isfinite, ch.v̄_perp)
 
 """
     ion_channel_directions(RP) -> Vector{Tuple}
