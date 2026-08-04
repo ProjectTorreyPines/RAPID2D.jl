@@ -251,6 +251,11 @@ end
     total(x) = sum(Jv[k] * x[k] for k in inw)
     before = total(RP.plasma.n_H2_gas)
 
+    # The sink consumes rates the electron solve publishes, so a standalone call
+    # has to establish them. Nothing is ionizing here, which is the point: this
+    # test is about the diffusion stencil alone.
+    RAPID2D.update_reaction_counts!(RP)
+
     for _ in 1:20
         update_neutral_H2_gas_density!(RP)
     end
@@ -280,12 +285,20 @@ end
     RAPID2D.update_transport_quantities!(RP)
     RP.plasma.ν_en_iz .= 5.0e5
 
+    # Run the producer, then the sink — the order `advance_timestep!` uses. The
+    # sink must destroy exactly what the electron equation created, so `expected`
+    # is read off the published rate rather than rebuilt from `ne·ν_iz`: that
+    # rebuild is what used to differ from the electron equation at θ < 1.
+    ne_before = copy(RP.plasma.ne)
+    RAPID2D.solve_electron_continuity_equation!(RP)
     n_before = copy(RP.plasma.n_H2_gas)
     update_neutral_H2_gas_density!(RP)
 
     inw = RP.G.nodes.in_wall_nids
-    expected = @. n_before - RP.dt * RP.plasma.ne * RP.plasma.ν_en_iz
+    expected = @. n_before - RP.reactions.counts.iz
     @test RP.plasma.n_H2_gas[inw] ≈ expected[inw] rtol = 1.0e-10
+    # and that IS the electron gain, one nucleus each way
+    @test (RP.plasma.ne - ne_before)[inw] ≈ (n_before - RP.plasma.n_H2_gas)[inw] rtol = 1.0e-9
 end
 
 @testitem "Neutral gas update: density never goes negative" begin
@@ -305,6 +318,7 @@ end
     RAPID2D.update_transport_quantities!(RP)
     RP.plasma.ν_en_iz .= 1.0e6
 
+    RAPID2D.update_reaction_counts!(RP)
     update_neutral_H2_gas_density!(RP)
     @test minimum(RP.plasma.n_H2_gas) ≥ 0.0
 end
@@ -345,13 +359,13 @@ end
     RP = RAPID{Float64}(config)
     initialize!(RP)
 
-    # Backward Euler by default, and deliberately NOT tied to Implicit_weight:
-    # that global is 0.5, which is Crank-Nicolson. CN is A-stable but not
-    # L-stable, so its amplification factor tends to −1 as |λ|Δt grows and stiff
-    # modes ring instead of damping. D spans two orders of magnitude across the
-    # shielding layer, so the stiff end is always present here.
-    @test RP.flags.θ_gas == 1.0
-    @test RP.flags.Implicit_weight == 0.5
+    # Backward Euler by default, and deliberately its own member of θ_imp rather
+    # than the transport weight: that one is 0.5, which is Crank-Nicolson. CN is
+    # A-stable but not L-stable, so its amplification factor tends to −1 as |λ|Δt
+    # grows and stiff modes ring instead of damping. D spans two orders of
+    # magnitude across the shielding layer, so the stiff end is always present here.
+    @test RP.flags.θ_imp.gas == 1.0
+    @test RP.flags.θ_imp.transport == 0.5
 
     # the knob is honoured: θ = 0 is forward Euler, which on this operator must
     # blow up at a Δt far above the explicit CFL limit min(dR,dZ)²/(4D)
@@ -364,8 +378,10 @@ end
             exp(-((RP.G.R2D - Rc)^2 + (RP.G.Z2D - Zc)^2) / 0.02)
     )
 
+    RAPID2D.update_reaction_counts!(RP)   # no ionization here; the scheme is under test
+
     RP.plasma.n_H2_gas .= bump()
-    RP.flags.θ_gas = 1.0
+    RP.flags.θ_imp.gas = 1.0
     for _ in 1:20
         update_neutral_H2_gas_density!(RP)
     end
@@ -373,7 +389,7 @@ end
     @test minimum(RP.plasma.n_H2_gas) ≥ 0.0
 
     RP.plasma.n_H2_gas .= bump()
-    RP.flags.θ_gas = 0.0
+    RP.flags.θ_imp.gas = 0.0
     for _ in 1:20
         update_neutral_H2_gas_density!(RP)
     end

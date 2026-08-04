@@ -21,6 +21,8 @@ export update_ue_para!,
     update_electron_heating_powers!,
     update_ion_heating_powers!,
     solve_electron_continuity_equation!,
+    solve_ion_continuity_equation!,
+    update_charge_states!,
     apply_electron_density_boundary_conditions!,
     calculate_para_grad_of_scalar_F,
     calculate_grad_of_scalar_F,
@@ -84,10 +86,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # and the combined momentum-Ampère solvers build the identical sum.
             ν_sum_mom_iz_ei = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
 
-            # Always use backward Euler for ue_para (θu=1.0) for better saturation
-            # but keep the formula structure compatible with variable θ_imp
-            # θu = RP.flags.Implicit_weight
-            θu = one_FT
+            # Backward Euler by default (θ_imp.decay = 1): this equation is
+            # friction-dominated, and at large Δt BE lands on u∞ = S/ν while CN
+            # rings about it forever. The formula stays written for a general θ.
+            θu = RP.flags.θ_imp.decay
 
             # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
             if RP.flags.Coulomb_Collision
@@ -170,14 +172,6 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 
-function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    # Solve the ion continuity equation
-    # This function is a placeholder and should be implemented based on the specific model
-    # For now, we just return the RAPID object unchanged
-    @warn "Ion continuity equation solver not implemented yet" maxlog = 1
-    return RP
-end
-
 """
     update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
@@ -190,6 +184,7 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Alias
             cnst = RP.config.constants
             pla = RP.plasma
+            m_i = bulk_ion_mass(RP)   # the ion this equation moves, not the default
 
             eff_atomic_coll_freq = zeros(FT, size(pla.ui_para))
             if RP.flags.Atomic_Collision
@@ -203,8 +198,11 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
                 # Add the ionization contribution if source terms are enabled, from the
                 # step-entry ν_en_iz that continuity and the energy equation also use.
+                # Ions are born at rest, so this is a dilution rate: events per second
+                # divided by the ions already present, n_e·ν_iz/(n_e/Z) = Z·ν_iz.
                 if RP.flags.src
-                    @. eff_atomic_coll_freq += pla.Zeff * pla.ν_en_iz
+                    Z_i = FT(bulk_ion_charge(RP))
+                    @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
                 end
 
                 # NOTE: convection and pressure contribution are ignored for ions
@@ -222,16 +220,16 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             θ = one_FT  # Backward Euler
             @. pla.ui_para = (
                 pla.ui_para * (one_FT - (one_FT - θ) * RP.dt * eff_atomic_coll_freq) +
-                    RP.dt * qi * RP.fields.E_para_tot / cnst.mi
+                    RP.dt * qi * RP.fields.E_para_tot / m_i
             ) /
                 (one_FT + θ * RP.dt * eff_atomic_coll_freq)
 
             # Add electron-ion momentum transfer effect
             if RP.flags.Coulomb_Collision
                 if RP.flags.Spitzer_Resistivity
-                    Rui_ei = @. pla.sptz_fac * (cnst.me / cnst.mi) * pla.ν_ei * (pla.ue_para - pla.ui_para)
+                    Rui_ei = @. pla.sptz_fac * (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
                 else
-                    Rui_ei = @. (cnst.me / cnst.mi) * pla.ν_ei * (pla.ue_para - pla.ui_para)
+                    Rui_ei = @. (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
                 end
                 pla.ui_para .+= RP.dt * Rui_ei
             end
@@ -266,7 +264,9 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         dt = RP.dt
         pla = RP.plasma
         OP = RP.operators
-        θimp = RP.flags.Implicit_weight
+        # Only the transport terms of the energy equation are θ-weighted here —
+        # the atomic power terms enter `ePowers.tot` explicitly.
+        θimp = RP.flags.θ_imp.transport
 
         two_thirds_FT = FT(2.0) / FT(3.0)
 
@@ -388,7 +388,12 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # char_exc_erg_eV normalizes the Total_Excitation surface and is validated at load
         # against the table's characteristic_exc_erg_eV (Electron_RRCs), so P_exc
         # reproduces the kinetic loss exactly.
-        @unpack ee, qe, me, mi, char_exc_erg_eV, iz_erg_eV = RP.config.constants
+        @unpack ee, qe, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
+        # Two different masses. `m_H2` is the NEUTRAL molecule an electron recoils
+        # off; `m_i` is the ion it equilibrates with. Equal for H₂/H₂⁺, which is why
+        # one symbol served both, and unequal for any other declared ion.
+        m_H2 = RP.config.constants.mi
+        m_i = bulk_ion_mass(RP)
         OP = RP.operators
 
         # Alias common objects for readability
@@ -472,7 +477,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # those channels do not also transfer 2me/M to the molecule. Using total
             # `Total_Momentum` over-counts this term by +42% at E/p ≈ 100 and +345% at
             # E/p ≈ 1000, where elastic is only 71% and 22% of the drift friction.
-            @. ePowers.ela = (FT(2.0) * me / mi) * pla.ν_en_mom_ela *
+            @. ePowers.ela = (FT(2.0) * me / m_H2) * pla.ν_en_mom_ela *
                 FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
 
             # Excitation power (energy lost to excite particles). ν_en_exc_eff is
@@ -496,7 +501,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # Equilibration power with ions (energy exchange from temperature differences)
         if RP.flags.Coulomb_Collision
             # Factor for energy transfer rate between electrons and ions
-            @. ePowers.equi = (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
+            @. ePowers.equi = (FT(2.0) * (m_i * me / (m_i + me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
         end
 
         # Calculate total power (sum of all components)
@@ -543,7 +548,7 @@ This function calculates the ion power sources and sinks based on the MATLAB
 # Notes
 The power calculation includes:
 - Energy change from atomic collisions: 0.5*mi*ui_mag_sq - 1.5*(Ti-T_gas)*ee
-- Effective collision frequency: n_H2_gas*(0.5*elastic + charge_exchange + Zeff*ionization)
+- Effective collision frequency: n_H2_gas*(0.5*elastic + charge_exchange + Z*ionization)
 - Atomic power: collision_frequency * energy_change
 - Equilibration power: matches electron equilibration power if Coulomb collisions enabled
 - Total power: atomic + equilibration
@@ -557,7 +562,8 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # TODO: add convection and diffusion terms for ions if needed
 
         # Extract physical constants
-        @unpack ee, mi, me = RP.config.constants
+        @unpack ee, me = RP.config.constants
+        mi = bulk_ion_mass(RP)
 
         # Alias common objects for readability
         pla = RP.plasma
@@ -587,8 +593,11 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # Ionization contribution, from the step-entry ν_en_iz (update_RRCs!) that the
             # electron continuity and energy equations use — the electron rate governs it.
+            # Z·ν_iz, not ν_iz: the events are counted per electron and this equation is
+            # per ion, and one ion carries Z of them (see `update_ui_para!`).
             if RP.flags.src
-                @. eff_atomic_coll_freq += pla.Zeff * pla.ν_en_iz
+                Z_i = FT(bulk_ion_charge(RP))
+                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
             end
 
             # Calculate atomic power: collision frequency times energy change
@@ -632,20 +641,16 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # Store previous density state for transport calculations
         RP.prev_n .= RP.plasma.ne
 
-        # Calculate source terms for electron density
-        fill!(op.RHS, zero(FT))  # Reset RHS to zero
-        if RP.flags.src
-            # ne * ν_en_iz, with ν_en_iz materialized by update_RRCs! at the step-entry
-            # state — do not re-query the table here (see update_RRCs! docstring).
-            op.RHS += pla.ne .* pla.ν_en_iz
-
-            # The implicit half of the same source needs ν_en_iz as a diagonal operator.
-            # It is assembled here, under `src`, rather than in update_RRCs!: the LHS at
-            # the bottom of this function adds op.ν_en_iz unconditionally, so a rebuild
-            # outside this branch would inject ionization into a run that asked for none.
-            if RP.flags.Implicit
-                op.ν_en_iz .= @views spdiagm(pla.ν_en_iz[:])
-            end
+        # op.RHS accumulates the TRANSPORT terms only. Ionization is added at the
+        # weighting step below instead, because the two families carry different
+        # θ (`θ_imp.transport` vs `θ_imp.growth`) and so cannot share a sum.
+        fill!(op.RHS, zero(FT))
+        if RP.flags.src && RP.flags.Implicit
+            # The implicit half of the ionization source needs ν_en_iz as a diagonal
+            # operator. Assembled here rather than in update_RRCs! so that a run
+            # with `src` off never builds one. ν_en_iz itself was materialized by
+            # update_RRCs! at the step-entry state — do not re-query the table here.
+            op.ν_en_iz .= @views spdiagm(pla.ν_en_iz[:])
         end
 
         if RP.flags.diffu
@@ -659,15 +664,35 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
 
         # update electron density
         if RP.flags.Implicit
-            # Implicit method implementation
-            # Weight for implicit method (0.0 = fully explicit, 1.0 = fully implicit)
-            θn = RP.flags.Implicit_weight
+            # 0 = forward Euler, ½ = Crank-Nicolson, 1 = backward Euler, per family.
+            θ_tr = RP.flags.θ_imp.transport
+            θ_gr = RP.flags.θ_imp.growth
 
-            # Build full RHS with explicit contribution
-            @. op.RHS = pla.ne + dt * (one(FT) - θn) * op.RHS
+            # Weight each family's explicit half in place, then close the RHS —
+            # the same accumulation order the explicit branch below uses, so that
+            # θ = 0 reproduces it bit for bit rather than merely algebraically.
+            @. op.RHS *= (one(FT) - θ_tr)
+            if RP.flags.src
+                @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
+            end
+            @. op.RHS = pla.ne + dt * op.RHS
 
-            # Build LHS operator
-            @. op.A_LHS = op.II - θn * dt * (op.∇𝐃∇ - op.∇𝐮 + op.ν_en_iz)
+            # Build LHS operator. Every term is gated by the SAME flag that gated
+            # its explicit half above: all three used to be added unconditionally,
+            # so `flags.diffu = false` removed only the explicit half and left θ·Δt
+            # of the diffusion still acting implicitly, and a run that turned `src`
+            # off mid-way kept ionizing through a stale ν_en_iz. The ion path
+            # honours the flags in full, which is how the mismatch showed up.
+            #
+            # Gated by ZEROING the weight rather than by branching, so this stays
+            # the single fused broadcast it has always been. Four statements cost
+            # 26 extra Ng-sized sparse temporaries per step at 100×200; they also
+            # would have made the sparsity pattern flag-dependent, and the cached
+            # factorization wants it stable.
+            θ_d = RP.flags.diffu ? θ_tr : zero(FT)
+            θ_c = RP.flags.convec ? θ_tr : zero(FT)
+            θ_s = RP.flags.src ? θ_gr : zero(FT)
+            @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
 
             # Solve the linear system (cached factorization; pattern is step-stable)
             @timeit RAPID_TIMER "ne LinearSolve`" begin
@@ -675,8 +700,17 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
         else
+            if RP.flags.src
+                @. op.RHS += pla.ne * pla.ν_en_iz
+            end
             @. RP.plasma.ne += dt * op.RHS
         end
+
+        # Publish how many ionizations this step made, from the θ and the nⁿ/nⁿ⁺¹
+        # this solve just used. Everything else — the ion source, both particle
+        # ledgers, the neutral-gas sink — reads that one number instead of
+        # rebuilding it, so they cannot disagree about the event count.
+        update_reaction_counts!(RP)
         return RP
     end # @timeit
 end
@@ -707,14 +741,11 @@ This function performs three main operations:
 """
 function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "treat_electron_outside_wall!" begin
-        # Estimate the number of electrons generated by ionization
-        if RP.flags.Implicit
-            θimp = RP.flags.Implicit_weight
-            effective_ne = @. (FT(1.0) - θimp) * RP.prev_n + θimp * RP.plasma.ne
-            Ne_iz = @. RP.plasma.ν_en_iz * effective_ne * RP.G.inVol2D * RP.dt
-        else
-            Ne_iz = @. RP.plasma.ν_en_iz * RP.plasma.ne * RP.G.inVol2D * RP.dt
-        end
+        # The number of electrons ionization made this step, from the one array
+        # that says so — already a per-step count, hence no Δt here. Bound outside
+        # the `@.`, which would otherwise broadcast the calls themselves over `RP`.
+        Δn_e = net_electron_count(check_reaction_counts(RP))
+        Ne_iz = @. Δn_e * RP.G.inVol2D
 
         # Estimate electron loss outside the wall
         # TODO: How to accurately define the volume outside/on the wall?
@@ -726,6 +757,17 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         Ntracker.cum0D_Ne_src += sum(Ne_iz)
         @. Ntracker.cum2D_Ne_src += Ne_iz
+
+        # One ionization event makes one electron AND one ion, so the ion ledger is
+        # fed the SAME number rather than recomputing it. `treat_ion_outside_wall!`
+        # used to, and by then `plasma.ne` had already been zeroed outside the wall
+        # a few lines below — so ionization in that band was booked for electrons
+        # and lost for ions. Guarded by the flag that decides whether the ion pass
+        # runs at all, so the pairing of writers is unchanged.
+        if RP.flags.update_ni_independently
+            Ntracker.cum0D_Ni_src += sum(Ne_iz)
+            @. Ntracker.cum2D_Ni_src += Ne_iz
+        end
 
         Ntracker.cum0D_Ne_loss += sum(Ne_loss)
         @. Ntracker.cum2D_Ne_loss[on_out_wall_nids] += Ne_loss
@@ -759,7 +801,8 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         end
 
         if !RP.flags.update_ni_independently
-            RP.plasma.ni .= RP.plasma.ne
+            # Same definition the step uses; they disagreed before (ne/Zeff vs ne).
+            slave_ions_to_electrons!(RP)
         end
 
         return RP
@@ -782,21 +825,18 @@ electrons from ion wall impacts, and optionally corrects negative densities.
 """
 function treat_ion_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "treat_ion_outside_wall!" begin
-        # Estimate the number of ions generated by ionization
-        # NOTE: ν_en_iz must be multiplied by the electron density to get the ionization rate
-        # In other words, Ne_iz = Ni_iz
-        Ni_iz = @. RP.plasma.ν_en_iz * RP.plasma.ne * RP.G.inVol2D * RP.dt
+        # The ion SOURCE is not booked here. Ne_iz = Ni_iz by construction — one
+        # ionization makes one of each — so `treat_electron_outside_wall!` books
+        # both from one number, before it zeroes `ne` outside the wall. Recomputing
+        # it here read that already-zeroed density.
 
         # Estimate electron loss outside the wall
         # TODO: How to accurately define the volume outside/on the wall?
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
         Ni_loss = @. RP.plasma.ni[on_out_wall_nids] * FT(2.0 * pi) * RP.G.Jacob[on_out_wall_nids] * RP.G.dR * RP.G.dZ
 
-        # Track changes in number of electrons
+        # Track changes in number of ions
         Ntracker = RP.diagnostics.Ntracker
-
-        Ntracker.cum0D_Ni_src += sum(Ni_iz)
-        @. Ntracker.cum2D_Ni_src += Ni_iz
 
         Ntracker.cum0D_Ni_loss += sum(Ni_loss)
         @. Ntracker.cum2D_Ni_loss[on_out_wall_nids] += Ni_loss
@@ -1263,6 +1303,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
 
     # Physical constants
     @unpack ee, me, μ0, qe = RP.config.constants
+    Z_i = FT(bulk_ion_charge(RP))   # scalar: `@.` would call it per element
 
     θimp = FT(1.0)  # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
 
@@ -1312,7 +1353,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     # Jϕ_tilde is the part of prediction of Jϕ at the next time step, using the current information
     Jϕ_tilde = @. (
         pla.ne * qe * (pla.ue_para + dt * accel_para_tilde)
-            + pla.ni * (ee * pla.Zeff) * Au_X_ui_para
+            + pla.ni * (ee * Z_i) * Au_X_ui_para
     ) * F.bϕ
 
 
@@ -1322,7 +1363,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     end
 
     # Toroidal current density Jϕ @ t=(n-th step)
-    Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
+    Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
     # 6. Initial guess for ψ_self using θ-implicit scheme with extrapolated Eϕ_self
     # Predict Eϕ_self(n+1) by linear extrapolation: 2*E(n) - E(n-1)
@@ -1367,7 +1408,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
         # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
         @. RHS = pla.ue_para + dt * accel_para_tilde - facEM * new_ψ_self_k
         ue_para_k .= Au \ RHS # Solve for ue_para at (k)-th step
-        @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
+        @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
 
         if csys.n_total > 0
@@ -1610,6 +1651,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # Physical constants
         @unpack ee, me, μ0, qe = RP.config.constants
+        Z_i = FT(bulk_ion_charge(RP))   # scalar: `@.` would call it per element
 
         θimp = FT(1.0)  # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
 
@@ -1658,7 +1700,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
 
         # Toroidal current density Jϕ @ t=(n-th step)
-        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
+        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
 
         # 6. Initial guess for ψ_self using θ-implicit scheme with extrapolated Eϕ_self
@@ -1699,7 +1741,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         converged = false
         while true
             # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
-            @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
+            @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
 
             if csys.n_total > 0
@@ -1746,7 +1788,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             # Step #3: Set RHS of the implicit Ampere equation
             @. RHS_u = pla.ue_para + dt * accel_para_tilde
 
-            @. RHS_ψ = -μ0 * G.R2D * pla.ni * ee * pla.Zeff * pla.ui_para * F.bϕ
+            @. RHS_ψ = -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
             if csys.n_total > 0
                 inside_Jϕ_coil_k = distribute_coil_currents_to_Jϕ(csys, RP.G; currents = new_coils_I_k)
                 @. RHS_ψ += -μ0 * G.R2D * inside_Jϕ_coil_k
@@ -1791,7 +1833,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             @. pla.Rue_ei += pla.ν_ei_eff * (-θimp * pla.ue_para)
         end
 
-        @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Zeff) * pla.ui_para) * F.bϕ
+        @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
         # Update coil currents
         if RP.coil_system.n_total > 0
@@ -1830,7 +1872,8 @@ function update_uMHD_by_global_JxB_force!(RP::RAPID{FT}) where {FT <: AbstractFl
     # Check if we have closed flux surfaces
     if !isempty(RP.flf.closed_surface_nids)
 
-        @unpack mi, me = RP.config.constants
+        @unpack me = RP.config.constants
+        mi = bulk_ion_mass(RP)   # the declared species, as transport uses
         nids = vcat(RP.G.nodes.on_wall_nids, RP.G.nodes.in_wall_nids)
         pla = RP.plasma
         F = RP.fields

@@ -16,7 +16,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     F = RP.fields
     inVol2D = RP.G.inVol2D  # alias for convenience
 
-    @unpack ee, me, mi = RP.config.constants  # Unpack constants for convenience
+    @unpack ee, me = RP.config.constants  # Unpack constants for convenience
+    mi = bulk_ion_mass(RP)                    # Ki_eV is the ion's kinetic energy
 
     # Store metadata
     snap0D.time_s = RP.time_s
@@ -248,7 +249,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     F = RP.fields                    # alias for convenience
     tp = RP.transport                 # alias for convenience
 
-    @unpack ee, me, mi = RP.config.constants  # Unpack constants for convenience
+    @unpack ee, me = RP.config.constants  # Unpack constants for convenience
+    mi = bulk_ion_mass(RP)                    # Ki_eV is the ion's kinetic energy
 
     # Store metadata
     snap2D.step = RP.step
@@ -294,9 +296,12 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     @. snap2D.Ni_src_rate = Ntracker.cum2D_Ni_src / RP.config.snap2D_Δt_s
     @. snap2D.Ni_loss_rate = Ntracker.cum2D_Ni_loss / RP.config.snap2D_Δt_s
 
-    # Current densities (parallel current components)
+    # Current densities (parallel current components). The ion term is a CHARGE
+    # density, `ni·Z` — it read `ni` alone, which was right only because H₂⁺ has
+    # Z = 1, and would have under-reported the current for any other ion.
     snap2D.Jϕ .= pla.Jϕ
-    @. snap2D.J_para = ee * (pla.ni * pla.ui_para - pla.ne * pla.ue_para)
+    Z_i = FT(bulk_ion_charge(RP))
+    @. snap2D.J_para = ee * (pla.ni * Z_i * pla.ui_para - pla.ne * pla.ue_para)
 
     # Poloidal flux
     snap2D.ψ .= F.ψ
@@ -328,8 +333,11 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.mean_aR_by_JxB .= pla.mean_aR_by_JxB
     snap2D.mean_aZ_by_JxB .= pla.mean_aZ_by_JxB
 
-    # Coulomb logarithm
+    # Coulomb logarithms — the electron-ion one and the ion-ion one, which are
+    # different formulas (NRL p.34b vs p.34c) and differ by tens of percent
+    # whenever Te ≠ Ti.
     snap2D.lnΛ .= pla.lnΛ
+    snap2D.lnΛ_ii .= pla.lnΛ_ii
 
     # Neutral gas
     snap2D.n_H2_gas .= pla.n_H2_gas

@@ -154,6 +154,11 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFl
     RP.transport.Dpara .= RP.transport.Dpara0 * ones(FT, RP.G.NR, RP.G.NZ)
     RP.transport.Dperp .= RP.transport.Dperp0 * ones(FT, RP.G.NR, RP.G.NZ)
 
+    # H₂⁺ is the only ion species the reaction set produces, but the machinery
+    # behind it is written for a list: appending H⁺ or Cᶻ⁺ here is what adds them
+    # to the transport solve.
+    set_ion_species!(RP, [IonSpecies(:H2⁺, FT(RP.config.constants.mi), 1)])
+
     # Set initial gas density
     RP.plasma.n_H2_gas .= RP.config.prefilled_gas_pressure ./
         (RP.plasma.T_gas_eV * RP.config.ee) .*
@@ -203,8 +208,13 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     if RP.flags.convec
         RP.operators.∇𝐮 = construct_∇𝐮_operator(RP)
+        RP.operators.∇𝐮_i = construct_∇𝐮_operator(RP, RP.plasma.uiR, RP.plasma.uiZ)
         RP.operators.𝐮∇ = construct_𝐮∇_operator(RP)
     end
+    # `∇𝐮_pinch` is NOT allocated here. The pinch is a diffusive-friction term, so
+    # it exists whether or not fluid convection is enabled and cannot ride on the
+    # `convec` allocation above; and `flags.ion_pinch` is routinely flipped after
+    # `initialize!`, like every other flag. It is allocated on first use instead.
 
     # Initialize specific operators based on flags
     if RP.flags.Ampere
@@ -744,6 +754,55 @@ function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return RP
 end
 
+"""
+    ion_ion_coulomb_log(n, T_eV, Z, μ, n′, T′_eV, Z′, μ′)
+    ion_ion_coulomb_log(n, T_eV, Z, μ)
+
+Mixed ion–ion Coulomb logarithm, NRL Plasma Formulary 2023 p.34(c):
+
+```
+λ_ii' = 23 − ln[ (Z Z' (μ+μ') / (μ T' + μ' T)) · (n Z²/T + n' Z'²/T')^(1/2) ]
+```
+
+Densities are **SI (m⁻³)** and converted internally; NRL states the formula in
+cm⁻³. Temperatures are eV and `μ = m/m_p`.
+
+The one-species method is the self-collision case `i = i′`, which reduces to
+`23 − ln(√2 Z³ √n[cm⁻³] T^(−3/2))`. That is the logarithm belonging in the NRL
+p.28 self-collision rate `ν_i ∝ Z⁴ μ^(−1/2) n λ T^(−3/2)` — **not** the
+electron–ion logarithm, which carries `Te` where this carries `Ti`.
+
+Two guards, both load-bearing rather than cosmetic:
+
+  * the result is floored at 1. The raw expression goes NEGATIVE for cold dense
+    plasma (`n = 1e21`, `Ti = 0.026 eV` gives −0.09), and a negative logarithm
+    makes `ν_ii` negative — an anti-collision, which does not degrade a run so
+    much as invert it. Below `λ ≈ 1` the impact-parameter ratio is `≈ e` and the
+    Coulomb-log expansion has no meaning anyway.
+  * a non-finite result falls back to 10, matching the convention already used
+    for `lnΛ`. `n = 0` sends the argument to 0 and the logarithm to `+Inf`; the
+    value is irrelevant there because `ν ∝ n λ` vanishes regardless.
+"""
+function ion_ion_coulomb_log(
+        n::Real, T_eV::Real, Z::Real, μ::Real,
+        n′::Real, T′_eV::Real, Z′::Real, μ′::Real
+    )
+    FT = float(promote_type(typeof(n), typeof(T_eV), typeof(Z), typeof(μ)))
+    # A continuity solve is free to hand back n ≤ 0, and a temperature equation to
+    # land microscopically below zero; neither may reach `sqrt` or a division.
+    nc = max(FT(n) * FT(1.0e-6), zero(FT))
+    nc′ = max(FT(n′) * FT(1.0e-6), zero(FT))
+    T = max(FT(T_eV), eps(FT))
+    T′ = max(FT(T′_eV), eps(FT))
+
+    arg = (Z * Z′ * (μ + μ′) / (μ * T′ + μ′ * T)) * sqrt(nc * Z^2 / T + nc′ * Z′^2 / T′)
+    λ = FT(23) - log(arg)
+    return isfinite(λ) ? max(λ, one(FT)) : FT(10)
+end
+
+ion_ion_coulomb_log(n::Real, T_eV::Real, Z::Real, μ::Real) =
+    ion_ion_coulomb_log(n, T_eV, Z, μ, n, T_eV, Z, μ)
+
 function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # NRL formula for Coulomb logarithm
     # Note that NRL uses cgs units for density and eV for temperature
@@ -751,37 +810,54 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     pla = RP.plasma
 
     # Constants needed for calculation
-    @unpack me, mi, mp, ee, eps0 = RP.config.constants
+    @unpack me, mp, ee, eps0 = RP.config.constants
+    # From the declared species, not `constants.mi`: `ion_transport_channels`
+    # scales every ion diffusivity from `ν_ii`, and it does so with `species.mass`.
+    # Reading a different mass here would make the two describe different ions.
+    mi = bulk_ion_mass(RP)
 
     μ = mi / mp  # ion mass / proton mass
     me_over_mi = me / mi  # electron to ion mass ratio
+
+    # Every Z below is the CHARGE STATE of the bulk ion, which is what NRL's
+    # p.28 rates and p.34 logarithms carry. It used to be read from `plasma.Zeff`,
+    # and that was right only because a single hydrogen species makes the charge
+    # state, the mean charge and the effective charge all equal 1. `Zeff` is now
+    # the per-electron average alone (`update_charge_states!`) and is consumed
+    # below by the Spitzer factor and by nothing else in this function.
+    Z_i = FT(bulk_ion_charge(RP))
 
     # Calculate temperature ratio threshold
     Ti_mass_ratio = pla.Ti_eV * me_over_mi
 
     # Create index masks for different temperature regimes
     idx1 = @. (pla.Te_eV < Ti_mass_ratio)  # very low Te case
-    idx2 = @. (!idx1 & (pla.Te_eV > 10 * pla.Zeff^2))  # normal Te case
+    idx2 = @. (!idx1 & (pla.Te_eV > 10 * Z_i^2))  # normal Te case
     idx3 = @. (!idx1 & !idx2)  # low Te case
 
     # Calculate Coulomb logarithm based on different regimes
     # Very low Te case
+    # max(0, ·) on every sqrt below. The `!isreal` guard a few lines down shows the
+    # intent was for a bad density to fall through to the base value — but `sqrt` of
+    # a negative Float64 THROWS rather than returning NaN or a Complex, so the guard
+    # could never fire. A continuity solve is free to land at n = -1e-55, and that
+    # took down a whole run.
     @. pla.lnΛ[idx1] = 16.0 - log(
-        sqrt(pla.ni[idx1] * 1.0e-6) *
+        sqrt(max(zero(FT), pla.ni[idx1] * 1.0e-6)) *
             (pla.Ti_eV[idx1])^(-1.5) *
-            pla.Zeff[idx1]^2 * μ
+            Z_i^2 * μ
     )
 
-    # Normal Te case (Te_eV > 10*Zeff^2)
+    # Normal Te case (Te_eV > 10*Z_i^2)
     @. pla.lnΛ[idx2] = 24.0 - log(
-        sqrt(pla.ne[idx2] * 1.0e-6) /
+        sqrt(max(zero(FT), pla.ne[idx2] * 1.0e-6)) /
             pla.Te_eV[idx2]
     )
 
     # Low Te case
     @. pla.lnΛ[idx3] = 23.0 - log(
-        sqrt(pla.ne[idx3] * 1.0e-6) *
-            pla.Zeff[idx3] *
+        sqrt(max(zero(FT), pla.ne[idx3] * 1.0e-6)) *
+            Z_i *
             (pla.Te_eV[idx3])^(-1.5)
     )
 
@@ -792,12 +868,20 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # Update collision frequency
     # ν_ei = n_e e^4 lnΛ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)
     ν_factor_Maxwellian = FT(1.863033936542749e-40)  # sqrt(2)*ee^4/(12π^(1.5)*ϵ0^2*sqrt(me))
-    @. pla.ν_ei = ν_factor_Maxwellian * pla.Zeff^2 * pla.ni *
+    @. pla.ν_ei = ν_factor_Maxwellian * Z_i^2 * pla.ni *
         pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
 
     # Another way (NRL formula):
     # @. pla.ν_ei = 2.91e-6 * pla.ne*1e-6 *pla.lnΛ * pla.Te_eV^(-1.5)
-    @. pla.ν_ii = 4.8e-8 * pla.Zeff^4 * (mi / mp)^(-0.5) * pla.ni * 1.0e-6 * pla.lnΛ * pla.Ti_eV^(-1.5)
+
+    # The ion-ion rate gets its OWN logarithm (NRL p.34c). Everything above this
+    # line is an electron-ion quantity and keeps `lnΛ`; `ν_ii` is not, and reusing
+    # the electron form put `Te` where `Ti` belongs — a factor (Te/Ti)^(3/2)
+    # inside a log, worth tens of percent whenever the electrons run hot. Every
+    # per-species ion diffusivity is scaled from this one rate
+    # (`ion_transport_channels`), so the error propagated to all of them.
+    pla.lnΛ_ii .= ion_ion_coulomb_log.(pla.ni, pla.Ti_eV, Z_i, μ)
+    @. pla.ν_ii = 4.8e-8 * Z_i^4 * (mi / mp)^(-0.5) * pla.ni * 1.0e-6 * pla.lnΛ_ii * pla.Ti_eV^(-1.5)
 
     # # From lecture note (CH2_Fundamentals) of Prof. Hong
     # τ_ei = @.  (6.0 * sqrt(3.0)*π * eps0^2/ ee^4) * (sqrt(me)* (ee*pla.Te_eV)^(1.5)) / (pla.Zeff^4 * pla.ni * pla.lnΛ)
@@ -809,6 +893,8 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     @. pla.ν_ii[!isfinite(pla.ν_ii)] = zero(FT)
 
 
+    # The one genuine Z_eff consumer in this function: Spitzer resistivity is a
+    # single-fluid closure, so it wants the per-ELECTRON average Σn_zZ_z²/n_e.
     Zeff = pla.Zeff
     @. pla.sptz_fac = (1 + 1.198 * Zeff + 0.222 * Zeff^2) / (1 + 2.966 * Zeff + 0.753 * Zeff^2)
     # Set Spitzer factor to 0.51 for Zeff=1

@@ -74,6 +74,10 @@ Contains simulation configuration parameters.
 
     turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
 
+    # Fraction of ions the wall returns to the plasma. 0 = fully absorbing,
+    # 1 = perfectly reflecting; the Robin coefficient is ¼v̄_n(1 − R).
+    ion_wall_albedo::FT = FT(0.0)
+
     # Output intervals
     snap0D_Δt_s::FT = FT(20.0e-6)  # Time interval for 1D snapshots
     snap2D_Δt_s::FT = FT(100.0e-6)  # Time interval for 2D snapshots
@@ -201,6 +205,11 @@ Contains the plasma state variables including density, temperature, and velocity
 
     # Densities
     ne::Matrix{FT} = zeros(FT, dims)    # Electron density [m^-3]
+    # The density OF THE ION SPECIES — `transport.ion_species[1]`, H₂⁺ by default —
+    # and not a total over species. There is only ever one (see `set_ion_species!`),
+    # so the two readings coincide today; naming which one it is now is what keeps a
+    # second species from having to guess later. Its charge density is `ni·Z` with
+    # `Z = bulk_ion_charge(RP)`; nothing stores a charge average to recover it from.
     ni::Matrix{FT} = zeros(FT, dims)    # Ion density [m^-3]
     n_H2_gas::Matrix{FT} = zeros(FT, dims)  # H2 gas density [m^-3]
 
@@ -238,7 +247,12 @@ Contains the plasma state variables including density, temperature, and velocity
     γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
 
     # Collision parameters
-    lnΛ::Matrix{FT} = zeros(FT, dims)   # Coulomb logarithm
+    lnΛ::Matrix{FT} = zeros(FT, dims)   # ELECTRON-ion Coulomb logarithm (NRL p.34b)
+    # Ion-ion Coulomb logarithm (NRL p.34c). Separate from `lnΛ` because the two
+    # differ by the temperature they carry inside the log: with Te ≫ Ti the
+    # electron form overstates ν_ii by tens of percent, and ν_ii is what every
+    # per-species ion diffusivity is scaled from.
+    lnΛ_ii::Matrix{FT} = zeros(FT, dims)
     ν_ei::Matrix{FT} = zeros(FT, dims) # Electron-ion collision frequency [1/s]
     ν_ii::Matrix{FT} = zeros(FT, dims) # ion-ion collision frequency [1/s]
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
@@ -254,7 +268,13 @@ Contains the plasma state variables including density, temperature, and velocity
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
-    Zeff::Matrix{FT} = ones(FT, dims) # Effective ion charge
+    # Effective charge, written by `update_charge_states!` and read by `sptz_fac`.
+    # With ONE ion species it equals that species' charge state everywhere, so it
+    # carries no information the species does not — it is a field because the
+    # multi-species form Σ n_z Z_z²/n_e genuinely varies in space, and this is the
+    # seam that form returns through. Nothing else may stand in for the charge
+    # state: use `bulk_ion_charge(RP)`, which cannot go stale.
+    Zeff::Matrix{FT} = ones(FT, dims)
     # Current densities
     Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
 
@@ -360,6 +380,20 @@ Fields include diffusion coefficients in different directions.
     Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # Ion parallel diffusion coefficient due to collisions [m²/s]
     Dpara_amb::Matrix{FT} = zeros(FT, dims)  # Ambipolar diffusion coefficient [m²/s]
     Dpara_e_eff::Matrix{FT} = zeros(FT, dims)  # Effective electron parallel diffusion coefficient [m²/s]
+    νi_eff::Matrix{FT} = zeros(FT, dims)  # Ion momentum-randomizing collision frequency [1/s]
+    # Kept apart because they scale differently with the ion's charge: the Coulomb
+    # half carries Z², a charge-exchange or elastic hit on H₂ does not.
+    νi_neutral::Matrix{FT} = zeros(FT, dims)  # ion-neutral part of νi_eff [1/s]
+    νi_coulomb::Matrix{FT} = zeros(FT, dims)  # ion-ion part of νi_eff [1/s]
+
+    # Ion transport. The species axis is present from the start so that H⁺, H₃⁺ and
+    # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as
+    # COLUMNS, which is exactly the multi-RHS layout the batch solve wants. Exactly
+    # one column is filled for now — `set_ion_species!` says what a second needs.
+    ion_species::Vector{IonSpecies{FT}} = IonSpecies{FT}[]
+    ion_N::Matrix{FT} = zeros(FT, prod(dims), 1)   # working densities [m⁻³]
+    ion_S::Matrix{FT} = zeros(FT, prod(dims), 1)   # working sources [m⁻³s⁻¹]
+    ion_solvers::Vector{SparseLUSolver{FT}} = SparseLUSolver{FT}[]  # one per transport group
 
     # Spatially-varying diffusion coefficients
     Dpara::Matrix{FT} = zeros(FT, dims)  # Parallel diffusion coefficient [m²/s]
@@ -421,6 +455,17 @@ Fields include various matrices for solving different parts of the model.
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
+    # The same operator built from the ION velocities. A separate instance rather
+    # than a rebuild, because electrons and ions are advanced in the same step and
+    # `update_∇𝐮_operator!` defaults to `ueR`/`ueZ` — an ion solve that forgot to
+    # pass its own velocities would drift the ions the wrong way and still run.
+    ∇𝐮_i::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+
+    # Impurity pinch, ∇⋅(n 𝐖) with 𝐖 = 𝐃∇n_i/(Z_i n_i). ONE operator for every
+    # species: the species enters only as the scalar Z_z multiplying 𝐖, and since
+    # Z_z > 0 it cannot flip an upwind direction either, so the coefficients are
+    # shared exactly and each species costs one sparse matvec.
+    ∇𝐮_pinch::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
 
     # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
     # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
@@ -451,6 +496,246 @@ function Operators{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
     return Operators{FT}(dims = (NR, NZ))
 end
 
+
+"""
+    ReactionCounts{FT}(dims)
+
+**How many events of each reaction happened during the step in progress**, per
+unit volume: `[events m⁻³]`, one field per channel.
+
+A count, not a rate, and deliberately so. A rate invites the question *at which
+instant* — `tⁿ`? `tⁿ⁺¹`? — which for a θ-scheme has the awkward answer "the step
+average, nominally at `tⁿ + θΔt`". A count has no such question, because it is a
+definite integral over the step:
+
+```
+    N_iz = ∫ₜⁿ^ₜⁿ⁺¹ ν_en_iz·nₑ(t) dt ≈ Δt·ν_en_iz·[(1−θ)nₑⁿ + θnₑⁿ⁺¹]
+```
+
+θ then controls only how *accurately* that integral is evaluated, not what it
+means. It is also what every consumer wants: each one formed `Δt·R` from the
+rate this replaces.
+
+Not to be confused with the **reaction rate COEFFICIENTS** (`RP.eRRCs`,
+`RP.iRRCs`), the `⟨σv⟩` tables loaded from disk.
+
+See [`ReactionState`](@ref) for why these are stored rather than recomputed, and
+[`REACTION_STOICHIOMETRY`](@ref) for how a species source is read off them.
+"""
+@kwdef mutable struct ReactionCounts{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+    "e + H₂ → 2e + H₂⁺"
+    iz::Matrix{FT} = zeros(FT, dims)
+    # Dissoc_Ionz, Recomb_H2Ion, Recomb_H3Ion append here — see Electron_RRCs,
+    # which already loads all three tables.
+end
+
+"""
+    ReactionState{FT}(dims)
+
+Everything the reaction bookkeeping owns. `counts` is the only member today;
+`counters` — the cumulative per-channel tallies that
+[`ParticleNumberTracker`](@ref) currently keeps per *species* — is the natural
+next one, which is why this is a namespace and not a bare field.
+
+Deliberately **not** called `sources`: a source term in a transport equation may
+one day come from something that is not a reaction at all (gas puffing, a beam),
+and that word should stay available for it.
+
+## Why the counts are stored instead of recomputed
+
+**Every species source is a contraction of these counts with integer
+stoichiometry**, `ΔNₛ = Σₖ νₖ,ₛ Nₖ`, with `ν` from
+[`REACTION_STOICHIOMETRY`](@ref). Two species therefore *cannot* disagree about
+how many events happened: they read the same `Nₖ` and multiply by a constant.
+
+That identity used to be maintained by having each equation rebuild the count for
+itself, which was correct only while an unwritten ordering rule held. It did not
+hold. The electron equation charged itself `Δt·ν·[(1−θ)nⁿ + θnⁿ⁺¹]`, while
+
+- the ion source used `Δt·ν·nⁿ⁺¹` — the electron solve had already returned, so
+  that is what `plasma.ne` held — and
+- the neutral-gas sink used `Δt·ν·nⁿ⁺¹` too
+  ([`update_neutral_H2_gas_density!`](@ref)),
+
+so at the default `θ = ½` the plasma gained more ions than electrons and burned
+more gas than it ionized. The gas docstring warns against exactly this ("breaks
+nuclei conservation … overshot the electron supply limit by 7 %") while doing it.
+
+## What this buys, and what it does not
+
+It does **not** make the count more accurate — that is the θ question, settled by
+[`ImplicitWeights`](@ref). It makes electrons, ions and neutrals agree, which is
+a conservation law rather than an accuracy matter and must hold exactly at every
+Δt, θ and resolution.
+
+Ordering is reduced, not abolished:
+
+- **among consumers** it is gone — they read one array, so any order gives
+  bit-identical answers;
+- **producer before consumers** remains, because nothing can know how many events
+  happened before the equation that determines them is solved. That is now one
+  constraint in one place and it is *checked* by `step` rather than assumed, so a
+  stale read raises instead of quietly halving a source.
+
+## Adding a channel
+
+A field in [`ReactionCounts`](@ref), a row in `REACTION_STOICHIOMETRY`, a term in
+each accessor. The axis does not move. Note that recombination is a **sink**, so
+it takes `θ_imp.decay` where ionization takes `θ_imp.growth`, and it is nonlinear
+in `nₑnᵢ` where ionization is linear in `nₑ`.
+"""
+@kwdef mutable struct ReactionState{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+    """
+    Which channels of `counts` describe the advance in progress.
+
+    Per channel, not one flag for the struct, because validity belongs on the same
+    axis the counts do. Today one producer writes every channel and the two are
+    equivalent — but a channel whose rate is only knowable later (recombination
+    treated implicitly in `nᵢ`, a wall-recycling channel) would break that, and a
+    single flag would report "valid" while one entry was a step old. `reset!`
+    zeroes the arrays too, so such an entry would read as *no events* rather than
+    as last step's — quieter, and no less wrong.
+    """
+    published::Set{Symbol} = Set{Symbol}()
+    counts::ReactionCounts{FT} = ReactionCounts{FT}(dims = dims)
+    # cumulative::ReactionTotals{FT} — running tallies, today in Ntracker
+end
+
+"""
+    REACTION_STOICHIOMETRY
+
+Particles created per event, per channel — the `νₖ,ₛ` of
+[`ReactionState`](@ref).
+
+Read at runtime only for `.θ` and `keys()`. The particle columns are the
+reference the accessors in `reactions.jl` were hand-written from, not a table
+they contract against — so treat them as documentation that has to be kept in
+step by hand, and see the note there before adding a channel.
+
+| channel | e | H₂⁺ | H₃⁺ | H⁺ | H₂ | H⁰ | `θ` family |
+|---|---|---|---|---|---|---|---|
+| `iz` — e + H₂ → 2e + H₂⁺ | +1 | +1 | | | −1 | | `:growth` |
+| *`diz` — e + H₂ → 2e + H⁺ + H⁰* | +1 | | | +1 | −1 | +1 | `:growth` |
+| *`rec_H2` — e + H₂⁺ → 2H⁰* | −1 | −1 | | | | +2 | `:decay` |
+| *`rec_H3` — e + H₃⁺ → H₂ + H⁰* | −1 | | −1 | | +1 | +1 | `:decay` |
+
+(italic rows are not implemented; the table records the intent so the
+stoichiometry is settled before the rates arrive.)
+
+`θ` names the [`ImplicitWeights`](@ref) member the channel's quadrature uses —
+see [`reaction_θ`](@ref). It is data rather than a line in the producer so that a
+`:decay` channel picks up backward Euler by existing, and so that a consumer that
+cares how the integral was evaluated can ask instead of assume.
+"""
+const REACTION_STOICHIOMETRY = (
+    iz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
+)
+
+"""
+    ImplicitWeights{FT}(; transport, growth, decay, gas)
+
+The `θ` of the θ-scheme `(𝐈 − θΔt𝐀)fⁿ⁺¹ = fⁿ + (1−θ)Δt𝐀fⁿ`, one per family of
+terms — `0` forward Euler, `½` Crank-Nicolson, `1` backward Euler.
+
+**The families are split by the character of the operator, above all by the SIGN
+of its eigenvalue**, because that is what decides which scheme is right:
+
+| field | terms | λ | default |
+|---|---|---|---|
+| `transport` | `∇·(𝐃∇f)`, `∇·(f𝐮)` in the `nₑ`, `nᵢ`, `Tₑ` equations | `< 0`, well-resolved | `½` |
+| `growth` | ionization — the `+ν_iz` source | **`> 0`** | `½` |
+| `decay` | the parallel momentum equation, which its friction dominates | `< 0`, stiff | `1` |
+| `gas` | neutral-gas diffusion | `< 0`, stiff | `1` |
+
+**Decay (`λ < 0`) wants BE.** With `g(z) = (1 + (1−θ)z)/(1 − θz)`, `z = λΔt`:
+`g → 0` as `z → −∞` for BE (L-stable) but `g → −1` for CN, so a stiff mode rings
+from step to step instead of damping. Saturation makes the same point exactly —
+for `du/dt = −νu + S` with `u∞ = S/ν`,
+
+```
+BE:  uⁿ⁺¹ = (uⁿ + ΔtS)/(1 + Δtν)   ──Δt→∞──▶  u∞          lands on it
+CN:  uⁿ⁺¹ − u∞ = −(uⁿ − u∞)        ──Δt→∞──▶  rings about it forever
+```
+
+**Growth (`λ > 0`) wants CN, and this is the reverse of the usual argument.**
+A-stability does not apply: the true solution grows, so `|g| > 1` is correct.
+What matters is that `g` stay positive and finite, and there BE is the *weaker*
+scheme — its pole sits at `Δtν = 1` against CN's at `2`, and it is first-order
+where CN is second:
+
+| | positive and finite for | order | `z` = 0.1 | `z` = 0.5 |
+|---|---|---|---|---|
+| FE | **all** `z > 0` | `O(Δt)` | `−0.47 %` | `−9.0 %` |
+| CN | `z < 2` | `O(Δt²)` | **`+0.01 %`** | **`+1.1 %`** |
+| BE | `z < 1` | `O(Δt)` | `+0.54 %` | `+21 %` |
+
+CN is chosen because that is where the discharge lives: `Δt = 10 µs` and
+`ν_iz` = 1e4–5e4 s⁻¹ puts `z` at 0.1–0.5, and CN is the only one of the three
+inside 1 % there. **FE's unconditional positivity is a real argument** — a
+negative density is a different kind of failure, not a larger error — but the
+crossover where FE becomes the more accurate of the two is `z* = 1.41`, i.e.
+`ν_iz > 1.4e5 s⁻¹`, three times above the measured range.
+
+Past `z ~ 1` none of the three is usable (FE is `−26 %` at `z = 1`). The right
+answer there is not a θ at all: this diagonal is local, linear and scalar with
+the rate frozen over the step, so its exact factor `exp(νΔt)` is available for
+one `exp()` — unconditionally positive *and* exact. That is an
+exponential-integrator split rather than a weight, so it is recorded here and
+not implemented. Measurements: `claudedocs/figs/theta_atomic_be_vs_cn.jl`.
+
+**One family, one weight, everywhere it appears.** `ν_iz` is a sink in the
+electron equation and a source in the ion equation; both read `growth`, so one
+ionization event cannot make an electron and an ion at different rates. That
+identity is exact in the continuous equations and it is this struct's job to
+keep it exact in the discrete ones — see `ionization_source_density`.
+
+Terms that are not θ-weighted at all do not appear here. `Tₑ`'s dilution and
+atomic power terms are wholly explicit inside `ePowers.tot`; were they made
+implicit they would join `decay`.
+
+Weights are validated on construction *and* on assignment, so
+`RP.flags.θ_imp.transport = 1.5` fails where it was written rather than as a
+growing mode ten thousand steps later.
+"""
+mutable struct ImplicitWeights{FT <: AbstractFloat}
+    transport::FT
+    growth::FT
+    decay::FT
+    gas::FT
+
+    function ImplicitWeights{FT}(transport, growth, decay, gas) where {FT <: AbstractFloat}
+        w = (
+            transport = FT(transport), growth = FT(growth),
+            decay = FT(decay), gas = FT(gas),
+        )
+        for (name, θ) in pairs(w)
+            _check_implicit_weight(FT, name, θ)
+        end
+        return new{FT}(w...)
+    end
+end
+
+function _check_implicit_weight(::Type{FT}, name::Symbol, θ) where {FT <: AbstractFloat}
+    isfinite(θ) && zero(FT) <= θ <= one(FT) || throw(
+        ArgumentError(
+            "θ_imp.$name = $θ is not a θ-scheme weight: it must lie in [0, 1], " *
+                "where 0 is forward Euler, ½ Crank-Nicolson and 1 backward Euler"
+        )
+    )
+    return θ
+end
+
+function ImplicitWeights{FT}(;
+        transport = FT(0.5), growth = FT(0.5), decay = FT(1.0), gas = FT(1.0)
+    ) where {FT <: AbstractFloat}
+    return ImplicitWeights{FT}(transport, growth, decay, gas)
+end
+
+function Base.setproperty!(w::ImplicitWeights{FT}, name::Symbol, θ) where {FT <: AbstractFloat}
+    return setfield!(w, name, _check_implicit_weight(FT, name, FT(θ)))
+end
 
 """
     SimulationFlags
@@ -492,6 +777,27 @@ Contains boolean flags that control various aspects of the simulation.
     update_ni_independently::Bool = true      # Update ion density independently
     Ti_evolve::Bool = true                   # Update ion temperature
 
+    # Whether ion species share one transport operator (see `ion_species.jl`).
+    # A TYPE, not a symbol: it dispatches at `ion_transport_groups` and nowhere
+    # else, so no solver contains a branch on it.
+    ion_transport_policy::IonTransportPolicy = SharedEffectiveTransport()
+
+    # Whether the Bohm channel carries a per-charge 1/Z. Reading Bohm as a random
+    # walk of ρ_s gives D_B = Te/(16 Z e B), but NRL p.29 states Bohm itself as
+    # ckT/16eB — an electron quantity with no Z. Bohm is an anomalous coefficient,
+    # not a derivation, so this is a modelling choice; it is a flag rather than a
+    # constant. Default `true` reproduces the existing behaviour, and at Z = 1 the
+    # flag is a no-op either way.
+    bohm_charge_scaling::Bool = true
+
+    # Impurity pinch: keep the ion-ion friction term in the trace species' flux,
+    #     Γ_z = −𝐃[∇n_z − (Z_z/Z_i)(n_z/n_i)∇n_i]
+    # so a highly charged impurity is driven UP the bulk gradient. Off by default:
+    # the term is real but unvalidated here, and it is comparable to — not small
+    # against — the diffusive flux it accompanies (Z_z/Z_i = 6 for C⁶⁺), so
+    # turning it on moves results rather than nudging them.
+    ion_pinch::Bool = false
+
     # secondary electron emission by ion impact
     secondary_electron::Bool = true           # Include secondary electron emission
     γ_2nd_electron::FT = FT(0.1)         # Secondary electron emission coefficient
@@ -524,15 +830,11 @@ Contains boolean flags that control various aspects of the simulation.
     Ampere_nstep::Int = 10                    # Steps between Ampere's law updates
     FLF_nstep::Int = 10                       # Steps between field line following updates
     Implicit::Bool = true                     # Use implicit methods
-    Implicit_weight::FT = FT(0.5)            # Weight for implicit scheme
-    # θ-weight for the neutral gas diffusion solve, kept separate from
-    # Implicit_weight on purpose. 1 = backward Euler (default), ½ = Crank-Nicolson,
-    # 0 = forward Euler. BE is the default because CN is A-stable but not L-stable:
-    # its amplification factor tends to −1 as |λ|Δt grows, so stiff modes ring
-    # instead of damping, and the gas diffusivity spans two orders of magnitude
-    # across the shielding layer. Exposed so CN can be plugged in for a smooth,
-    # well-resolved problem where second-order accuracy is worth more than damping.
-    θ_gas::FT = FT(1.0)
+    # θ of the θ-scheme, one per family of terms, split by the sign and stiffness
+    # of the operator — see `ImplicitWeights`. Replaces the single `Implicit_weight`
+    # that transport, atomic rates and the ledger all used to share, the separate
+    # `θ_gas` that had already broken out of it, and an inline `θu = 1`.
+    θ_imp::ImplicitWeights{FT} = ImplicitWeights{FT}()
     Adapt_dt::Bool = false                    # Use adaptive time stepping
 
     # Temperature limits
@@ -757,6 +1059,9 @@ mutable struct RAPID{FT <: AbstractFloat}
 
     # Previous state and diagnostics
     prev_n::Matrix{FT}                # Previous density
+    # Reaction event rates for the step in progress — the one place that says how
+    # many ionizations happened, so electrons, ions and neutrals cannot disagree.
+    reactions::ReactionState{FT}
     tElap::Dict{Symbol, Float64}      # Elapsed times
     diagnostics::Diagnostics   # Diagnostic data
 
@@ -787,6 +1092,7 @@ mutable struct RAPID{FT <: AbstractFloat}
         # Initialize matrices
         damping_func = zeros(FT, dims)
         prev_n = zeros(FT, dims)
+        reactions = ReactionState{FT}(dims = dims)
 
         # Initialize empty containers
         eRRC = load_electron_RRCs()
@@ -820,7 +1126,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             eRRC, iRRC,
             config, flags, plasma, fields, transport, operators,
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
-            prev_n, tElap, diagnostics,
+            prev_n, reactions, tElap, diagnostics,
             flf,
             AW_snap0D, AW_snap2D,
             coil_system
@@ -861,4 +1167,4 @@ RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
 RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
-export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, RAPID, GridGeometry, NodeState
+export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState

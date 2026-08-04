@@ -20,7 +20,17 @@ Update all transport-related quantities including diffusion coefficients, veloci
 function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     tp = RP.transport
-    @unpack mi, me, ee = RP.config.constants
+    @unpack me, ee = RP.config.constants
+    # `vp_i` reaches the ion collisional diffusivity and, through the ambipolar
+    # average, the ELECTRON one — so a mass that disagrees with the species the
+    # ion equation transports would move both.
+    mi = bulk_ion_mass(RP)
+
+    # Charge state first: `Zeff` reaches the Spitzer factor a few lines below. The
+    # charge density and the quasineutrality slaving do NOT come through here —
+    # they take the species' own charge, which is why nothing downstream depends on
+    # this call having run.
+    update_charge_states!(RP)
 
     # The one RRC evaluation point of the step. Everything downstream — the rest of this
     # function and the whole of the next advance_timestep! — reads plasma.ν_en_* instead
@@ -42,12 +52,16 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
         @. νi_eff += pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
     end
+    tp.νi_neutral .= νi_eff      # everything so far is ion-neutral
 
     # Calculate total collision frequency
     if RP.flags.Coulomb_Collision
         update_coulomb_collision_parameters!(RP)
         ν_sum_mom_iz_ei .+= pla.ν_ei_eff
         νi_eff .+= pla.ν_ii
+        tp.νi_coulomb .= pla.ν_ii
+    else
+        fill!(tp.νi_coulomb, zero(FT))
     end
 
     # Calculate parallel diffusion coefficient based on collision frequency
@@ -58,6 +72,11 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Collision-based diffusion coefficient (D = vth²/(3ν))
     tp.Dpara_e_coll = @. FT(0.5) * vp_e^2 / ν_sum_mom_iz_ei
     @. tp.Dpara_e_coll[isnan(tp.Dpara_e_coll)] = typemax(FT) # make NaN to Inf
+
+    # Kept as state, not a local: the ion continuity equation rebuilds D∥ per
+    # species from its own mass, so it needs the collision frequency rather than
+    # the H₂⁺ diffusivity this line happens to produce.
+    tp.νi_eff .= νi_eff
 
     tp.Dpara_i_coll = @. FT(0.5) * vp_i^2 / νi_eff
     @. tp.Dpara_i_coll[isnan(tp.Dpara_i_coll)] = typemax(FT) # make NaN to Inf
@@ -231,6 +250,10 @@ function update_transport_related_operators!(RP::RAPID{FT}) where {FT <: Abstrac
 
     if !isempty(OP.∇𝐮.k2csc)
         update_∇𝐮_operator!(RP)
+    end
+
+    if !isempty(OP.∇𝐮_i.k2csc)
+        update_∇𝐮_operator!(RP, RP.plasma.uiR, RP.plasma.uiZ; ∇𝐮 = OP.∇𝐮_i)
     end
 
     if !isempty(OP.∇𝐃∇.k2csc)

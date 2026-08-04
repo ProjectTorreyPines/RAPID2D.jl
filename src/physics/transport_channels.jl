@@ -209,6 +209,92 @@ function total_tensor(channels_with_directions)
 end
 
 """
+    mixture_channel(channels, weights) -> DiffusionChannel
+
+Population-weighted mean of channels describing the **same** mechanism carried by
+**different** species, so that one operator can stand for all of them.
+
+Contrast [`total_tensor`](@ref), which *sums*. Summing is for independent arrival
+paths of one population; averaging is for one path shared by several populations,
+where the result must reproduce the mixture's total flux, not several times it.
+
+Two quantities are averaged, each because a flux is linear in it:
+
+```
+    v = Σ wₛvₛ / Σ wₛ          a one-sided wall flux is Σ ¼v̄ₛnₛ
+    D = Σ wₛDₛ / Σ wₛ          a diffusive flux is Σ Dₛ∇nₛ
+```
+
+and the step follows as `λ = 2D/v`. Averaging `λ` directly instead would conserve
+neither. `weights` are per-node densities; only their **ratio** matters, so the
+mixture does not drift as a discharge climbs nine orders in density.
+
+Where every weight vanishes the unweighted mean is used. Such a node is empty
+*now* and is exactly where material is about to arrive, so a `0/0` — or a
+`D = 0`, which would be an artificial barrier at the plasma edge — must not be
+what the operator sees there.
+
+Channels that are the same object are returned as that object: a mass- and
+charge-free mechanism is genuinely shared, and this makes it free and exact
+rather than merely cheap and close.
+
+## What is exact and what is not
+
+`D` is reproduced exactly whenever the species agree on it — which covers Bohm
+(`D_B = T_e/16B`, mass cancels) and ExB mixing (`v_E = E_pol/B_tot`), leaving
+`D∥` as the only mechanism the mixture actually approximates.
+
+The wall ceiling is exact only at the two limits. `¼v̄_n` interpolates in
+quadrature, which is linear in `v` at `b_n = 0` and `b_n = 1` but concave in
+between, so an oblique wall is under-supplied by the mixture — 0.2 % at 45° for a
+2:1 speed ratio.
+"""
+function mixture_channel(
+        channels::AbstractVector{<:DiffusionChannel},
+        weights::AbstractVector{<:AbstractMatrix}
+    )
+    isempty(channels) && throw(ArgumentError("a mixture needs at least one channel"))
+    length(channels) == length(weights) ||
+        throw(ArgumentError("got $(length(channels)) channels but $(length(weights)) weights"))
+
+    sz = size(first(channels).v_para)
+    all(ch -> size(ch.v_para) == sz, channels) ||
+        throw(DimensionMismatch("all channels in a mixture must share a size"))
+    all(w -> size(w) == sz, weights) ||
+        throw(DimensionMismatch("each weight must be an $(sz) field, one per node"))
+
+    all(ch -> ch === first(channels), channels) && return first(channels)
+
+    FT = eltype(first(channels).v_para)
+    ns = FT(length(channels))
+    Σw = sum(weights)
+    empty = Σw .<= zero(FT)
+    norm = @. ifelse(empty, ns, Σw)
+
+    v_para = zeros(FT, sz)
+    v_perp = zeros(FT, sz)
+    D_para = zeros(FT, sz)
+    D_perp = zeros(FT, sz)
+    for (ch, w) in zip(channels, weights)
+        w̃ = @. ifelse(empty, one(FT), FT(w))
+        @. v_para += w̃ * ch.v_para
+        @. v_perp += w̃ * ch.v_perp
+        @. D_para += w̃ * FT(0.5) * ch.v_para * ch.λ_para
+        @. D_perp += w̃ * FT(0.5) * ch.v_perp * ch.λ_perp
+    end
+    @. v_para /= norm
+    @. v_perp /= norm
+    @. D_para /= norm
+    @. D_perp /= norm
+
+    # v = 0 forces D = 0, since every vₛ ≥ 0 makes the mean vanish only when all
+    # do, and then every Dₛ = ½vₛλₛ vanishes too. λ = 0 is the consistent value.
+    λ_para = @. ifelse(v_para > zero(FT), 2 * D_para / v_para, zero(FT))
+    λ_perp = @. ifelse(v_perp > zero(FT), 2 * D_perp / v_perp, zero(FT))
+    return DiffusionChannel{FT}(v_para, λ_para, v_perp, λ_perp)
+end
+
+"""
     total_ceiling(channels, bR, bZ, outward) -> Matrix
 
 Sum of `channel_ceiling` over independent channels — separate arrival mechanisms
@@ -219,6 +305,18 @@ channel's `λ`, and summing them would count the same particles arriving twice.
 """
 function total_ceiling(channels, bR, bZ, outward::Tuple{Int, Int})
     return sum(channel_ceiling(ch, bR, bZ, outward) for ch in channels)
+end
+
+"""
+    total_ceiling(channels_with_directions, outward) -> Matrix
+
+Sum of `channel_ceiling` over channels aligned with **different** axes, given as
+`((ch₁, bR₁, bZ₁), (ch₂, bR₂, bZ₂), …)` — the ceiling counterpart of the
+same-shaped [`total_tensor`](@ref) method, and the form to use whenever a
+collisional channel (along `b̂`) sits beside a turbulent one (along `b̂_pol`).
+"""
+function total_ceiling(channels_with_directions, outward::Tuple{Int, Int})
+    return sum(channel_ceiling(ch, bR, bZ, outward) for (ch, bR, bZ) in channels_with_directions)
 end
 
 # ── the physical channels ───────────────────────────────────────────────────
@@ -282,6 +380,10 @@ a random walk, `ρ_s²ω_ci = T_e/eB` gives `D_B = ¹⁄₁₆ρ_s²ω_ci`, and 
 — a step of one sound gyroradius per ≈1.3 gyro-periods, reproducing `D_B` exactly
 by construction. At `T_e = 5` eV, `B = 0.63` T, H⁺: `ρ_s = 0.36` mm, `v⊥ = 2.7` km/s.
 
+**Mass-free, but not charge-free.** `ρ_s²ω_ci = T_e/(ZeB)`, so `D_B = T_e/(16ZB)`:
+the mass cancels exactly and every ion species shares `D⊥` only at equal charge.
+A six-times-charged ion diffuses across the field six times more slowly.
+
 The alternatives are not absurd (`λ⊥ = ρ_i` gives `v⊥` 2.2× larger, a turbulent
 correlation length gives less), so the choice is recorded rather than buried. It is
 also not load-bearing: this channel contributes ~15 % of an ion's kinetic ceiling
@@ -290,9 +392,16 @@ ever unified.
 
 `v_para = 0`: a cross-field channel cannot reach a wall the field points into.
 """
-function bohm_channel(Te_eV, B, m_i)
-    c_s = @. sqrt(Te_eV * EE_GAS / m_i)      # EE_GAS is the elementary charge
-    ω_ci = @. EE_GAS * B / m_i
+function bohm_channel(Te_eV, B, m_i, Z::Integer = 1)
+    # max(0, ·) because a temperature equation may land microscopically below
+    # zero, where `sqrt` raises rather than returning NaN
+    c_s = @. sqrt(max(zero(eltype(Te_eV)), Te_eV * EE_GAS / m_i))   # EE_GAS is the elementary charge
+    # `abs(B)`: `Bϕ = R0B0/R` carries the sign of the user's R0B0, and a signed
+    # ω_ci would hand back a negative ρ_s — hence a negative λ⊥ and a negative
+    # D⊥ = ½v⊥λ⊥, i.e. ANTI-diffusion, for a field that merely points the other
+    # way. `D_B` is a magnitude; the gyration sense does not enter it. The
+    # electron path states the same thing as `abs(Te/Bϕ)` in `transport.jl`.
+    ω_ci = @. Z * EE_GAS * abs(B) / m_i
     ρ_s = @. c_s / ω_ci
     return DiffusionChannel(zero.(c_s), zero.(c_s), (@. c_s / 8), ρ_s)
 end

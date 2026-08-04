@@ -257,13 +257,17 @@ end
         RP_explicit = deepcopy(RP)
 
         RP.flags.Implicit = true
-        RP.flags.Implicit_weight = 0.0
+        # every family, or the comparison against the explicit run is not one:
+        # the explicit path is θ = 0 for transport AND for the atomic rates.
+        RP.flags.θ_imp.transport = 0.0
+        RP.flags.θ_imp.growth = 0.0
         initialize!(RP); reset_to_initial_conditions!(RP)
         RAPID2D.run_simulation!(RP)
         RP_implicit_0 = deepcopy(RP)
 
         RP.flags.Implicit = true
-        RP.flags.Implicit_weight = 1.0
+        RP.flags.θ_imp.transport = 1.0
+        RP.flags.θ_imp.growth = 1.0
         initialize!(RP); reset_to_initial_conditions!(RP)
         RAPID2D.run_simulation!(RP)
         RP_implicit_1 = deepcopy(RP)
@@ -496,7 +500,10 @@ end
 
     function run_case!(RP; implicit, Te_eV, implicit_weight = nothing)
         RP.flags.Implicit = implicit
-        implicit_weight === nothing || (RP.flags.Implicit_weight = implicit_weight)
+        if implicit_weight !== nothing
+            RP.flags.θ_imp.transport = implicit_weight
+            RP.flags.θ_imp.growth = implicit_weight
+        end
         initialize!(RP)
         RP.plasma.ne = copy(ini_n)
         RP.plasma.ni = copy(ini_n)
@@ -567,7 +574,7 @@ end
     RP.flags.Atomic_Collision = true
     RP.flags.Ionz_method = "Xsec"
     RP.flags.Implicit = true
-    RP.flags.Implicit_weight = 1.0
+    RP.flags.θ_imp.transport = 1.0
 
     initialize!(RP)
     R0 = (config.R_min + config.R_max) / 2
@@ -654,7 +661,7 @@ end
         RP.flags.Atomic_Collision = true   # ← elastic e-n transfer is the mechanism
         RP.flags.Ionz_method = "Xsec"
         RP.flags.Implicit = true
-        RP.flags.Implicit_weight = 1.0
+        RP.flags.θ_imp.transport = 1.0
 
         initialize!(RP)
         R0 = (config.R_min + config.R_max) / 2

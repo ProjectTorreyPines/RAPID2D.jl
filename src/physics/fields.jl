@@ -300,7 +300,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
 
     # Physical constants
     cnst = RP.config.constants
-    @unpack me, mi, ee, eps0 = RP.config.constants
+    @unpack me, ee, eps0 = RP.config.constants
 
     # Initialize arrays for calculations
     NR, NZ = G.NR, G.NZ

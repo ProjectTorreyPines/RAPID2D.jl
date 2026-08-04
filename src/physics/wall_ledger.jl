@@ -47,7 +47,7 @@ Add this step's absorption to `ledger.absorbed`, face by face:
 itself charged. `θ = 1` (backward Euler) is the default and needs only `n_new`;
 any other θ requires `n_prev` as well and throws without it, since silently
 booking `nⁿ⁺¹` under a θ-scheme is exactly the error this signature exists to
-prevent. `Implicit_weight` defaults to `0.5` in this code, where booking `nⁿ⁺¹`
+prevent. `θ_imp.transport` defaults to `0.5` in this code, where booking `nⁿ⁺¹`
 alone leaves a 1.3e-4 relative hole in the identity below against 8e-17 when the
 weighting is right.
 

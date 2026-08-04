@@ -32,6 +32,7 @@ const RAPID_TIMER = TimerOutput()
 include("constants.jl")
 include("numerics/discretized_operator.jl")
 include("numerics/linear_solvers.jl")
+include("physics/ion_species.jl")   # IonSpecies and the transport policies; types.jl needs both
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")
@@ -40,12 +41,14 @@ include("numerics/numerics.jl")
 include("numerics/operators.jl")
 
 # Include the field-related functionality
+include("physics/reactions.jl")             # event rates -> per-species sources
 include("physics/neutral_gas.jl")
 include("physics/wall.jl")   # wall face geometry; reuses EE_GAS from neutral_gas.jl
 include("physics/transport_channels.jl")   # the (v∥, λ∥, v⊥, λ⊥) basis
 include("numerics/wall_diffusion.jl")      # wall-aware 9-point tensor operator
 include("diagnostics/field_moments.jl")    # shape statistics, for direction checks
 include("physics/wall_ledger.jl")          # per-face absorbed/emitted inventory
+include("physics/ion_transport.jl")        # which equation the ion species share
 include("physics/fields.jl")
 include("physics/transport.jl")
 
