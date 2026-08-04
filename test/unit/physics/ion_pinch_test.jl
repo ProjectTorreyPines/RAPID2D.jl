@@ -17,15 +17,23 @@
 # 𝐖 is species-INDEPENDENT, so one divergence operator serves every species and
 # the term lands in the right-hand side. The factorization count does not move.
 #
+# `z ≠ i` is a PREMISE of that derivation, not a convention: the term exists
+# because z rubs against i. Applying it to the bulk itself makes Z_z/Z_i = 1 and
+# n_z = n_i, so `n_i V_pinch,i = 𝐃∇n_i` — the diffusive flux exactly, pointing the
+# other way. The bulk would stop diffusing. So the source skips it, and with one
+# ion species the pinch is identically zero: nothing to rub against.
+#
+# The genuinely multi-species assertions (a trace peaking on the bulk, the exact
+# Z_z linearity, per-species groups each carrying their own 𝐃) need a second
+# species, which `set_ion_species!` does not take yet. They are written out
+# ready-to-run in claudedocs/TODO/ion-inventory-multi-species.md.
+#
 # Default off: the term is real but unvalidated here, and turning it on would
-# move every existing result.
+# move every existing result once a second species exists.
 
 @testsnippet PinchRun begin
-    "A box-wall case with a peaked bulk and one or more flat trace impurities."
-    function pinch_case(;
-            pinch::Bool, Z_traces = [6], NR = 21, NZ = 21,
-            policy = RAPID2D.SharedEffectiveTransport()
-        )
+    "A box-wall case with a peaked bulk ion."
+    function pinch_case(; pinch::Bool, NR = 21, NZ = 21, policy = RAPID2D.SharedEffectiveTransport())
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = NR, NZ = NZ,
             R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
@@ -40,52 +48,62 @@
         RP.flags.convec = false            # isolate diffusion + pinch
         RP.flags.src = false
         RP.flags.ion_transport_policy = policy
-        mi = RP.config.constants.mi
-        species = [RAPID2D.IonSpecies(:H2⁺, mi, 1)]
-        for (k, Z) in enumerate(Z_traces)
-            push!(species, RAPID2D.IonSpecies(Symbol(:trace, k), 6mi, Z))
-        end
-        RAPID2D.set_ion_species!(RP, species)
 
-        # Bulk peaked at the box centre; the trace starts flat, so anything that
-        # develops in it came from the pinch and not from its own gradient.
+        # Peaked at the box centre, so diffusion has something to flatten.
         R0, Z0 = 1.5, 0.0
         @. RP.plasma.ni = 1.0e18 * exp(-((RP.G.R2D - R0)^2 + (RP.G.Z2D - Z0)^2) / 0.02)
         RP.plasma.ne .= RP.plasma.ni
         RP.plasma.Te_eV .= 10.0
         RP.plasma.Ti_eV .= 1.0
         update_transport_quantities!(RP)
-        RP.transport.ion_N[:, 2:end] .= 1.0e16
         return RP
     end
 
-    "Trace density at the bulk peak divided by its value near the edge."
-    function peaking(RP)
-        NR, NZ = RP.G.NR, RP.G.NZ
-        n = reshape(view(RP.transport.ion_N, :, 2), NR, NZ)
-        return n[NR ÷ 2 + 1, NZ ÷ 2 + 1] / n[NR ÷ 2 + 1, NZ ÷ 2 + 1 - 5]
-    end
+    "Peak of the bulk column."
+    bulk_peak(RP) = maximum(view(RP.transport.ion_N, :, 1))
 end
 
-@testitem "The pinch is off by default and changes nothing when off" setup = [PinchRun] begin
-    RP = pinch_case(pinch = false)
+@testitem "The bulk ion does not pinch against itself" setup = [PinchRun] begin
+    # With one species the only candidate partner is the bulk itself, and the
+    # self-term is `−∇⋅(𝐃∇n)` — its own diffusion with the sign flipped. Left in,
+    # it cancels the diffusion it accompanies and a peaked profile stops relaxing.
+    on = pinch_case(pinch = true)
+    off = pinch_case(pinch = false)
+    p0 = maximum(off.plasma.ni)   # `ion_N` is only synced once a solve starts
+
+    for _ in 1:20
+        solve_ion_continuity_equation!(on)
+        solve_ion_continuity_equation!(off)
+    end
+
+    # Over these 20 steps diffusion alone takes the peak down by 3.54e-5 of itself.
+    # With the self-term left in, only 6.69e-6 of it survived — the pinch cancelled
+    # 81 % of the relaxation, and `solve_ion_continuity_equation!` returned negative
+    # densities where the profile was steepest.
+    @test bulk_peak(off) < p0                          # diffusion really is flattening it
+    @test bulk_peak(on) ≈ bulk_peak(off) rtol = 1.0e-12
+    @test all(≥(0.0), on.transport.ion_N)
+end
+
+@testitem "The pinch is off by default, and is a no-op at one species" setup = [PinchRun] begin
     @test !RAPID{Float64}(SimulationConfig{Float64}()).flags.ion_pinch
 
-    before = copy(RP.transport.ion_N)
-    solve_ion_continuity_equation!(RP)
-    off = copy(RP.transport.ion_N)
-    @test off != before                        # diffusion still ran
+    on = pinch_case(pinch = true)
+    off = pinch_case(pinch = false)
+    before = copy(off.transport.ion_N)
+    solve_ion_continuity_equation!(on)
+    solve_ion_continuity_equation!(off)
 
-    # Bit-identical to a run that never heard of the flag: the trace column moves
-    # only by diffusion and the wall.
-    ref = pinch_case(pinch = false)
-    solve_ion_continuity_equation!(ref)
-    @test ref.transport.ion_N == off
+    @test off.transport.ion_N != before                # diffusion still ran
+    @test on.transport.ion_N == off.transport.ion_N    # …and the flag changed nothing
 end
 
 @testitem "The pinch velocity is 𝐃∇n_i/(Z_i n_i), species-independent" setup = [PinchRun] begin
     using RAPID2D: ion_pinch_velocity
 
+    # 𝐖 is built whether or not anyone consumes it, and it is a property of the
+    # BULK profile and the tensor alone — no species enters until `Z_z` multiplies
+    # it downstream. That is what lets one operator serve every species.
     RP = pinch_case(pinch = true)
     NR, NZ = RP.G.NR, RP.G.NZ
 
@@ -133,92 +151,6 @@ end
     @test all(iszero, W_R0) && all(iszero, W_Z0)
 end
 
-@testitem "The pinch drives the trace UP the bulk gradient" setup = [PinchRun] begin
-    on = pinch_case(pinch = true)
-    off = pinch_case(pinch = false)
-    p0 = peaking(on)
-    @test p0 ≈ 1.0                                  # starts flat
-
-    for _ in 1:20
-        solve_ion_continuity_equation!(on)
-        solve_ion_continuity_equation!(off)
-    end
-
-    # Inward: the trace peaks where the bulk peaks. Diffusion alone cannot do
-    # this — it only flattens — so the sign is the whole assertion.
-    @test peaking(on) > peaking(off)
-    @test peaking(on) > 1.0
-end
-
-@testitem "The pinch source scales exactly with the trace charge" setup = [PinchRun] begin
-    using RAPID2D: ion_step_operators, add_ion_pinch_source!
-
-    # Γ_pinch ∝ Z_z/Z_i, and the whole species dependence is that one scalar in
-    # front of a SHARED matvec. Asserted on the source term itself, not on the
-    # solved density: the solve also differs with Z (a trace's own D∥ carries Z²
-    # and its Bohm D⊥ carries 1/Z), so only the term is exactly linear.
-    using RAPID2D: ion_pinch_divergence
-    RP = pinch_case(pinch = true, Z_traces = [1, 6])
-    @test length(RP.transport.ion_species) == 3
-    groups, _, dirs = ion_step_operators(RP)
-    @test length(groups) == 1                        # shared policy: one operator
-    group, _, _ = groups[1]
-    P = ion_pinch_divergence(RP, group, dirs)
-    @test !isnothing(P)
-
-    S = zero(RP.transport.ion_S)
-    add_ion_pinch_source!(RP, group, P, RP.transport.ion_N, S)
-    @test maximum(abs, S[:, 2]) > 0                  # the term does something
-    @test S[:, 3] ≈ 6 .* S[:, 2] rtol = 1.0e-12      # equal density, 6× the charge
-end
-
-@testitem "Per-species groups each pinch with their OWN diffusion tensor" setup = [PinchRun] begin
-    using RAPID2D: ion_step_operators, add_ion_pinch_source!, PerSpeciesTransport
-
-    # Under the per-species policy every group carries its own 𝐃, hence its own
-    # 𝐖. The pinch operator lives in ONE cached slot, so building it for every
-    # group BEFORE any group consumes it leaves them all aliasing the last
-    # group's tensor — invisible under the shared policy, which has one group.
-    #
-    # Definitional check: per-species means nothing is shared, so species 1's
-    # pinch source must be exactly what species 1 gets when it is alone.
-    using RAPID2D: ion_pinch_divergence
-    function pinch_source(RP)
-        groups, _, dirs = ion_step_operators(RP)
-        S = zero(RP.transport.ion_S)
-        for (group, _, _) in groups
-            P = ion_pinch_divergence(RP, group, dirs)
-            add_ion_pinch_source!(RP, group, P, RP.transport.ion_N, S)
-        end
-        return S
-    end
-
-    both = pinch_case(pinch = true, Z_traces = [6], policy = PerSpeciesTransport())
-    alone = pinch_case(pinch = true, Z_traces = Int[], policy = PerSpeciesTransport())
-    @test length(ion_step_operators(both)[1]) == 2      # one group per species
-    @test length(ion_step_operators(alone)[1]) == 1
-
-    s_both = pinch_source(both)[:, 1]
-    s_alone = pinch_source(alone)[:, 1]
-    @test maximum(abs, s_alone) > 0
-    @test s_both ≈ s_alone rtol = 1.0e-12
-end
-
-@testitem "A full run survives the pinch being on" setup = [PinchRun] begin
-    # The other tests drive `solve_ion_continuity_equation!` directly. This one
-    # goes through `run_simulation!`, because that is where the operator's lazy
-    # allocation, the per-step rebuild and the wall bookkeeping actually meet.
-    RP = pinch_case(pinch = true)
-    RP.flags.convec = true                     # both convective operators live
-    RP.flags.src = true
-    run_simulation!(RP)
-
-    @test all(isfinite, RP.transport.ion_N)
-    @test all(isfinite, RP.plasma.ni)
-    @test all(≥(0.0), RP.transport.ion_N)      # upwinding must keep it positive
-    @test length(RP.transport.ion_solvers) == 1
-end
-
 @testitem "The pinch stays out of the factorized operator" setup = [PinchRun] begin
     using RAPID2D: ion_step_operators
 
@@ -232,5 +164,20 @@ end
 
     solve_ion_continuity_equation!(on)
     @test length(on.transport.ion_solvers) == 1
-    @test length(on.transport.ion_species) == 2
+end
+
+@testitem "A full run survives the pinch being on" setup = [PinchRun] begin
+    # The other tests drive `solve_ion_continuity_equation!` directly. This one
+    # goes through `run_simulation!`, because that is where the operator's lazy
+    # allocation, the per-step rebuild and the wall bookkeeping actually meet —
+    # all of which happen whether or not the source it feeds is zero.
+    RP = pinch_case(pinch = true)
+    RP.flags.convec = true                     # both convective operators live
+    RP.flags.src = true
+    run_simulation!(RP)
+
+    @test all(isfinite, RP.transport.ion_N)
+    @test all(isfinite, RP.plasma.ni)
+    @test all(≥(0.0), RP.transport.ion_N)      # upwinding must keep it positive
+    @test length(RP.transport.ion_solvers) == 1
 end

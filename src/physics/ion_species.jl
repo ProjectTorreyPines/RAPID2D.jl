@@ -28,6 +28,12 @@ One ion species: what its transport channels need to know about it.
 differ 6× in both, but O⁸⁺ and H₂⁺ differ 8× in charge and 8× in mass while C⁴⁺
 and He²⁺ share neither ratio. That independence is why `Zeff` alone cannot stand
 in for a species: one scalar cannot carry two independent numbers.
+
+Exactly one of these is declared at a time — see [`set_ion_species!`](@ref) for
+what a second one would need first. `charge` is therefore the only charge state
+in the run, reachable as `bulk_ion_charge(RP)`, and `mass` is the only place the
+ion mass enters transport: H⁺, H₂⁺ and H₃⁺ all carry Z = 1 but differ 1:2:3 in
+mass, which moves the Bohm step by √2 between them.
 """
 struct IonSpecies{FT <: AbstractFloat}
     name::Symbol
@@ -44,53 +50,13 @@ end
 IonSpecies(name::Symbol, mass::Real, charge::Integer) =
     IonSpecies{float(typeof(mass))}(name, float(mass), Int(charge))
 
-"""
-    mean_charge(Z, n) -> Z̄
-
-Mean charge **per ion**, `Z̄ = Σ n_z Z_z / Σ n_z`.
-
-This is the average quasineutrality wants — `n_e = Σ n_z Z_z = n_i Z̄`, so the
-total ion density balancing a given `n_e` is `n_e/Z̄` — and the one the ion
-charge density `n_i Z̄ e` wants. It is NOT [`effective_charge`](@ref): at 10 %
-C⁶⁺ in H₂⁺ they are 1.5 and 3.0.
-
-Falls back to `Z[1]` where there are no ions at all; `Σn = 0` otherwise makes
-the average `0/0`, and that NaN would reach the collision rates, the current
-density and the quasineutrality slaving in the same step.
-"""
-function mean_charge(Z::AbstractVector, n::AbstractVector)
-    FT = float(promote_type(eltype(Z), eltype(n)))
-    s0 = zero(FT)
-    s1 = zero(FT)
-    for k in eachindex(Z, n)
-        nk = max(FT(n[k]), zero(FT))   # a continuity solve may hand back n ≤ 0
-        s0 += nk
-        s1 += nk * Z[k]
-    end
-    return s0 > zero(FT) ? s1 / s0 : FT(first(Z))
-end
-
-"""
-    effective_charge(Z, n) -> Z_eff
-
-Effective charge **per electron**, `Z_eff = Σ n_z Z_z² / n_e` with
-`n_e = Σ n_z Z_z`.
-
-The single-fluid closure quantity — Spitzer resistivity and the like. Squaring
-weights the high-Z tail far harder than [`mean_charge`](@ref) does, which is the
-whole reason a trace impurity can dominate `Z_eff` while barely moving `Z̄`.
-"""
-function effective_charge(Z::AbstractVector, n::AbstractVector)
-    FT = float(promote_type(eltype(Z), eltype(n)))
-    s1 = zero(FT)
-    s2 = zero(FT)
-    for k in eachindex(Z, n)
-        nk = max(FT(n[k]), zero(FT))
-        s1 += nk * Z[k]
-        s2 += nk * Z[k]^2
-    end
-    return s1 > zero(FT) ? s2 / s1 : FT(first(Z))
-end
+# The two charge averages a species MIXTURE needs — Z̄ = Σn_z Z_z/Σn_z per ion and
+# Z_eff = Σn_z Z_z²/n_e per electron — lived here and are gone. With one species
+# both equal `charge` identically, so they were a reduction over a list of length
+# one dressed up as physics, and keeping them uncalled would have invited a caller
+# to reach for the wrong one. The forms, the degenerate cases they had to survive,
+# and the 99:1 / 90:10 H₂⁺–C⁶⁺ numbers that separate them are recorded in
+# claudedocs/TODO/ion-inventory-multi-species.md, to come back with the mixture.
 
 """
     IonTransportPolicy

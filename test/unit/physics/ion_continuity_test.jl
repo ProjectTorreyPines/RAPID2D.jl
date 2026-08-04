@@ -59,8 +59,8 @@ end
     # they disagreed: the step wrote `ni .= ne ./ Zeff`, then
     # `treat_electron_outside_wall!` overwrote it with `ni .= ne`, so the
     # Zeff-aware line was dead code in `run_simulation!`. Both now call
-    # `slave_ions_to_electrons!`, which is `ne/Z̄` — and a single hydrogen species
-    # has Z̄ = 1 exactly, so what actually runs is still `ni = ne`.
+    # `slave_ions_to_electrons!`, which is `ne/Z` for the declared species — and
+    # H₂⁺ has Z = 1, so what actually runs is still `ni = ne`, bitwise.
     RP = ion_case()
     RP.flags.update_ni_independently = false
     # A hand-set Z_eff is a statement about the single-fluid closure. It is not
@@ -69,8 +69,7 @@ end
     run_simulation!(RP)
 
     @test RP.plasma.ni == RP.plasma.ne
-    @test all(==(1.0), RP.plasma.Z_mean)
-    @test RP.plasma.ni == RP.plasma.ne ./ RP.plasma.Z_mean
+    @test RAPID2D.bulk_ion_charge(RP) == 1
 end
 
 @testitem "Ionization enters the ion equation at the electron rate" setup = [IonRun] begin

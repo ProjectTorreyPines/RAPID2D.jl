@@ -294,9 +294,12 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     @. snap2D.Ni_src_rate = Ntracker.cum2D_Ni_src / RP.config.snap2D_Δt_s
     @. snap2D.Ni_loss_rate = Ntracker.cum2D_Ni_loss / RP.config.snap2D_Δt_s
 
-    # Current densities (parallel current components)
+    # Current densities (parallel current components). The ion term is a CHARGE
+    # density, `ni·Z` — it read `ni` alone, which was right only because H₂⁺ has
+    # Z = 1, and would have under-reported the current for any other ion.
     snap2D.Jϕ .= pla.Jϕ
-    @. snap2D.J_para = ee * (pla.ni * pla.ui_para - pla.ne * pla.ue_para)
+    Z_i = FT(bulk_ion_charge(RP))
+    @. snap2D.J_para = ee * (pla.ni * Z_i * pla.ui_para - pla.ne * pla.ue_para)
 
     # Poloidal flux
     snap2D.ψ .= F.ψ
@@ -333,7 +336,6 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     # whenever Te ≠ Ti.
     snap2D.lnΛ .= pla.lnΛ
     snap2D.lnΛ_ii .= pla.lnΛ_ii
-    snap2D.Z_mean .= pla.Z_mean
 
     # Neutral gas
     snap2D.n_H2_gas .= pla.n_H2_gas

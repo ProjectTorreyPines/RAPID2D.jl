@@ -205,6 +205,11 @@ Contains the plasma state variables including density, temperature, and velocity
 
     # Densities
     ne::Matrix{FT} = zeros(FT, dims)    # Electron density [m^-3]
+    # The density OF THE ION SPECIES — `transport.ion_species[1]`, H₂⁺ by default —
+    # and not a total over species. There is only ever one (see `set_ion_species!`),
+    # so the two readings coincide today; naming which one it is now is what keeps a
+    # second species from having to guess later. Its charge density is `ni·Z` with
+    # `Z = bulk_ion_charge(RP)`; nothing stores a charge average to recover it from.
     ni::Matrix{FT} = zeros(FT, dims)    # Ion density [m^-3]
     n_H2_gas::Matrix{FT} = zeros(FT, dims)  # H2 gas density [m^-3]
 
@@ -263,12 +268,13 @@ Contains the plasma state variables including density, temperature, and velocity
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
-    # Two DIFFERENT charge averages, both written by `update_charge_states!`.
-    # A single-species hydrogen plasma has Z_mean = Zeff = 1, which is why one
-    # field could stand in for both — and for the per-species charge state — until
-    # a second species existed. At 10 % C⁶⁺ they are 1.5 and 3.0.
-    Z_mean::Matrix{FT} = ones(FT, dims) # Σ n_z Z_z / Σ n_z — per ION: charge density, quasineutrality
-    Zeff::Matrix{FT} = ones(FT, dims)   # Σ n_z Z_z² / n_e — per ELECTRON: single-fluid closures
+    # Effective charge, written by `update_charge_states!` and read by `sptz_fac`.
+    # With ONE ion species it equals that species' charge state everywhere, so it
+    # carries no information the species does not — it is a field because the
+    # multi-species form Σ n_z Z_z²/n_e genuinely varies in space, and this is the
+    # seam that form returns through. Nothing else may stand in for the charge
+    # state: use `bulk_ion_charge(RP)`, which cannot go stale.
+    Zeff::Matrix{FT} = ones(FT, dims)
     # Current densities
     Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
 
@@ -382,7 +388,8 @@ Fields include diffusion coefficients in different directions.
 
     # Ion transport. The species axis is present from the start so that H⁺, H₃⁺ and
     # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as
-    # COLUMNS, which is exactly the multi-RHS layout the batch solve wants.
+    # COLUMNS, which is exactly the multi-RHS layout the batch solve wants. Exactly
+    # one column is filled for now — `set_ion_species!` says what a second needs.
     ion_species::Vector{IonSpecies{FT}} = IonSpecies{FT}[]
     ion_N::Matrix{FT} = zeros(FT, prod(dims), 1)   # working densities [m⁻³]
     ion_S::Matrix{FT} = zeros(FT, prod(dims), 1)   # working sources [m⁻³s⁻¹]

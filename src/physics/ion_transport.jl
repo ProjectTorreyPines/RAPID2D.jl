@@ -493,8 +493,14 @@ end
 """
     ion_pinch_velocity(RP, D_RR, D_RZ, D_ZZ) -> (W_R, W_Z)
 
-The **species-independent** part of the impurity pinch velocity,
-`𝐖 = 𝐃 ∇n_i/(Z_i n_i)`, so that species `z` moves at `Z_z 𝐖`.
+The part of the impurity pinch velocity that is independent of the species being
+pinched, `𝐖 = 𝐃 ∇n_i/(Z_i n_i)`, so that species `z` moves at `Z_z 𝐖`.
+
+It is NOT independent of the species doing the pinching: `n_i` and `Z_i` are the
+DRIVER's, read here from `plasma.ni` and [`bulk_ion_charge`](@ref). Which species
+that is travels with the operator built from it — see
+[`ion_pinch_divergence`](@ref) — because the driver is the one species the term
+must not be applied to.
 
 The factorization of `V_pinch,z` into `Z_z` times a shared field is what keeps
 the pinch from multiplying the work: one divergence operator covers every
@@ -545,9 +551,19 @@ function ion_pinch_velocity(
 end
 
 """
-    ion_pinch_divergence(RP, group, directions) -> P or nothing
+    ion_pinch_divergence(RP, group, directions) -> (; divergence, driver) or nothing
 
-`P` such that `P * n_z = ∇⋅(n_z 𝐖)`, built from the group's own diffusion tensor.
+`divergence` such that `divergence * n_z = ∇⋅(n_z 𝐖)`, built from the group's own
+diffusion tensor, and `driver`: the index of the species whose profile 𝐖 was
+built from.
+
+The two travel together because they are one fact. 𝐖 is `𝐃∇n_driver/(Z_driver
+n_driver)`, so the term describes species z being dragged along **driver's**
+gradient — and `z = driver` is the one case the derivation excludes. Returning
+the index rather than letting the consumer assume it is what keeps that exclusion
+correct when the driver stops being species 1: a general mixture pinches each z
+against `Σ_{s≠z}`, at which point this becomes a driver per receiving species and
+the change is confined to these two fields.
 
 Returns `nothing` when the pinch is off, which is how the caller stays free of a
 branch. The operator is cached in `operators.∇𝐮_pinch` and allocated on first
@@ -571,7 +587,10 @@ function ion_pinch_divergence(
     else
         update_∇𝐮_operator!(RP, W_R, W_Z; ∇𝐮 = RP.operators.∇𝐮_pinch)
     end
-    return RP.operators.∇𝐮_pinch.matrix
+    # `ion_pinch_velocity` read `plasma.ni`, which is species 1 by definition
+    # (see `set_ion_species!`). That is the whole reason the driver is known here
+    # and not decided at the consumer.
+    return (divergence = RP.operators.∇𝐮_pinch.matrix, driver = 1)
 end
 
 """
@@ -583,6 +602,16 @@ Add `−∇⋅(n_z V_pinch,z)` to each of the group's source columns, explicitly
 of one shared matvec. Nothing here touches the matrix that gets factorized —
 which is the point. Making the pinch implicit would put `Z_z` inside the operator
 and cost one factorization PER SPECIES, undoing the batch.
+
+**`P.driver` receives nothing.** `z ≠ i` is a premise of the derivation, not a
+convention: the term exists because z rubs against i, and 𝐖 is built from i's own
+profile. Put z = i in and `Z_z/Z_i = 1`, `n_z = n_i`, so the pinch flux
+`n_i V_pinch,i = 𝐃∇n_i` is the diffusive flux exactly, pointing the other way —
+the driver stops diffusing and goes negative where the profile is steep. The
+reaction it genuinely feels back from the traces is `O(n_z/n_i)`, which is what
+the trace-limit derivation drops. With one ion species that species IS the driver,
+so the whole term is identically zero — correct, because there is nothing to rub
+against.
 
 The explicit treatment is safe on a CFL argument, not on a smallness argument:
 the pinch flux is `Z_z/Z_i` times the diffusive flux it accompanies, so for C⁶⁺
@@ -597,8 +626,9 @@ function add_ion_pinch_source!(
     isnothing(P) && return S
     species = RP.transport.ion_species
     for s in group.sids
+        s == P.driver && continue        # 𝐖 is this species' own gradient
         Z_z = FT(species[s].charge)
-        @views S[:, s] .-= Z_z .* (P * N[:, s])
+        @views S[:, s] .-= Z_z .* (P.divergence * N[:, s])
     end
     return S
 end
@@ -630,15 +660,32 @@ end
 Declare which ion species the transport solve advances, and size the work
 buffers to match.
 
-Species are columns of `ion_N`/`ion_S`, in the order given; column 1 is the
-species `plasma.ni` mirrors. Appending a species here is the whole cost of
-adding it to the transport solve — grouping, assembly and the batch solve are
-already written for a list.
+**Exactly one species, for now.** Grouping, assembly and the batch solve are
+already written against a list, but three things outside them are not, and each
+is silently wrong rather than loudly missing:
+
+  - `treat_ion_outside_wall!` clears only column 1, so every other species
+    accumulates outside the wall without bound and unbooked;
+  - `γ_2nd_electron` is one number, so only column 1 yields secondary electrons;
+  - the ion charge density is `n·Z` from this species, and would have to become
+    `Σ_s n_s Z_s` at every site that builds a current (see
+    `claudedocs/TODO/ion-inventory-multi-species.md`).
+
+`plasma.ni` IS this species' density — not a total over species, and not a
+quantity a second field mirrors.
 """
 function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonSpecies{FT}}) where {FT <: AbstractFloat}
-    isempty(species) && throw(ArgumentError("at least one ion species is required"))
-    allunique(sp.name for sp in species) ||
-        throw(ArgumentError("ion species names must be unique, got $(map(sp -> sp.name, species))"))
+    length(species) == 1 || throw(
+        ArgumentError(
+            "exactly one ion species is supported, got $(length(species)). " *
+                "A second one needs four things that do not exist yet: " *
+                "`treat_ion_outside_wall!` clears only the first column, so the others " *
+                "accumulate outside the wall unbooked; `γ_2nd_electron` is one number, so " *
+                "only the first yields secondary electrons; `Ni_loss` does not split by " *
+                "species; and every current builds its charge density as n·Z, which would " *
+                "have to become Σ_s n_s Z_s."
+        )
+    )
     tp = RP.transport
     tp.ion_species = collect(species)
     Ng = RP.G.NR * RP.G.NZ
@@ -651,11 +698,16 @@ end
 """
     bulk_ion_charge(RP) -> Int
 
-The charge state of the bulk ion — species 1, the one `plasma.ni` mirrors.
+The charge state of the ion the plasma is made of — `plasma.ni` is its density.
 
-This is what the NRL collision rates on p.28 and the logarithms on p.34 carry.
-They took `plasma.Zeff` before the two were distinguished, which was correct only
-because a single hydrogen species makes every charge average equal 1.
+**The single source of Z.** It is read from the declared species rather than from
+a field derived alongside it, so it cannot be stale: there is no window between
+declaring a species and refreshing an average in which a caller sees the old
+charge. That window is what a stored `Z_mean` had, and what it got wrong.
+
+This is also what the NRL collision rates on p.28 and the logarithms on p.34
+carry. They took `plasma.Zeff` before the two were distinguished, which was
+correct only because a hydrogen plasma makes every charge average equal 1.
 """
 bulk_ion_charge(RP::RAPID) =
     isempty(RP.transport.ion_species) ? 1 : RP.transport.ion_species[1].charge
@@ -663,57 +715,38 @@ bulk_ion_charge(RP::RAPID) =
 """
     update_charge_states!(RP) -> RP
 
-Recompute `plasma.Z_mean` and `plasma.Zeff` from the species list and the
-per-species densities.
+Fill `plasma.Zeff` from the declared species.
 
-Column 1 of `ion_N` is synced from `plasma.ni` first — it is that species by
-definition (see [`set_ion_species!`](@ref)), and the continuity solve does the
-same sync at its own entry. Species 2 and up carry their own state across steps.
+With one species `Z_eff = Σ n_z Z_z²/Σ n_z Z_z` reduces to that species' charge
+at every node and every density, including the empty and negative ones a
+continuity solve can produce — so this is a `fill!`, not an average. It stays a
+function, and `Zeff` stays a field, because the multi-species form varies in
+space and this is the seam it returns through.
 
-The two averages are genuinely different reductions of the same inventory
-([`mean_charge`](@ref), [`effective_charge`](@ref)); computing them in one sweep
-keeps them from ever disagreeing about which inventory they described.
+There is deliberately no mean charge `Z̄`. It existed only to let `ni` mean a
+total over species; `ni` is one species now, so `n_i Z` is the ion charge density
+outright and nothing needs to divide by an average to recover it.
 """
 function update_charge_states!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    tp, pla = RP.transport, RP.plasma
-    isempty(tp.ion_species) && return RP
-
-    Z = FT[sp.charge for sp in tp.ion_species]
-    N = tp.ion_N
-    @views N[:, 1] .= vec(pla.ni)
-
-    Z_bulk = FT(tp.ion_species[1].charge)
-    Zm, Ze = vec(pla.Z_mean), vec(pla.Zeff)
-    @inbounds for k in axes(N, 1)
-        s0 = zero(FT)
-        s1 = zero(FT)
-        s2 = zero(FT)
-        for s in eachindex(Z)
-            n = max(N[k, s], zero(FT))
-            s0 += n
-            s1 += n * Z[s]
-            s2 += n * Z[s]^2
-        end
-        Zm[k] = s0 > zero(FT) ? s1 / s0 : Z_bulk
-        Ze[k] = s1 > zero(FT) ? s2 / s1 : Z_bulk
-    end
+    fill!(RP.plasma.Zeff, FT(bulk_ion_charge(RP)))
     return RP
 end
 
 """
     slave_ions_to_electrons!(RP) -> RP
 
-Set `ni` from `ne` by quasineutrality: `n_e = Σ n_z Z_z = n_i Z̄`, so `n_i = n_e/Z̄`.
+Set `ni` from `ne` by quasineutrality: `n_e = n_i Z`, so `n_i = n_e/Z`.
 
 The single definition behind both places that slave ions. They used to disagree —
 the step wrote `ni .= ne ./ Zeff` and the boundary pass then overwrote it with
 `ni .= ne`, so the Zeff-aware line was dead code in `run_simulation!` and which
-one was right depended on what `Zeff` meant. It means `Z̄` here, and with one
-hydrogen species `Z̄ = 1`, so the two former writers now agree exactly and no
-existing result moves.
+one was right depended on what `Zeff` meant. `Z` here is the species' own charge
+state, and with one hydrogen species that is 1, so the two former writers agree
+exactly and no existing result moves.
 """
-function slave_ions_to_electrons!(RP::RAPID)
+function slave_ions_to_electrons!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
-    @. pla.ni = pla.ne / pla.Z_mean
+    Z = FT(bulk_ion_charge(RP))   # bound outside the broadcast: `@.` would call it per element
+    @. pla.ni = pla.ne / Z
     return RP
 end

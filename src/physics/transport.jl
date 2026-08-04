@@ -22,10 +22,10 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp = RP.transport
     @unpack mi, me, ee = RP.config.constants
 
-    # Charge averages first: `Zeff` reaches the Spitzer factor a few lines below,
-    # and `Z_mean` reaches the current density and the quasineutrality slaving
-    # later in the step. Both are composition quantities, so one evaluation per
-    # step is the same discipline `update_RRCs!` follows for the rate tables.
+    # Charge state first: `Zeff` reaches the Spitzer factor a few lines below. The
+    # charge density and the quasineutrality slaving do NOT come through here —
+    # they take the species' own charge, which is why nothing downstream depends on
+    # this call having run.
     update_charge_states!(RP)
 
     # The one RRC evaluation point of the step. Everything downstream — the rest of this

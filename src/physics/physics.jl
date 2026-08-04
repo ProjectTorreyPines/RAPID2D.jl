@@ -197,8 +197,11 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
                 # Add the ionization contribution if source terms are enabled, from the
                 # step-entry ν_en_iz that continuity and the energy equation also use.
+                # Ions are born at rest, so this is a dilution rate: events per second
+                # divided by the ions already present, n_e·ν_iz/(n_e/Z) = Z·ν_iz.
                 if RP.flags.src
-                    @. eff_atomic_coll_freq += pla.Z_mean * pla.ν_en_iz
+                    Z_i = FT(bulk_ion_charge(RP))
+                    @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
                 end
 
                 # NOTE: convection and pressure contribution are ignored for ions
@@ -539,7 +542,7 @@ This function calculates the ion power sources and sinks based on the MATLAB
 # Notes
 The power calculation includes:
 - Energy change from atomic collisions: 0.5*mi*ui_mag_sq - 1.5*(Ti-T_gas)*ee
-- Effective collision frequency: n_H2_gas*(0.5*elastic + charge_exchange + Z_mean*ionization)
+- Effective collision frequency: n_H2_gas*(0.5*elastic + charge_exchange + Z*ionization)
 - Atomic power: collision_frequency * energy_change
 - Equilibration power: matches electron equilibration power if Coulomb collisions enabled
 - Total power: atomic + equilibration
@@ -583,8 +586,11 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # Ionization contribution, from the step-entry ν_en_iz (update_RRCs!) that the
             # electron continuity and energy equations use — the electron rate governs it.
+            # Z·ν_iz, not ν_iz: the events are counted per electron and this equation is
+            # per ion, and one ion carries Z of them (see `update_ui_para!`).
             if RP.flags.src
-                @. eff_atomic_coll_freq += pla.Z_mean * pla.ν_en_iz
+                Z_i = FT(bulk_ion_charge(RP))
+                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
             end
 
             # Calculate atomic power: collision frequency times energy change
@@ -1290,6 +1296,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
 
     # Physical constants
     @unpack ee, me, μ0, qe = RP.config.constants
+    Z_i = FT(bulk_ion_charge(RP))   # scalar: `@.` would call it per element
 
     θimp = FT(1.0)  # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
 
@@ -1339,7 +1346,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     # Jϕ_tilde is the part of prediction of Jϕ at the next time step, using the current information
     Jϕ_tilde = @. (
         pla.ne * qe * (pla.ue_para + dt * accel_para_tilde)
-            + pla.ni * (ee * pla.Z_mean) * Au_X_ui_para
+            + pla.ni * (ee * Z_i) * Au_X_ui_para
     ) * F.bϕ
 
 
@@ -1349,7 +1356,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     end
 
     # Toroidal current density Jϕ @ t=(n-th step)
-    Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * pla.Z_mean) * pla.ui_para) * F.bϕ
+    Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
     # 6. Initial guess for ψ_self using θ-implicit scheme with extrapolated Eϕ_self
     # Predict Eϕ_self(n+1) by linear extrapolation: 2*E(n) - E(n-1)
@@ -1394,7 +1401,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
         # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
         @. RHS = pla.ue_para + dt * accel_para_tilde - facEM * new_ψ_self_k
         ue_para_k .= Au \ RHS # Solve for ue_para at (k)-th step
-        @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * pla.Z_mean) * pla.ui_para) * F.bϕ
+        @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
 
         if csys.n_total > 0
@@ -1637,6 +1644,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # Physical constants
         @unpack ee, me, μ0, qe = RP.config.constants
+        Z_i = FT(bulk_ion_charge(RP))   # scalar: `@.` would call it per element
 
         θimp = FT(1.0)  # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
 
@@ -1685,7 +1693,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
 
         # Toroidal current density Jϕ @ t=(n-th step)
-        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * pla.Z_mean) * pla.ui_para) * F.bϕ
+        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
 
         # 6. Initial guess for ψ_self using θ-implicit scheme with extrapolated Eϕ_self
@@ -1726,7 +1734,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         converged = false
         while true
             # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
-            @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * pla.Z_mean) * pla.ui_para) * F.bϕ
+            @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
 
             if csys.n_total > 0
@@ -1773,7 +1781,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             # Step #3: Set RHS of the implicit Ampere equation
             @. RHS_u = pla.ue_para + dt * accel_para_tilde
 
-            @. RHS_ψ = -μ0 * G.R2D * pla.ni * ee * pla.Z_mean * pla.ui_para * F.bϕ
+            @. RHS_ψ = -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
             if csys.n_total > 0
                 inside_Jϕ_coil_k = distribute_coil_currents_to_Jϕ(csys, RP.G; currents = new_coils_I_k)
                 @. RHS_ψ += -μ0 * G.R2D * inside_Jϕ_coil_k
@@ -1818,7 +1826,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             @. pla.Rue_ei += pla.ν_ei_eff * (-θimp * pla.ue_para)
         end
 
-        @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Z_mean) * pla.ui_para) * F.bϕ
+        @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
         # Update coil currents
         if RP.coil_system.n_total > 0

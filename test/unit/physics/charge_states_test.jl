@@ -1,16 +1,17 @@
 # `Zeff` was carrying three different quantities.
 #
-# In a single-species hydrogen plasma the charge state Z, the mean charge Z̄ and
-# the effective charge Z_eff are all 1, so one field could stand in for all three
-# and nothing complained. They separate the moment a second species exists:
+# In a single-species plasma the charge state Z, the mean charge Z̄ and the
+# effective charge Z_eff are all equal to Z, so one field could stand in for all
+# three and nothing complained. They separate the moment a second species exists:
 #
 #   Z_s   = the charge state of species s        → collision rates (NRL p.28/34)
 #   Z̄     = Σ n_z Z_z / Σ n_z                    → quasineutrality, charge density
 #   Z_eff = Σ n_z Z_z² / n_e                     → single-fluid closures (Spitzer)
 #
-# For H₂⁺ + C⁶⁺ at 99:1 these are 1, 1.05 and 1.29; at 90:10, 1, 1.5 and 3.0.
-# Fixing this AFTER adding impurities would mean re-deriving which of the three
-# every existing formula meant, from formulas that all read `Zeff`.
+# This branch resolves that by carrying ONE species, so all three collapse onto
+# its declared charge and no derived field is needed to hold them apart. The
+# multi-species forms — and why a stored average was the wrong shape — are in
+# claudedocs/TODO/ion-inventory-multi-species.md.
 
 @testsnippet ChargeCase begin
     "A discharge-shaped setup, ions free to evolve."
@@ -33,68 +34,95 @@
     end
 end
 
-@testitem "Mean charge and effective charge are different averages" begin
-    using RAPID2D: mean_charge, effective_charge
-
-    # One species: all three collapse onto its charge state, whatever that is
-    for Z in (1.0, 6.0)
-        @test mean_charge([Z], [1.0e18]) ≈ Z
-        @test effective_charge([Z], [1.0e18]) ≈ Z
-    end
-
-    # H₂⁺ 99 : C⁶⁺ 1 — Z̄ is a per-ION average, Z_eff a per-ELECTRON one
-    Z, n = [1.0, 6.0], [9.9e17, 1.0e16]
-    ne = n[1] * 1 + n[2] * 6
-    @test mean_charge(Z, n) ≈ (n[1] * 1 + n[2] * 6) / (n[1] + n[2])
-    @test effective_charge(Z, n) ≈ (n[1] * 1 + n[2] * 36) / ne
-    @test mean_charge(Z, n) ≈ 1.05 rtol = 0.01
-    @test effective_charge(Z, n) ≈ 1.286 rtol = 0.01    # 1 % carbon by ION number
-
-    # Z_eff ≥ Z̄ always: squaring weights the high-Z tail harder. The gap widens
-    # fast — at 10 % carbon it is 1.5 against 3.0, exactly a factor of two.
-    @test effective_charge(Z, n) > mean_charge(Z, n)
-    @test mean_charge(Z, [9.0e17, 1.0e17]) ≈ 1.5 rtol = 0.01
-    @test effective_charge(Z, [9.0e17, 1.0e17]) ≈ 3.0 rtol = 0.01
-end
-
-@testitem "Charge averages survive an empty or negative plasma" begin
-    using RAPID2D: mean_charge, effective_charge
-
-    # A continuity solve is free to hand back n ≤ 0, and out-of-wall nodes are 0.
-    # 0/0 in a charge would propagate into ν_ii, the current density and the
-    # quasineutrality slaving all at once.
-    @test mean_charge([1.0, 6.0], [0.0, 0.0]) == 1.0        # falls back to the bulk
-    @test effective_charge([1.0, 6.0], [0.0, 0.0]) == 1.0
-    @test isfinite(mean_charge([2.0], [-1.0e-40]))
-    @test mean_charge([2.0], [-1.0e-40]) == 2.0
-end
-
-@testitem "update_charge_states! fills both fields from the species list" setup = [ChargeCase] begin
-    using RAPID2D: IonSpecies, set_ion_species!, mean_charge, effective_charge
+@testitem "The transport solve carries exactly one ion species" setup = [ChargeCase] begin
+    using RAPID2D: IonSpecies, set_ion_species!, bulk_ion_charge
 
     RP = charge_case()
-    update_charge_states!(RP)
-    @test all(==(1.0), RP.plasma.Z_mean)
-    @test all(==(1.0), RP.plasma.Zeff)
+    @test length(RP.transport.ion_species) == 1
+    @test bulk_ion_charge(RP) == 1              # H₂⁺
 
-    # Add carbon and the two fields separate
+    # A second species is refused rather than half-supported. The wall pass clears
+    # one column, γ_2nd is not per species, `Ni_loss` does not split, and the
+    # charge density would need Σ n_z Z_z instead of n·Z — none of which exist yet.
     mi = RP.config.constants.mi
-    set_ion_species!(
-        RP, [
-            IonSpecies(:H2⁺, mi, 1),
-            IonSpecies(:C⁶⁺, 6mi, 6),
-        ]
-    )
-    RP.transport.ion_N[:, 2] .= 1.0e16
+    err = try
+        set_ion_species!(RP, [IonSpecies(:H2⁺, mi, 1), IonSpecies(:C⁶⁺, 6mi, 6)])
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("one ion species", err.msg)
+    @test occursin("wall", err.msg)              # names what is missing, not just "no"
+
+    # …and the refusal leaves the existing species untouched
+    @test length(RP.transport.ion_species) == 1
+    @test bulk_ion_charge(RP) == 1
+end
+
+@testitem "There is no stored mean charge — Z comes from the species" setup = [ChargeCase] begin
+    using RAPID2D: IonSpecies, set_ion_species!, bulk_ion_charge
+
+    RP = charge_case()
+
+    # `Z_mean` existed only to let `ni` mean "total ion density". With one species
+    # `ni` IS that species, so a per-ion average has nothing to average over.
+    @test !hasproperty(RP.plasma, :Z_mean)
+
+    # `Z_eff` survives — `sptz_fac` is a genuine consumer — and at one species it
+    # is that species' charge exactly, not a value maintained alongside it.
+    mi = RP.config.constants.mi
+    set_ion_species!(RP, [IonSpecies(:C⁶⁺, 6mi, 6)])
     update_charge_states!(RP)
+    @test bulk_ion_charge(RP) == 6
+    @test all(==(6.0), RP.plasma.Zeff)
+end
 
-    Z, n = [1.0, 6.0], [1.0e18, 1.0e16]
-    @test all(≈(mean_charge(Z, n)), RP.plasma.Z_mean)
-    @test all(≈(effective_charge(Z, n)), RP.plasma.Zeff)
-    @test RP.plasma.Zeff[5, 5] > RP.plasma.Z_mean[5, 5]
+@testitem "Quasineutrality slaves ions with the declared species charge" setup = [ChargeCase] begin
+    using RAPID2D: IonSpecies, set_ion_species!, slave_ions_to_electrons!
 
-    # column 1 is `ni` by definition, so the sync must be exact
-    @test RP.transport.ion_N[:, 1] == vec(RP.plasma.ni)
+    # n_e = n_i Z, so the ion density balancing a given n_e is ne/Z. Reading Z from
+    # the declared species rather than from a field means it CANNOT be stale: the
+    # test below never refreshes any derived quantity between declaring C⁶⁺ and
+    # slaving, which is exactly the window a stored average got wrong.
+    RP = charge_case()
+    mi = RP.config.constants.mi
+    set_ion_species!(RP, [IonSpecies(:C⁶⁺, 6mi, 6)])
+    slave_ions_to_electrons!(RP)
+    @test RP.plasma.ni ≈ RP.plasma.ne ./ 6
+
+    # With one singly-charged species that is exactly ni == ne, bitwise
+    RP2 = charge_case()
+    RP2.flags.update_ni_independently = false
+    run_simulation!(RP2)
+    @test RP2.plasma.ni == RP2.plasma.ne
+end
+
+@testitem "A current carries the ion CHARGE density, not the ion density" setup = [ChargeCase] begin
+    using RAPID2D: IonSpecies, set_ion_species!, measure_snap2D
+
+    # J∥ = e(n_i Z u_i∥ − n_e u_e∥). The ion term is a charge density; dropping the
+    # Z under-reports the ion current by a factor of Z, silently, because H₂⁺ makes
+    # Z = 1 and the omission invisible. Read from the species, so declaring a
+    # different ion is enough — no derived field has to be refreshed in between.
+    RP = charge_case()
+    mi = RP.config.constants.mi
+    RP.plasma.ue_para .= -1.0e5
+    RP.plasma.ui_para .= 2.0e3
+    ee = RP.config.constants.ee
+
+    set_ion_species!(RP, [IonSpecies(:H2⁺, mi, 1)])
+    J_H2 = copy(measure_snap2D(RP).J_para)
+
+    set_ion_species!(RP, [IonSpecies(:C⁶⁺, 6mi, 6)])
+    J_C = measure_snap2D(RP).J_para
+
+    pla = RP.plasma
+    @test J_H2 ≈ @. ee * (pla.ni * 1 * pla.ui_para - pla.ne * pla.ue_para)
+    @test J_C ≈ @. ee * (pla.ni * 6 * pla.ui_para - pla.ne * pla.ue_para)
+
+    # …and the difference is exactly the extra five charges per ion
+    @test J_C - J_H2 ≈ @. ee * 5 * pla.ni * pla.ui_para
 end
 
 @testitem "Collision rates follow the species charge, not Zeff" setup = [ChargeCase] begin
@@ -116,41 +144,22 @@ end
     @test !all(≈(0.510469472194728), RP.plasma.sptz_fac)
 end
 
-@testitem "The new collision and charge fields reach the 2D snapshot" setup = [ChargeCase] begin
+@testitem "The new collision field reaches the 2D snapshot" setup = [ChargeCase] begin
     using RAPID2D: measure_snap2D
 
     # `ν_ii` now carries its own logarithm, and that correction moves the ion AND
     # (through the ambipolar coupling) the ELECTRON parallel diffusivity by tens
-    # of percent. A user whose run moves has to be able to see why, so the two
-    # new fields have to be observable, not just internal.
+    # of percent. A user whose run moves has to be able to see why, so the new
+    # field has to be observable, not just internal.
     RP = charge_case()
     update_transport_quantities!(RP)
     snap = measure_snap2D(RP)
 
     @test snap.lnΛ_ii == RP.plasma.lnΛ_ii
-    @test snap.Z_mean == RP.plasma.Z_mean
     @test snap.lnΛ_ii != snap.lnΛ                 # Te ≠ Ti ⇒ genuinely different
     @test all(>(0.0), snap.lnΛ_ii)
-end
 
-@testitem "Quasineutrality slaves ions with the mean charge" setup = [ChargeCase] begin
-    using RAPID2D: slave_ions_to_electrons!
-
-    # n_e = Σ n_z Z_z = n_i Z̄, so the ion density that balances a given n_e is
-    # ne/Z̄ — NOT ne/Z_eff, and not ne except when Z̄ = 1.
-    RP = charge_case()
-    RP.plasma.Z_mean .= 1.5
-    RP.plasma.Zeff .= 4.0
-    slave_ions_to_electrons!(RP)
-    @test RP.plasma.ni ≈ RP.plasma.ne ./ 1.5
-
-    # The two places that slave ions now agree by construction: both call this.
-    RP2 = charge_case()
-    RP2.flags.update_ni_independently = false
-    run_simulation!(RP2)
-    @test RP2.plasma.ni ≈ RP2.plasma.ne ./ RP2.plasma.Z_mean
-
-    # and with one hydrogen species that is exactly ni == ne, so nothing moves
-    @test all(==(1.0), RP2.plasma.Z_mean)
-    @test RP2.plasma.ni == RP2.plasma.ne
+    # A charge AVERAGE is not a 2D field here: one species means one scalar charge,
+    # and recording NR×NZ copies of it every snapshot says nothing.
+    @test !hasproperty(snap, :Z_mean)
 end

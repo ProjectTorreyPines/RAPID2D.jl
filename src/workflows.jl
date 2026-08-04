@@ -77,7 +77,10 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractF
             pla = RP.plasma
             F = RP.fields
             @unpack qe, ee = RP.config.constants
-            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * pla.Z_mean) * pla.ui_para) * F.bϕ
+            # `ni·Z` is the ion CHARGE density. One species, so it is a product and not
+            # a sum; `Z` comes from the species itself and cannot lag behind it.
+            Z_i = FT(bulk_ion_charge(RP))
+            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
             I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
         end
 
