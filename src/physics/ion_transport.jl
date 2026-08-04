@@ -1,3 +1,5 @@
+export set_ion_species!, bulk_ion_charge, bulk_ion_mass
+
 # From a set of ion species to an advanced density.
 #
 # The policy types and `IonSpecies` are declared in `ion_species.jl`, ahead of
@@ -683,7 +685,8 @@ function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonSpecies{FT}}
                 "accumulate outside the wall unbooked; `γ_2nd_electron` is one number, so " *
                 "only the first yields secondary electrons; `Ni_loss` does not split by " *
                 "species; and every current builds its charge density as n·Z, which would " *
-                "have to become Σ_s n_s Z_s."
+                "have to become Σ_s n_s Z_s — as would `ν_ei`, `ν_ii` and `lnΛ_ii`, which " *
+                "take the bulk's charge and mass. `plasma.ni` also round-trips only column 1."
         )
     )
     tp = RP.transport
@@ -711,6 +714,25 @@ correct only because a hydrogen plasma makes every charge average equal 1.
 """
 bulk_ion_charge(RP::RAPID) =
     isempty(RP.transport.ion_species) ? 1 : RP.transport.ion_species[1].charge
+
+"""
+    bulk_ion_mass(RP) -> FT
+
+The mass of the ion the plasma is made of [kg], from the declared species.
+
+Sibling of [`bulk_ion_charge`](@ref), and for the same reason: the transport
+channels already scale `v_p`, the Coulomb collisionality and the Bohm step from
+`species.mass`, so anything else that needs an ion mass has to take it from the
+same place or the two describe different plasmas. `ν_ii` and the closed-surface
+mass integral read `config.constants.mi` before this, which was correct only
+because that is what the default H₂⁺ is constructed with — declaring H⁺ or H₃⁺
+would have left transport right and the mass ledger wrong, with nothing to say so.
+
+Falls back to the configured default when no species has been declared, matching
+[`bulk_ion_charge`](@ref)'s fallback to 1.
+"""
+bulk_ion_mass(RP::RAPID{FT}) where {FT <: AbstractFloat} =
+    isempty(RP.transport.ion_species) ? FT(RP.config.constants.mi) : RP.transport.ion_species[1].mass
 
 """
     update_charge_states!(RP) -> RP

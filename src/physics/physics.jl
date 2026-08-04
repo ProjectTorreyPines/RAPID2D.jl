@@ -1865,7 +1865,8 @@ function update_uMHD_by_global_JxB_force!(RP::RAPID{FT}) where {FT <: AbstractFl
     # Check if we have closed flux surfaces
     if !isempty(RP.flf.closed_surface_nids)
 
-        @unpack mi, me = RP.config.constants
+        @unpack me = RP.config.constants
+        mi = bulk_ion_mass(RP)   # the declared species, as transport uses
         nids = vcat(RP.G.nodes.on_wall_nids, RP.G.nodes.in_wall_nids)
         pla = RP.plasma
         F = RP.fields

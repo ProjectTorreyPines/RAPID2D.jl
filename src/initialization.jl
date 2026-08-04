@@ -810,7 +810,11 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     pla = RP.plasma
 
     # Constants needed for calculation
-    @unpack me, mi, mp, ee, eps0 = RP.config.constants
+    @unpack me, mp, ee, eps0 = RP.config.constants
+    # From the declared species, not `constants.mi`: `ion_transport_channels`
+    # scales every ion diffusivity from `ν_ii`, and it does so with `species.mass`.
+    # Reading a different mass here would make the two describe different ions.
+    mi = bulk_ion_mass(RP)
 
     μ = mi / mp  # ion mass / proton mass
     me_over_mi = me / mi  # electron to ion mass ratio

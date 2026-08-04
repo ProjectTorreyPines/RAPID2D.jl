@@ -607,9 +607,12 @@ end
     REACTION_STOICHIOMETRY
 
 Particles created per event, per channel — the `νₖ,ₛ` of
-[`ReactionState`](@ref). Integers, and the single source of truth: the accessors
-in `reactions.jl` are written from this table and `reactions_test.jl` walks it to
-assert they still agree.
+[`ReactionState`](@ref).
+
+Read at runtime only for `.θ` and `keys()`. The particle columns are the
+reference the accessors in `reactions.jl` were hand-written from, not a table
+they contract against — so treat them as documentation that has to be kept in
+step by hand, and see the note there before adding a channel.
 
 | channel | e | H₂⁺ | H₃⁺ | H⁺ | H₂ | H⁰ | `θ` family |
 |---|---|---|---|---|---|---|---|
@@ -1164,4 +1167,4 @@ RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
 RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
-export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, ReactionCounts, ReactionState, RAPID, GridGeometry, NodeState
+export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState

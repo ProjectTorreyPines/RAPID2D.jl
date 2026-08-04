@@ -1,3 +1,5 @@
+export IonSpecies, IonTransportPolicy, SharedEffectiveTransport, PerSpeciesTransport
+
 # What an ion species is, and whether species share a transport equation.
 #
 # Declarations only — `types.jl` needs them to type a flag and a state field, so

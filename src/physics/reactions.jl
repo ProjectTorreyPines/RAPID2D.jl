@@ -1,20 +1,17 @@
-export reset_reaction_counts!,
-    update_reaction_counts!,
-    check_reaction_counts,
-    reaction_θ,
-    net_electron_count,
-    net_ion_count,
-    net_H2_gas_count
-
 # Contracting reaction EVENT counts into per-species particle changes.
+#
+# Nothing here is exported: this is the wiring of one step, driven by
+# `advance_timestep!` and the species equations. Reach for it by name.
 #
 # The struct and the stoichiometry table live in `types.jl`; this is the arithmetic
 # `ΔNₛ = Σₖ νₖ,ₛ Nₖ` that turns one into the other, plus the freshness check.
 #
-# Written from `REACTION_STOICHIOMETRY` and kept honest against it by
-# `reactions_test.jl`, which walks the table and re-derives every accessor.
-# With one channel these are one-liners; with four they are four-term sums, which
-# is still both readable and type-stable, so no contraction engine is warranted.
+# The accessors below are HAND-WRITTEN from `REACTION_STOICHIOMETRY`; nothing
+# derives them from it and nothing checks that they still agree. Only `.θ` and
+# `keys()` are actually read at runtime (`reaction_θ`, `check_reaction_counts`),
+# so the particle columns are documentation until a second channel makes the sums
+# worth generating. Adding a channel means editing the table AND every accessor —
+# that is the cost being deferred, and it is the moment to reconsider.
 
 """
     reset_reaction_counts!(RP) -> RP
