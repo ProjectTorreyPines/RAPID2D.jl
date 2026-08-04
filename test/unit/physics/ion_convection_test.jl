@@ -15,7 +15,12 @@
 # genuinely different mechanisms.
 
 @testsnippet IonDrift begin
-    using RAPID2D: update_transport_related_operators!, treat_ion_outside_wall!
+    # Only what `drift_case` itself calls. A name imported here reaches the SNIPPET
+    # module, and `using ..IonDrift` re-exports what the snippet DEFINES, not what
+    # it imported — so a testitem that calls an unexported function has to import it
+    # in its own body. Under TestItemRunner the two scopes happen to coincide; under
+    # ReTestItems, which is what CI runs, they do not.
+    using RAPID2D: update_transport_related_operators!
 
     "A case with prescribed, uniform parallel velocities and no field solve."
     function drift_case(; ui = 3.0e4, ue = -3.0e4, NR = 25, NZ = 25)
@@ -146,6 +151,8 @@ end
 end
 
 @testitem "Convected ions leaving the wall are booked, not lost silently" setup = [IonDrift] begin
+    using RAPID2D: treat_ion_outside_wall!
+
     # The Robin debit books what DIFFUSION takes. Convection puts material on
     # out-of-wall nodes instead, where `treat_ion_outside_wall!` books it. The two
     # paths must not overlap and must not leave a gap.
