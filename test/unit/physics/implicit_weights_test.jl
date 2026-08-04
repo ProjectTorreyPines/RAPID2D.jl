@@ -93,6 +93,106 @@ end
     @test RP.flags.θ_imp.growth == 1.0
 end
 
+@testitem "The ionization source is a stored number, not a reconstruction" begin
+    using RAPID2D
+
+    # Electrons and ions must agree on how many ionizations happened. Making each
+    # side compute that separately means they agree only while an unwritten
+    # ordering rule holds — `solve_ion_continuity_equation!` reconstructing
+    # (1−θ)nⁿ + θnⁿ⁺¹ is right only if the electron solve ran first this step,
+    # and is silently HALF if it did not.
+    #
+    # So the number is produced once, inside the electron solve, from the very θ
+    # and the very nⁿ/nⁿ⁺¹ that solve used, and everyone else reads it. Then the
+    # two sides match because they are literally the same array — no ordering
+    # rule to hold or break.
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", NR = 7, NZ = 7,
+        R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 4.0e-2, R0B0 = 1.0, dt = 1.0e-5,
+        t_end_s = 5.0e-5, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.diffu = false
+    RP.flags.convec = false
+    RP.flags.src = true
+    RP.flags.update_ni_independently = true
+    RP.plasma.ne .= 1.0e14
+    RP.plasma.ni .= 1.0e14
+    RP.plasma.Te_eV .= 5.0
+    RP.plasma.Ti_eV .= 1.0
+    RP.plasma.ν_en_iz .= 5.0e4          # Δt·ν = 0.5
+
+    ne_before = copy(RP.plasma.ne)
+    RAPID2D.solve_electron_continuity_equation!(RP)
+
+    # what the electron solve actually charged itself
+    θ = RP.flags.θ_imp.growth
+    n_star = @. (1 - θ) * ne_before + θ * RP.plasma.ne
+    @test RP.reactions.rates.iz ≈ n_star .* RP.plasma.ν_en_iz rtol = 1.0e-12
+    @test RP.reactions.valid
+    @test RP.plasma.ne ≈ ne_before .+ RP.dt .* RP.reactions.rates.iz rtol = 1.0e-10
+
+    # THE DISCRIMINATOR. Move `ne` after the electron solve has returned. A
+    # consumer that rebuilds the source from `plasma.ne` would follow; one that
+    # reads the published number cannot.
+    ni_before = copy(RP.plasma.ni)
+    gas_before = copy(RP.plasma.n_H2_gas)
+    Ṙ = copy(RP.reactions.rates.iz)
+    RP.plasma.ne .*= 7.0
+
+    RAPID2D.solve_ion_continuity_equation!(RP)
+    @test RP.plasma.ni ≈ ni_before .+ RP.dt .* Ṙ rtol = 1.0e-12
+
+    # the gas sink is the third consumer of the same number
+    RAPID2D.update_neutral_H2_gas_density!(RP)
+    inw = RP.G.nodes.in_wall_nids
+    burnt = (gas_before - RP.plasma.n_H2_gas)[inw]
+    # loose because the sink differences ~9.6e18 to expose ~6.7e13: five digits
+    # of the comparison are lost to cancellation before the test sees them
+    @test burnt ≈ (RP.dt .* Ṙ)[inw] rtol = 1.0e-9
+
+    @test RP.reactions.rates.iz == Ṙ     # and no consumer wrote to it
+end
+
+@testitem "A consumer that runs before the producer is an error, not a wrong answer" begin
+    using RAPID2D
+
+    # The producer→consumer order cannot be designed away: nothing knows how many
+    # events happened before the equation that determines them is solved. So it is
+    # CHECKED. Reading a stale rate used to halve the ion source in silence.
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", NR = 7, NZ = 7,
+        R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 4.0e-2, R0B0 = 1.0, dt = 1.0e-5,
+        t_end_s = 5.0e-5, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.diffu = false
+    RP.flags.convec = false
+    RP.flags.src = true
+    RP.flags.update_ni_independently = true
+    RP.plasma.ne .= 1.0e14
+    RP.plasma.ni .= 1.0e14
+    RP.plasma.ν_en_iz .= 5.0e4
+
+    @test !RP.reactions.valid            # never published
+    @test_throws ArgumentError RAPID2D.solve_ion_continuity_equation!(RP)
+
+    RAPID2D.solve_electron_continuity_equation!(RP)
+    RAPID2D.solve_ion_continuity_equation!(RP)   # now it is allowed
+
+    # ...and the next advance voids them again, at its start
+    RAPID2D.reset_reaction_rates!(RP)
+    @test !RP.reactions.valid
+    @test all(iszero, RP.reactions.rates.iz)      # not merely marked, cleared
+    @test_throws ArgumentError RAPID2D.solve_ion_continuity_equation!(RP)
+end
+
 @testitem "Ionization creates one ion per electron, at every θ_growth" begin
     using RAPID2D
 

@@ -62,6 +62,11 @@ This function represents the core time-stepping algorithm of RAPID2D.
 function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "advance_timestep!" begin
 
+        # Last step's reaction rates are void from here on. Reset at the START of
+        # the advance rather than the end, because the wall passes that book the
+        # ionization run outside `advance_timestep!` and must still see it.
+        reset_reaction_rates!(RP)
+
         # Update vacuum fields from external sources
         @timeit RAPID_TIMER "external_fields" begin
             update_external_fields!(RP)

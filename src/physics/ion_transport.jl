@@ -410,10 +410,15 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
         N[:, 1] .= vec(pla.ni)
         fill!(S, zero(FT))
         if RP.flags.src
-            # The density the ELECTRON equation ionized at, not whatever `pla.ne`
-            # holds now — the electron solve already ran and left nⁿ⁺¹ there. See
-            # `ionization_source_density`: one event, one electron, one ion.
-            @views S[:, 1] .= vec(ionization_source_density(RP)) .* vec(pla.ν_en_iz)
+            # Read the event rates the electron solve published; do not rebuild
+            # them. One ionization makes one electron and one ion, and that
+            # survives discretization only if both sides use the same number.
+            rates = check_reaction_rates(RP)
+            for (sid, sp) in enumerate(tp.ion_species)
+                Ṙ = net_ion_rate(rates, sp.name)
+                isnothing(Ṙ) && continue     # no channel makes or destroys it
+                @views S[:, sid] .= vec(Ṙ)
+            end
         end
 
         if !RP.flags.diffu && !RP.flags.convec

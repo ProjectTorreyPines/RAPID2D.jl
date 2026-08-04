@@ -491,6 +491,113 @@ end
 
 
 """
+    ReactionRates{FT}(dims)
+
+How often each particle-changing reaction is firing, per unit volume:
+`[events m⁻³ s⁻¹]`, one field per channel.
+
+Not to be confused with the **reaction rate COEFFICIENTS** (`RP.eRRCs`,
+`RP.iRRCs`), which are the `⟨σv⟩` tables loaded from disk. A rate here is a
+coefficient already multiplied by the densities that participate — `R_iz =
+ν_en_iz·nₑ*`.
+
+See [`ReactionState`](@ref) for why these are stored rather than recomputed, and
+[`REACTION_STOICHIOMETRY`](@ref) for how a species source is read off them.
+"""
+@kwdef mutable struct ReactionRates{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+    "e + H₂ → 2e + H₂⁺"
+    iz::Matrix{FT} = zeros(FT, dims)
+    # Dissoc_Ionz, Recomb_H2Ion, Recomb_H3Ion append here — see Electron_RRCs,
+    # which already loads all three tables.
+end
+
+"""
+    ReactionState{FT}(dims)
+
+Everything the reaction bookkeeping owns. `rates` is the only member today;
+`counters` — the cumulative per-channel tallies that
+[`ParticleNumberTracker`](@ref) currently keeps per *species* — is the natural
+next one, which is why this is a namespace and not a bare field.
+
+Deliberately **not** called `sources`: a source term in a transport equation may
+one day come from something that is not a reaction at all (gas puffing, a beam),
+and that word should stay available for it.
+
+## Why the rates are stored instead of recomputed
+
+**Every species source is a contraction of these rates with integer
+stoichiometry**, `Ṡₛ = Σₖ νₖ,ₛ Rₖ`, with `ν` from
+[`REACTION_STOICHIOMETRY`](@ref). Two species therefore *cannot* disagree about
+how many events happened: they read the same `Rₖ` and multiply by a constant.
+
+That identity used to be maintained by having each equation rebuild the rate for
+itself, which was correct only while an unwritten ordering rule held. It did not
+hold. The electron equation charged itself `Δt·ν·[(1−θ)nⁿ + θnⁿ⁺¹]`, while
+
+- the ion source used `Δt·ν·nⁿ⁺¹` — the electron solve had already returned, so
+  that is what `plasma.ne` held — and
+- the neutral-gas sink used `Δt·ν·nⁿ⁺¹` too
+  ([`update_neutral_H2_gas_density!`](@ref)),
+
+so at the default `θ = ½` the plasma gained more ions than electrons and burned
+more gas than it ionized. The gas docstring warns against exactly this ("breaks
+nuclei conservation … overshot the electron supply limit by 7 %") while doing it.
+
+## What this buys, and what it does not
+
+It does **not** make the rate more accurate — that is the θ question, settled by
+[`ImplicitWeights`](@ref). It makes electrons, ions and neutrals agree, which is
+a conservation law rather than an accuracy matter and must hold exactly at every
+Δt, θ and resolution.
+
+Ordering is reduced, not abolished:
+
+- **among consumers** it is gone — they read one array, so any order gives
+  bit-identical answers;
+- **producer before consumers** remains, because nothing can know how many events
+  happened before the equation that determines them is solved. That is now one
+  constraint in one place and it is *checked* by `step` rather than assumed, so a
+  stale read raises instead of quietly halving a source.
+
+## Adding a channel
+
+A field in [`ReactionRates`](@ref), a row in `REACTION_STOICHIOMETRY`, a term in
+each accessor. The axis does not move. Note that recombination is a **sink**, so
+it takes `θ_imp.decay` where ionization takes `θ_imp.growth`, and it is nonlinear
+in `nₑnᵢ` where ionization is linear in `nₑ`.
+"""
+@kwdef mutable struct ReactionState{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+    "Whether `rates` describes the advance in progress. Cleared by `reset_reaction_rates!`."
+    valid::Bool = false
+    rates::ReactionRates{FT} = ReactionRates{FT}(dims = dims)
+    # counters::ReactionCounters{FT} — cumulative tallies, today in Ntracker
+end
+
+"""
+    REACTION_STOICHIOMETRY
+
+Particles created per event, per channel — the `νₖ,ₛ` of
+[`ReactionState`](@ref). Integers, and the single source of truth: the accessors
+in `reactions.jl` are written from this table and `reactions_test.jl` walks it to
+assert they still agree.
+
+| channel | e | H₂⁺ | H₃⁺ | H⁺ | H₂ | H⁰ |
+|---|---|---|---|---|---|---|
+| `iz` — e + H₂ → 2e + H₂⁺ | +1 | +1 | | | −1 | |
+| *`diz` — e + H₂ → 2e + H⁺ + H⁰* | +1 | | | +1 | −1 | +1 |
+| *`rec_H2` — e + H₂⁺ → 2H⁰* | −1 | −1 | | | | +2 |
+| *`rec_H3` — e + H₃⁺ → H₂ + H⁰* | −1 | | −1 | | +1 | +1 |
+
+(italic rows are not implemented; the table records the intent so the
+stoichiometry is settled before the rates arrive.)
+"""
+const REACTION_STOICHIOMETRY = (
+    iz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,)),
+)
+
+"""
     ImplicitWeights{FT}(; transport, growth, decay, gas)
 
 The `θ` of the θ-scheme `(𝐈 − θΔt𝐀)fⁿ⁺¹ = fⁿ + (1−θ)Δt𝐀fⁿ`, one per family of
@@ -916,6 +1023,9 @@ mutable struct RAPID{FT <: AbstractFloat}
 
     # Previous state and diagnostics
     prev_n::Matrix{FT}                # Previous density
+    # Reaction event rates for the step in progress — the one place that says how
+    # many ionizations happened, so electrons, ions and neutrals cannot disagree.
+    reactions::ReactionState{FT}
     tElap::Dict{Symbol, Float64}      # Elapsed times
     diagnostics::Diagnostics   # Diagnostic data
 
@@ -946,6 +1056,7 @@ mutable struct RAPID{FT <: AbstractFloat}
         # Initialize matrices
         damping_func = zeros(FT, dims)
         prev_n = zeros(FT, dims)
+        reactions = ReactionState{FT}(dims = dims)
 
         # Initialize empty containers
         eRRC = load_electron_RRCs()
@@ -979,7 +1090,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             eRRC, iRRC,
             config, flags, plasma, fields, transport, operators,
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
-            prev_n, tElap, diagnostics,
+            prev_n, reactions, tElap, diagnostics,
             flf,
             AW_snap0D, AW_snap2D,
             coil_system
@@ -1020,4 +1131,4 @@ RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
 RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
-export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState
+export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, ReactionRates, ReactionState, RAPID, GridGeometry, NodeState

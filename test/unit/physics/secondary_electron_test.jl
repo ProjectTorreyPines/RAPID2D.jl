@@ -80,7 +80,10 @@ end
     N_made = sum(vec(RP.plasma.ne) .* V)
     loss_before = RP.diagnostics.Ntracker.cum0D_Ne_loss
 
-    # the top of the very next step, with no transport in between
+    # the top of the very next step, with no transport in between. The pass books
+    # ionization from the published rates, so stand the producer up — nothing is
+    # ionizing here, which is what this test wants.
+    RAPID2D.update_reaction_rates!(RP)
     treat_electron_outside_wall!(RP)
     Δloss = RP.diagnostics.Ntracker.cum0D_Ne_loss - loss_before
 
@@ -232,6 +235,7 @@ end
 
     # and the next step's boundary pass leaves them alone instead of booking them
     loss_before = RP.diagnostics.Ntracker.cum0D_Ne_loss
+    RAPID2D.update_reaction_rates!(RP)
     treat_electron_outside_wall!(RP)
     @test RP.diagnostics.Ntracker.cum0D_Ne_loss == loss_before
     @test sum(vec(RP.plasma.ne) .* V) ≈ N_returned rtol = 1.0e-12
