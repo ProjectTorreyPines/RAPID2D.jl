@@ -284,7 +284,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     #
     # max(0, ·): the Ti equation is free to land microscopically below zero
     # (−1.3e-61 was observed), and `sqrt` of that is a DomainError, not a NaN.
-    m_ref = RP.config.constants.mi
+    m_ref = bulk_ion_mass(RP)   # the mass `ν_ii` was built with; μ is a ratio TO the bulk
     mass_ratio = FT(m_ref / species.mass)
     coulomb_scale = FT(species.charge^2) * sqrt(mass_ratio) * (1 + mass_ratio) / 2
     v_p_ref = @. sqrt(max(zero(FT), 2 * pla.Ti_eV * ee / m_ref))

@@ -20,7 +20,11 @@ Update all transport-related quantities including diffusion coefficients, veloci
 function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     tp = RP.transport
-    @unpack mi, me, ee = RP.config.constants
+    @unpack me, ee = RP.config.constants
+    # `vp_i` reaches the ion collisional diffusivity and, through the ambipolar
+    # average, the ELECTRON one — so a mass that disagrees with the species the
+    # ion equation transports would move both.
+    mi = bulk_ion_mass(RP)
 
     # Charge state first: `Zeff` reaches the Spitzer factor a few lines below. The
     # charge density and the quasineutrality slaving do NOT come through here —

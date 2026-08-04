@@ -184,6 +184,7 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Alias
             cnst = RP.config.constants
             pla = RP.plasma
+            m_i = bulk_ion_mass(RP)   # the ion this equation moves, not the default
 
             eff_atomic_coll_freq = zeros(FT, size(pla.ui_para))
             if RP.flags.Atomic_Collision
@@ -219,16 +220,16 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             θ = one_FT  # Backward Euler
             @. pla.ui_para = (
                 pla.ui_para * (one_FT - (one_FT - θ) * RP.dt * eff_atomic_coll_freq) +
-                    RP.dt * qi * RP.fields.E_para_tot / cnst.mi
+                    RP.dt * qi * RP.fields.E_para_tot / m_i
             ) /
                 (one_FT + θ * RP.dt * eff_atomic_coll_freq)
 
             # Add electron-ion momentum transfer effect
             if RP.flags.Coulomb_Collision
                 if RP.flags.Spitzer_Resistivity
-                    Rui_ei = @. pla.sptz_fac * (cnst.me / cnst.mi) * pla.ν_ei * (pla.ue_para - pla.ui_para)
+                    Rui_ei = @. pla.sptz_fac * (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
                 else
-                    Rui_ei = @. (cnst.me / cnst.mi) * pla.ν_ei * (pla.ue_para - pla.ui_para)
+                    Rui_ei = @. (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
                 end
                 pla.ui_para .+= RP.dt * Rui_ei
             end
@@ -387,7 +388,12 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # char_exc_erg_eV normalizes the Total_Excitation surface and is validated at load
         # against the table's characteristic_exc_erg_eV (Electron_RRCs), so P_exc
         # reproduces the kinetic loss exactly.
-        @unpack ee, qe, me, mi, char_exc_erg_eV, iz_erg_eV = RP.config.constants
+        @unpack ee, qe, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
+        # Two different masses. `m_H2` is the NEUTRAL molecule an electron recoils
+        # off; `m_i` is the ion it equilibrates with. Equal for H₂/H₂⁺, which is why
+        # one symbol served both, and unequal for any other declared ion.
+        m_H2 = RP.config.constants.mi
+        m_i = bulk_ion_mass(RP)
         OP = RP.operators
 
         # Alias common objects for readability
@@ -471,7 +477,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # those channels do not also transfer 2me/M to the molecule. Using total
             # `Total_Momentum` over-counts this term by +42% at E/p ≈ 100 and +345% at
             # E/p ≈ 1000, where elastic is only 71% and 22% of the drift friction.
-            @. ePowers.ela = (FT(2.0) * me / mi) * pla.ν_en_mom_ela *
+            @. ePowers.ela = (FT(2.0) * me / m_H2) * pla.ν_en_mom_ela *
                 FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
 
             # Excitation power (energy lost to excite particles). ν_en_exc_eff is
@@ -495,7 +501,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # Equilibration power with ions (energy exchange from temperature differences)
         if RP.flags.Coulomb_Collision
             # Factor for energy transfer rate between electrons and ions
-            @. ePowers.equi = (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
+            @. ePowers.equi = (FT(2.0) * (m_i * me / (m_i + me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
         end
 
         # Calculate total power (sum of all components)
@@ -556,7 +562,8 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # TODO: add convection and diffusion terms for ions if needed
 
         # Extract physical constants
-        @unpack ee, mi, me = RP.config.constants
+        @unpack ee, me = RP.config.constants
+        mi = bulk_ion_mass(RP)
 
         # Alias common objects for readability
         pla = RP.plasma

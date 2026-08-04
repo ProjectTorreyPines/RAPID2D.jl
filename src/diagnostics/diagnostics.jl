@@ -16,7 +16,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     F = RP.fields
     inVol2D = RP.G.inVol2D  # alias for convenience
 
-    @unpack ee, me, mi = RP.config.constants  # Unpack constants for convenience
+    @unpack ee, me = RP.config.constants  # Unpack constants for convenience
+    mi = bulk_ion_mass(RP)                    # Ki_eV is the ion's kinetic energy
 
     # Store metadata
     snap0D.time_s = RP.time_s
@@ -248,7 +249,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     F = RP.fields                    # alias for convenience
     tp = RP.transport                 # alias for convenience
 
-    @unpack ee, me, mi = RP.config.constants  # Unpack constants for convenience
+    @unpack ee, me = RP.config.constants  # Unpack constants for convenience
+    mi = bulk_ion_mass(RP)                    # Ki_eV is the ion's kinetic energy
 
     # Store metadata
     snap2D.step = RP.step
