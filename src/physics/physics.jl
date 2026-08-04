@@ -670,16 +670,16 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # of the diffusion still acting implicitly, and a run that turned `src`
             # off mid-way kept ionizing through a stale ν_en_iz. The ion path
             # honours the flags in full, which is how the mismatch showed up.
-            @. op.A_LHS = op.II
-            if RP.flags.diffu
-                @. op.A_LHS -= dt * θ_tr * op.∇𝐃∇
-            end
-            if RP.flags.convec
-                @. op.A_LHS += dt * θ_tr * op.∇𝐮
-            end
-            if RP.flags.src
-                @. op.A_LHS -= dt * θ_gr * op.ν_en_iz
-            end
+            #
+            # Gated by ZEROING the weight rather than by branching, so this stays
+            # the single fused broadcast it has always been. Four statements cost
+            # 26 extra Ng-sized sparse temporaries per step at 100×200; they also
+            # would have made the sparsity pattern flag-dependent, and the cached
+            # factorization wants it stable.
+            θ_d = RP.flags.diffu ? θ_tr : zero(FT)
+            θ_c = RP.flags.convec ? θ_tr : zero(FT)
+            θ_s = RP.flags.src ? θ_gr : zero(FT)
+            @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
 
             # Solve the linear system (cached factorization; pattern is step-stable)
             @timeit RAPID_TIMER "ne LinearSolve`" begin
