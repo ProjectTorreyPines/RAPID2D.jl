@@ -410,14 +410,18 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
         N[:, 1] .= vec(pla.ni)
         fill!(S, zero(FT))
         if RP.flags.src
-            # Read the event rates the electron solve published; do not rebuild
+            # Read the event counts the electron solve published; do not rebuild
             # them. One ionization makes one electron and one ion, and that
             # survives discretization only if both sides use the same number.
-            rates = check_reaction_rates(RP)
+            #
+            # `S` is a RATE because the θ-scheme multiplies it by Δt, while a count
+            # is per-step: one visible division rather than two conventions, and it
+            # is exactly the Δt the count was formed with.
+            counts = check_reaction_counts(RP)
             for (sid, sp) in enumerate(tp.ion_species)
-                Ṙ = net_ion_rate(rates, sp.name)
-                isnothing(Ṙ) && continue     # no channel makes or destroys it
-                @views S[:, sid] .= vec(Ṙ)
+                Δn = net_ion_count(counts, sp.name)
+                isnothing(Δn) && continue     # no channel makes or destroys it
+                @views S[:, sid] .= vec(Δn) ./ dt
             end
         end
 

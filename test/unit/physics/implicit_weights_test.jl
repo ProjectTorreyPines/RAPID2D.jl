@@ -131,20 +131,20 @@ end
     # what the electron solve actually charged itself
     θ = RP.flags.θ_imp.growth
     n_star = @. (1 - θ) * ne_before + θ * RP.plasma.ne
-    @test RP.reactions.rates.iz ≈ n_star .* RP.plasma.ν_en_iz rtol = 1.0e-12
-    @test RP.reactions.valid
-    @test RP.plasma.ne ≈ ne_before .+ RP.dt .* RP.reactions.rates.iz rtol = 1.0e-10
+    @test RP.reactions.counts.iz ≈ RP.dt .* n_star .* RP.plasma.ν_en_iz rtol = 1.0e-12
+    @test :iz in RP.reactions.published
+    @test RP.plasma.ne ≈ ne_before .+ RP.reactions.counts.iz rtol = 1.0e-10
 
     # THE DISCRIMINATOR. Move `ne` after the electron solve has returned. A
     # consumer that rebuilds the source from `plasma.ne` would follow; one that
     # reads the published number cannot.
     ni_before = copy(RP.plasma.ni)
     gas_before = copy(RP.plasma.n_H2_gas)
-    Ṙ = copy(RP.reactions.rates.iz)
+    ΔN = copy(RP.reactions.counts.iz)
     RP.plasma.ne .*= 7.0
 
     RAPID2D.solve_ion_continuity_equation!(RP)
-    @test RP.plasma.ni ≈ ni_before .+ RP.dt .* Ṙ rtol = 1.0e-12
+    @test RP.plasma.ni ≈ ni_before .+ ΔN rtol = 1.0e-12
 
     # the gas sink is the third consumer of the same number
     RAPID2D.update_neutral_H2_gas_density!(RP)
@@ -152,9 +152,9 @@ end
     burnt = (gas_before - RP.plasma.n_H2_gas)[inw]
     # loose because the sink differences ~9.6e18 to expose ~6.7e13: five digits
     # of the comparison are lost to cancellation before the test sees them
-    @test burnt ≈ (RP.dt .* Ṙ)[inw] rtol = 1.0e-9
+    @test burnt ≈ ΔN[inw] rtol = 1.0e-9
 
-    @test RP.reactions.rates.iz == Ṙ     # and no consumer wrote to it
+    @test RP.reactions.counts.iz == ΔN     # and no consumer wrote to it
 end
 
 @testitem "A consumer that runs before the producer is an error, not a wrong answer" begin
@@ -180,16 +180,16 @@ end
     RP.plasma.ni .= 1.0e14
     RP.plasma.ν_en_iz .= 5.0e4
 
-    @test !RP.reactions.valid            # never published
+    @test isempty(RP.reactions.published)         # nothing published yet
     @test_throws ArgumentError RAPID2D.solve_ion_continuity_equation!(RP)
 
     RAPID2D.solve_electron_continuity_equation!(RP)
     RAPID2D.solve_ion_continuity_equation!(RP)   # now it is allowed
 
     # ...and the next advance voids them again, at its start
-    RAPID2D.reset_reaction_rates!(RP)
-    @test !RP.reactions.valid
-    @test all(iszero, RP.reactions.rates.iz)      # not merely marked, cleared
+    RAPID2D.reset_reaction_counts!(RP)
+    @test isempty(RP.reactions.published)
+    @test all(iszero, RP.reactions.counts.iz)      # not merely unpublished, cleared
     @test_throws ArgumentError RAPID2D.solve_ion_continuity_equation!(RP)
 end
 
@@ -243,5 +243,38 @@ end
         end
 
         @test RP.plasma.ne ≈ RP.plasma.ni rtol = 1.0e-12
+    end
+end
+
+@testitem "Each channel carries its own θ, from the table the producer reads" begin
+    using RAPID2D
+    using RAPID2D: REACTION_STOICHIOMETRY, reaction_θ
+
+    # What is stored is a per-step COUNT, so "how many between tⁿ and tⁿ⁺¹" needs
+    # no θ to interpret. θ says only how accurately the integral was evaluated,
+    # and it is per channel: `:growth` takes CN, `:decay` will take BE. Keeping it
+    # in the table rather than in the producer is what lets a new channel pick up
+    # its scheme by existing.
+    RP = RAPID{Float64}(SimulationConfig{Float64}(; NR = 5, NZ = 5, dt = 1.0e-6))
+
+    # the family is data, so the producer picks up a new channel's scheme for free
+    @test REACTION_STOICHIOMETRY.iz.θ === :growth
+    @test reaction_θ(RP.flags, :iz) == RP.flags.θ_imp.growth
+
+    RP.flags.θ_imp.growth = 1.0
+    @test reaction_θ(RP.flags, :iz) == 1.0        # right-endpoint rectangle
+    RP.flags.θ_imp.growth = 0.5
+    @test reaction_θ(RP.flags, :iz) == 0.5        # trapezoid
+
+    # an explicit run evaluates every channel at nⁿ, whatever the table says
+    RP.flags.Implicit = false
+    @test reaction_θ(RP.flags, :iz) == 0.0
+
+    @test_throws ArgumentError reaction_θ(RP.flags, :no_such_channel)
+
+    # every channel must declare a family, or the producer has nothing to read
+    for (name, stoich) in pairs(REACTION_STOICHIOMETRY)
+        @test stoich.θ in (:growth, :decay)
+        @test hasproperty(RP.flags.θ_imp, stoich.θ)
     end
 end

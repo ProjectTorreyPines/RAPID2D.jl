@@ -254,7 +254,7 @@ end
     # The sink consumes rates the electron solve publishes, so a standalone call
     # has to establish them. Nothing is ionizing here, which is the point: this
     # test is about the diffusion stencil alone.
-    RAPID2D.update_reaction_rates!(RP)
+    RAPID2D.update_reaction_counts!(RP)
 
     for _ in 1:20
         update_neutral_H2_gas_density!(RP)
@@ -295,7 +295,7 @@ end
     update_neutral_H2_gas_density!(RP)
 
     inw = RP.G.nodes.in_wall_nids
-    expected = @. n_before - RP.dt * RP.reactions.rates.iz
+    expected = @. n_before - RP.reactions.counts.iz
     @test RP.plasma.n_H2_gas[inw] ≈ expected[inw] rtol = 1.0e-10
     # and that IS the electron gain, one nucleus each way
     @test (RP.plasma.ne - ne_before)[inw] ≈ (n_before - RP.plasma.n_H2_gas)[inw] rtol = 1.0e-9
@@ -318,7 +318,7 @@ end
     RAPID2D.update_transport_quantities!(RP)
     RP.plasma.ν_en_iz .= 1.0e6
 
-    RAPID2D.update_reaction_rates!(RP)
+    RAPID2D.update_reaction_counts!(RP)
     update_neutral_H2_gas_density!(RP)
     @test minimum(RP.plasma.n_H2_gas) ≥ 0.0
 end
@@ -378,7 +378,7 @@ end
             exp(-((RP.G.R2D - Rc)^2 + (RP.G.Z2D - Zc)^2) / 0.02)
     )
 
-    RAPID2D.update_reaction_rates!(RP)   # no ionization here; the scheme is under test
+    RAPID2D.update_reaction_counts!(RP)   # no ionization here; the scheme is under test
 
     RP.plasma.n_H2_gas .= bump()
     RP.flags.θ_imp.gas = 1.0

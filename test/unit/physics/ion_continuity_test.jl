@@ -40,8 +40,8 @@ end
     RP = ion_case()
     update_transport_quantities!(RP)
     # The ion source reads rates the electron solve publishes, so a standalone
-    # call has to stand the producer up first — see `reset_reaction_rates!`.
-    RAPID2D.update_reaction_rates!(RP)
+    # call has to stand the producer up first — see `reset_reaction_counts!`.
+    RAPID2D.update_reaction_counts!(RP)
     before = copy(RP.plasma.ni)
 
     solve_ion_continuity_equation!(RP)

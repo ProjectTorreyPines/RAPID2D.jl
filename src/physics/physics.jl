@@ -697,7 +697,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # this solve just used. Everything else — the ion source, both particle
         # ledgers, the neutral-gas sink — reads that one number instead of
         # rebuilding it, so they cannot disagree about the event count.
-        update_reaction_rates!(RP)
+        update_reaction_counts!(RP)
         return RP
     end # @timeit
 end
@@ -729,10 +729,10 @@ This function performs three main operations:
 function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "treat_electron_outside_wall!" begin
         # The number of electrons ionization made this step, from the one array
-        # that says so. Bound outside the `@.`, which would otherwise broadcast
-        # the calls themselves over `RP`.
-        Ṙ_e = net_electron_rate(check_reaction_rates(RP))
-        Ne_iz = @. Ṙ_e * RP.G.inVol2D * RP.dt
+        # that says so — already a per-step count, hence no Δt here. Bound outside
+        # the `@.`, which would otherwise broadcast the calls themselves over `RP`.
+        Δn_e = net_electron_count(check_reaction_counts(RP))
+        Ne_iz = @. Δn_e * RP.G.inVol2D
 
         # Estimate electron loss outside the wall
         # TODO: How to accurately define the volume outside/on the wall?

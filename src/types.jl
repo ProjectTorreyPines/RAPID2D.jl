@@ -491,20 +491,31 @@ end
 
 
 """
-    ReactionRates{FT}(dims)
+    ReactionCounts{FT}(dims)
 
-How often each particle-changing reaction is firing, per unit volume:
-`[events m⁻³ s⁻¹]`, one field per channel.
+**How many events of each reaction happened during the step in progress**, per
+unit volume: `[events m⁻³]`, one field per channel.
+
+A count, not a rate, and deliberately so. A rate invites the question *at which
+instant* — `tⁿ`? `tⁿ⁺¹`? — which for a θ-scheme has the awkward answer "the step
+average, nominally at `tⁿ + θΔt`". A count has no such question, because it is a
+definite integral over the step:
+
+```
+    N_iz = ∫ₜⁿ^ₜⁿ⁺¹ ν_en_iz·nₑ(t) dt ≈ Δt·ν_en_iz·[(1−θ)nₑⁿ + θnₑⁿ⁺¹]
+```
+
+θ then controls only how *accurately* that integral is evaluated, not what it
+means. It is also what every consumer wants: each one formed `Δt·R` from the
+rate this replaces.
 
 Not to be confused with the **reaction rate COEFFICIENTS** (`RP.eRRCs`,
-`RP.iRRCs`), which are the `⟨σv⟩` tables loaded from disk. A rate here is a
-coefficient already multiplied by the densities that participate — `R_iz =
-ν_en_iz·nₑ*`.
+`RP.iRRCs`), the `⟨σv⟩` tables loaded from disk.
 
 See [`ReactionState`](@ref) for why these are stored rather than recomputed, and
 [`REACTION_STOICHIOMETRY`](@ref) for how a species source is read off them.
 """
-@kwdef mutable struct ReactionRates{FT <: AbstractFloat}
+@kwdef mutable struct ReactionCounts{FT <: AbstractFloat}
     dims::Tuple{Int, Int}
     "e + H₂ → 2e + H₂⁺"
     iz::Matrix{FT} = zeros(FT, dims)
@@ -515,7 +526,7 @@ end
 """
     ReactionState{FT}(dims)
 
-Everything the reaction bookkeeping owns. `rates` is the only member today;
+Everything the reaction bookkeeping owns. `counts` is the only member today;
 `counters` — the cumulative per-channel tallies that
 [`ParticleNumberTracker`](@ref) currently keeps per *species* — is the natural
 next one, which is why this is a namespace and not a bare field.
@@ -524,14 +535,14 @@ Deliberately **not** called `sources`: a source term in a transport equation may
 one day come from something that is not a reaction at all (gas puffing, a beam),
 and that word should stay available for it.
 
-## Why the rates are stored instead of recomputed
+## Why the counts are stored instead of recomputed
 
-**Every species source is a contraction of these rates with integer
-stoichiometry**, `Ṡₛ = Σₖ νₖ,ₛ Rₖ`, with `ν` from
+**Every species source is a contraction of these counts with integer
+stoichiometry**, `ΔNₛ = Σₖ νₖ,ₛ Nₖ`, with `ν` from
 [`REACTION_STOICHIOMETRY`](@ref). Two species therefore *cannot* disagree about
-how many events happened: they read the same `Rₖ` and multiply by a constant.
+how many events happened: they read the same `Nₖ` and multiply by a constant.
 
-That identity used to be maintained by having each equation rebuild the rate for
+That identity used to be maintained by having each equation rebuild the count for
 itself, which was correct only while an unwritten ordering rule held. It did not
 hold. The electron equation charged itself `Δt·ν·[(1−θ)nⁿ + θnⁿ⁺¹]`, while
 
@@ -546,7 +557,7 @@ nuclei conservation … overshot the electron supply limit by 7 %") while doing 
 
 ## What this buys, and what it does not
 
-It does **not** make the rate more accurate — that is the θ question, settled by
+It does **not** make the count more accurate — that is the θ question, settled by
 [`ImplicitWeights`](@ref). It makes electrons, ions and neutrals agree, which is
 a conservation law rather than an accuracy matter and must hold exactly at every
 Δt, θ and resolution.
@@ -562,17 +573,27 @@ Ordering is reduced, not abolished:
 
 ## Adding a channel
 
-A field in [`ReactionRates`](@ref), a row in `REACTION_STOICHIOMETRY`, a term in
+A field in [`ReactionCounts`](@ref), a row in `REACTION_STOICHIOMETRY`, a term in
 each accessor. The axis does not move. Note that recombination is a **sink**, so
 it takes `θ_imp.decay` where ionization takes `θ_imp.growth`, and it is nonlinear
 in `nₑnᵢ` where ionization is linear in `nₑ`.
 """
 @kwdef mutable struct ReactionState{FT <: AbstractFloat}
     dims::Tuple{Int, Int}
-    "Whether `rates` describes the advance in progress. Cleared by `reset_reaction_rates!`."
-    valid::Bool = false
-    rates::ReactionRates{FT} = ReactionRates{FT}(dims = dims)
-    # counters::ReactionCounters{FT} — cumulative tallies, today in Ntracker
+    """
+    Which channels of `counts` describe the advance in progress.
+
+    Per channel, not one flag for the struct, because validity belongs on the same
+    axis the counts do. Today one producer writes every channel and the two are
+    equivalent — but a channel whose rate is only knowable later (recombination
+    treated implicitly in `nᵢ`, a wall-recycling channel) would break that, and a
+    single flag would report "valid" while one entry was a step old. `reset!`
+    zeroes the arrays too, so such an entry would read as *no events* rather than
+    as last step's — quieter, and no less wrong.
+    """
+    published::Set{Symbol} = Set{Symbol}()
+    counts::ReactionCounts{FT} = ReactionCounts{FT}(dims = dims)
+    # cumulative::ReactionTotals{FT} — running tallies, today in Ntracker
 end
 
 """
@@ -583,18 +604,23 @@ Particles created per event, per channel — the `νₖ,ₛ` of
 in `reactions.jl` are written from this table and `reactions_test.jl` walks it to
 assert they still agree.
 
-| channel | e | H₂⁺ | H₃⁺ | H⁺ | H₂ | H⁰ |
-|---|---|---|---|---|---|---|
-| `iz` — e + H₂ → 2e + H₂⁺ | +1 | +1 | | | −1 | |
-| *`diz` — e + H₂ → 2e + H⁺ + H⁰* | +1 | | | +1 | −1 | +1 |
-| *`rec_H2` — e + H₂⁺ → 2H⁰* | −1 | −1 | | | | +2 |
-| *`rec_H3` — e + H₃⁺ → H₂ + H⁰* | −1 | | −1 | | +1 | +1 |
+| channel | e | H₂⁺ | H₃⁺ | H⁺ | H₂ | H⁰ | `θ` family |
+|---|---|---|---|---|---|---|---|
+| `iz` — e + H₂ → 2e + H₂⁺ | +1 | +1 | | | −1 | | `:growth` |
+| *`diz` — e + H₂ → 2e + H⁺ + H⁰* | +1 | | | +1 | −1 | +1 | `:growth` |
+| *`rec_H2` — e + H₂⁺ → 2H⁰* | −1 | −1 | | | | +2 | `:decay` |
+| *`rec_H3` — e + H₃⁺ → H₂ + H⁰* | −1 | | −1 | | +1 | +1 | `:decay` |
 
 (italic rows are not implemented; the table records the intent so the
 stoichiometry is settled before the rates arrive.)
+
+`θ` names the [`ImplicitWeights`](@ref) member the channel's quadrature uses —
+see [`reaction_θ`](@ref). It is data rather than a line in the producer so that a
+`:decay` channel picks up backward Euler by existing, and so that a consumer that
+cares how the integral was evaluated can ask instead of assume.
 """
 const REACTION_STOICHIOMETRY = (
-    iz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,)),
+    iz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
 )
 
 """
@@ -1131,4 +1157,4 @@ RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
 RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
-export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, ReactionRates, ReactionState, RAPID, GridGeometry, NodeState
+export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, ReactionCounts, ReactionState, RAPID, GridGeometry, NodeState

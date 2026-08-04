@@ -263,14 +263,14 @@ function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloa
         zero_FT = zero(FT)
 
         # ── burn-out ────────────────────────────────────────────────────────
-        # `Ṙ_H2` is the SAME event count the electron equation charged itself, not
-        # a second estimate built from `ne·ν_iz`. That is what the paragraph above
-        # asks for and what this line used to get wrong: `pla.ne` here is nⁿ⁺¹,
-        # while the electron solve ionized at (1−θ)nⁿ + θnⁿ⁺¹.
-        rates = check_reaction_rates(RP)
+        # The SAME event count the electron equation charged itself, not a second
+        # estimate built from `ne·ν_iz`. That is what the paragraph above asks for
+        # and what this line used to get wrong: `pla.ne` here is nⁿ⁺¹, while the
+        # electron solve ionized at (1−θ)nⁿ + θnⁿ⁺¹. A count already carries Δt.
+        counts = check_reaction_counts(RP)
         @inbounds for k in G.nodes.in_wall_nids
             pla.n_H2_gas[k] = max(
-                pla.n_H2_gas[k] + dt * net_H2_gas_rate(rates, k), zero_FT
+                pla.n_H2_gas[k] + net_H2_gas_count(counts, k), zero_FT
             )
         end
 
