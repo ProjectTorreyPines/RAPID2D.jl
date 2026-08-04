@@ -396,7 +396,12 @@ function bohm_channel(Te_eV, B, m_i, Z::Integer = 1)
     # max(0, ·) because a temperature equation may land microscopically below
     # zero, where `sqrt` raises rather than returning NaN
     c_s = @. sqrt(max(zero(eltype(Te_eV)), Te_eV * EE_GAS / m_i))   # EE_GAS is the elementary charge
-    ω_ci = @. Z * EE_GAS * B / m_i
+    # `abs(B)`: `Bϕ = R0B0/R` carries the sign of the user's R0B0, and a signed
+    # ω_ci would hand back a negative ρ_s — hence a negative λ⊥ and a negative
+    # D⊥ = ½v⊥λ⊥, i.e. ANTI-diffusion, for a field that merely points the other
+    # way. `D_B` is a magnitude; the gyration sense does not enter it. The
+    # electron path states the same thing as `abs(Te/Bϕ)` in `transport.jl`.
+    ω_ci = @. Z * EE_GAS * abs(B) / m_i
     ρ_s = @. c_s / ω_ci
     return DiffusionChannel(zero.(c_s), zero.(c_s), (@. c_s / 8), ρ_s)
 end

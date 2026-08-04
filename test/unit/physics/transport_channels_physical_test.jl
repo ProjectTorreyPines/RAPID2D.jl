@@ -113,6 +113,33 @@ end
     @test only(ch.v_perp) / v_ExB > 40                  # records the present gap
 end
 
+@testitem "Channel adapter: Bohm diffusion does not care which way B points" begin
+    using RAPID2D: bohm_channel
+
+    # `Bϕ = R0B0/R` carries the SIGN of the user's R0B0, and ω_ci = ZeB/m inherits
+    # it — so ρ_s = c_s/ω_ci, and with it λ⊥ and D⊥ = ½v⊥λ⊥, flip sign with the
+    # field direction. A negative D⊥ is anti-diffusion: it sharpens gradients
+    # instead of relaxing them, and nothing downstream would flag it because the
+    # value is perfectly finite. D_B is a magnitude; the gyration sense does not
+    # enter it. The electron path already knows this — `transport.jl` builds its
+    # Bohm coefficient as `abs(Te/Bϕ)`.
+    Te, B, m_i = 5.0, 0.63, 1.673e-27
+    pos = bohm_channel(fill(Te, 1, 1), fill(+B, 1, 1), m_i)
+    neg = bohm_channel(fill(Te, 1, 1), fill(-B, 1, 1), m_i)
+
+    @test only(neg.λ_perp) ≈ only(pos.λ_perp) rtol = 1.0e-14
+    @test only(neg.v_perp) ≈ only(pos.v_perp) rtol = 1.0e-14
+    @test only(@. 0.5 * neg.v_perp * neg.λ_perp) > 0
+
+    # and with the charge scaling on, at every charge state
+    for Z in (1, 2, 6)
+        p = bohm_channel(fill(Te, 1, 1), fill(+B, 1, 1), m_i, Z)
+        n = bohm_channel(fill(Te, 1, 1), fill(-B, 1, 1), m_i, Z)
+        @test only(n.λ_perp) ≈ only(p.λ_perp) rtol = 1.0e-14
+        @test only(@. 0.5 * n.v_perp * n.λ_perp) ≈ Te / (16 * Z * B) rtol = 1.0e-12
+    end
+end
+
 @testitem "Channel adapter: Bohm and the collisional channel do not share a speed" begin
     using RAPID2D: bohm_channel, parallel_collisional_channel
 
