@@ -152,6 +152,81 @@ end
     @test_broken (on.inside - off.inside) ≈ intended rtol = 0.5     # INTENDED
 end
 
+@testitem "The Robin wall emits nothing: its impacts never reach the γ source" begin
+    using RAPID2D: is_in_wall
+
+    # Ions now leave through TWO wall channels, and only one of them can emit.
+    #
+    #   diffusion  → the Robin face term, `¼v̄_n(1−R)`, booked in `book_ion_wall_loss!`
+    #   convection → deposits on out-of-wall nodes, booked in `treat_ion_outside_wall!`
+    #
+    # `treat_ion_outside_wall!` is the ONLY γ source, and it reads `ni` on
+    # out-of-wall nodes. The Robin term never writes there — deliberately, it
+    # removes the ions inside the matrix — so its impacts are invisible to it.
+    # At the conditions measured in `ion_species.jl` (nₑ = 1e15, Ti = 1 eV) the
+    # diffusive channels carry 88 % of the ion flux that reaches the wall, so this
+    # is the dominant path, not an edge case.
+    #
+    # Convection is off here so the Robin channel is the only one running: any
+    # γ effect at all would have to come from it.
+    function run_robin_only(sec::Bool; γ = 0.5)
+        config = SimulationConfig{Float64}(
+            device_Name = "manual", NR = 31, NZ = 31,
+            R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+            wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+            prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-7,
+            t_end_s = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        RP = RAPID{Float64}(config)
+        initialize!(RP)
+        RP.flags.update_ni_independently = true
+        RP.flags.convec = false                 # leave only the Robin channel
+        RP.flags.secondary_electron = sec
+        RP.flags.γ_2nd_electron = γ
+        RP.plasma.ne .= 1.0e15
+        RP.plasma.ni .= 1.0e15
+        RP.plasma.Te_eV .= 5.0
+
+        # Start with the out-of-wall band EMPTY. Seeding it uniformly hands
+        # `treat_ion_outside_wall!` a slab it never had to transport, and the γ it
+        # then yields measures the initial condition rather than the wall.
+        G = RP.G
+        inw = [is_in_wall(G, G.nodes.rid[k], G.nodes.zid[k]) for k in 1:(G.NR * G.NZ)]
+        vec(RP.plasma.ne)[.!inw] .= 0.0
+        vec(RP.plasma.ni)[.!inw] .= 0.0
+
+        run_simulation!(RP)
+
+        V = vec(2π .* G.Jacob .* G.dR .* G.dZ)
+        return (
+            ni_loss = RP.diagnostics.Ntracker.cum0D_Ni_loss,
+            ne_loss = RP.diagnostics.Ntracker.cum0D_Ne_loss,
+            inside = sum(vec(RP.plasma.ne)[inw] .* V[inw]),
+        )
+    end
+
+    γ = 0.5
+    off = run_robin_only(false; γ = γ)
+    on = run_robin_only(true; γ = γ)
+
+    # The premise: ions really did reach the wall this way, and were booked. Without
+    # this the rest of the test would pass vacuously on a run where nothing happened.
+    @test on.ni_loss > 0.0
+    @test on.ni_loss ≈ off.ni_loss rtol = 1.0e-12
+
+    # …and γ is inert. Bit-identical, because the impacts it would act on were
+    # removed by the operator rather than deposited anywhere it can see.
+    @test on.inside == off.inside
+    @test on.ne_loss == off.ne_loss
+
+    # INTENDED: γ·(what hit the wall) electrons, returned to the wall-adjacent
+    # INTERIOR cells through `wall_emission_source` — not deposited outside, which
+    # is what the other channel does and why its measured yield is ≈ 7e-5 instead
+    # of γ. Both channels have to move together; fixing only this one would leave
+    # the same surface emitting into two different places.
+    @test_broken (on.inside - off.inside) ≈ γ * on.ni_loss rtol = 0.5
+end
+
 @testitem "Secondary electrons are unreachable when ions are slaved to electrons" begin
     # `workflows.jl` gates the ONLY secondary-electron code behind an unrelated
     # flag: `if RP.flags.update_ni_independently  treat_ion_outside_wall!(RP)`.
