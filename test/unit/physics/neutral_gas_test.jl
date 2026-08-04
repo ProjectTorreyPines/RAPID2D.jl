@@ -345,13 +345,13 @@ end
     RP = RAPID{Float64}(config)
     initialize!(RP)
 
-    # Backward Euler by default, and deliberately NOT tied to Implicit_weight:
-    # that global is 0.5, which is Crank-Nicolson. CN is A-stable but not
-    # L-stable, so its amplification factor tends to −1 as |λ|Δt grows and stiff
-    # modes ring instead of damping. D spans two orders of magnitude across the
-    # shielding layer, so the stiff end is always present here.
-    @test RP.flags.θ_gas == 1.0
-    @test RP.flags.Implicit_weight == 0.5
+    # Backward Euler by default, and deliberately its own member of θ_imp rather
+    # than the transport weight: that one is 0.5, which is Crank-Nicolson. CN is
+    # A-stable but not L-stable, so its amplification factor tends to −1 as |λ|Δt
+    # grows and stiff modes ring instead of damping. D spans two orders of
+    # magnitude across the shielding layer, so the stiff end is always present here.
+    @test RP.flags.θ_imp.gas == 1.0
+    @test RP.flags.θ_imp.transport == 0.5
 
     # the knob is honoured: θ = 0 is forward Euler, which on this operator must
     # blow up at a Δt far above the explicit CFL limit min(dR,dZ)²/(4D)
@@ -365,7 +365,7 @@ end
     )
 
     RP.plasma.n_H2_gas .= bump()
-    RP.flags.θ_gas = 1.0
+    RP.flags.θ_imp.gas = 1.0
     for _ in 1:20
         update_neutral_H2_gas_density!(RP)
     end
@@ -373,7 +373,7 @@ end
     @test minimum(RP.plasma.n_H2_gas) ≥ 0.0
 
     RP.plasma.n_H2_gas .= bump()
-    RP.flags.θ_gas = 0.0
+    RP.flags.θ_imp.gas = 0.0
     for _ in 1:20
         update_neutral_H2_gas_density!(RP)
     end

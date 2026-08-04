@@ -491,6 +491,110 @@ end
 
 
 """
+    ImplicitWeights{FT}(; transport, growth, decay, gas)
+
+The `θ` of the θ-scheme `(𝐈 − θΔt𝐀)fⁿ⁺¹ = fⁿ + (1−θ)Δt𝐀fⁿ`, one per family of
+terms — `0` forward Euler, `½` Crank-Nicolson, `1` backward Euler.
+
+**The families are split by the character of the operator, above all by the SIGN
+of its eigenvalue**, because that is what decides which scheme is right:
+
+| field | terms | λ | default |
+|---|---|---|---|
+| `transport` | `∇·(𝐃∇f)`, `∇·(f𝐮)` in the `nₑ`, `nᵢ`, `Tₑ` equations | `< 0`, well-resolved | `½` |
+| `growth` | ionization — the `+ν_iz` source | **`> 0`** | `½` |
+| `decay` | the parallel momentum equation, which its friction dominates | `< 0`, stiff | `1` |
+| `gas` | neutral-gas diffusion | `< 0`, stiff | `1` |
+
+**Decay (`λ < 0`) wants BE.** With `g(z) = (1 + (1−θ)z)/(1 − θz)`, `z = λΔt`:
+`g → 0` as `z → −∞` for BE (L-stable) but `g → −1` for CN, so a stiff mode rings
+from step to step instead of damping. Saturation makes the same point exactly —
+for `du/dt = −νu + S` with `u∞ = S/ν`,
+
+```
+BE:  uⁿ⁺¹ = (uⁿ + ΔtS)/(1 + Δtν)   ──Δt→∞──▶  u∞          lands on it
+CN:  uⁿ⁺¹ − u∞ = −(uⁿ − u∞)        ──Δt→∞──▶  rings about it forever
+```
+
+**Growth (`λ > 0`) wants CN, and this is the reverse of the usual argument.**
+A-stability does not apply: the true solution grows, so `|g| > 1` is correct.
+What matters is that `g` stay positive and finite, and there BE is the *weaker*
+scheme — its pole sits at `Δtν = 1` against CN's at `2`, and it is first-order
+where CN is second:
+
+| | positive and finite for | order | `z` = 0.1 | `z` = 0.5 |
+|---|---|---|---|---|
+| FE | **all** `z > 0` | `O(Δt)` | `−0.47 %` | `−9.0 %` |
+| CN | `z < 2` | `O(Δt²)` | **`+0.01 %`** | **`+1.1 %`** |
+| BE | `z < 1` | `O(Δt)` | `+0.54 %` | `+21 %` |
+
+CN is chosen because that is where the discharge lives: `Δt = 10 µs` and
+`ν_iz` = 1e4–5e4 s⁻¹ puts `z` at 0.1–0.5, and CN is the only one of the three
+inside 1 % there. **FE's unconditional positivity is a real argument** — a
+negative density is a different kind of failure, not a larger error — but the
+crossover where FE becomes the more accurate of the two is `z* = 1.41`, i.e.
+`ν_iz > 1.4e5 s⁻¹`, three times above the measured range.
+
+Past `z ~ 1` none of the three is usable (FE is `−26 %` at `z = 1`). The right
+answer there is not a θ at all: this diagonal is local, linear and scalar with
+the rate frozen over the step, so its exact factor `exp(νΔt)` is available for
+one `exp()` — unconditionally positive *and* exact. That is an
+exponential-integrator split rather than a weight, so it is recorded here and
+not implemented. Measurements: `claudedocs/figs/theta_atomic_be_vs_cn.jl`.
+
+**One family, one weight, everywhere it appears.** `ν_iz` is a sink in the
+electron equation and a source in the ion equation; both read `growth`, so one
+ionization event cannot make an electron and an ion at different rates. That
+identity is exact in the continuous equations and it is this struct's job to
+keep it exact in the discrete ones — see `ionization_source_density`.
+
+Terms that are not θ-weighted at all do not appear here. `Tₑ`'s dilution and
+atomic power terms are wholly explicit inside `ePowers.tot`; were they made
+implicit they would join `decay`.
+
+Weights are validated on construction *and* on assignment, so
+`RP.flags.θ_imp.transport = 1.5` fails where it was written rather than as a
+growing mode ten thousand steps later.
+"""
+mutable struct ImplicitWeights{FT <: AbstractFloat}
+    transport::FT
+    growth::FT
+    decay::FT
+    gas::FT
+
+    function ImplicitWeights{FT}(transport, growth, decay, gas) where {FT <: AbstractFloat}
+        w = (
+            transport = FT(transport), growth = FT(growth),
+            decay = FT(decay), gas = FT(gas),
+        )
+        for (name, θ) in pairs(w)
+            _check_implicit_weight(FT, name, θ)
+        end
+        return new{FT}(w...)
+    end
+end
+
+function _check_implicit_weight(::Type{FT}, name::Symbol, θ) where {FT <: AbstractFloat}
+    isfinite(θ) && zero(FT) <= θ <= one(FT) || throw(
+        ArgumentError(
+            "θ_imp.$name = $θ is not a θ-scheme weight: it must lie in [0, 1], " *
+                "where 0 is forward Euler, ½ Crank-Nicolson and 1 backward Euler"
+        )
+    )
+    return θ
+end
+
+function ImplicitWeights{FT}(;
+        transport = FT(0.5), growth = FT(0.5), decay = FT(1.0), gas = FT(1.0)
+    ) where {FT <: AbstractFloat}
+    return ImplicitWeights{FT}(transport, growth, decay, gas)
+end
+
+function Base.setproperty!(w::ImplicitWeights{FT}, name::Symbol, θ) where {FT <: AbstractFloat}
+    return setfield!(w, name, _check_implicit_weight(FT, name, FT(θ)))
+end
+
+"""
     SimulationFlags
 
 Contains boolean flags that control various aspects of the simulation.
@@ -583,15 +687,11 @@ Contains boolean flags that control various aspects of the simulation.
     Ampere_nstep::Int = 10                    # Steps between Ampere's law updates
     FLF_nstep::Int = 10                       # Steps between field line following updates
     Implicit::Bool = true                     # Use implicit methods
-    Implicit_weight::FT = FT(0.5)            # Weight for implicit scheme
-    # θ-weight for the neutral gas diffusion solve, kept separate from
-    # Implicit_weight on purpose. 1 = backward Euler (default), ½ = Crank-Nicolson,
-    # 0 = forward Euler. BE is the default because CN is A-stable but not L-stable:
-    # its amplification factor tends to −1 as |λ|Δt grows, so stiff modes ring
-    # instead of damping, and the gas diffusivity spans two orders of magnitude
-    # across the shielding layer. Exposed so CN can be plugged in for a smooth,
-    # well-resolved problem where second-order accuracy is worth more than damping.
-    θ_gas::FT = FT(1.0)
+    # θ of the θ-scheme, one per family of terms, split by the sign and stiffness
+    # of the operator — see `ImplicitWeights`. Replaces the single `Implicit_weight`
+    # that transport, atomic rates and the ledger all used to share, the separate
+    # `θ_gas` that had already broken out of it, and an inline `θu = 1`.
+    θ_imp::ImplicitWeights{FT} = ImplicitWeights{FT}()
     Adapt_dt::Bool = false                    # Use adaptive time stepping
 
     # Temperature limits
@@ -920,4 +1020,4 @@ RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
 RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
-export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, RAPID, GridGeometry, NodeState
+export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState

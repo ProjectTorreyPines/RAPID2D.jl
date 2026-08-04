@@ -135,7 +135,7 @@ end
     )
     A = A_diff - RP.operators.∇𝐮_i.matrix
     N = reshape(copy(vec(RP.plasma.ni)), :, 1)
-    solve_ion_group!(N, groups[1], A, SparseLUSolver{Float64}(), RP.dt; θ = RP.flags.Implicit_weight)
+    solve_ion_group!(N, groups[1], A, SparseLUSolver{Float64}(), RP.dt; θ = RP.flags.θ_imp.transport)
 
     solve_ion_continuity_equation!(RP)
     @test vec(RP.plasma.ni) ≈ N[:, 1]

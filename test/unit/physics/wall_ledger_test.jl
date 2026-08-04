@@ -475,7 +475,7 @@ end
     using RAPID2D.SparseArrays
     using RAPID2D.LinearAlgebra
 
-    # `Implicit_weight` defaults to 0.5 in this code, so backward Euler is NOT the
+    # `θ_imp.transport` defaults to 0.5 in this code, so backward Euler is NOT the
     # scheme the ledger will meet in production. Booking nⁿ⁺¹ alone is right only
     # at θ = 1; everywhere else the operator charged (1−θ)nⁿ + θnⁿ⁺¹.
     config = SimulationConfig{Float64}(

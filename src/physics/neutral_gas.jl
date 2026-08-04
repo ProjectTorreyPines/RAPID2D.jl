@@ -239,8 +239,8 @@ was explicit while the electron equation's source was implicit.
 
 Applied on in-wall nodes only, so gas outside the vessel is never consumed.
 
-**Time scheme: `flags.θ_gas`, default 1 (backward Euler).** Deliberately its own
-knob rather than the global `Implicit_weight`, which is ½ — Crank-Nicolson. CN is
+**Time scheme: `flags.θ_imp.gas`, default 1 (backward Euler).** Deliberately its
+own member rather than the transport weight, which is ½ — Crank-Nicolson. CN is
 A-stable but not L-stable: its amplification factor tends to −1 as |λ|Δt grows,
 so stiff modes ring instead of damping, and D varies by two orders of magnitude
 across the shielding layer so the stiff end is always present. The MATLAB
@@ -285,7 +285,7 @@ function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloa
 
         # ── reflective diffusion, θ-scheme (BE by default) ──────────────────
         A = build_reflective_diffusion_matrix(G, D)
-        θ = RP.flags.θ_gas
+        θ = RP.flags.θ_imp.gas
         # rows outside the wall are empty in A, so this leaves them as identity
         M = sparse(I, size(A, 1), size(A, 2)) - θ * dt * A
         # The RHS is copied out rather than solved in place. UMFPACK rejects an

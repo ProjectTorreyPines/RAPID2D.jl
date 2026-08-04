@@ -86,10 +86,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # and the combined momentum-Ampère solvers build the identical sum.
             ν_sum_mom_iz_ei = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
 
-            # Always use backward Euler for ue_para (θu=1.0) for better saturation
-            # but keep the formula structure compatible with variable θ_imp
-            # θu = RP.flags.Implicit_weight
-            θu = one_FT
+            # Backward Euler by default (θ_imp.decay = 1): this equation is
+            # friction-dominated, and at large Δt BE lands on u∞ = S/ν while CN
+            # rings about it forever. The formula stays written for a general θ.
+            θu = RP.flags.θ_imp.decay
 
             # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
             if RP.flags.Coulomb_Collision
@@ -260,7 +260,9 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         dt = RP.dt
         pla = RP.plasma
         OP = RP.operators
-        θimp = RP.flags.Implicit_weight
+        # Only the transport terms of the energy equation are θ-weighted here —
+        # the atomic power terms enter `ePowers.tot` explicitly.
+        θimp = RP.flags.θ_imp.transport
 
         two_thirds_FT = FT(2.0) / FT(3.0)
 
@@ -626,20 +628,16 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # Store previous density state for transport calculations
         RP.prev_n .= RP.plasma.ne
 
-        # Calculate source terms for electron density
-        fill!(op.RHS, zero(FT))  # Reset RHS to zero
-        if RP.flags.src
-            # ne * ν_en_iz, with ν_en_iz materialized by update_RRCs! at the step-entry
-            # state — do not re-query the table here (see update_RRCs! docstring).
-            op.RHS += pla.ne .* pla.ν_en_iz
-
-            # The implicit half of the same source needs ν_en_iz as a diagonal operator.
-            # It is assembled here, under `src`, rather than in update_RRCs!: the LHS at
-            # the bottom of this function adds op.ν_en_iz unconditionally, so a rebuild
-            # outside this branch would inject ionization into a run that asked for none.
-            if RP.flags.Implicit
-                op.ν_en_iz .= @views spdiagm(pla.ν_en_iz[:])
-            end
+        # op.RHS accumulates the TRANSPORT terms only. Ionization is added at the
+        # weighting step below instead, because the two families carry different
+        # θ (`θ_imp.transport` vs `θ_imp.growth`) and so cannot share a sum.
+        fill!(op.RHS, zero(FT))
+        if RP.flags.src && RP.flags.Implicit
+            # The implicit half of the ionization source needs ν_en_iz as a diagonal
+            # operator. Assembled here rather than in update_RRCs! so that a run
+            # with `src` off never builds one. ν_en_iz itself was materialized by
+            # update_RRCs! at the step-entry state — do not re-query the table here.
+            op.ν_en_iz .= @views spdiagm(pla.ν_en_iz[:])
         end
 
         if RP.flags.diffu
@@ -653,15 +651,35 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
 
         # update electron density
         if RP.flags.Implicit
-            # Implicit method implementation
-            # Weight for implicit method (0.0 = fully explicit, 1.0 = fully implicit)
-            θn = RP.flags.Implicit_weight
+            # 0 = forward Euler, ½ = Crank-Nicolson, 1 = backward Euler, per family.
+            θ_tr = RP.flags.θ_imp.transport
+            θ_gr = RP.flags.θ_imp.growth
 
-            # Build full RHS with explicit contribution
-            @. op.RHS = pla.ne + dt * (one(FT) - θn) * op.RHS
+            # Weight each family's explicit half in place, then close the RHS —
+            # the same accumulation order the explicit branch below uses, so that
+            # θ = 0 reproduces it bit for bit rather than merely algebraically.
+            @. op.RHS *= (one(FT) - θ_tr)
+            if RP.flags.src
+                @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
+            end
+            @. op.RHS = pla.ne + dt * op.RHS
 
-            # Build LHS operator
-            @. op.A_LHS = op.II - θn * dt * (op.∇𝐃∇ - op.∇𝐮 + op.ν_en_iz)
+            # Build LHS operator. Every term is gated by the SAME flag that gated
+            # its explicit half above: all three used to be added unconditionally,
+            # so `flags.diffu = false` removed only the explicit half and left θ·Δt
+            # of the diffusion still acting implicitly, and a run that turned `src`
+            # off mid-way kept ionizing through a stale ν_en_iz. The ion path
+            # honours the flags in full, which is how the mismatch showed up.
+            @. op.A_LHS = op.II
+            if RP.flags.diffu
+                @. op.A_LHS -= dt * θ_tr * op.∇𝐃∇
+            end
+            if RP.flags.convec
+                @. op.A_LHS += dt * θ_tr * op.∇𝐮
+            end
+            if RP.flags.src
+                @. op.A_LHS -= dt * θ_gr * op.ν_en_iz
+            end
 
             # Solve the linear system (cached factorization; pattern is step-stable)
             @timeit RAPID_TIMER "ne LinearSolve`" begin
@@ -669,10 +687,43 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
         else
+            if RP.flags.src
+                @. op.RHS += pla.ne * pla.ν_en_iz
+            end
             @. RP.plasma.ne += dt * op.RHS
         end
         return RP
     end # @timeit
+end
+
+"""
+    ionization_source_density(RP) -> Matrix{FT}
+
+The electron density the ionization source was actually evaluated at this step,
+
+```
+    n* = (1 − θ)nⁿ + θnⁿ⁺¹        θ = θ_imp.growth  (0 when the run is explicit)
+```
+
+**The single definition of "how many ionizations happened".** One event makes one
+electron and one ion, so the electron sink, the ion source and both ledgers must
+all be built from the same `n*` — otherwise the identity that is exact in the
+continuous equations is broken by the discretization, and the two species drift
+apart for a purely numerical reason.
+
+They used to. The electron equation carried `ν_iz` inside its θ-scheme, gaining
+`Δt·ν·[(1−θ)nⁿ + θnⁿ⁺¹]`, while the ion equation took `ν_iz` as a plain explicit
+source built from whatever `plasma.ne` held when it ran — `nⁿ⁺¹`, because the
+electron solve goes first. At `θ = 1` the two coincide by accident; at `θ < 1`
+the ion gains `θ(Δtν)²n` more per step, which is negligible in a quiet cell and
+is 33 % at `Δt·ν = 1` — the regime an avalanche spends its time in.
+
+Valid only between `solve_electron_continuity_equation!`, which fills `prev_n`,
+and the next step's call to it.
+"""
+function ionization_source_density(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    θ = RP.flags.Implicit ? RP.flags.θ_imp.growth : zero(FT)
+    return @. (one(FT) - θ) * RP.prev_n + θ * RP.plasma.ne
 end
 
 """
@@ -701,14 +752,11 @@ This function performs three main operations:
 """
 function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "treat_electron_outside_wall!" begin
-        # Estimate the number of electrons generated by ionization
-        if RP.flags.Implicit
-            θimp = RP.flags.Implicit_weight
-            effective_ne = @. (FT(1.0) - θimp) * RP.prev_n + θimp * RP.plasma.ne
-            Ne_iz = @. RP.plasma.ν_en_iz * effective_ne * RP.G.inVol2D * RP.dt
-        else
-            Ne_iz = @. RP.plasma.ν_en_iz * RP.plasma.ne * RP.G.inVol2D * RP.dt
-        end
+        # Estimate the number of electrons generated by ionization.
+        # Bound outside the `@.`: the macro would otherwise broadcast the call
+        # itself, i.e. `ionization_source_density.(RP)`.
+        n_iz = ionization_source_density(RP)
+        Ne_iz = @. RP.plasma.ν_en_iz * n_iz * RP.G.inVol2D * RP.dt
 
         # Estimate electron loss outside the wall
         # TODO: How to accurately define the volume outside/on the wall?
@@ -720,6 +768,17 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         Ntracker.cum0D_Ne_src += sum(Ne_iz)
         @. Ntracker.cum2D_Ne_src += Ne_iz
+
+        # One ionization event makes one electron AND one ion, so the ion ledger is
+        # fed the SAME number rather than recomputing it. `treat_ion_outside_wall!`
+        # used to, and by then `plasma.ne` had already been zeroed outside the wall
+        # a few lines below — so ionization in that band was booked for electrons
+        # and lost for ions. Guarded by the flag that decides whether the ion pass
+        # runs at all, so the pairing of writers is unchanged.
+        if RP.flags.update_ni_independently
+            Ntracker.cum0D_Ni_src += sum(Ne_iz)
+            @. Ntracker.cum2D_Ni_src += Ne_iz
+        end
 
         Ntracker.cum0D_Ne_loss += sum(Ne_loss)
         @. Ntracker.cum2D_Ne_loss[on_out_wall_nids] += Ne_loss
@@ -777,21 +836,18 @@ electrons from ion wall impacts, and optionally corrects negative densities.
 """
 function treat_ion_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "treat_ion_outside_wall!" begin
-        # Estimate the number of ions generated by ionization
-        # NOTE: ν_en_iz must be multiplied by the electron density to get the ionization rate
-        # In other words, Ne_iz = Ni_iz
-        Ni_iz = @. RP.plasma.ν_en_iz * RP.plasma.ne * RP.G.inVol2D * RP.dt
+        # The ion SOURCE is not booked here. Ne_iz = Ni_iz by construction — one
+        # ionization makes one of each — so `treat_electron_outside_wall!` books
+        # both from one number, before it zeroes `ne` outside the wall. Recomputing
+        # it here read that already-zeroed density.
 
         # Estimate electron loss outside the wall
         # TODO: How to accurately define the volume outside/on the wall?
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
         Ni_loss = @. RP.plasma.ni[on_out_wall_nids] * FT(2.0 * pi) * RP.G.Jacob[on_out_wall_nids] * RP.G.dR * RP.G.dZ
 
-        # Track changes in number of electrons
+        # Track changes in number of ions
         Ntracker = RP.diagnostics.Ntracker
-
-        Ntracker.cum0D_Ni_src += sum(Ni_iz)
-        @. Ntracker.cum2D_Ni_src += Ni_iz
 
         Ntracker.cum0D_Ni_loss += sum(Ni_loss)
         @. Ntracker.cum2D_Ni_loss[on_out_wall_nids] += Ni_loss

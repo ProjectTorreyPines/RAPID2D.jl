@@ -71,21 +71,41 @@ end
 end
 
 @testitem "Ionization enters the ion equation at the electron rate" setup = [IonRun] begin
-    # Ni_iz = Ne_iz: each ionization makes one ion and one electron, and the rate
-    # is set by the ELECTRON density, so for ions it is a pure explicit source.
+    # Ni_iz = Ne_iz: each ionization makes one ion AND one electron. The rate is
+    # set by the ELECTRON density, so for ions it is a pure explicit source — but
+    # "the electron density" means the one the electron equation itself ionized
+    # at, `(1−θ)nⁿ + θnⁿ⁺¹`, NOT whatever `pla.ne` holds once that solve returns.
+    # This asserted the latter, and so pinned the defect: at θ = ½ the ion gained
+    # θ(Δtν)²n more than the electron every step.
+    #
+    # Run in the workflow's order, because that is the order the identity holds
+    # in — `solve_electron_continuity_equation!` is what fills `prev_n`.
     RP = ion_case()
     RP.flags.diffu = false
     RP.flags.convec = false
     RP.flags.src = true
     update_transport_quantities!(RP)
 
-    before = copy(RP.plasma.ni)
-    expected = @. before + RP.dt * RP.plasma.ne * RP.plasma.ν_en_iz
+    ne_before = copy(RP.plasma.ne)
+    ni_before = copy(RP.plasma.ni)
+    solve_electron_continuity_equation!(RP)
     solve_ion_continuity_equation!(RP)
 
     inw = RP.G.nodes.in_wall_nids
-    @test RP.plasma.ni[inw] ≈ expected[inw] rtol = 1.0e-12
     @test any(>(0), RP.plasma.ν_en_iz[inw])      # the source is not silently zero
+
+    # One event, one of each. Loose by the standards of this file because the two
+    # sides are not computed the same way: the electron gain comes back through a
+    # sparse LU solve while the ion gain, with transport off, is accumulated
+    # directly. The identity is exact in exact arithmetic; 1e-12 is below the
+    # round-trip.
+    @test (RP.plasma.ne - ne_before)[inw] ≈ (RP.plasma.ni - ni_before)[inw] rtol = 1.0e-10
+
+    # and it is the θ-weighted rate, written out so the scheme itself is pinned
+    θ = RP.flags.θ_imp.growth
+    n_star = @. (1 - θ) * ne_before + θ * RP.plasma.ne
+    expected = @. ni_before + RP.dt * n_star * RP.plasma.ν_en_iz
+    @test RP.plasma.ni[inw] ≈ expected[inw] rtol = 1.0e-12
 end
 
 @testitem "Turning the source off leaves the ion source out" setup = [IonRun] begin

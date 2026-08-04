@@ -404,13 +404,16 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
     return @timeit RAPID_TIMER "solve_ion_continuity_equation!" begin
         tp, pla = RP.transport, RP.plasma
         dt = RP.dt
-        θ = RP.flags.Implicit ? FT(RP.flags.Implicit_weight) : zero(FT)
+        θ = RP.flags.Implicit ? RP.flags.θ_imp.transport : zero(FT)
 
         N, S = tp.ion_N, tp.ion_S
         N[:, 1] .= vec(pla.ni)
         fill!(S, zero(FT))
         if RP.flags.src
-            @views S[:, 1] .= vec(pla.ne) .* vec(pla.ν_en_iz)
+            # The density the ELECTRON equation ionized at, not whatever `pla.ne`
+            # holds now — the electron solve already ran and left nⁿ⁺¹ there. See
+            # `ionization_source_density`: one event, one electron, one ion.
+            @views S[:, 1] .= vec(ionization_source_density(RP)) .* vec(pla.ν_en_iz)
         end
 
         if !RP.flags.diffu && !RP.flags.convec
