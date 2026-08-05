@@ -38,7 +38,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     update_RRCs!(RP)
 
     # Sum of the electron collision frequencies that randomize directed momentum.
-    # Used below only as the ν in D∥ = vth²/(3ν): ionization is counted as a
+    # Used below only as the ν in D∥ = T/(mν): ionization is counted as a
     # momentum-randomizing event here because the newborn electron carries none of the
     # parent's drift. The same sum drives the momentum decay in `update_ue_para!`
     # (`physics.jl`) and the combined momentum-Ampère solver.
@@ -64,12 +64,13 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         fill!(tp.νi_coulomb, zero(FT))
     end
 
-    # Calculate parallel diffusion coefficient based on collision frequency
-    # NOTE: vp is the most probable velocity for Maxwellian distribution
-    vp_e = @. sqrt(2.0 * pla.Te_eV * ee / me)
-    vp_i = @. sqrt(2.0 * pla.Ti_eV * ee / mi)
+    # `vp = √(2T/m)` is the moment that makes the line below come out at D∥ = T/(mν):
+    # ½vp² = T/m exactly. Any other Maxwellian speed would need a different
+    # numerical prefactor, so the `½` and the `vp` must be read together.
+    vp_e = maxwellian_most_probable_speed.(pla.Te_eV, me)
+    vp_i = maxwellian_most_probable_speed.(pla.Ti_eV, mi)
 
-    # Collision-based diffusion coefficient (D = vth²/(3ν))
+    # Collision-based diffusion coefficient: ½·(2T/m)/ν = T/(mν)
     tp.Dpara_e_coll = @. FT(0.5) * vp_e^2 / ν_sum_mom_iz_ei
     @. tp.Dpara_e_coll[isnan(tp.Dpara_e_coll)] = typemax(FT) # make NaN to Inf
 

@@ -17,7 +17,7 @@
     # v∥ = v⊥ and λ∥ = λ⊥ must erase b̂ entirely, for EVERY b̂ — not just the
     # axis-aligned ones where D_RZ happens to vanish anyway.
     v, λ = fill(800.0, 2, 3), fill(0.05, 2, 3)
-    ch = DiffusionChannel(v, λ, v, λ; v̄_para = v, v̄_perp = v)
+    ch = DiffusionChannel(v, λ, v, λ; vm_para = v, vm_perp = v)
     D = 0.5 * 800.0 * 0.05
 
     for θ in (0.0, 0.3, π / 4, 1.1, π / 2, 2.7)
@@ -37,7 +37,7 @@ end
     ch = DiffusionChannel(
         fill(1000.0, 1, 1), fill(0.2, 1, 1),      # D∥ = 100
         fill(10.0, 1, 1), fill(0.02, 1, 1);      # D⊥ = 0.1
-        v̄_para = fill(1000.0, 1, 1), v̄_perp = fill(10.0, 1, 1)
+        vm_para = fill(1000.0, 1, 1), vm_perp = fill(10.0, 1, 1)
     )
     Dpara, Dperp = 100.0, 0.1
 
@@ -60,7 +60,7 @@ end
     # THE discriminating case. With b̂ on an axis D_RZ vanishes, so every
     # axis-aligned test would still pass with the cross term deleted from the
     # code. Only an oblique field exercises it.
-    ch = DiffusionChannel(fill(1000.0, 1, 1), fill(0.2, 1, 1), fill(10.0, 1, 1), fill(0.02, 1, 1); v̄_para = fill(1000.0, 1, 1), v̄_perp = fill(10.0, 1, 1))
+    ch = DiffusionChannel(fill(1000.0, 1, 1), fill(0.2, 1, 1), fill(10.0, 1, 1), fill(0.02, 1, 1); vm_para = fill(1000.0, 1, 1), vm_perp = fill(10.0, 1, 1))
     Dpara, Dperp = 100.0, 0.1
     s = 1 / sqrt(2.0)
 
@@ -89,7 +89,7 @@ end
 
     # The strongest single statement of "the tensor means what we think": its
     # principal axes ARE b̂ and its normal, with eigenvalues D∥ and D⊥.
-    ch = DiffusionChannel(fill(1000.0, 1, 1), fill(0.2, 1, 1), fill(10.0, 1, 1), fill(0.02, 1, 1); v̄_para = fill(1000.0, 1, 1), v̄_perp = fill(10.0, 1, 1))
+    ch = DiffusionChannel(fill(1000.0, 1, 1), fill(0.2, 1, 1), fill(10.0, 1, 1), fill(0.02, 1, 1); vm_para = fill(1000.0, 1, 1), vm_perp = fill(10.0, 1, 1))
     Dpara, Dperp = 100.0, 0.1
 
     θ = 0.6
@@ -117,7 +117,7 @@ end
     λ_para = [0.01 * j for i in 1:NR, j in 1:NZ]
     v_perp = [3.0 * i for i in 1:NR, j in 1:NZ]
     λ_perp = fill(0.002, NR, NZ)
-    ch = DiffusionChannel(v_para, λ_para, v_perp, λ_perp; v̄_para = v_para, v̄_perp = v_perp)
+    ch = DiffusionChannel(v_para, λ_para, v_perp, λ_perp; vm_para = v_para, vm_perp = v_perp)
 
     @test channel_D_para(ch) ≈ 0.5 .* v_para .* λ_para rtol = 1.0e-14
     @test channel_D_perp(ch) ≈ 0.5 .* v_perp .* λ_perp rtol = 1.0e-14
@@ -153,7 +153,7 @@ end
     v = 1000.0
     ch = DiffusionChannel(
         fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.2, 1, 1);
-        v̄_para = fill(7.0, 1, 1), v̄_perp = fill(7.0, 1, 1)
+        vm_para = fill(7.0, 1, 1), vm_perp = fill(7.0, 1, 1)
     )
     # v̄ deliberately unrelated to v: the ceiling must read the declared value alone
     @test channel_ceiling(ch, 1.0, 0.0, (1, 0))[1] ≈ 0.25 * 7.0 rtol = 1.0e-14
@@ -163,8 +163,8 @@ end
     T, m = 3.0, 3.34e-27
     @test maxwellian_mean_speed(T, m) ≈ sqrt(8 * T * 1.602176634e-19 / (π * m)) rtol = 1.0e-9
     # …which sits between the most probable speed and the RMS speed
-    v_p = sqrt(2 * T * 1.602176634e-19 / m)
-    @test v_p < maxwellian_mean_speed(T, m) < sqrt(1.5) * v_p
+    vp_s = sqrt(2 * T * 1.602176634e-19 / m)
+    @test vp_s < maxwellian_mean_speed(T, m) < sqrt(1.5) * vp_s
     # a temperature that has undershot zero must not raise from `sqrt`
     @test maxwellian_mean_speed(-1.0e-60, m) == 0.0
 end
@@ -176,7 +176,7 @@ end
     # against double-counting the anisotropy: the supply side already carries it
     # through D_nn, so putting a directional factor on the ceiling too is wrong.
     v = 1000.0
-    ch = DiffusionChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.05, 1, 1); v̄_para = fill(v, 1, 1), v̄_perp = fill(v, 1, 1))
+    ch = DiffusionChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.05, 1, 1); vm_para = fill(v, 1, 1), vm_perp = fill(v, 1, 1))
     bR, bZ = cos(0.4), sin(0.4)
 
     c = [channel_ceiling(ch, bR, bZ, o)[1] for o in ((1, 0), (-1, 0), (0, 1), (0, -1))]
@@ -192,7 +192,7 @@ end
     ch = DiffusionChannel(
         fill(0.0, 1, 1), fill(0.0, 1, 1),        # v∥ = 0
         fill(2500.0, 1, 1), fill(4.0e-4, 1, 1);
-        v̄_para = fill(0.0, 1, 1), v̄_perp = fill(2500.0, 1, 1)
+        vm_para = fill(0.0, 1, 1), vm_perp = fill(2500.0, 1, 1)
     )
 
     # b̂ = R̂ and an R-face → g = 1
@@ -212,7 +212,7 @@ end
     ch = DiffusionChannel(
         fill(v_para, 1, 1), fill(1.0, 1, 1),
         fill(0.0, 1, 1), fill(0.0, 1, 1);        # v⊥ = 0
-        v̄_para = fill(v_para, 1, 1), v̄_perp = fill(0.0, 1, 1)
+        vm_para = fill(v_para, 1, 1), vm_perp = fill(0.0, 1, 1)
     )
 
     α = 8.0e-3                       # ≈ 0.46°, the manual configuration's pitch
@@ -231,7 +231,7 @@ end
     # g = (b̂·n̂)² is a FACE property, not a cell property. A staircase corner cell
     # owns one R-face and one Z-face, and they must not share a ceiling unless the
     # field happens to bisect them.
-    ch = DiffusionChannel(fill(1.0e5, 1, 1), fill(1.0, 1, 1), fill(100.0, 1, 1), fill(0.01, 1, 1); v̄_para = fill(1.0e5, 1, 1), v̄_perp = fill(100.0, 1, 1))
+    ch = DiffusionChannel(fill(1.0e5, 1, 1), fill(1.0, 1, 1), fill(100.0, 1, 1), fill(0.01, 1, 1); vm_para = fill(1.0e5, 1, 1), vm_perp = fill(100.0, 1, 1))
 
     θ = 0.3                                     # oblique
     bR, bZ = cos(θ), sin(θ)
@@ -257,8 +257,8 @@ end
     # mechanisms, so both fluxes and ceilings add. (Sub-processes that share one
     # speed combine by Matthiessen *inside* a channel and are counted once — that
     # is the gas's three-way λ, already handled by neutral_gas.jl.)
-    fast = DiffusionChannel(fill(1.0e6, 1, 1), fill(1.0, 1, 1), fill(0.0, 1, 1), fill(0.0, 1, 1); v̄_para = fill(1.0e6, 1, 1), v̄_perp = fill(0.0, 1, 1))
-    slow = DiffusionChannel(fill(0.0, 1, 1), fill(0.0, 1, 1), fill(60.0, 1, 1), fill(1.0, 1, 1); v̄_para = fill(0.0, 1, 1), v̄_perp = fill(60.0, 1, 1))
+    fast = DiffusionChannel(fill(1.0e6, 1, 1), fill(1.0, 1, 1), fill(0.0, 1, 1), fill(0.0, 1, 1); vm_para = fill(1.0e6, 1, 1), vm_perp = fill(0.0, 1, 1))
+    slow = DiffusionChannel(fill(0.0, 1, 1), fill(0.0, 1, 1), fill(60.0, 1, 1), fill(1.0, 1, 1); vm_para = fill(0.0, 1, 1), vm_perp = fill(60.0, 1, 1))
     chs = (fast, slow)
     bR, bZ = cos(0.4), sin(0.4)
 

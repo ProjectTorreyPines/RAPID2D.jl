@@ -18,7 +18,7 @@
     # that and return it — both because the shared policy then costs exactly
     # nothing for this mechanism, and because a weighted mean of a constant is not
     # bit-exact in floating point at the density ratios a discharge spans.
-    ch = DiffusionChannel(fill(3.0, 4, 5), fill(0.5, 4, 5), fill(7.0, 4, 5), fill(0.25, 4, 5); v̄_para = fill(3.0, 4, 5), v̄_perp = fill(7.0, 4, 5))
+    ch = DiffusionChannel(fill(3.0, 4, 5), fill(0.5, 4, 5), fill(7.0, 4, 5), fill(0.25, 4, 5); vm_para = fill(3.0, 4, 5), vm_perp = fill(7.0, 4, 5))
     weights = [fill(1.0e14, 4, 5), fill(9.0e17, 4, 5), fill(2.0, 4, 5)]
 
     @test mixture_channel([ch, ch, ch], weights) === ch
@@ -31,7 +31,7 @@ end
     # Same claim without the identity short-circuit: the general path must also
     # reproduce a constant, to rounding. Weights span 18 orders, which is what a
     # burn-through impurity fraction actually looks like.
-    mk() = DiffusionChannel(fill(3.0, 4, 5), fill(0.5, 4, 5), fill(7.0, 4, 5), fill(0.25, 4, 5); v̄_para = fill(3.0, 4, 5), v̄_perp = fill(7.0, 4, 5))
+    mk() = DiffusionChannel(fill(3.0, 4, 5), fill(0.5, 4, 5), fill(7.0, 4, 5), fill(0.25, 4, 5); vm_para = fill(3.0, 4, 5), vm_perp = fill(7.0, 4, 5))
     mix = mixture_channel([mk(), mk(), mk()], [fill(1.0e14, 4, 5), fill(9.0e17, 4, 5), fill(2.0, 4, 5)])
 
     @test mix.v_para ≈ fill(3.0, 4, 5)
@@ -48,8 +48,8 @@ end
     #   v  — a one-sided wall flux is Σ ¼v̄_s·n_s, linear in v
     #   D  — a diffusive flux is Σ D_s∇n_s, linear in D
     # Averaging λ directly instead would conserve neither.
-    ch1 = DiffusionChannel(fill(2.0, 3, 3), fill(3.0, 3, 3), fill(4.0, 3, 3), fill(5.0, 3, 3); v̄_para = fill(2.0, 3, 3), v̄_perp = fill(4.0, 3, 3))
-    ch2 = DiffusionChannel(fill(6.0, 3, 3), fill(1.0, 3, 3), fill(8.0, 3, 3), fill(1.0, 3, 3); v̄_para = fill(6.0, 3, 3), v̄_perp = fill(8.0, 3, 3))
+    ch1 = DiffusionChannel(fill(2.0, 3, 3), fill(3.0, 3, 3), fill(4.0, 3, 3), fill(5.0, 3, 3); vm_para = fill(2.0, 3, 3), vm_perp = fill(4.0, 3, 3))
+    ch2 = DiffusionChannel(fill(6.0, 3, 3), fill(1.0, 3, 3), fill(8.0, 3, 3), fill(1.0, 3, 3); vm_para = fill(6.0, 3, 3), vm_perp = fill(8.0, 3, 3))
     w = [fill(1.0, 3, 3), fill(3.0, 3, 3)]
 
     mix = mixture_channel([ch1, ch2], w)
@@ -73,30 +73,30 @@ end
     # per-channel v̄ exists to remove.
     ch1 = DiffusionChannel(
         fill(2.0, 2, 2), fill(3.0, 2, 2), fill(4.0, 2, 2), fill(5.0, 2, 2);
-        v̄_para = fill(20.0, 2, 2), v̄_perp = fill(4.0, 2, 2)     # ratio 10
+        vm_para = fill(20.0, 2, 2), vm_perp = fill(4.0, 2, 2)     # ratio 10
     )
     ch2 = DiffusionChannel(
         fill(6.0, 2, 2), fill(1.0, 2, 2), fill(8.0, 2, 2), fill(1.0, 2, 2);
-        v̄_para = fill(6.0, 2, 2), v̄_perp = fill(8.0, 2, 2)      # ratio 1
+        vm_para = fill(6.0, 2, 2), vm_perp = fill(8.0, 2, 2)      # ratio 1
     )
     mix = mixture_channel([ch1, ch2], [fill(1.0, 2, 2), fill(3.0, 2, 2)])
 
-    @test all(mix.v̄_para .≈ (1 * 20 + 3 * 6) / 4)         # = 9.5
+    @test all(mix.vm_para .≈ (1 * 20 + 3 * 6) / 4)         # = 9.5
     @test all(mix.v_para .≈ (1 * 2 + 3 * 6) / 4)          # = 5, and 9.5 is not a multiple of it
-    @test all(mix.v̄_perp .≈ (1 * 4 + 3 * 8) / 4)          # = 7
+    @test all(mix.vm_perp .≈ (1 * 4 + 3 * 8) / 4)          # = 7
 
     # …and the ceiling the mixture reports is the density-weighted sum of the
     # ceilings the species would have reported, exactly, at a head-on face
     using RAPID2D: channel_ceiling
-    head_on = (ch, ) -> channel_ceiling(ch, 1.0, 0.0, (1, 0))
+    head_on = (ch) -> channel_ceiling(ch, 1.0, 0.0, (1, 0))
     @test all(4 .* head_on(mix) .≈ 1 .* head_on(ch1) .+ 3 .* head_on(ch2))
 end
 
 @testitem "Mixing is per cell, and a species that is absent nowhere contributes" begin
     using RAPID2D: DiffusionChannel, mixture_channel
 
-    ch1 = DiffusionChannel(fill(2.0, 2, 3), fill(3.0, 2, 3), fill(4.0, 2, 3), fill(5.0, 2, 3); v̄_para = fill(2.0, 2, 3), v̄_perp = fill(4.0, 2, 3))
-    ch2 = DiffusionChannel(fill(6.0, 2, 3), fill(1.0, 2, 3), fill(8.0, 2, 3), fill(1.0, 2, 3); v̄_para = fill(6.0, 2, 3), v̄_perp = fill(8.0, 2, 3))
+    ch1 = DiffusionChannel(fill(2.0, 2, 3), fill(3.0, 2, 3), fill(4.0, 2, 3), fill(5.0, 2, 3); vm_para = fill(2.0, 2, 3), vm_perp = fill(4.0, 2, 3))
+    ch2 = DiffusionChannel(fill(6.0, 2, 3), fill(1.0, 2, 3), fill(8.0, 2, 3), fill(1.0, 2, 3); vm_para = fill(6.0, 2, 3), vm_perp = fill(8.0, 2, 3))
 
     # species 2 present only in the right-hand column
     w2 = zeros(2, 3)
@@ -114,8 +114,8 @@ end
     # would poison the whole matrix. The fallback must also not be D = 0: a cell
     # with no ions yet is exactly where ions are about to diffuse INTO, and a zero
     # diffusivity there is an artificial barrier at the plasma edge.
-    ch1 = DiffusionChannel(fill(2.0, 2, 2), fill(3.0, 2, 2), fill(4.0, 2, 2), fill(5.0, 2, 2); v̄_para = fill(2.0, 2, 2), v̄_perp = fill(4.0, 2, 2))
-    ch2 = DiffusionChannel(fill(6.0, 2, 2), fill(1.0, 2, 2), fill(8.0, 2, 2), fill(1.0, 2, 2); v̄_para = fill(6.0, 2, 2), v̄_perp = fill(8.0, 2, 2))
+    ch1 = DiffusionChannel(fill(2.0, 2, 2), fill(3.0, 2, 2), fill(4.0, 2, 2), fill(5.0, 2, 2); vm_para = fill(2.0, 2, 2), vm_perp = fill(4.0, 2, 2))
+    ch2 = DiffusionChannel(fill(6.0, 2, 2), fill(1.0, 2, 2), fill(8.0, 2, 2), fill(1.0, 2, 2); vm_para = fill(6.0, 2, 2), vm_perp = fill(8.0, 2, 2))
 
     mix = mixture_channel([ch1, ch2], [zeros(2, 2), zeros(2, 2)])
 
@@ -132,8 +132,8 @@ end
     # A low-density discharge starts at ne = 1e6 and ends 9 orders higher. The
     # mixture must depend on the density RATIO only, or the effective transport
     # would drift during a run for no physical reason.
-    ch1 = DiffusionChannel(fill(2.0, 3, 2), fill(3.0, 3, 2), fill(4.0, 3, 2), fill(5.0, 3, 2); v̄_para = fill(2.0, 3, 2), v̄_perp = fill(4.0, 3, 2))
-    ch2 = DiffusionChannel(fill(6.0, 3, 2), fill(1.0, 3, 2), fill(8.0, 3, 2), fill(1.0, 3, 2); v̄_para = fill(6.0, 3, 2), v̄_perp = fill(8.0, 3, 2))
+    ch1 = DiffusionChannel(fill(2.0, 3, 2), fill(3.0, 3, 2), fill(4.0, 3, 2), fill(5.0, 3, 2); vm_para = fill(2.0, 3, 2), vm_perp = fill(4.0, 3, 2))
+    ch2 = DiffusionChannel(fill(6.0, 3, 2), fill(1.0, 3, 2), fill(8.0, 3, 2), fill(1.0, 3, 2); vm_para = fill(6.0, 3, 2), vm_perp = fill(8.0, 3, 2))
 
     lo = mixture_channel([ch1, ch2], [fill(1.0e6, 3, 2), fill(3.0e6, 3, 2)])
     hi = mixture_channel([ch1, ch2], [fill(1.0e15, 3, 2), fill(3.0e15, 3, 2)])
@@ -149,8 +149,8 @@ end
     # limits, where it reduces to ¼v̄∥ and ¼v̄⊥. There the density-weighted mean
     # speed reproduces Σ n_s·¼v̄_s EXACTLY. In between it blends in quadrature and
     # cannot; that error is the price of the shared policy and is pinned below.
-    ch1 = DiffusionChannel(fill(2.0, 3, 3), fill(3.0, 3, 3), fill(4.0, 3, 3), fill(5.0, 3, 3); v̄_para = fill(2.0, 3, 3), v̄_perp = fill(4.0, 3, 3))
-    ch2 = DiffusionChannel(fill(6.0, 3, 3), fill(1.0, 3, 3), fill(8.0, 3, 3), fill(1.0, 3, 3); v̄_para = fill(6.0, 3, 3), v̄_perp = fill(8.0, 3, 3))
+    ch1 = DiffusionChannel(fill(2.0, 3, 3), fill(3.0, 3, 3), fill(4.0, 3, 3), fill(5.0, 3, 3); vm_para = fill(2.0, 3, 3), vm_perp = fill(4.0, 3, 3))
+    ch2 = DiffusionChannel(fill(6.0, 3, 3), fill(1.0, 3, 3), fill(8.0, 3, 3), fill(1.0, 3, 3); vm_para = fill(6.0, 3, 3), vm_perp = fill(8.0, 3, 3))
     chans = [ch1, ch2]
     w = [fill(1.0, 3, 3), fill(3.0, 3, 3)]
     n_tot = w[1] .+ w[2]
@@ -177,8 +177,8 @@ end
 @testitem "Mixing rejects a ragged set of channels" begin
     using RAPID2D: DiffusionChannel, mixture_channel
 
-    ch1 = DiffusionChannel(fill(2.0, 3, 3), fill(3.0, 3, 3), fill(4.0, 3, 3), fill(5.0, 3, 3); v̄_para = fill(2.0, 3, 3), v̄_perp = fill(4.0, 3, 3))
-    ch2 = DiffusionChannel(fill(2.0, 4, 3), fill(3.0, 4, 3), fill(4.0, 4, 3), fill(5.0, 4, 3); v̄_para = fill(2.0, 4, 3), v̄_perp = fill(4.0, 4, 3))
+    ch1 = DiffusionChannel(fill(2.0, 3, 3), fill(3.0, 3, 3), fill(4.0, 3, 3), fill(5.0, 3, 3); vm_para = fill(2.0, 3, 3), vm_perp = fill(4.0, 3, 3))
+    ch2 = DiffusionChannel(fill(2.0, 4, 3), fill(3.0, 4, 3), fill(4.0, 4, 3), fill(5.0, 4, 3); vm_para = fill(2.0, 4, 3), vm_perp = fill(4.0, 4, 3))
 
     @test_throws DimensionMismatch mixture_channel([ch1, ch2], [ones(3, 3), ones(3, 3)])
     @test_throws DimensionMismatch mixture_channel([ch1, ch1], [ones(3, 3), ones(4, 3)])
@@ -189,7 +189,7 @@ end
 @testitem "Per-species policy hands every species its own operator, untouched" begin
     using RAPID2D: DiffusionChannel, PerSpeciesTransport, ion_transport_groups
 
-    mk(v) = DiffusionChannel(fill(v, 2, 2), fill(1.0, 2, 2), fill(2v, 2, 2), fill(0.5, 2, 2); v̄_para = fill(v, 2, 2), v̄_perp = fill(2v, 2, 2))
+    mk(v) = DiffusionChannel(fill(v, 2, 2), fill(1.0, 2, 2), fill(2v, 2, 2), fill(0.5, 2, 2); vm_para = fill(v, 2, 2), vm_perp = fill(2v, 2, 2))
     per_species = [[mk(1.0), mk(10.0)], [mk(2.0), mk(20.0)], [mk(3.0), mk(30.0)]]
     w = [fill(1.0, 2, 2), fill(2.0, 2, 2), fill(3.0, 2, 2)]
 
@@ -208,7 +208,7 @@ end
     using RAPID2D: DiffusionChannel, SharedEffectiveTransport, ion_transport_groups,
         mixture_channel
 
-    mk(v) = DiffusionChannel(fill(v, 2, 2), fill(1.0, 2, 2), fill(2v, 2, 2), fill(0.5, 2, 2); v̄_para = fill(v, 2, 2), v̄_perp = fill(2v, 2, 2))
+    mk(v) = DiffusionChannel(fill(v, 2, 2), fill(1.0, 2, 2), fill(2v, 2, 2), fill(0.5, 2, 2); vm_para = fill(v, 2, 2), vm_perp = fill(2v, 2, 2))
     per_species = [[mk(1.0), mk(10.0)], [mk(2.0), mk(20.0)], [mk(3.0), mk(30.0)]]
     w = [fill(1.0, 2, 2), fill(2.0, 2, 2), fill(3.0, 2, 2)]
 
@@ -234,8 +234,8 @@ end
     # until a second species is appended.
     only_one = [
         [
-            DiffusionChannel(fill(3.0, 4, 6), fill(1.5, 4, 6), fill(9.0, 4, 6), fill(0.1, 4, 6); v̄_para = fill(3.0, 4, 6), v̄_perp = fill(9.0, 4, 6)),
-            DiffusionChannel(zeros(4, 6), zeros(4, 6), fill(4.0, 4, 6), fill(2.0, 4, 6); v̄_para = zeros(4, 6), v̄_perp = fill(4.0, 4, 6)),
+            DiffusionChannel(fill(3.0, 4, 6), fill(1.5, 4, 6), fill(9.0, 4, 6), fill(0.1, 4, 6); vm_para = fill(3.0, 4, 6), vm_perp = fill(9.0, 4, 6)),
+            DiffusionChannel(zeros(4, 6), zeros(4, 6), fill(4.0, 4, 6), fill(2.0, 4, 6); vm_para = zeros(4, 6), vm_perp = fill(4.0, 4, 6)),
         ],
     ]
     w = [fill(5.0e14, 4, 6)]
@@ -257,7 +257,7 @@ end
     using RAPID2D: DiffusionChannel, SharedEffectiveTransport, PerSpeciesTransport,
         ion_transport_groups
 
-    mk() = DiffusionChannel(ones(2, 2), ones(2, 2), ones(2, 2), ones(2, 2); v̄_para = ones(2, 2), v̄_perp = ones(2, 2))
+    mk() = DiffusionChannel(ones(2, 2), ones(2, 2), ones(2, 2), ones(2, 2); vm_para = ones(2, 2), vm_perp = ones(2, 2))
     ragged = [[mk(), mk()], [mk()]]
     w = [ones(2, 2), ones(2, 2)]
 

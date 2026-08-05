@@ -312,17 +312,17 @@ end
 # ── the one-sided flux that bombards the wall ───────────────────────────────
 
 @testitem "Wall impingement: v_incident is a quarter of the MEAN speed" begin
-    using RAPID2D: v_incident, neutral_gas_thermal_speed, M_H2_GAS
+    using RAPID2D: v_incident, maxwellian_thermal_speed, M_H2_GAS
 
     # Two different speeds live in this codebase and they differ by √(8/π) = 1.596.
-    # neutral_gas.jl's v_th = √(T/m) is the convention D = ½·v_th·λ needs; the
-    # Hertz-Knudsen flux needs the MEAN speed v̄ = √(8T/πm). Taking ¼v_th instead of
+    # neutral_gas.jl's vth = √(T/m) is the convention D = ½·vth·λ needs; the
+    # Hertz-Knudsen flux needs the MEAN speed v̄ = √(8T/πm). Taking ¼√(T/m) instead of
     # ¼v̄ under-counts every impact by 37 %, and no scaling law would expose it —
     # both go as √(T/m).
     T = 0.026
     @test v_incident(T, M_H2_GAS) ≈
-        0.25 * sqrt(8 / π) * neutral_gas_thermal_speed(T) rtol = 1.0e-14
-    @test v_incident(T, M_H2_GAS) / neutral_gas_thermal_speed(T) ≈ 0.3989 rtol = 1.0e-3
+        0.25 * sqrt(8 / π) * maxwellian_thermal_speed(T, M_H2_GAS) rtol = 1.0e-14
+    @test v_incident(T, M_H2_GAS) / maxwellian_thermal_speed(T, M_H2_GAS) ≈ 0.3989 rtol = 1.0e-3
 
     # v̄ ∝ √(T/m): four times the temperature doubles it, four times the mass halves it
     @test v_incident(4T, M_H2_GAS) ≈ 2 * v_incident(T, M_H2_GAS) rtol = 1.0e-14

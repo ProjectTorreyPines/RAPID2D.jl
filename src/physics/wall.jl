@@ -128,8 +128,8 @@ It does **not** depend on the boundary condition, so diagnostics built on it
 (sputtering, bombardment rates) are unaffected by the wall treatment: a reflective
 wall still has `Γ_in = Γ_out = v_incident·n_w`, with only the *net* flux zero.
 
-**`v̄`, not `v_th`.** `neutral_gas_thermal_speed` is `√(T/m)`, the convention
-`D = ½·v_th·λ` is written in; the two differ by `√(8/π) = 1.596`, so `¼v_th` here
+**`vm`, not `vth`.** `neutral_gas.jl` writes its `D = ½·v·λ` in the
+`vth = √(T/m)` convention; the two differ by `√(8/π) = 1.596`, so `¼·vth` here
 would under-count every impact by 37 %. Both go as `√(T/m)`, so no scaling test
 would reveal the swap — hence the ratio is pinned to `0.3989 = ¼√(8/π)`.
 

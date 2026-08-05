@@ -342,7 +342,7 @@ end
     # bookkeeping married to `λ` so that ½vλ reproduces D, and which split was
     # chosen is a property of how the code got D, not of the population. Deriving
     # v̄ from it makes the wall depend on that choice: the collisional channel
-    # declares v_p = √(2T/m) while the gas channel declares √(T/m), and one
+    # declares vp = √(2T/m) while the gas channel declares vth = √(T/m), and one
     # global v̄/v ratio cannot be right for both.
     RP = ion_case()
     update_transport_quantities!(RP)

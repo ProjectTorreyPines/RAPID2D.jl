@@ -232,7 +232,7 @@ policy at all:
 
 | mechanism | axis | depends on the species? |
 |---|---|---|
-| collisional | `b̂` | **yes** — `D∥ = ½v_p²/ν` with `v_p = √(2T_i/m)` |
+| collisional | `b̂` | **yes** — `D∥ = ½v²/ν` with `v = √(2T_i/m)` |
 | Bohm | `b̂` | `D⊥ = T_e/16B` is mass-free; only the `v`/`λ` split moves |
 | turbulent ExB | `b̂_pol` | no — `v_E = E_pol/B_tot` has neither mass nor charge in it |
 
@@ -253,7 +253,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     # cell into `Inf/0`. Written as an inverse length, every degenerate limit falls
     # out instead of needing a case:
     #
-    #   T_i = 0            v_p = 0 → ν/v_p = Inf → λ∥ = 0, and D∥ = ½v∥λ∥ = 0
+    #   T_i = 0            v = 0 → ν/v = Inf → λ∥ = 0, and D∥ = ½v∥λ∥ = 0
     #   no collisions      λ∥ = L_field: free streaming to the wall along B
     #   no field length    nothing bounds a parallel step, so the COLLISIONAL
     #                      channel is absent. Free streaming is convection, and the
@@ -270,7 +270,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     #     ν_s^{z|i} ∝ n_i Z_z²Z_i² λ (μ_i^½/μ_z)(1 + μ_i/μ_z) T^-3/2
     #
     # Dividing that by the same expression at z = i gives `coulomb_scale` below,
-    # which is exactly 1 for the bulk. With v_p,z ∝ μ_z^-½ the mass then CANCELS
+    # which is exactly 1 for the bulk. With v_z ∝ μ_z^-½ the mass then CANCELS
     # out of the diffusivity for a heavy impurity,
     #
     #     D∥_z / D∥_bulk = 2 / [ (Z_z/Z_i)² (1 + μ_i/μ_z) ]
@@ -287,25 +287,25 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     m_ref = bulk_ion_mass(RP)   # the mass `ν_ii` was built with; μ is a ratio TO the bulk
     mass_ratio = FT(m_ref / species.mass)
     coulomb_scale = FT(species.charge^2) * sqrt(mass_ratio) * (1 + mass_ratio) / 2
-    v_p_ref = @. sqrt(max(zero(FT), 2 * pla.Ti_eV * ee / m_ref))
-    v_p = @. v_p_ref * sqrt(mass_ratio)
-    inv_λ = @. (tp.νi_neutral + coulomb_scale * tp.νi_coulomb) / v_p_ref +
+    vp_ref = maxwellian_most_probable_speed.(pla.Ti_eV, m_ref)
+    vp_s = @. vp_ref * sqrt(mass_ratio)
+    inv_λ = @. (tp.νi_neutral + coulomb_scale * tp.νi_coulomb) / vp_ref +
         ifelse(tp.L_mixing > 0, 1 / tp.L_mixing, zero(FT))
     # `inv_λ > 0` is false for both Inf⁻¹ = 0 and for a NaN out of 0/0, so the two
     # degenerate cases above land on λ∥ = 0 without being enumerated.
     λ_para = @. ifelse(inv_λ > 0, 1 / inv_λ, zero(FT))
     if tp.Dpara0 > zero(FT)
         # A base diffusivity adds a step length, because ½v(λ + λ₀) = D + ½vλ₀
-        @. λ_para += ifelse(v_p > 0, 2 * tp.Dpara0 / v_p, zero(FT))
+        @. λ_para += ifelse(vp_s > 0, 2 * tp.Dpara0 / vp_s, zero(FT))
     end
     # The wall wants ⟨|v|⟩ of THIS species' Maxwellian, which is (Ti, m) and nothing
-    # else — not a rescaling of `v_p`, whose √2 exists only because `λ = v_p/ν`
-    # was the route to D. Both are Maxwellian speeds and they differ by √2, which
-    # is exactly the size of the error a shared v̄/v ratio produced here.
-    v̄_p = maxwellian_mean_speed.(pla.Ti_eV, species.mass)
+    # else — not a rescaling of `vp_s`, whose √2 exists only because
+    # `λ = v/ν` was the route to D. Both are Maxwellian moments and they differ by
+    # √2, which is exactly the size of the error a shared ratio produced here.
+    vm_s = maxwellian_mean_speed.(pla.Ti_eV, species.mass)
     collisional = DiffusionChannel(
-        v_p, λ_para, zero.(v_p), zero.(v_p);
-        v̄_para = v̄_p, v̄_perp = zero.(v_p)
+        vp_s, λ_para, zero.(vp_s), zero.(vp_s);
+        vm_para = vm_s, vm_perp = zero.(vp_s)
     )
 
     # `bohm_charge_scaling = false` hands the channel Z = 1 instead of the species
@@ -320,7 +320,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         bohm = DiffusionChannel(
             bohm.v_para, bohm.λ_para, bohm.v_perp,
             (@. ifelse(isfinite(bohm.λ_perp), bohm.λ_perp, zero(FT)));
-            v̄_para = bohm.v̄_para, v̄_perp = bohm.v̄_perp
+            vm_para = bohm.vm_para, vm_perp = bohm.vm_perp
         )
     end
     if tp.Dperp0 > zero(FT)
@@ -330,7 +330,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         bohm = DiffusionChannel(
             bohm.v_para, bohm.λ_para, bohm.v_perp,
             (@. bohm.λ_perp + ifelse(bohm.v_perp > 0, 2 * tp.Dperp0 / bohm.v_perp, zero(FT)));
-            v̄_para = bohm.v̄_para, v̄_perp = bohm.v̄_perp
+            vm_para = bohm.vm_para, vm_perp = bohm.vm_perp
         )
     end
 
@@ -353,7 +353,7 @@ const ION_MECHANISMS = ("collisional", "Bohm", "turbulent ExB")
 _finite_channel(ch::DiffusionChannel) =
     all(isfinite, ch.v_para) && all(isfinite, ch.λ_para) &&
     all(isfinite, ch.v_perp) && all(isfinite, ch.λ_perp) &&
-    all(isfinite, ch.v̄_para) && all(isfinite, ch.v̄_perp)
+    all(isfinite, ch.vm_para) && all(isfinite, ch.vm_perp)
 
 """
     ion_channel_directions(RP) -> Vector{Tuple}
@@ -732,7 +732,7 @@ bulk_ion_charge(RP::RAPID) =
 The mass of the ion the plasma is made of [kg], from the declared species.
 
 Sibling of [`bulk_ion_charge`](@ref), and for the same reason: the transport
-channels already scale `v_p`, the Coulomb collisionality and the Bohm step from
+channels already scale the most probable speed, the Coulomb collisionality and the Bohm step from
 `species.mass`, so anything else that needs an ion mass has to take it from the
 same place or the two describe different plasmas. `ν_ii` and the closed-surface
 mass integral read `config.constants.mi` before this, which was correct only

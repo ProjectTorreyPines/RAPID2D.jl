@@ -17,26 +17,83 @@
 # D/(2Δx), is what happens when the discarded λ is silently replaced by the grid
 # spacing.
 
+# ── Speed conventions ───────────────────────────────────────────────────────
+#
+# Four speeds get called "the thermal speed" in the literature; three are used
+# here. Each has ONE definition, ONE function that computes it, and ONE variable
+# stem that carries it — so a call site names the moment and the arithmetic under
+# it stays readable:
+#
+#   function                        var    formula    ×√(T/m)  what it is
+#   ──────────────────────────────  ─────  ────────   ───────  ───────────────────
+#   maxwellian_thermal_speed        vth_*  √(T/m)      1.000   √⟨v_z²⟩, ONE compt.
+#   maxwellian_most_probable_speed  vp_*   √(2T/m)     1.414   peak of f(|v|)
+#   maxwellian_mean_speed           vm_*   √(8T/πm)    1.596   ⟨|v|⟩, mean SPEED
+#   (rms √⟨v²⟩ — not used here)     —      √(3T/m)     1.732
+#
+# WHICH ONE IS RIGHT is not a matter of taste. It follows from what the mechanism
+# supplies:
+#
+#   vth   λ was back-derived from a MEASURED D under D = ½vλ    (neutral gas)
+#   vp    D is built from a KNOWN RATE — ½vp² = T/m exactly, so
+#         D = ½vp²/ν = T/(mν) reproduces Einstein
+#   vm    anything CROSSING A SURFACE: ⅓vm isotropic diffusion, ½vm = ⟨|v_∥|⟩
+#         along one axis, ¼vm = ⟨v_nθ(v_n)⟩ one-sided at a wall
+#
+# A factor √2 between vth and vp was a live bug in this file's history. The rule
+# that settles it is derived in
+# `internal/docs/src/details/speed-and-composition.md`.
+#
+# All three take `(T_eV, m)` in eV and kg, return m/s, and guard `max(0, T)`: the
+# temperature equations are free to land microscopically below zero (−1.3e-61 was
+# observed), where `sqrt` raises a DomainError rather than returning NaN.
+
+"""
+    maxwellian_thermal_speed(T_eV, m) -> Float
+
+`√(T/m)` [m/s] — the rms of a **single** velocity component, `√⟨v_z²⟩`, and the
+scale appearing in `exp(−v_z²/2v_th²)`.
+
+The smallest of the three and the one most often meant by an unqualified "thermal
+speed", so the function name pins which moment is meant. Used where a
+step length was back-derived from a **measured** diffusivity under the
+`D = ½·v·λ` convention — the neutral gas channel.
+"""
+maxwellian_thermal_speed(T_eV, m) = sqrt(max(zero(T_eV), T_eV) * EE_GAS / m)
+
+"""
+    maxwellian_most_probable_speed(T_eV, m) -> Float
+
+`√(2T/m)` [m/s] — the **most probable** speed, the peak of `f(|v|) ∝ v²exp(−mv²/2T)`.
+
+Forced, not chosen, wherever a diffusivity is built from a **known collision
+rate**: `½·vp² = T/m` exactly, so `D = ½·vp²/ν = T/(mν)` reproduces Einstein.
+Any other moment here would need a different numerical prefactor, so the pair
+`(½, vp)` must be read and changed together.
+"""
+maxwellian_most_probable_speed(T_eV, m) = sqrt(2 * max(zero(T_eV), T_eV) * EE_GAS / m)
+
 """
     maxwellian_mean_speed(T_eV, m) -> Float
 
-Mean speed `v̄ = ⟨|v|⟩ = √(8T/πm)` [m/s] of a Maxwellian at `T_eV` with mass `m`.
+`⟨|v|⟩ = √(8T/πm)` [m/s] — the **mean speed**, and the only one of the three that
+is an observable rather than a convention.
 
-**This is what a wall needs, and it is a function of `(T, m)` alone.** A channel's
-own `v` is bookkeeping married to its `λ` so that `½vλ` reproduces `D`, and which
-split was chosen is a property of how the code obtained `D` — the collisional
-channel back-derives `λ = v/ν` from a collision frequency and lands on
-`v_p = √(2T/m)`; the gas channel back-derives `λ = 2D/v` from a measured
-diffusivity and lands on `√(T/m)`. Both are correct; neither is `v̄`. No single
-`v̄/v` ratio can serve them, so the ratio is not the thing to store.
+**Anything crossing a surface is a projection of `vm`,** with the coefficient
+saying which projection: `⅓vm` for isotropic 3-D diffusion, `½vm = ⟨|v_∥|⟩` along
+one axis, `¼vm = ⟨v_nθ(v_n)⟩` one-sided through a wall (Hertz–Knudsen).
 
-The `¼` that goes with it is not a magnetization correction and never was. The
-one-sided flux `∫f(v)·v_z·θ(v_z)d³v` factorizes to a 1D integral over the
-wall-normal component alone, and `∫₀^∞ v·f₁D(v)dv = ¼v̄` exactly. Magnetizing the
-plasma changes *which axis* is free — `ẑ` becomes `b̂` — so the `¼` survives and
-the field enters only as the projection `|b̂·n̂|` in [`channel_ceiling`](@ref).
+A channel's own `v` is bookkeeping married to its `λ` so that `½vλ` reproduces
+`D`; which split was chosen is a property of how the code obtained `D`. `vm` is
+not — it is fixed by `(T, m)` alone, so it is taken from `(T, m)` and never
+scaled from a channel's `v`. No single `vm/v` ratio could serve every channel,
+which is why the ratio is not the thing to store.
 
-`max(0, T)`: the temperature equations are free to land microscopically below zero.
+The `¼` is not a magnetization correction and never was. The one-sided flux
+`∫f(v)·v_z·θ(v_z)d³v` factorizes to a 1-D integral over the wall-normal component
+alone, and `∫₀^∞ v·f₁D(v)dv = ¼vm` exactly. Magnetizing the plasma changes *which
+axis* is free — `ẑ` becomes `b̂` — so the `¼` survives and the field enters only
+through the projection `|b̂·n̂|` in [`channel_ceiling`](@ref).
 """
 maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE_GAS / (π * m))
 
@@ -64,16 +121,24 @@ A diffusive channel, described by six per-node fields:
 
 - `v_para`, `λ_para`  speed and step **along** `b̂`, giving `D∥ = ½v∥λ∥`
 - `v_perp`, `λ_perp`  speed and step **across** `b̂`, giving `D⊥ = ½v⊥λ⊥`
-- `v̄_para`, `v̄_perp`  the speeds at which this mechanism **delivers to a wall**
+- `vm_para`, `vm_perp`  mean speeds — what this mechanism **delivers to a wall**
 
 All six are full `NR×NZ` fields: a channel's speed and step vary with the local
 plasma state, and the wall condition is evaluated cell by cell.
 
-`v̄` is carried rather than derived from `v` because it is not a function of `v` —
-see [`maxwellian_mean_speed`](@ref). For a thermal channel it is that function of
-`(T, m)`; for a channel that is not a Maxwellian at all — Bohm, ExB mixing — there
-is no theorem to appeal to and the value is a modelling choice, which is why every
-construction site has to state it rather than inherit one.
+**`v_para`/`v_perp` and `vm_para`/`vm_perp` are different kinds of
+quantity, which is why they are named differently.** The first pair is bookkeeping:
+only the product `½vλ = D` is physical, so a channel may split it however its
+derivation forced — rescale `v` and `λ` follows, leaving `D` untouched. The second
+pair is an observable, `⟨|v|⟩` of the actual distribution, fixed by `(T, m)` and
+not free to be chosen. Calling both of them `v` is what once let a `√(8/π)` be
+applied to the wrong one.
+
+`vm_*` is carried rather than derived from `v_*` because it is not a function
+of it — see [`maxwellian_mean_speed`](@ref). For a thermal channel it is that
+function of `(T, m)`; for a channel that is not a Maxwellian at all — Bohm, ExB
+mixing — there is no theorem to appeal to and the value is a modelling choice,
+which is why every construction site has to state it rather than inherit one.
 
 `v_para = 0` marks a channel with no parallel transport — Bohm and other
 cross-field mechanisms. Such a channel contributes nothing at a wall the field
@@ -89,28 +154,28 @@ struct DiffusionChannel{FT <: AbstractFloat} <: TransportChannel{FT}
     λ_para::Matrix{FT}
     v_perp::Matrix{FT}
     λ_perp::Matrix{FT}
-    v̄_para::Matrix{FT}
-    v̄_perp::Matrix{FT}
+    vm_para::Matrix{FT}
+    vm_perp::Matrix{FT}
 
     function DiffusionChannel{FT}(
             v_para::Matrix{FT}, λ_para::Matrix{FT},
             v_perp::Matrix{FT}, λ_perp::Matrix{FT},
-            v̄_para::Matrix{FT}, v̄_perp::Matrix{FT}
+            vm_para::Matrix{FT}, vm_perp::Matrix{FT}
         ) where {FT <: AbstractFloat}
         sz = size(v_para)
-        all(==(sz), (size(λ_para), size(v_perp), size(λ_perp), size(v̄_para), size(v̄_perp))) ||
+        all(==(sz), (size(λ_para), size(v_perp), size(λ_perp), size(vm_para), size(vm_perp))) ||
             throw(DimensionMismatch("all six channel fields must share a size"))
-        return new{FT}(v_para, λ_para, v_perp, λ_perp, v̄_para, v̄_perp)
+        return new{FT}(v_para, λ_para, v_perp, λ_perp, vm_para, vm_perp)
     end
 end
 
 """
-    DiffusionChannel(v_para, λ_para, v_perp, λ_perp; v̄_para, v̄_perp)
+    DiffusionChannel(v_para, λ_para, v_perp, λ_perp; vm_para, vm_perp)
 
 Build a channel from any mix of fields and scalars, expanded to their common
 broadcast shape.
 
-`v̄_para` and `v̄_perp` are **required keywords**, not defaulted, because there is
+`vm_para` and `vm_perp` are **required keywords**, not defaulted, because there is
 no default that is right for more than one channel. A default would have to be
 `v̄ = c·v`, and the whole reason this field exists is that no such `c` exists.
 
@@ -124,8 +189,8 @@ At least one argument must be a matrix — a channel lives on the `NR×NZ` grid,
 an all-scalar call is more likely a mistake than a request for a 0-dimensional
 channel.
 """
-function DiffusionChannel(v_para, λ_para, v_perp, λ_perp; v̄_para, v̄_perp)
-    args = (v_para, λ_para, v_perp, λ_perp, v̄_para, v̄_perp)
+function DiffusionChannel(v_para, λ_para, v_perp, λ_perp; vm_para, vm_perp)
+    args = (v_para, λ_para, v_perp, λ_perp, vm_para, vm_perp)
     ax = Broadcast.combine_axes(args...)
     length(ax) == 2 || throw(
         ArgumentError(
@@ -185,7 +250,7 @@ field lies *in* the wall to ±1 when it meets the wall head-on,
     v̄_n = √( v̄⊥² + (v̄∥² − v̄⊥²)·b_n² )
 ```
 
-taking the channel's own `v̄_para`/`v̄_perp` — see [`maxwellian_mean_speed`](@ref)
+taking the channel's own `vm_para`/`vm_perp` — see [`maxwellian_mean_speed`](@ref)
 for why those are carried rather than scaled from `v_para`/`v_perp`.
 
 **The ceiling is a speed, not a tensor projection.** The supply side of the Robin
@@ -207,7 +272,7 @@ function channel_ceiling(ch::DiffusionChannel{FT}, bR, bZ, outward::Tuple{Int, I
     b_n_sq = @. (bR * nR + bZ * nZ)^2
     # max(0, ·) guards a b̂ that is not exactly normalised; b_n² ≤ 1 analytically
     return @. FT(0.25) * sqrt(
-        max(zero(FT), ch.v̄_perp^2 + (ch.v̄_para^2 - ch.v̄_perp^2) * b_n_sq)
+        max(zero(FT), ch.vm_perp^2 + (ch.vm_para^2 - ch.vm_perp^2) * b_n_sq)
     )
 end
 
@@ -309,21 +374,21 @@ function mixture_channel(
     # can carry different v̄/v ratios, and the wall flux Σₛ nₛ·¼v̄ₛ is linear in v̄,
     # so the density-weighted mean is what reproduces it — the same argument that
     # makes the mixture exact at b_n = 0 and 1.
-    v̄_para = zeros(FT, sz)
-    v̄_perp = zeros(FT, sz)
+    vm_para = zeros(FT, sz)
+    vm_perp = zeros(FT, sz)
     for (ch, w) in zip(channels, weights)
         w̃ = @. ifelse(empty, one(FT), FT(w))
         @. v_para += w̃ * ch.v_para
         @. v_perp += w̃ * ch.v_perp
-        @. v̄_para += w̃ * ch.v̄_para
-        @. v̄_perp += w̃ * ch.v̄_perp
+        @. vm_para += w̃ * ch.vm_para
+        @. vm_perp += w̃ * ch.vm_perp
         @. D_para += w̃ * FT(0.5) * ch.v_para * ch.λ_para
         @. D_perp += w̃ * FT(0.5) * ch.v_perp * ch.λ_perp
     end
     @. v_para /= norm
     @. v_perp /= norm
-    @. v̄_para /= norm
-    @. v̄_perp /= norm
+    @. vm_para /= norm
+    @. vm_perp /= norm
     @. D_para /= norm
     @. D_perp /= norm
 
@@ -331,7 +396,7 @@ function mixture_channel(
     # do, and then every Dₛ = ½vₛλₛ vanishes too. λ = 0 is the consistent value.
     λ_para = @. ifelse(v_para > zero(FT), 2 * D_para / v_para, zero(FT))
     λ_perp = @. ifelse(v_perp > zero(FT), 2 * D_perp / v_perp, zero(FT))
-    return DiffusionChannel{FT}(v_para, λ_para, v_perp, λ_perp, v̄_para, v̄_perp)
+    return DiffusionChannel{FT}(v_para, λ_para, v_perp, λ_perp, vm_para, vm_perp)
 end
 
 """
@@ -391,32 +456,38 @@ function turbulent_ExB_channel(E_pol, B_tot, L_mixing, f_para, f_perp)
     # choice, not a theorem. It is written out here rather than inherited from a
     # shared constant so that the choice is visible where it is made. A cross-field
     # delivery model would replace it; see internal_docs/src/notes/TODO/wall-boundary-conditions.md.
-    v̄_E = @. sqrt(8 / π) * v_E
+    vm_E = @. sqrt(8 / π) * v_E
     return DiffusionChannel(
         v_E, (@. f_para * L_mixing), v_E, (@. f_perp * L_mixing);
-        v̄_para = v̄_E, v̄_perp = v̄_E
+        vm_para = vm_E, vm_perp = vm_E
     )
 end
 
 """
-    parallel_collisional_channel(v_p, D_para)
+    parallel_collisional_channel(vp_s, D_para)
 
-Collisional transport along `B`: `D∥ = ½·v_p²/ν`, so `λ∥ = 2D∥/v_p = v_p/ν`.
+Collisional transport along `B`: `D∥ = ½·v²/ν`, so `λ∥ = 2D∥/v = v/ν`.
+
+`vp_s` is contracted to be [`maxwellian_most_probable_speed`](@ref),
+`√(2T/m)` — that is the only moment for which `½v²/ν` equals `T/(mν)`, so it is
+forced by the derivation rather than chosen. The parameter is named for the moment
+so that a caller passing `√(T/m)` is making a visible mistake rather than a silent
+factor of `√2`.
 
 `v_perp = 0` — streaming along the field contributes nothing across it, and so
 nothing at a wall the field points straight into. That is also why a parallel and
 a cross-field mechanism are two channels rather than one anisotropic channel: they
 do not share a speed, so their ceilings add.
 """
-function parallel_collisional_channel(v_p, D_para)
-    # `v_p` is contracted to be the Maxwellian MOST PROBABLE speed √(2T/m) — that is
-    # what makes ½v_p²/ν equal T/(mν) — so v̄/v_p = √(8/π)/√2 = √(4/π) = 1.128 here,
-    # and NOT the √(8/π) that applies to a channel declaring √(T/m). Both are
-    # Maxwellian; they differ only in which speed the channel chose to name.
-    v̄ = @. sqrt(4 / π) * v_p
+function parallel_collisional_channel(vp_s, D_para)
+    # ⟨|v|⟩/√(2T/m) = √(8/π)/√2 = √(4/π) = 1.128 — NOT the √(8/π) = 1.596 that
+    # applies to a channel declaring √(T/m). Both are Maxwellian; they differ only
+    # in which moment the channel chose to name.
+    vm_s = @. sqrt(4 / π) * vp_s
     return DiffusionChannel(
-        v_p, (@. 2 * D_para / v_p), zero.(v_p), zero.(v_p);
-        v̄_para = v̄, v̄_perp = zero.(v_p)
+        vp_s, (@. 2 * D_para / vp_s),
+        zero.(vp_s), zero.(vp_s);
+        vm_para = vm_s, vm_perp = zero.(vp_s)
     )
 end
 
@@ -466,6 +537,6 @@ function bohm_channel(Te_eV, B, m_i, Z::Integer = 1)
     # model; the Bohm sheath criterion would argue for `c_s` itself, an 8× move.
     return DiffusionChannel(
         zero.(c_s), zero.(c_s), (@. c_s / 8), ρ_s;
-        v̄_para = zero.(c_s), v̄_perp = (@. sqrt(8 / π) * c_s / 8)
+        vm_para = zero.(c_s), vm_perp = (@. sqrt(8 / π) * c_s / 8)
     )
 end

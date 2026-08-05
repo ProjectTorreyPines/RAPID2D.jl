@@ -823,7 +823,7 @@ Contains boolean flags that control various aspects of the simulation.
     )
     limit_flux::NamedTuple = (
         state = true,                         # Enable flux limiting
-        factor = 0.25,                          # Limiting factor (Deff = min(D_SH, factor*vth*Ln))
+        factor = 0.25,                          # Limiting factor (Deff = min(D_SH, factor*speed*Ln))
     )
 
     # Numerical settings
