@@ -2,23 +2,24 @@
 #
 # A molecule's free path is terminated by whichever happens first — a collision
 # with another molecule, destruction by electron impact, or arrival at the wall.
-# The three are summed as rates (Matthiessen), so the shortest one dominates,
-# with v ≡ vth = √(T/m) throughout this file — the moment its λ is back-derived
-# in. The wall's ¼vm is a different moment; see the contract in
-# `transport_channels.jl`:
+# They are composed as DIFFUSIVITIES — each mechanism entering through the form it
+# is known in — so the shortest path dominates and no conversion is needed:
 #
-#     1/λ = v/(2·D_elastic)  +  ν_iz/v  +  1/L
-#            ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾      ‾‾‾‾‾‾‾‾‾     ‾‾‾
-#            gas-gas (NIST)        ionization    wall (Knudsen)
+#     1/D = 1/D_elastic  +  m·ν_iz/T  +  3/(vm·L)
+#            ‾‾‾‾‾‾‾‾‾‾‾     ‾‾‾‾‾‾‾‾‾     ‾‾‾‾‾‾‾‾
+#            gas-gas         Einstein      wall (Knudsen, D_K = ⅓·vm·L)
+#            (NIST, as-is)   (a RATE)      (a LENGTH)
 #
-#     D = ½·v·λ
+# The ⅓ is the isotropic projection ⟨v_z²/|v|⟩ = vm/3; a magnetized ion gets ½
+# instead, from ⟨|v_∥|⟩ = vm/2. Derived in
+# `internal/docs/src/details/speed-and-composition.md`.
 #
 # **Why the wall term is not optional.** At tokamak breakdown pressures the
 # gas-gas path is METRES: 4.2 m at 2e-5 Torr, 2.8 m at 4 mPa, against a vessel of
 # order 1 m. The flow there is free-molecular, not diffusive, and an uncapped D
-# makes the diffusive crossing time L²/D fall BELOW the ballistic floor L/v —
+# makes the diffusive crossing time L²/D fall BELOW the ballistic floor L/vm —
 # transport faster than free streaming, which is impossible. Counting the wall as
-# a collision channel recovers Knudsen diffusion, D → ½·v·L, i.e. crossing at
+# a collision channel recovers Knudsen diffusion, D → ⅓·vm·L, i.e. crossing at
 # roughly the thermal transit rate. It also removes the n_gas → 0 singularity on
 # burnt-out cells without any NaN scrubbing.
 #
@@ -68,7 +69,7 @@ const KB_J_PER_K = 1.380649e-23         # CODATA Boltzmann constant [J/K]
 # hard-sphere mean free path would give √T and fall ~2.5× low across the fit's
 # span. Feeding the measured fit into the elastic channel leaves both limits
 # correct on their own terms: elastic-dominated recovers the measured D(T), and
-# wall-dominated tends to ½·v·L, which scales as √T because free streaming is
+# wall-dominated tends to ⅓·vm·L, which scales as √T because free streaming is
 # what it describes.
 #
 # Our T_gas (0.026 eV ≈ 302 K) sits just past the fit's 115-295 K window — the
@@ -107,14 +108,36 @@ Isotropic diffusivity [m²/s] of the neutral H2 fill.
 - `L_char`   characteristic vessel dimension [m]; `Inf` disables the wall term
 
 Pass `ν_iz = 0` and `L_char = Inf` to obtain the pure gas-gas value.
+
+The three mechanisms are composed as **diffusivities**, each entering through the
+form it is known in — a measurement stays a measurement, a rate stays a rate, a
+length stays a length:
+
+```
+    1/D = 1/D_elastic  +  m·ν_iz/T  +  3/(vm·L)
+          ‾‾‾‾‾‾‾‾‾‾‾     ‾‾‾‾‾‾‾‾‾     ‾‾‾‾‾‾‾‾
+          NIST, as-is     Einstein      Knudsen, D_K = ⅓·vm·L
+```
+
+The `⅓` is the isotropic projection `⟨v_z²/|v|⟩ = vm/3` — a molecule has no
+preferred axis, unlike a magnetized ion whose `½` comes from `⟨|v_∥|⟩ = vm/2`.
+Derived in `internal/docs/src/details/speed-and-composition.md`.
+
+`ν_iz` belongs here and is **not** double counting against the burn-out sink in
+`update_n_H2_gas_density!`. Absorption damps the *current* as well as the density
+— it appears in the first angular moment of the kinetic equation alongside
+scattering — which is the same reason neutron diffusion theory puts `Σ_a` in the
+transport cross section.
 """
 function neutral_gas_diffusivity(n_gas, T_gas_eV, ν_iz, L_char)
-    vth_g = maxwellian_thermal_speed(T_gas_eV, M_H2_GAS)
-    # measured elastic diffusivity, scaled to the local density, then inverted
-    # under this file's D = ½·vth_g·λ convention to give a rate
+    vm_g = maxwellian_mean_speed(T_gas_eV, M_H2_GAS)
+    # The measured elastic value enters as itself. n_gas → 0 sends it to Inf and
+    # so contributes 0 to the sum, which is what keeps a burnt-out cell finite.
     D_elastic = h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
-    inv_λ = vth_g / (2 * D_elastic) + ν_iz / vth_g + 1 / L_char
-    return 0.5 * vth_g / inv_λ
+    inv_D = 1 / D_elastic +
+        M_H2_GAS * ν_iz / (T_gas_eV * EE_GAS) +
+        (vm_g > 0 ? 3 / (vm_g * L_char) : oftype(vm_g, Inf))
+    return 1 / inv_D
 end
 
 """
@@ -123,28 +146,29 @@ end
 The same physics as `neutral_gas_diffusivity`, returned as the four numbers of the
 transport-channel basis instead of collapsed into one diffusivity.
 
-`neutral_gas_diffusivity` computes `λ` explicitly and then destroys it by
-returning `½·v·λ`. A diffusivity cannot state a wall condition — `D = ½vλ` is
-one equation in two unknowns, and the wall needs the *speed* — so this returns the
-pair rather than the product. Nothing new is modelled: `½·v_para·λ_para`
-reproduces `neutral_gas_diffusivity` exactly.
+A diffusivity cannot state a wall condition — `D = ½vλ` is one equation in two
+unknowns, and the wall needs the *speed* — so this returns the pair rather than
+the product. Nothing new is modelled: `½·v_para·λ_para` reproduces
+`neutral_gas_diffusivity` exactly.
 
 **Isotropic**, so `⊥ ≡ ∥`: a neutral molecule has no preferred axis. The three
-competing processes — elastic, ionization, wall — all happen at the same `v`,
-so they combine by Matthiessen *inside* `λ` and their kinetic ceiling is counted
-once, not summed.
+competing processes are composed as diffusivities and their kinetic ceiling is
+counted once, not summed — they are one channel, not three.
+
+`v_para == vm_para` here: with `D` the primitive, the channel's own speed has no
+convention left to choose, and `λ = 2D/vm` is a derived bookkeeping length rather
+than the physical mean free path (which is `3D/vm` for isotropic motion). Only the
+product `½vλ = D` and the separate `vm` are read downstream.
 """
 function neutral_gas_channel(n_gas, T_gas_eV, ν_iz, L_char)
-    vth_g = maxwellian_thermal_speed.(T_gas_eV, M_H2_GAS)
-    D_elastic = @. h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
-    inv_λ = @. vth_g / (2 * D_elastic) + ν_iz / vth_g + 1 / L_char
-    λ = @. 1 / inv_λ
-    # This channel declares v = vth, so its mean speed is √(8/π) times that — the
-    # value it has always contributed. Taken from (T, m) rather than scaled from
-    # `vth_g`, so a later change of convention here cannot move the wall.
     vm_g = maxwellian_mean_speed.(T_gas_eV, M_H2_GAS)
+    D_elastic = @. h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
+    inv_D = @. 1 / D_elastic + M_H2_GAS * ν_iz / (T_gas_eV * EE_GAS) +
+        ifelse(vm_g > 0, 3 / (vm_g * L_char), oftype(vm_g, Inf))
+    D = @. 1 / inv_D
+    λ = @. ifelse(vm_g > 0, 2 * D / vm_g, zero(vm_g))
     return DiffusionChannel(
-        vth_g, λ, vth_g, λ;
+        vm_g, λ, vm_g, λ;
         vm_para = vm_g, vm_perp = vm_g
     )
 end

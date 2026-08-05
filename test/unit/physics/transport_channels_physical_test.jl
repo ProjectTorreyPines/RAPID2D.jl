@@ -8,11 +8,10 @@
 
 @testitem "Channel adapter: the H2 gas round-trips its own diffusivity" begin
     using RAPID2D: neutral_gas_channel, neutral_gas_diffusivity,
-        maxwellian_thermal_speed, M_H2_GAS, DiffusionChannel
+        maxwellian_mean_speed, M_H2_GAS, DiffusionChannel
 
     # The gas is one channel with three competing loss processes — elastic,
-    # ionization, wall — all traversed at the SAME speed, so they combine by
-    # Matthiessen inside λ and the ceiling is counted once.
+    # ionization, wall — composed as diffusivities, so the ceiling is counted once.
     for (n, T, νiz, L) in (
             (6.4e17, 0.026, 0.0, 1.2),
             (1.0e15, 0.026, 1.0e4, 1.2),
@@ -24,13 +23,13 @@
         # ½·v·λ must be the diffusivity the solver already computes — exactly
         @test only(@. 0.5 * ch.v_para * ch.λ_para) ≈
             neutral_gas_diffusivity(n, T, νiz, L) rtol = 1.0e-14
-        # the speed is the D-convention one this module already defines…
-        @test only(ch.v_para) ≈ maxwellian_thermal_speed(T, M_H2_GAS) rtol = 1.0e-14
-        # …and the wall speed is ⟨|v|⟩, which for THIS channel's √(T/m) convention
-        # happens to be √(8/π) times it. That coincidence is why one shared ratio
-        # was right here and wrong for every collisional channel; the value below
-        # is unchanged by carrying v̄ explicitly, and this pins that.
-        @test only(ch.vm_para) ≈ sqrt(8 / π) * maxwellian_thermal_speed(T, M_H2_GAS) rtol = 1.0e-14
+        # With D the primitive there is no second speed convention left to pick:
+        # the channel's own v IS the mean speed, and λ = 2D/vm is derived from it.
+        # The pair used to disagree — v = √(T/m) against a wall reading √(8T/πm) —
+        # and one shared ratio between them was the √2 defect this basis exists to
+        # prevent. `==`, not `≈`: they must be the same field, not merely close.
+        @test only(ch.vm_para) ≈ maxwellian_mean_speed(T, M_H2_GAS) rtol = 1.0e-14
+        @test ch.v_para == ch.vm_para
         @test ch.vm_perp == ch.vm_para
         # a neutral gas has no preferred axis
         @test ch.v_perp == ch.v_para
