@@ -390,7 +390,7 @@ function turbulent_ExB_channel(E_pol, B_tot, L_mixing, f_para, f_perp)
     # about how fast it delivers to a wall and `v̄ = √(8/π)·v_E` is a modelling
     # choice, not a theorem. It is written out here rather than inherited from a
     # shared constant so that the choice is visible where it is made. A cross-field
-    # delivery model would replace it; see claudedocs/TODO/wall-boundary-conditions.md.
+    # delivery model would replace it; see internal_docs/src/notes/TODO/wall-boundary-conditions.md.
     v̄_E = @. sqrt(8 / π) * v_E
     return DiffusionChannel(
         v_E, (@. f_para * L_mixing), v_E, (@. f_perp * L_mixing);

@@ -11,7 +11,7 @@
 # This branch resolves that by carrying ONE species, so all three collapse onto
 # its declared charge and no derived field is needed to hold them apart. The
 # multi-species forms — and why a stored average was the wrong shape — are in
-# claudedocs/TODO/ion-inventory-multi-species.md.
+# internal_docs/src/notes/TODO/ion-inventory-multi-species.md.
 
 @testsnippet ChargeCase begin
     "A discharge-shaped setup, ions free to evolve."

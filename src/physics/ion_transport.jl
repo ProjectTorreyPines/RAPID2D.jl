@@ -682,7 +682,7 @@ is silently wrong rather than loudly missing:
   - `γ_2nd_electron` is one number, so only column 1 yields secondary electrons;
   - the ion charge density is `n·Z` from this species, and would have to become
     `Σ_s n_s Z_s` at every site that builds a current (see
-    `claudedocs/TODO/ion-inventory-multi-species.md`).
+    `internal_docs/src/notes/TODO/ion-inventory-multi-species.md`).
 
 `plasma.ni` IS this species' density — not a total over species, and not a
 quantity a second field mirrors.

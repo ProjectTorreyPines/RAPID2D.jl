@@ -4,10 +4,14 @@ snaps2D.*mp4
 coverage/
 *.cov
 
-# Working notes, design drafts and issue write-ups produced while developing with
-# Claude. Kept in the checkout so they stay next to the code they describe, but not
-# part of the published repository.
-claudedocs/
+# Internal documentation: working notes, design drafts, issue write-ups and the
+# physics reference pages that are not finished enough to publish. Kept in the
+# checkout so they stay next to the code they describe, but not part of the
+# published repository. Builds to a local Documenter site (internal_docs/build,
+# also ignored) — see internal_docs/make.jl. A page graduates by being moved to a
+# tracked docs/, which is a move rather than a rewrite because the layout already
+# matches Documenter's.
+internal_docs/
 
 # Transient shadow tree built by test/runtests_parallel.jl (ReTestItems parallel runner).
 # Created and removed within a single run; only survives a hard kill. PID-suffixed so
