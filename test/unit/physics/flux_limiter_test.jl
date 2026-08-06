@@ -128,7 +128,7 @@ end
 
 @testsnippet LimiterRun begin
     using RAPID2D: update_transport_quantities!, maxwellian_mean_speed,
-        calculate_para_grad_of_scalar_F, flux_limited_diffusivity
+        calculate_para_grad_of_scalar_F, calculate_grad_of_scalar_F, flux_limited_diffusivity
 
     "A walled discharge-shaped case with an elongated blob and a settable field."
     function limiter_case(;
@@ -152,29 +152,13 @@ end
             # Elongated along R̂, so ∇n has both components and b̂·∇n vanishes on a
             # curve that cuts through live gradient rather than along a flat.
             #
-            # σ_Z is SOLVED, not guessed. A centred finite difference of a smooth
-            # Gaussian crosses zero BETWEEN grid nodes for generic widths — a scan of
-            # ~4500 (σ_R, σ_Z) pairs (0.02:0.005:0.35 each) got no closer than
-            # |b̂·∇n|/scale ≈ 1e-7, five orders of magnitude short of the "D is
-            # untouched..." testitem's 1e-10 gate, so σ_R = 0.20, σ_Z = 0.05 (the first
-            # values tried here) leaves its `tangent` set empty. This σ_Z instead puts
-            # the zero-crossing exactly on the grid nodes 4 cells in +R̂, 1 cell in -Ẑ
-            # from the peak (and, by the blob's point symmetry, the mirrored pair 4/-1
-            # from it): the root of `bR·sinh(2a) = bZ·sinh(2b)`,
-            # `a = (dR/(√2·σ_R))²`, `b = (dR/(√2·σ_Z))²`, `dR` the grid spacing,
-            # `(bR, bZ)` the field below. Lands at |b̂·∇n|/scale = 0 and 1.2e-16 at
-            # those two nodes — float noise, not a near miss. Sensitive to `dR`
-            # (hence NR/NZ), the wall box, and `(bR, bZ)` below: if any of those move,
-            # re-solve rather than nudge the digits.
-            #
             # Written IN-WALL ONLY, so `initialize!`'s uniform exterior survives. That
             # exterior is the subject of the "flat region is untouched" testitem: an
             # analytic blob evaluated over the whole grid is never bit-exactly flat
             # anywhere, so writing it everywhere would leave that test nothing to assert on.
             R = RP.G.R2D
             Z = RP.G.Z2D
-            σ_Z = 0.11453380557968938
-            blob = @. 1.0e18 * exp(-((R - 1.5)^2 / (2 * 0.2^2) + Z^2 / (2 * σ_Z^2))) + 1.0e6
+            blob = @. 1.0e18 * exp(-((R - 1.5)^2 / (2 * 0.2^2) + Z^2 / (2 * 0.05^2))) + 1.0e6
             vec(RP.plasma.ne)[RP.G.nodes.in_wall_nids] .= vec(blob)[RP.G.nodes.in_wall_nids]
         else
             RP.plasma.ne .= ne
@@ -447,24 +431,48 @@ end
 
 @testitem "Limiter 2-D: D is untouched where the field runs along a density contour" setup = [LimiterRun] begin
     # The regression test for the guard, in the geometry where 1-D cannot see it.
-    on = limiter_case(; oblique = true, limit = true)
-    off = limiter_case(; oblique = true, limit = false)
+    #
+    # In 1-D the inverted guard is a provable no-op: D is zeroed exactly where the
+    # gradient is zero, and D only ever enters multiplied by that gradient. That
+    # argument dies in the anisotropic tensor, where the limiter reads the PARALLEL
+    # projection b̂·∇n — which can vanish while the full gradient is alive.
+    #
+    # Constructed so that vanishing is EXACT rather than nearly so: the density varies
+    # along Ẑ only, so ∂n/∂R is a difference of equal values and is exactly 0.0 at
+    # every node; pointing b̂ along R̂ then makes b̂·∇n = 1·0 + 0·∂n/∂Z identically zero
+    # while |∇n| stays alive everywhere. Hunting instead for isolated nodes that happen
+    # to sit on a tangent CURVE cannot be made exact — the curve generically passes
+    # between grid nodes, so it would mean fitting the fixture's widths to the mesh and
+    # re-fitting them whenever NR, NZ, the wall box or b̂ moved.
+    #
+    # D_RZ = (D∥ − D⊥)·b_R·b_Z is zero here because b̂ lies on an axis. That is fine:
+    # the cross term is the subject of the next testitem, which uses the oblique
+    # fixture. Exactness and obliqueness pull in opposite directions, so they are
+    # asserted separately rather than compromised into one weaker test.
+    function tangent_case(limit)
+        RP = limiter_case(; limit)
+        @. RP.plasma.ne = 1.0e18 * exp(-RP.G.Z2D^2 / (2 * 0.1^2)) + 1.0e6
+        RP.plasma.ni .= RP.plasma.ne
+        RP.fields.bR .= 1.0
+        RP.fields.bZ .= 0.0
+        RP.fields.bϕ .= 0.0
+        update_transport_quantities!(RP)
+        return RP
+    end
+    on, off = tangent_case(true), tangent_case(false)
+
     g = calculate_para_grad_of_scalar_F(on, on.plasma.ne; upwind = false)
-
-    # the test is only meaningful if such nodes exist: b̂·∇n ≈ 0 while ∇n ≠ 0
-    gR, gZ = RAPID2D.calculate_grad_of_scalar_F(on, on.plasma.ne; upwind = false)
+    gR, gZ = calculate_grad_of_scalar_F(on, on.plasma.ne; upwind = false)
     full = @. sqrt(gR^2 + gZ^2)
-    inw = on.G.nodes.in_wall_nids
-    scale = maximum(vec(full)[inw])
-    tangent = [k for k in inw if abs(vec(g)[k]) < 1.0e-10 * scale && vec(full)[k] > 0.01 * scale]
-    @test !isempty(tangent)
 
-    # where the field runs along a contour there is no parallel flux to limit, so D
-    # must be exactly the uncapped value — the old guard forced 0 here
-    @test vec(on.transport.Dpara)[tangent] ≈ vec(off.transport.Dpara)[tangent] rtol = 1.0e-12
-    # and no in-wall node with density is left at D = 0
-    populated = [k for k in inw if vec(on.plasma.ne)[k] > 1.0e10]
-    @test all(>(0), vec(on.transport.Dpara)[populated])
+    # the construction holds: parallel projection dead everywhere, full gradient alive
+    @test all(iszero, g)
+    @test all(>(0), full)
+    # so the limiter has nothing to cap, and must return D untouched — the old guard
+    # forced 0 at every one of these nodes instead
+    @test on.transport.Dpara == off.transport.Dpara
+    # not vacuous: the field being compared is substantial, not zero on both sides
+    @test maximum(on.transport.Dpara) > 1.0e3
 end
 
 @testitem "Limiter 2-D: the oblique field genuinely exercises the cross term" setup = [LimiterRun] begin
