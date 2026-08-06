@@ -149,11 +149,17 @@ end
         RP.plasma.Te_eV .= Te
         RP.plasma.Ti_eV .= 1.0
         if ne === nothing
-            # elongated along R̂, so ∇n has both components and b̂·∇n vanishes on a
-            # curve that cuts through live gradient rather than along a flat
+            # Elongated along R̂, so ∇n has both components and b̂·∇n vanishes on a
+            # curve that cuts through live gradient rather than along a flat.
+            #
+            # Written IN-WALL ONLY, so `initialize!`'s uniform exterior survives. That
+            # exterior is the subject of the "flat region is untouched" testitem: an
+            # analytic blob evaluated over the whole grid is never bit-exactly flat
+            # anywhere, so writing it everywhere would leave that test nothing to assert on.
             R = RP.G.R2D
             Z = RP.G.Z2D
-            @. RP.plasma.ne = 1.0e18 * exp(-((R - 1.5)^2 / (2 * 0.2^2) + Z^2 / (2 * 0.05^2))) + 1.0e6
+            blob = @. 1.0e18 * exp(-((R - 1.5)^2 / (2 * 0.2^2) + Z^2 / (2 * 0.05^2))) + 1.0e6
+            vec(RP.plasma.ne)[RP.G.nodes.in_wall_nids] .= vec(blob)[RP.G.nodes.in_wall_nids]
         else
             RP.plasma.ne .= ne
         end
@@ -201,6 +207,11 @@ end
     # unchanged. Asserting "identical with the limiter on and off" pins the guard
     # removal exactly, and is a stronger statement than measuring the difference.
     #
+    # The comparison is over the nodes that are BIT-EXACTLY flat, not over "outside the
+    # wall": a node one cell outside still sees the in-wall blob through its centred
+    # stencil, so the two sets are not the same and only the first one is what the
+    # claim is about.
+    #
     # This is a real behaviour change and it is the one to watch: electron density is
     # diffused through the ordinary operator and only zeroed outside the wall
     # afterwards (physics.jl:742), so a lagged D_Fick out there lets the implicit
@@ -208,11 +219,14 @@ end
     # solve before it is deleted and booked as wall loss.
     on = limiter_case(; limit = true)
     off = limiter_case(; limit = false)
-    out = setdiff(1:length(on.plasma.ne), on.G.nodes.in_wall_nids)
-    @test !isempty(out)
-    @test vec(on.transport.Dpara)[out] == vec(off.transport.Dpara)[out]
-    # and it is not trivially zero on both sides
-    @test any(>(0), vec(on.transport.Dpara)[out])
+    g = calculate_para_grad_of_scalar_F(on, on.plasma.ne; upwind = false)
+    flat = findall(iszero, vec(g))
+
+    # the assertion is only meaningful if such nodes exist, and in quantity
+    @test length(flat) > 100
+    @test vec(on.transport.Dpara)[flat] == vec(off.transport.Dpara)[flat]
+    # and it is not trivially zero on both sides, which would satisfy `==` vacuously
+    @test any(>(0), vec(on.transport.Dpara)[flat])
 end
 
 @testitem "Limiter wiring: D never depends on the sign of the flow" setup = [LimiterRun] begin
@@ -222,13 +236,27 @@ end
     # no business reading the flow direction, and the operator it is bounding uses
     # centred face gradients anyway. Passing upwind = false at that one call site is
     # what this asserts.
-    fwd = limiter_case()
-    rev = limiter_case()
-    rev.plasma.ue_para .= .-rev.plasma.ue_para
-    rev.plasma.ueR .= .-rev.plasma.ueR
-    rev.plasma.ueZ .= .-rev.plasma.ueZ
-    update_transport_quantities!(rev)
+    #
+    # `ueR`/`ueZ` are seeded directly rather than through `ue_para`: they are what the
+    # gradient routine reads, and `update_transport_quantities!` recomputes them from
+    # `ue_para` only after the limiter has already run. Seeding `ue_para` alone would
+    # leave the limiter looking at zeros and the test would assert nothing.
+    function with_flow(sign)
+        RP = limiter_case()
+        RP.plasma.ueR .= sign * 1.0e5
+        RP.plasma.ueZ .= sign * 1.0e5
+        update_transport_quantities!(RP)
+        return RP
+    end
+    fwd, rev = with_flow(+1), with_flow(-1)
     @test fwd.transport.Dpara ≈ rev.transport.Dpara rtol = 1.0e-14
+
+    # and prove the fixture can tell the difference — under the upwind stencil the two
+    # gradients genuinely differ, so the assertion above is doing real work rather than
+    # comparing two copies of the same number
+    gf = calculate_para_grad_of_scalar_F(fwd, fwd.plasma.ne; upwind = true)
+    gr = calculate_para_grad_of_scalar_F(rev, rev.plasma.ne; upwind = true)
+    @test gf != gr
 end
 
 @testitem "Limiter wiring: Lₙ reads the raw density the solver transports" setup = [LimiterRun] begin
