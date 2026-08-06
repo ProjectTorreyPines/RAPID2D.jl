@@ -152,13 +152,29 @@ end
             # Elongated along R̂, so ∇n has both components and b̂·∇n vanishes on a
             # curve that cuts through live gradient rather than along a flat.
             #
+            # σ_Z is SOLVED, not guessed. A centred finite difference of a smooth
+            # Gaussian crosses zero BETWEEN grid nodes for generic widths — a scan of
+            # ~4500 (σ_R, σ_Z) pairs (0.02:0.005:0.35 each) got no closer than
+            # |b̂·∇n|/scale ≈ 1e-7, five orders of magnitude short of the "D is
+            # untouched..." testitem's 1e-10 gate, so σ_R = 0.20, σ_Z = 0.05 (the first
+            # values tried here) leaves its `tangent` set empty. This σ_Z instead puts
+            # the zero-crossing exactly on the grid nodes 4 cells in +R̂, 1 cell in -Ẑ
+            # from the peak (and, by the blob's point symmetry, the mirrored pair 4/-1
+            # from it): the root of `bR·sinh(2a) = bZ·sinh(2b)`,
+            # `a = (dR/(√2·σ_R))²`, `b = (dR/(√2·σ_Z))²`, `dR` the grid spacing,
+            # `(bR, bZ)` the field below. Lands at |b̂·∇n|/scale = 0 and 1.2e-16 at
+            # those two nodes — float noise, not a near miss. Sensitive to `dR`
+            # (hence NR/NZ), the wall box, and `(bR, bZ)` below: if any of those move,
+            # re-solve rather than nudge the digits.
+            #
             # Written IN-WALL ONLY, so `initialize!`'s uniform exterior survives. That
             # exterior is the subject of the "flat region is untouched" testitem: an
             # analytic blob evaluated over the whole grid is never bit-exactly flat
             # anywhere, so writing it everywhere would leave that test nothing to assert on.
             R = RP.G.R2D
             Z = RP.G.Z2D
-            blob = @. 1.0e18 * exp(-((R - 1.5)^2 / (2 * 0.2^2) + Z^2 / (2 * 0.05^2))) + 1.0e6
+            σ_Z = 0.11453380557968938
+            blob = @. 1.0e18 * exp(-((R - 1.5)^2 / (2 * 0.2^2) + Z^2 / (2 * σ_Z^2))) + 1.0e6
             vec(RP.plasma.ne)[RP.G.nodes.in_wall_nids] .= vec(blob)[RP.G.nodes.in_wall_nids]
         else
             RP.plasma.ne .= ne
@@ -273,4 +289,197 @@ end
     # extrapolation both rewrite Dpara afterwards
     inw = RP.G.nodes.in_wall_nids
     @test vec(tp.Dpara)[inw] ≈ vec(expected)[inw] rtol = 1.0e-12
+end
+
+# ── behavioural, 1-D ────────────────────────────────────────────────────────
+#
+# The 1-D problem is the specification (internal/docs/figs/flux_limiter_1d.jl, which
+# cannot be included from here because internal/ is gitignored). Backward Euler with D
+# lagged one step and arithmetically averaged to faces — the 1-D reduction of
+# `update_∇𝐃∇_operator!`.
+#
+# These are GATES, NOT SELECTORS. Every member of Larsen's family is exact in both
+# limits, so n = 1, n = 2 and n = ∞ pass all of them identically (measured: the same
+# front ratio, the same 0.3750 mm penetration depth). Nothing here discriminates
+# between exponents — only the small-R kinetic comparison in the design doc does. What
+# these catch is the limiter being absent, mis-scaled, or applied to the wrong field.
+
+@testsnippet Limiter1D begin
+    using LinearAlgebra: Tridiagonal
+    using RAPID2D: flux_limited_diffusivity
+
+    const V̄1 = 1.496e6      # ⟨|v|⟩ for 5 eV electrons   [m/s]
+    const DF1 = 2.3e4       # T/(mν) at the default fill [m²/s]
+    const Λ1 = 2 * DF1 / V̄1  # D = ½v̄λ ⟹ λ = 3.07 cm      [m]
+
+    "∂ₓn by centred differences, one-sided at the ends."
+    function ddx(n, dx)
+        g = similar(n)
+        g[1] = (n[2] - n[1]) / dx
+        g[end] = (n[end] - n[end - 1]) / dx
+        @views @. g[2:(end - 1)] = (n[3:end] - n[1:(end - 2)]) / (2dx)
+        return g
+    end
+
+    "One implicit step of ∂ₜn = ∂ₓ(D ∂ₓn) − νn, D lagged and averaged to faces."
+    function step1d!(n, dx, dt; limited::Bool, ν = 0.0, bc = :reflect, n₀ = 0.0)
+        N = length(n)
+        g = ddx(n, dx)
+        Dn = limited ?
+            [flux_limited_diffusivity(DF1, g[i], n[i], V̄1, 0.25) for i in 1:N] :
+            fill(DF1, N)
+        Df = [0.5 * (Dn[i] + Dn[i + 1]) for i in 1:(N - 1)]
+        lo, di, up = zeros(N - 1), zeros(N), zeros(N - 1)
+        for i in 1:N
+            fl = i > 1 ? Df[i - 1] / dx^2 : 0.0
+            fr = i < N ? Df[i] / dx^2 : 0.0
+            di[i] = 1 + dt * (fl + fr + ν)
+            i > 1 && (lo[i - 1] = -dt * fl)
+            i < N && (up[i] = -dt * fr)
+        end
+        A = Tridiagonal(lo, di, up)
+        rhs = copy(n)
+        if bc === :dirichlet
+            # Row 1 only. Zeroing A.dl[1] instead would cut the reservoir off from the
+            # cell it feeds — a silent no-flux wall.
+            A.d[1] = 1.0
+            A.du[1] = 0.0
+            rhs[1] = n₀
+        end
+        n .= A \ rhs
+        return n
+    end
+end
+
+@testitem "Limiter 1-D: unlimited diffusion outruns its own mean speed" setup = [Limiter1D] begin
+    # A blob spreads as √(2Dt) while its particles travel v̄t on average, and the first
+    # beats the second for all t < 2D/v̄² — until the front has moved one mean free
+    # path. NOT a causality violation: a Maxwellian has unbounded velocity support, so
+    # v̄t is a mean-speed scale rather than a light cone. The measurement is the
+    # diagnostic; the word is not.
+    N = 1601
+    x = range(-0.5, 0.5; length = N)
+    dx, dt = step(x), 2.0e-11
+    blob = @. exp(-x^2 / (2 * 4.0e-3^2))
+    front(n) = (i = findlast(≥(1.0e-3 * maximum(n)), n); i === nothing ? 0.0 : abs(x[i]))
+    x0 = front(blob)
+
+    ratio(limited) = begin
+        n, worst = copy(blob), 0.0
+        for k in 1:1200
+            step1d!(n, dx, dt; limited)
+            k % 60 == 0 && (worst = max(worst, front(n) / (x0 + V̄1 * k * dt)))
+        end
+        worst
+    end
+    @test ratio(false) > 2.5          # measured 2.762
+    @test ratio(true) < 1.05          # measured 0.9276
+end
+
+@testitem "Limiter 1-D: the shielding layer stops at the flux-limited fixed point" setup = [Limiter1D] begin
+    # Reservoir at x = 0, volumetric sink ν everywhere. Diffusion gives δ = √(D/ν); a
+    # particle absorbed at rate ν covers at most ~v̄/ν before it dies. The limited
+    # answer lands on ¼v̄/ν, and that is a closed-form check rather than a fit: with an
+    # exponential profile Lₙ = δ exactly, so D → ¼v̄δ and δ² = D/ν closes on itself.
+    N = 4001
+    x = range(0, 0.02; length = N)
+    dx, ν = step(x), 1.0e9
+    depth(limited) = begin
+        n = zeros(N)
+        for _ in 1:20000
+            step1d!(n, dx, 1.0e-12; limited, ν, bc = :dirichlet, n₀ = 1.0)
+        end
+        x[findfirst(<(n[1] / ℯ), n)]
+    end
+    fixed_point = 0.25 * V̄1 / ν            # 0.374 mm
+    @test depth(true) ≈ fixed_point rtol = 0.01     # measured 0.375 mm
+    @test depth(false) > 10 * fixed_point           # measured 4.805 mm, 12.8×
+end
+
+@testitem "Limiter 1-D: the diffusive limit reproduces the unlimited solution" setup = [Limiter1D] begin
+    # λ/Lₙ → 0 must return Fick untouched. Widening the blob is what does it — raising
+    # its AMPLITUDE does not, because D_max = ¼v̄·n/|∇n| is homogeneous of degree zero
+    # in n, so a taller blob has exactly the same cap.
+    N = 1601
+    x = range(-0.5, 0.5; length = N)
+    dx, dt = step(x), 2.0e-11
+    gap(σ) = begin
+        nl = @. exp(-x^2 / (2σ^2))
+        nu = copy(nl)
+        for _ in 1:400
+            step1d!(nl, dx, dt; limited = true)
+            step1d!(nu, dx, dt; limited = false)
+        end
+        maximum(abs.(nl .- nu)) / maximum(nu)
+    end
+    @test gap(0.2) < 2.0e-3      # σ₀/λ = 6.5,  measured 8.5e-4
+    @test gap(0.1) < 5.0e-3      # σ₀/λ = 3.25, measured 2.7e-3
+    @test gap(0.004) > 0.5        # σ₀/λ = 0.13, the cap is doing real work
+end
+
+@testitem "Limiter 1-D: inventory is conserved and density stays non-negative" setup = [Limiter1D] begin
+    N = 1601
+    x = range(-0.5, 0.5; length = N)
+    dx, dt = step(x), 2.0e-11
+    for limited in (false, true)
+        n = @. exp(-x^2 / (2 * 4.0e-3^2))
+        Σ0 = sum(n)
+        for _ in 1:400
+            step1d!(n, dx, dt; limited)
+        end
+        # reflective ends make the stencil a divergence, so constants lie in its kernel
+        @test sum(n) ≈ Σ0 rtol = 1.0e-13
+        @test minimum(n) ≥ 0
+    end
+end
+
+# ── behavioural, 2-D — and it must be 2-D ───────────────────────────────────
+#
+# A scalar test passes while the inverted guard is live: in 1-D the guard is a
+# provable no-op, because D is zeroed exactly where the gradient is zero and D only
+# ever enters multiplied by that gradient. That argument does not survive the
+# anisotropic tensor, where the limiter reads the PARALLEL projection b̂·∇n — which can
+# vanish on a one-cell-wide surface while the perpendicular gradient there is alive.
+#
+# The field must be OBLIQUE. With B along Ẑ, b_R = 0 and hence
+# D_RZ = (D∥ − D⊥)·b_R·b_Z ≡ 0, so an axis-aligned test bypasses exactly the cross
+# terms that make the 9-point stencil non-monotone.
+
+@testitem "Limiter 2-D: D is untouched where the field runs along a density contour" setup = [LimiterRun] begin
+    # The regression test for the guard, in the geometry where 1-D cannot see it.
+    on = limiter_case(; oblique = true, limit = true)
+    off = limiter_case(; oblique = true, limit = false)
+    g = calculate_para_grad_of_scalar_F(on, on.plasma.ne; upwind = false)
+
+    # the test is only meaningful if such nodes exist: b̂·∇n ≈ 0 while ∇n ≠ 0
+    gR, gZ = RAPID2D.calculate_grad_of_scalar_F(on, on.plasma.ne; upwind = false)
+    full = @. sqrt(gR^2 + gZ^2)
+    inw = on.G.nodes.in_wall_nids
+    scale = maximum(vec(full)[inw])
+    tangent = [k for k in inw if abs(vec(g)[k]) < 1.0e-10 * scale && vec(full)[k] > 0.01 * scale]
+    @test !isempty(tangent)
+
+    # where the field runs along a contour there is no parallel flux to limit, so D
+    # must be exactly the uncapped value — the old guard forced 0 here
+    @test vec(on.transport.Dpara)[tangent] ≈ vec(off.transport.Dpara)[tangent] rtol = 1.0e-12
+    # and no in-wall node with density is left at D = 0
+    populated = [k for k in inw if vec(on.plasma.ne)[k] > 1.0e10]
+    @test all(>(0), vec(on.transport.Dpara)[populated])
+end
+
+@testitem "Limiter 2-D: the oblique field genuinely exercises the cross term" setup = [LimiterRun] begin
+    # Guards the test above against silently degenerating: if D_RZ were zero the
+    # anisotropic stencil would collapse to 5 points and the geometry that motivates a
+    # 2-D test would be gone.
+    oblique = limiter_case(; oblique = true)
+    inw = oblique.G.nodes.in_wall_nids
+    @test maximum(abs, vec(oblique.transport.DRZ)[inw]) > 0
+
+    # and the axis-aligned case that the design originally proposed does not
+    axis = limiter_case(; oblique = false)
+    axis.fields.bR .= 0.0
+    axis.fields.bZ .= 1.0
+    axis.fields.bϕ .= 0.0
+    update_transport_quantities!(axis)
+    @test all(==(0), axis.transport.DRZ)
 end
