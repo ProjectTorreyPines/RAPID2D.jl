@@ -640,12 +640,9 @@ end
 
     # Builds a fresh, fully independent scenario at the given starting Te.
     function build_relaxation_case(Te0)
-        # The explicit snapshot intervals are REQUIRED, not a tuning choice: `dt` here is
-        # 1 ms and the defaults are 20 µs / 100 µs, so the defaults would ask to record
-        # 50× and 10× more often than the solver steps — which `validate_config!` now
-        # rejects outright. (That same config is what preallocated 1.5 GiB per RAPID
-        # before snapshot storage grew on demand; storage is no longer sized from
-        # `t_end_s`, so the interval only has to be legal, not economical.)
+        # The explicit snapshot intervals are REQUIRED, not tuning: `dt` here is 1 ms, so
+        # the 20 µs / 100 µs defaults would ask to record more often than the solver
+        # steps, which `validate_config!` rejects.
         config = SimulationConfig{FT}(
             NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
             dt = 1.0e-3, t_end_s = 0.5, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,

@@ -62,28 +62,18 @@ end
 """
     normalize_snapshot_intervals!(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
 
-Put `snap0D_Δt_s` and `snap2D_Δt_s` onto the `dt` grid, rejecting intervals below `dt`.
+Round `snap0D_Δt_s` and `snap2D_Δt_s` to the nearest multiple of `dt`; reject either below `dt`.
 
-`is_snap0D_time`/`is_snap2D_time` are only ever evaluated at multiples of `dt`, and they
-fire within `0.1·dt` of a multiple of the interval. An interval that is not an integer
-multiple of `dt` therefore has sample times that fall BETWEEN steps and are silently
-dropped — at `dt = 1 µs`, `Δt = 2.5 µs` records at 5 and 10 µs but not 2.5 or 7.5, half
-the series gone with no diagnostic. Rounding to the nearest multiple here makes the
-predicate exact for every caller.
+`is_snap*_time` is only evaluated at multiples of `dt`, so a non-integer interval has
+sample times that fall between steps and vanish: at `dt = 1 µs`, `Δt = 2.5 µs` records at
+5 and 10 µs but not 2.5 or 7.5. The interval is also the DENOMINATOR of the source/loss
+rates in `measure_snap0D!`, so a mismatch is wrong physics, not just sparse sampling.
 
-It also keeps the interval honest as a *denominator*: `measure_snap0D!` divides the
-cumulative source/loss counts by `snap0D_Δt_s` to form rates. If the configured interval
-and the interval actually elapsed between snapshots disagree, the rates are wrong by that
-ratio — so this is a correctness fix, not only a sampling one.
+Below `dt` is an error, not a clamp — recording more often than the solver steps has no
+reading, and it is what preallocated 1.5 GiB in a 500-step run (201b1f8).
 
-An interval below `dt` is an error rather than a clamp. Asking to record more often than
-the solver steps has no defensible reading, and it is what asked for 1.5 GiB of snapshot
-buffers in a 500-step run (201b1f8): the interval divides `t_end_s`, so a sub-`dt` value
-inflates the sample count past the step count itself.
-
-The equality test is `isapprox`, not `==`. `9e-8` IS three times `3e-8`, but the
-round-trip through `round(Δt/dt)*dt` lands on `8.999999999999999e-8`; an exact test would
-warn about a perfectly good interval and perturb the value it is meant to protect.
+`isapprox`, not `==`: `9e-8` is three times `3e-8`, but the round trip lands on
+`8.999999999999999e-8` and an exact test would perturb the value it is protecting.
 """
 function normalize_snapshot_intervals!(config::SimulationConfig{FT}) where {FT <: AbstractFloat}
     config.dt > 0 || throw(ArgumentError("dt must be positive, got $(config.dt)"))
@@ -92,16 +82,18 @@ function normalize_snapshot_intervals!(config::SimulationConfig{FT}) where {FT <
         Δt = getfield(config, fld)
 
         if Δt < config.dt
-            throw(ArgumentError(
-                "$fld = $Δt s is below dt = $(config.dt) s. Snapshots cannot be recorded " *
-                    "more often than the simulation steps; set $fld to at least dt."
-            ))
+            throw(
+                ArgumentError(
+                    "$fld = $Δt s is below dt = $(config.dt) s. Snapshots cannot be recorded " *
+                        "more often than the simulation steps; set $fld to at least dt."
+                )
+            )
         end
 
         snapped = round(Δt / config.dt) * config.dt
         if !isapprox(snapped, Δt; rtol = 1.0e-9)
             @warn "$fld is not an integer multiple of dt; snapshots at the in-between " *
-                  "times would be silently dropped. Snapping to the nearest multiple." fld original = Δt dt = config.dt adjusted = snapped
+                "times would be silently dropped. Snapping to the nearest multiple." fld original = Δt dt = config.dt adjusted = snapped
             setfield!(config, fld, FT(snapped))
         end
     end
@@ -784,8 +776,7 @@ end
 
 
 function initialize_diagnostics!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    # Fresh and empty — this DISCARDS any snapshots already recorded, which is what
-    # re-initializing means. Storage grows with the run (see Diagnostics).
+    # Fresh and empty — this DISCARDS any snapshots already recorded.
     RP.diagnostics = Diagnostics{FT}(RP.G.NR, RP.G.NZ)
     return RP
 end

@@ -269,12 +269,9 @@ No legacy Dictionary compatibility layer
 @kwdef mutable struct Diagnostics{FT <: AbstractFloat}
     dims_RZ::Tuple{Int, Int} # Dimensions for R and Z (NR, NZ)
 
-    # Snapshot storage GROWS as snapshots are taken — `update_snaps0D!`/`update_snaps2D!`
-    # push onto these. Nothing is sized from `t_end_s`, so an interval that outruns the
-    # run costs nothing (201b1f8: 5001 preallocated 2-D slots, 1.5 GiB, none of them
-    # ever written), and `length` is the number of snapshots actually recorded rather
-    # than a capacity with a zero-filled tail. `snaps0D[end]` is the latest snapshot;
-    # there is no separate index to fall out of step with it.
+    # Storage GROWS as snapshots are taken; nothing is sized from `t_end_s`. So `length`
+    # is the number recorded, not a capacity with a zero-filled tail, and `snaps*[end]`
+    # is the latest — no separate index to fall out of step with it.
 
     # 0D time series snapshots
     snaps0D::Vector{Snapshot0D{FT}} = Snapshot0D{FT}[]

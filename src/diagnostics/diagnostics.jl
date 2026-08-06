@@ -101,14 +101,11 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     # Growth rates
     # TODO: Check if this is the correct way to calculate growth rates
     #
-    # `snaps0D` holds only COMPLETED snapshots here: `update_snaps0D!` measures into a
-    # fresh Snapshot0D and pushes it afterwards, so `end` is genuinely the previous one.
-    # The first snapshot has no predecessor, and zero reproduces what the preallocated
-    # slot used to supply (prev_total_Ne = 0, hence NaN growth rates on the opening
-    # sample). Indexing unconditionally is what made the push! path unreachable: on an
-    # empty vector the old `snaps0D[max(1, tid_0D - 1)]` was `snaps0D[1]`, a BoundsError.
-    prev_snaps0D = RP.diagnostics.snaps0D
-    prev_total_Ne = isempty(prev_snaps0D) ? zero(FT) : prev_snaps0D[end].ne * RP.G.device_inVolume
+    # `snaps0D` holds only COMPLETED snapshots here — `update_snaps0D!` pushes the one
+    # being measured afterwards — so `end` is the previous one. The first snapshot has no
+    # predecessor; zero reproduces what the preallocated slot supplied (NaN growth rates).
+    snaps0D = RP.diagnostics.snaps0D
+    prev_total_Ne = isempty(snaps0D) ? zero(FT) : snaps0D[end].ne * RP.G.device_inVolume
     snap0D.eGrowth_rate = log(FT(1) + Ntracker.cum0D_Ne_src / prev_total_Ne) / RP.config.snap0D_Δt_s
     try
         snap0D.eLoss_rate = -log(FT(1) - Ntracker.cum0D_Ne_loss / prev_total_Ne) / RP.config.snap0D_Δt_s
@@ -465,12 +462,8 @@ end
 Measure the current state into a new `Snapshot0D` and append it to `snaps0D`.
 Automatically resets cumulative trackers after measurement.
 
-Measure-then-append, not append-then-fill: `measure_snap0D!` reads `snaps0D[end]` for the
-growth rate, and that must be the PREVIOUS snapshot, not the one being written.
-
-`push!` grows the vector geometrically, so N snapshots cost O(log N) reallocations of a
-pointer array — `Snapshot0D` is a mutable struct, so the vector holds 8-byte references
-and the measured data itself never moves.
+Measure then append, not append then fill: `measure_snap0D!` reads `snaps0D[end]` for the
+growth rate, and that must be the PREVIOUS snapshot.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance to update diagnostics for
@@ -490,10 +483,6 @@ end
 
 Measure the current state into a new `Snapshot2D` and append it to `snaps2D`.
 Automatically resets cumulative trackers after measurement.
-
-The new `Snapshot2D` allocates its own field matrices, which `measure_snap2D!` then fills
-in place. That allocation IS the retained data — the preallocating version allocated the
-same matrices, just all of them up front, including the ones a short run never reached.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance to update diagnostics for
