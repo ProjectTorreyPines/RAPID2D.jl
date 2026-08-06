@@ -128,10 +128,10 @@ It does **not** depend on the boundary condition, so diagnostics built on it
 (sputtering, bombardment rates) are unaffected by the wall treatment: a reflective
 wall still has `Γ_in = Γ_out = v_incident·n_w`, with only the *net* flux zero.
 
-**`vm`, not `vth`.** `neutral_gas.jl` writes its `D = ½·v·λ` in the
-`vth = √(T/m)` convention; the two differ by `√(8/π) = 1.596`, so `¼·vth` here
-would under-count every impact by 37 %. Both go as `√(T/m)`, so no scaling test
-would reveal the swap — hence the ratio is pinned to `0.3989 = ¼√(8/π)`.
+**`vm`, not `vth`.** Every Maxwellian moment goes as `√(T/m)` and they differ only
+by the constant — `√(8/π) = 1.596` between these two — so no scaling test can tell
+them apart, and `¼·vth` here would under-count every impact by 37 % in silence.
+The ratio to `√(T/m)` is pinned at `0.3989 = ¼√(8/π)` for exactly that reason.
 
 Shares [`maxwellian_mean_speed`](@ref) with the channel ceiling rather than
 restating the formula. It was stated twice, and the two copies disagreed: this one

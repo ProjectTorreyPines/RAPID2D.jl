@@ -742,9 +742,9 @@ bulk_ion_charge(RP::RAPID) =
 The mass of the ion the plasma is made of [kg], from the declared species.
 
 Sibling of [`bulk_ion_charge`](@ref), and for the same reason: the transport
-channels already scale the most probable speed, the Coulomb collisionality and the Bohm step from
-`species.mass`, so anything else that needs an ion mass has to take it from the
-same place or the two describe different plasmas. `ν_ii` and the closed-surface
+channels already scale the mean speed, the Coulomb collisionality and the Bohm
+step from `species.mass`, so anything else that needs an ion mass has to take it
+from the same place or the two describe different plasmas. `ν_ii` and the closed-surface
 mass integral read `config.constants.mi` before this, which was correct only
 because that is what the default H₂⁺ is constructed with — declaring H⁺ or H₃⁺
 would have left transport right and the mass ledger wrong, with nothing to say so.
