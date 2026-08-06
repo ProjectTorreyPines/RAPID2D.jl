@@ -201,51 +201,48 @@ end
     @test minimum(vec(tp.Dpara)[live]) < 1.0e12
 end
 
-@testitem "Limiter wiring: a flat region is untouched, so the out-of-wall D changes" setup = [LimiterRun] begin
-    # `initialize!` leaves the out-of-wall state UNIFORM, so ∇∥n = 0 there. The old
-    # guard mapped that to D = 0 across the whole exterior; the new form returns D
-    # unchanged. Asserting "identical with the limiter on and off" pins the guard
-    # removal exactly, and is a stronger statement than measuring the difference.
+@testitem "Limiter wiring: a uniform profile is untouched" setup = [LimiterRun] begin
+    # THE REGRESSION TEST FOR THE OLD GUARD, at the scale it actually operated on.
+    # `Lne_para[!isfinite] = 0` mapped ∇∥n = 0 to D = 0, so on a uniform field it
+    # zeroed the diffusivity across the WHOLE domain. The new form returns D unchanged.
     #
-    # The comparison is over the nodes that are BIT-EXACTLY flat, not over "outside the
-    # wall": a node one cell outside still sees the in-wall blob through its centred
-    # stencil, so the two sets are not the same and only the first one is what the
-    # claim is about.
+    # A uniform `ne` is what makes this assertion exact: every node is bit-exactly
+    # flat, so the limiter is a total no-op, and `extrapolate_field_to_boundary_nodes!`
+    # and the out-of-wall damping then apply identically to both sides and cannot
+    # manufacture a difference. Asserting on a flat SUBSET of a blob fixture cannot
+    # work — post-stage-3 boundary extrapolation copies in-wall values onto adjacent
+    # exterior nodes, so divergence leaks into any subset the field itself defines.
     #
     # This is a real behaviour change and it is the one to watch: electron density is
     # diffused through the ordinary operator and only zeroed outside the wall
     # afterwards (physics.jl:742), so a lagged D_Fick out there lets the implicit
     # matrix move newly arrived material through several exterior cells within one
     # solve before it is deleted and booked as wall loss.
-    on = limiter_case(; limit = true)
-    off = limiter_case(; limit = false)
-    g = calculate_para_grad_of_scalar_F(on, on.plasma.ne; upwind = false)
-    flat = findall(iszero, vec(g))
-
-    # the assertion is only meaningful if such nodes exist, and in quantity
-    @test length(flat) > 100
-    @test vec(on.transport.Dpara)[flat] == vec(off.transport.Dpara)[flat]
-    # and it is not trivially zero on both sides, which would satisfy `==` vacuously
-    @test any(>(0), vec(on.transport.Dpara)[flat])
+    on = limiter_case(; ne = 1.0e15, limit = true)
+    off = limiter_case(; ne = 1.0e15, limit = false)
+    @test on.transport.Dpara == off.transport.Dpara
+    # not vacuous: the field being compared is substantial, not zero on both sides
+    @test maximum(on.transport.Dpara) > 1.0e3
 end
 
 @testitem "Limiter wiring: D never depends on the sign of the flow" setup = [LimiterRun] begin
     # `calculate_para_grad_of_scalar_F` defaults to upwind = flags.upwind = true, which
-    # picks its one-sided stencil from sign(ueR)/sign(ueZ) — and from values refreshed
-    # LATER in the same function than the limiter reads them. A diffusive closure has
-    # no business reading the flow direction, and the operator it is bounding uses
-    # centred face gradients anyway. Passing upwind = false at that one call site is
-    # what this asserts.
+    # picks its one-sided stencil from sign(ueR)/sign(ueZ). A diffusive closure has no
+    # business reading the flow direction, and the operator it is bounding uses centred
+    # face gradients anyway. Passing upwind = false at that one call site is what this
+    # asserts.
     #
-    # `ueR`/`ueZ` are seeded directly rather than through `ue_para`: they are what the
-    # gradient routine reads, and `update_transport_quantities!` recomputes them from
-    # `ue_para` only after the limiter has already run. Seeding `ue_para` alone would
-    # leave the limiter looking at zeros and the test would assert nothing.
-    function with_flow(sign)
-        RP = limiter_case()
-        RP.plasma.ueR .= sign * 1.0e5
-        RP.plasma.ueZ .= sign * 1.0e5
-        update_transport_quantities!(RP)
+    # The fixture has to be OBLIQUE and the seed has to go through `ue_para`:
+    # `update_transport_quantities!` recomputes `ueR .= ue_para * bR` before returning,
+    # so seeding `ueR` directly is erased, and a purely toroidal field converts any
+    # `ue_para` straight back to `ueR = 0`. The second call is what lets the limiter
+    # see the seeded flow at all — on the first, it is still reading the stale zeros
+    # from before the conversion, which is precisely the lag the comment is about.
+    function with_flow(s)
+        RP = limiter_case(; oblique = true)
+        RP.plasma.ue_para .= s * 1.0e6
+        update_transport_quantities!(RP)   # ue_para -> ueR/ueZ; limiter saw stale zeros
+        update_transport_quantities!(RP)   # limiter now sees the seeded flow
         return RP
     end
     fwd, rev = with_flow(+1), with_flow(-1)
