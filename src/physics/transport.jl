@@ -89,30 +89,55 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp.Dpara_amb = @. (pla.Te_eV + pla.Ti_eV) * tp.Dpara_e_coll * tp.Dpara_i_coll / (pla.Ti_eV * tp.Dpara_e_coll + pla.Te_eV * tp.Dpara_i_coll)
     @. tp.Dpara_amb[isnan(tp.Dpara_amb)] = typemax(FT) # make NaN to Inf
 
-    # Harmonic average of collision and ambipolar diffusion coefficients
+    # ── how D∥ᵉ is assembled: three stages, and the order is the physics ──────
+    #
+    #   1  1/D_ch = Σ_p 1/D_p     competing termination events   (PR #11)
+    #   2  D∥ = D_ch + Dpara0     independent arrival paths
+    #   3  cap(D∥, ¼·v̄·Lₙ)        a causality bound on the TOTAL
+    #
+    # Stage 3 must come last. The free-streaming ceiling is mechanism-agnostic — a
+    # Maxwellian of density n cannot push more than ¼nv̄ across any surface, whatever
+    # moves it — so it bounds the sum, not one limb of it. Capping before the addition
+    # is what let `Dpara0` transport faster than free streaming.
+
+    # Stage 1. Harmonic average of collision and ambipolar diffusion coefficients.
     tp.Dpara_e_eff = @. (tp.Dpara_e_coll * tp.Dpara_amb) / (tp.Dpara_e_coll + tp.Dpara_amb)
     @. tp.Dpara_e_eff[isnan(tp.Dpara_e_eff)] = typemax(FT) # make NaN to Inf
 
-    # Flux-limiter scheme to prevent excessive diffusion
-    if RP.flags.limit_flux.state
-        # Limit electron diffusivity
-        ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
-        Lne_para = abs.(pla.ne ./ calculate_para_grad_of_scalar_F(RP, ne_SM)) # gradient-scale length
-        @. Lne_para[!isfinite(Lne_para)] = zero(FT)
-        De_max_para = RP.flags.limit_flux.factor * vp_e .* Lne_para
-        tp.Dpara_e_eff = min.(tp.Dpara_e_eff, De_max_para)
-
-        # # Limit ion diffusivity
-        # ni_SM = smooth_data_2D(pla.ni; num_SM=2, weighting=RP.G.inVol2D)
-        # Lni_para = abs.(pla.ni ./ calculate_para_grad_of_scalar_F(RP,ni_SM)) # gradient-scale length
-        # @. Lni_para[isnan(Lni_para)] = zero(FT)
-        # Di_max_para = RP.flags.limit_flux.factor * vthi .* Lni_para
-
-        # Dpara_i_coll = min.(Dpara_e_coll, Dpara_amb, Di_max_para)
-    end
-
-    # Combine base and collision diffusion
+    # Stage 2. A base diffusivity is an independent arrival path, so it ADDS rather
+    # than joining the harmonic sum — the same rule the ion channel states.
     @. tp.Dpara = tp.Dpara0 + tp.Dpara_e_eff
+
+    # Stage 3. The free-streaming ceiling.
+    if RP.flags.limit_flux.state
+        # `vm_e`, not the `vp_e` above: the ceiling is a ONE-WAY flux across a
+        # surface, ⟨v_n θ(v_n)⟩ = ¼v̄, and only the mean speed has that meaning. The
+        # pair (½, vp) two dozen lines up is a different derivation and must not be
+        # copied here — see the speed contract at the top of `transport_channels.jl`.
+        vm_e = maxwellian_mean_speed.(pla.Te_eV, me)
+        # `upwind = false`, overriding `flags.upwind`: this gradient describes the
+        # PROFILE, not a flow. The upwind stencil picks its side from sign(ueR)/
+        # sign(ueZ) — components this function refreshes further down, so the limiter
+        # would respond to a flow reversal one update late — and the diffusion
+        # operator it is bounding uses centred face gradients regardless.
+        #
+        # Raw `pla.ne`, not a smoothed copy: the bound has to apply to the field the
+        # solve actually transports. The old `n_raw / |∇∥(n_SM)|` mixed two different
+        # fields and ran ~5× tighter on the low-density flank of a front.
+        ∇para_ne = calculate_para_grad_of_scalar_F(RP, pla.ne; upwind = false)
+        @. tp.Dpara = flux_limited_diffusivity(
+            tp.Dpara, ∇para_ne, pla.ne, vm_e, RP.flags.limit_flux.factor
+        )
+
+        # Ions carry no gradient ceiling yet. It is NOT the one line it looks like:
+        # an ion ceiling has to bound the total non-convective species flux including
+        # the pinch term, it makes otherwise-grouped species operators differ, and
+        # `ion_transport_channels` receives an `IonSpecies` that carries no density.
+        # The neutral gas is owed the same question — panel 2 of the 1-D spec is a
+        # GAS problem and the gas channel has no gradient cap either. Both are queued
+        # behind the ambipolar-gate work; see
+        # `internal/docs/src/notes/TODO/electron-parallel-transport-gating.md`.
+    end
 
     # Calculate perpendicular diffusion using Bohm diffusivity
     Dperp_bohm = @. abs((1 / 16) * pla.Te_eV / RP.fields.Bϕ)
