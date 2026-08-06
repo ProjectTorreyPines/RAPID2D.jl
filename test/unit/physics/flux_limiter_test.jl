@@ -277,10 +277,26 @@ end
 
 # ── behavioural, 1-D ────────────────────────────────────────────────────────
 #
-# The 1-D problem is the specification (internal/docs/figs/flux_limiter_1d.jl, which
-# cannot be included from here because internal/ is gitignored). Backward Euler with D
-# lagged one step and arithmetically averaged to faces — the 1-D reduction of
-# `update_∇𝐃∇_operator!`.
+# The 1-D problem is the specification. `internal/docs/figs/flux_limiter_1d.jl` holds
+# the reference implementation and the figure, and cannot be `include`d from here
+# because `internal/` is gitignored — so the solver below is a deliberate copy.
+#
+# ONLY ONE HALF OF THAT PAIR IS IN VERSION CONTROL. Nothing here can detect the two
+# drifting apart, so if the reference script is ever regenerated or corrected, three
+# properties are what this copy is claiming to reproduce and are what must be
+# re-checked by hand:
+#
+#   1. backward Euler in time
+#   2. D evaluated from n at the START of the step (lagged one step), never from the
+#      solution being solved for
+#   3. D arithmetically averaged to faces, `½(Dᵢ + Dᵢ₊₁)`
+#
+# Those three are what make this the 1-D reduction of `update_∇𝐃∇_operator!` for the
+# purpose of pinning the limiter. It is NOT a full reduction of that operator: the
+# real one carries the cylindrical Jacobian (`operators.jl:606-611` weights the face
+# average by `inv_Jacob[i,j]·Jacob[i±1,j]`, i.e. by R), and this slab-geometry solver
+# does not. That is deliberate — these tests pin the closure, not the geometry — but
+# the distinction matters if anyone tries to reuse this solver for a geometric claim.
 #
 # These are GATES, NOT SELECTORS. Every member of Larsen's family is exact in both
 # limits, so n = 1, n = 2 and n = ∞ pass all of them identically (measured: the same
@@ -470,6 +486,12 @@ end
     @test all(>(0), full)
     # so the limiter has nothing to cap, and must return D untouched — the old guard
     # forced 0 at every one of these nodes instead
+    #
+    # The comparison spans the whole grid, out-of-wall nodes included. Those are
+    # rewritten after stage 3 by the damping function and by
+    # `extrapolate_field_to_boundary_nodes!`, and it passes bit-exactly only because
+    # neither rewrite depends on the limiter flag. If that ever changes, this test
+    # fails for a reason that has nothing to do with the limiter — check there first.
     @test on.transport.Dpara == off.transport.Dpara
     # not vacuous: the field being compared is substantial, not zero on both sides
     @test maximum(on.transport.Dpara) > 1.0e3
