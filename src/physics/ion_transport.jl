@@ -232,7 +232,7 @@ policy at all:
 
 | mechanism | axis | depends on the species? |
 |---|---|---|
-| collisional | `b̂` | **yes** — `D∥ = ½v_p²/ν` with `v_p = √(2T_i/m)` |
+| collisional | `b̂` | **yes** — `1/D∥ = mν/T + 2/(vm·L)`, Einstein plus a free-streaming bound |
 | Bohm | `b̂` | `D⊥ = T_e/16B` is mass-free; only the `v`/`λ` split moves |
 | turbulent ExB | `b̂_pol` | no — `v_E = E_pol/B_tot` has neither mass nor charge in it |
 
@@ -245,19 +245,28 @@ separates the two policies today.
 """
 function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_turb) where {FT <: AbstractFloat}
     pla, tp, F = RP.plasma, RP.transport, RP.fields
-    ee = RP.config.constants.ee
 
-    # λ∥ is built directly as a length, not recovered from a diffusivity. Going
-    # through `D∥ = ½v²/ν` and back through `λ = 2D/v` is exactly the lossy round
-    # trip the channel basis exists to avoid, and it is what turns a collisionless
-    # cell into `Inf/0`. Written as an inverse length, every degenerate limit falls
-    # out instead of needing a case:
+    # Competing mechanisms are composed as DIFFUSIVITIES, not as mean free paths:
     #
-    #   T_i = 0            v_p = 0 → ν/v_p = Inf → λ∥ = 0, and D∥ = ½v∥λ∥ = 0
-    #   no collisions      λ∥ = L_field: free streaming to the wall along B
+    #     1/D∥ = Σ_rates m·ν_p/T  +  Σ_lengths 2/(vm·L_q)
+    #
+    # Each mechanism enters through the form it is KNOWN in. A rate stays a rate
+    # and gives Einstein's D = T/(mν) exactly; a geometric length stays a length
+    # and gives the free-streaming limit ½·vm·L exactly, since a 1-D step of L is
+    # taken at ⟨|v_∥|⟩ = vm/2. Converting one into the other — a `1/λ = ν/v` summed
+    # with `1/L` — is exact in neither, and costs up to 36 % because λ = |v|/ν
+    # weights fast particles differently from a fixed ν. Derived in
+    # `internal/docs/src/details/speed-and-composition.md` §3–4.
+    #
+    # Written as an inverse diffusivity, every degenerate limit falls out instead
+    # of needing a case:
+    #
+    #   T_i = 0            vm = 0 → both terms Inf (or NaN) → D∥ = 0
+    #   no collisions      D∥ = ½·vm·L_field: free streaming bounded by the field
     #   no field length    nothing bounds a parallel step, so the COLLISIONAL
     #                      channel is absent. Free streaming is convection, and the
     #                      equation already carries it as −∇·(n𝐮_i).
+    #
     # T_i and the fluid velocity are shared — the reaction set carries one ion
     # temperature and one ion drift, and density is the only per-species state, so
     # everything separating two ion species arrives through m and Z.
@@ -270,35 +279,45 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     #     ν_s^{z|i} ∝ n_i Z_z²Z_i² λ (μ_i^½/μ_z)(1 + μ_i/μ_z) T^-3/2
     #
     # Dividing that by the same expression at z = i gives `coulomb_scale` below,
-    # which is exactly 1 for the bulk. With v_p,z ∝ μ_z^-½ the mass then CANCELS
-    # out of the diffusivity for a heavy impurity,
-    #
-    #     D∥_z / D∥_bulk = 2 / [ (Z_z/Z_i)² (1 + μ_i/μ_z) ]
-    #
-    # — using the self-collision μ^-½ instead makes C⁶⁺ 4.2× less diffusive.
+    # which is exactly 1 for the bulk.
     #
     # Only the Coulomb half of ν is scaled this way. An ion–neutral collision rate
-    # goes as n₀σ√(T/m) (NRL p.39), so its contribution to 1/λ = ν/v is
-    # species-independent outright, and scaling it by Z² would overstate an
-    # impurity's collisionality through the whole gas-dominated early discharge.
+    # goes as n₀σ√(T/m) (NRL p.39), so its contribution is species-independent
+    # outright, and scaling it by Z² would overstate an impurity's collisionality
+    # through the whole gas-dominated early discharge.
     #
-    # max(0, ·): the Ti equation is free to land microscopically below zero
-    # (−1.3e-61 was observed), and `sqrt` of that is a DomainError, not a NaN.
+    # Einstein is now written directly, so a heavy impurity's mass no longer
+    # cancels out of D∥ the way the previous v/λ split made it: D∥_z/D∥_bulk picks
+    # up a √μ. That is the honest test-particle answer — a strongly coupled species
+    # diffuses LESS, and "carried along by the bulk" is convection (shared u_i) plus
+    # the pinch term, not a shared D. See
+    # `internal/docs/src/details/impurity-transport-basics.md` §4. No present result
+    # moves: at z = bulk, μ = 1 and the two forms are identical.
     m_ref = bulk_ion_mass(RP)   # the mass `ν_ii` was built with; μ is a ratio TO the bulk
     mass_ratio = FT(m_ref / species.mass)
     coulomb_scale = FT(species.charge^2) * sqrt(mass_ratio) * (1 + mass_ratio) / 2
-    v_p_ref = @. sqrt(max(zero(FT), 2 * pla.Ti_eV * ee / m_ref))
-    v_p = @. v_p_ref * sqrt(mass_ratio)
-    inv_λ = @. (tp.νi_neutral + coulomb_scale * tp.νi_coulomb) / v_p_ref +
-        ifelse(tp.L_mixing > 0, 1 / tp.L_mixing, zero(FT))
-    # `inv_λ > 0` is false for both Inf⁻¹ = 0 and for a NaN out of 0/0, so the two
-    # degenerate cases above land on λ∥ = 0 without being enumerated.
-    λ_para = @. ifelse(inv_λ > 0, 1 / inv_λ, zero(FT))
-    if tp.Dpara0 > zero(FT)
-        # A base diffusivity adds a step length, because ½v(λ + λ₀) = D + ½vλ₀
-        @. λ_para += ifelse(v_p > 0, 2 * tp.Dpara0 / v_p, zero(FT))
-    end
-    collisional = DiffusionChannel(v_p, λ_para, zero.(v_p), zero.(v_p))
+    vm_s = maxwellian_mean_speed.(pla.Ti_eV, species.mass)
+    ν_s = @. tp.νi_neutral + coulomb_scale * tp.νi_coulomb
+    # `&`, not `&&`: inside `@.` the comparisons are elementwise masks, and `&&` is
+    # control flow rather than a call, so it never becomes a broadcast.
+    # `EE`, not `config.constants.ee`: `vm_s` on the line above already converts
+    # eV→J with it, and one expression must not name one constant two ways.
+    inv_D = @. species.mass * ν_s / (pla.Ti_eV * EE) +
+        ifelse((tp.L_mixing > 0) & (vm_s > 0), 2 / (vm_s * tp.L_mixing), zero(FT))
+    # `inv_D > 0` is false for both Inf⁻¹ = 0 and for a NaN out of 0/0, so the
+    # degenerate cases above land on D∥ = 0 without being enumerated.
+    D_para = @. ifelse(inv_D > 0, 1 / inv_D, zero(FT))
+    # A base diffusivity is an independent arrival path, so it ADDS rather than
+    # joining the harmonic sum.
+    tp.Dpara0 > zero(FT) && (@. D_para += tp.Dpara0)
+    # The channel carries `vm_s` as its own speed as well: with D the primitive,
+    # λ∥ = 2D∥/vm is a derived quantity and the bookkeeping speed no longer has a
+    # convention of its own to disagree with the wall's.
+    λ_para = @. ifelse(vm_s > 0, 2 * D_para / vm_s, zero(FT))
+    collisional = DiffusionChannel(
+        vm_s, λ_para, zero.(vm_s), zero.(vm_s);
+        vm_para = vm_s, vm_perp = zero.(vm_s)
+    )
 
     # `bohm_charge_scaling = false` hands the channel Z = 1 instead of the species
     # charge, so D⊥ loses its 1/Z and every species shares the textbook Bohm value.
@@ -311,7 +330,8 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         # ρ_s = c_s/ω_ci is 0/0 wherever B vanishes; no field means no gyro-step
         bohm = DiffusionChannel(
             bohm.v_para, bohm.λ_para, bohm.v_perp,
-            (@. ifelse(isfinite(bohm.λ_perp), bohm.λ_perp, zero(FT)))
+            (@. ifelse(isfinite(bohm.λ_perp), bohm.λ_perp, zero(FT)));
+            vm_para = bohm.vm_para, vm_perp = bohm.vm_perp
         )
     end
     if tp.Dperp0 > zero(FT)
@@ -320,7 +340,8 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         # is left alone.
         bohm = DiffusionChannel(
             bohm.v_para, bohm.λ_para, bohm.v_perp,
-            (@. bohm.λ_perp + ifelse(bohm.v_perp > 0, 2 * tp.Dperp0 / bohm.v_perp, zero(FT)))
+            (@. bohm.λ_perp + ifelse(bohm.v_perp > 0, 2 * tp.Dperp0 / bohm.v_perp, zero(FT)));
+            vm_para = bohm.vm_para, vm_perp = bohm.vm_perp
         )
     end
 
@@ -342,7 +363,8 @@ const ION_MECHANISMS = ("collisional", "Bohm", "turbulent ExB")
 
 _finite_channel(ch::DiffusionChannel) =
     all(isfinite, ch.v_para) && all(isfinite, ch.λ_para) &&
-    all(isfinite, ch.v_perp) && all(isfinite, ch.λ_perp)
+    all(isfinite, ch.v_perp) && all(isfinite, ch.λ_perp) &&
+    all(isfinite, ch.vm_para) && all(isfinite, ch.vm_perp)
 
 """
     ion_channel_directions(RP) -> Vector{Tuple}
@@ -671,7 +693,7 @@ is silently wrong rather than loudly missing:
   - `γ_2nd_electron` is one number, so only column 1 yields secondary electrons;
   - the ion charge density is `n·Z` from this species, and would have to become
     `Σ_s n_s Z_s` at every site that builds a current (see
-    `claudedocs/TODO/ion-inventory-multi-species.md`).
+    `internal/docs/src/notes/TODO/ion-inventory-multi-species.md`).
 
 `plasma.ni` IS this species' density — not a total over species, and not a
 quantity a second field mirrors.
@@ -721,9 +743,9 @@ bulk_ion_charge(RP::RAPID) =
 The mass of the ion the plasma is made of [kg], from the declared species.
 
 Sibling of [`bulk_ion_charge`](@ref), and for the same reason: the transport
-channels already scale `v_p`, the Coulomb collisionality and the Bohm step from
-`species.mass`, so anything else that needs an ion mass has to take it from the
-same place or the two describe different plasmas. `ν_ii` and the closed-surface
+channels already scale the mean speed, the Coulomb collisionality and the Bohm
+step from `species.mass`, so anything else that needs an ion mass has to take it
+from the same place or the two describe different plasmas. `ν_ii` and the closed-surface
 mass integral read `config.constants.mi` before this, which was correct only
 because that is what the default H₂⁺ is constructed with — declaring H⁺ or H₃⁺
 would have left transport right and the mass ledger wrong, with nothing to say so.

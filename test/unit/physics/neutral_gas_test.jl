@@ -8,7 +8,7 @@
 @testitem "Neutral gas diffusivity: elastic mean free path scales as 1/n" begin
     using RAPID2D: neutral_gas_diffusivity
 
-    # D = ½·v_th·λ at fixed T, so D inherits λ's density scaling exactly.
+    # D = ½·vth_g·λ at fixed T, so D inherits λ's density scaling exactly.
     # Inf characteristic length disables the wall term to isolate the gas term.
     D1 = neutral_gas_diffusivity(1.0e18, 0.026, 0.0, Inf)
     D2 = neutral_gas_diffusivity(5.0e17, 0.026, 0.0, Inf)
@@ -47,51 +47,73 @@ end
     @test Db / Da > 1.5 * sqrt(Tb / Ta)         # decisively not the √T law
 end
 
-@testitem "Neutral gas diffusivity: ionization shortens the mean free path" begin
-    using RAPID2D: neutral_gas_diffusivity, neutral_gas_thermal_speed
+@testitem "Neutral gas diffusivity: each mechanism is exact alone, and they compose at D" begin
+    using RAPID2D: neutral_gas_diffusivity, h2_self_diffusivity, NIST_H2_N_REF,
+        maxwellian_mean_speed, M_H2_GAS, EE
 
-    # A molecule destroyed by electron impact never completes its free path, so
-    # ν_iz adds to the collision rate. This is the mechanism behind neutral
-    # shielding: where the plasma is hot, the gas cannot penetrate.
-    n, T, νiz = 6.4e17, 0.026, 1.0e4
-    D0 = neutral_gas_diffusivity(n, T, 0.0, Inf)
-    Diz = neutral_gas_diffusivity(n, T, νiz, Inf)
-    @test Diz < D0
+    # Three mechanisms bound a molecule's path, and each has an exact closed form
+    # when it acts alone. Isolating one means switching the other two off through
+    # their own null values, so every branch is exercised:
+    #
+    #   elastic only   D = D_NIST(T)·n_ref/n     the measurement, unmodified
+    #   ionization     D = T/(m·ν_iz)            Einstein — ν_iz is a RATE
+    #   wall only      D = ⅓·vm·L                Knudsen, D_K = ⅓v̄d (Kennard §64)
+    #
+    # and the model is that they compose as diffusivities. The `⅓` is the isotropic
+    # projection ⟨v_z²/|v|⟩ = vm/3; a magnetized ion would get ½ instead.
+    #
+    # ν_iz belongs in D at all because absorption damps the CURRENT as well as the
+    # density — the same reason neutron diffusion theory puts Σ_a in the transport
+    # cross section — so this is not double counting against the burn-out sink.
+    n, T, νiz, L = 6.4e17, 0.026, 1.0e4, 1.09
+    vm_g = maxwellian_mean_speed(T, M_H2_GAS)
 
-    # exact combination law, without hard-coding σ: recover ν_elastic from D0
-    vth = neutral_gas_thermal_speed(T)
-    ν_el = vth^2 / (2 * D0)
-    @test Diz ≈ D0 * ν_el / (ν_el + νiz) rtol = 1.0e-12
+    @test neutral_gas_diffusivity(n, T, 0.0, Inf) ≈
+        h2_self_diffusivity(T) * NIST_H2_N_REF / n rtol = 1.0e-14
+    @test neutral_gas_diffusivity(0.0, T, νiz, Inf) ≈
+        T * EE / (M_H2_GAS * νiz) rtol = 1.0e-14
+    @test neutral_gas_diffusivity(0.0, T, 0.0, L) ≈ vm_g * L / 3 rtol = 1.0e-14
+
+    @test 1 / neutral_gas_diffusivity(n, T, νiz, L) ≈
+        1 / neutral_gas_diffusivity(n, T, 0.0, Inf) +
+        1 / neutral_gas_diffusivity(0.0, T, νiz, Inf) +
+        1 / neutral_gas_diffusivity(0.0, T, 0.0, L) rtol = 1.0e-14
+
+    # Adding a loss channel can only shorten the path — the physical content of a
+    # sum of inverse diffusivities, and the mechanism behind neutral shielding:
+    # where the plasma is hot, the gas cannot penetrate.
+    @test neutral_gas_diffusivity(n, T, νiz, L) < neutral_gas_diffusivity(n, T, 0.0, L)
 end
 
 @testitem "Neutral gas diffusivity: never transports faster than free streaming" begin
-    using RAPID2D: neutral_gas_diffusivity, neutral_gas_thermal_speed
+    using RAPID2D: neutral_gas_diffusivity, maxwellian_thermal_speed,
+        maxwellian_mean_speed, M_H2_GAS
 
     # At breakdown pressures the gas-gas mean free path is METRES — larger than the
     # vessel — so the flow is free-molecular, not diffusive. Left uncapped, D grows
     # without bound and the diffusive crossing time L²/D drops BELOW the ballistic
-    # floor L/v_th, which nothing can beat. Adding the wall as a collision channel
+    # floor L/vth_g, which nothing can beat. Adding the wall as a collision channel
     # (1/λ += 1/L, i.e. Knudsen diffusion) restores the correct limit.
     L, T = 1.09, 0.026
-    vth = neutral_gas_thermal_speed(T)
+    vth_g = maxwellian_thermal_speed(T, M_H2_GAS)
     for n in (1.0e15, 1.0e17, 6.4e17, 1.0e19)
         D = neutral_gas_diffusivity(n, T, 0.0, L)
-        @test L^2 / D ≥ L / vth
+        @test L^2 / D ≥ L / vth_g
     end
 
-    # in the collisionless limit the wall alone sets the path
-    @test neutral_gas_diffusivity(1.0e8, T, 0.0, L) ≈ 0.5 * vth * L rtol = 1.0e-4
+    # and the bound is approached from below as the gas thins towards free-molecular
+    @test neutral_gas_diffusivity(1.0e8, T, 0.0, L) < maxwellian_mean_speed(T, M_H2_GAS) * L / 3
 end
 
 @testitem "Neutral gas diffusivity: stays finite where the gas is fully burnt" begin
-    using RAPID2D: neutral_gas_diffusivity, neutral_gas_thermal_speed
+    using RAPID2D: neutral_gas_diffusivity, maxwellian_mean_speed, M_H2_GAS
 
     # n_gas → 0 makes the elastic path infinite. The wall term keeps λ finite, so
     # no special-casing (and no NaN scrubbing) is needed on burnt-out cells.
     L, T = 1.09, 0.026
     D = neutral_gas_diffusivity(0.0, T, 0.0, L)
     @test isfinite(D)
-    @test D ≈ 0.5 * neutral_gas_thermal_speed(T) * L rtol = 1.0e-12
+    @test D ≈ maxwellian_mean_speed(T, M_H2_GAS) * L / 3 rtol = 1.0e-12
 end
 
 # ── reflective diffusion operator ───────────────────────────────────────────

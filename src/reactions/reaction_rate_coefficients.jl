@@ -317,7 +317,7 @@ read `plasma.ν_en_iz`, `ν_en_mom_tot`, `ν_en_mom_ela`, `ν_en_exc_eff`; they 
 physical coefficient evaluated at two different plasma states — the momentum equation
 removing drag at one `ν_mom` while the energy equation credits frictional heating at
 another — so its discrete energy budget cannot close. See
-`claudedocs/design/rrc-single-evaluation-point.md`.
+`internal/docs/src/notes/design/rrc-single-evaluation-point.md`.
 
 Called from the top of [`update_transport_quantities!`](@ref), which runs at the end of a
 `run_simulation!` iteration — precisely the state the next `advance_timestep!` enters with.

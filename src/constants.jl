@@ -2,6 +2,27 @@
 Physical constants and conversion factors used in RAPID2D.
 """
 
+# ── module-level constants, for the code paths that hold no `RAPID` ──────────
+#
+# `PlasmaConstants` is the configured view of these, and its defaults are these
+# values, so the two cannot drift apart. Free functions that must stay callable
+# without a simulation object — `maxwellian_*_speed`, `neutral_gas_diffusivity`,
+# the Bohm channel — take them from here instead.
+#
+# Overriding `PlasmaConstants.ee` therefore desynchronizes the two. Nothing in
+# the repo does, and changing a defining SI constant is not a physics choice, so
+# no validation is enforced; if that ever becomes a supported knob, these paths
+# have to take it as an argument.
+
+"Elementary charge [C]. Doubles as the eV→J factor, which is most of its use."
+const EE = 1.602176634e-19
+
+"CODATA Boltzmann constant [J/K]."
+const KB_J_PER_K = 1.380649e-23
+
+"CODATA Boltzmann constant [eV/K]."
+const KB_EV_PER_K = 8.617333262e-5
+
 """
     PlasmaConstants{FT<:AbstractFloat}
 
@@ -28,13 +49,13 @@ Fields:
 """
 @kwdef struct PlasmaConstants{FT <: AbstractFloat}
     # Basic physical constants
-    ee::FT = FT(1.602176634e-19)    # Elementary charge [C]
+    ee::FT = FT(EE)                 # Elementary charge [C]
     me::FT = FT(9.1093837015e-31)   # Electron mass [kg]
     mi::FT = FT(3.34754699166e-27)  # H2+ ion mass [kg]
     mp::FT = FT(1.67262192369e-27)  # Proton mass [kg]
     eps0::FT = FT(8.8541878128e-12) # Vacuum permittivity [F/m]
     μ0::FT = FT(1.25663706212e-6)  # Vacuum permeability [H/m]
-    kB::FT = FT(1.380649e-23)       # Boltzmann constant [J/K]
+    kB::FT = FT(KB_J_PER_K)         # Boltzmann constant [J/K]
     c_light::FT = FT(299792458.0)   # Speed of light in vacuum [m/s]
     room_T_eV::FT = FT(0.026)       # Room temperature [eV]
 

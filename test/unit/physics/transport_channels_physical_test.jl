@@ -8,11 +8,10 @@
 
 @testitem "Channel adapter: the H2 gas round-trips its own diffusivity" begin
     using RAPID2D: neutral_gas_channel, neutral_gas_diffusivity,
-        neutral_gas_thermal_speed, DiffusionChannel
+        maxwellian_mean_speed, M_H2_GAS, DiffusionChannel
 
     # The gas is one channel with three competing loss processes — elastic,
-    # ionization, wall — all traversed at the SAME v_th, so they combine by
-    # Matthiessen inside λ and the ceiling is counted once.
+    # ionization, wall — composed as diffusivities, so the ceiling is counted once.
     for (n, T, νiz, L) in (
             (6.4e17, 0.026, 0.0, 1.2),
             (1.0e15, 0.026, 1.0e4, 1.2),
@@ -24,8 +23,14 @@
         # ½·v·λ must be the diffusivity the solver already computes — exactly
         @test only(@. 0.5 * ch.v_para * ch.λ_para) ≈
             neutral_gas_diffusivity(n, T, νiz, L) rtol = 1.0e-14
-        # the speed is the D-convention one this module already defines
-        @test only(ch.v_para) ≈ neutral_gas_thermal_speed(T) rtol = 1.0e-14
+        # With D the primitive there is no second speed convention left to pick:
+        # the channel's own v IS the mean speed, and λ = 2D/vm is derived from it.
+        # The pair used to disagree — v = √(T/m) against a wall reading √(8T/πm) —
+        # and one shared ratio between them was the √2 defect this basis exists to
+        # prevent. `==`, not `≈`: they must be the same field, not merely close.
+        @test only(ch.vm_para) ≈ maxwellian_mean_speed(T, M_H2_GAS) rtol = 1.0e-14
+        @test ch.v_para == ch.vm_para
+        @test ch.vm_perp == ch.vm_para
         # a neutral gas has no preferred axis
         @test ch.v_perp == ch.v_para
         @test ch.λ_perp == ch.λ_para
@@ -57,13 +62,13 @@ end
 @testitem "Channel adapter: the parallel collisional channel has no cross-field part" begin
     using RAPID2D: parallel_collisional_channel
 
-    # D∥ = ½·v_p²/ν, so λ∥ = v_p/ν falls straight out
-    v_p, ν = 1.5e6, 1.0e7
-    D_para = 0.5 * v_p^2 / ν
-    ch = parallel_collisional_channel(fill(v_p, 1, 1), fill(D_para, 1, 1))
+    # D∥ = ½·v²/ν, so λ∥ = v/ν falls straight out
+    vp_s, ν = 1.5e6, 1.0e7
+    D_para = 0.5 * vp_s^2 / ν
+    ch = parallel_collisional_channel(fill(vp_s, 1, 1), fill(D_para, 1, 1))
 
-    @test only(ch.v_para) ≈ v_p rtol = 1.0e-14
-    @test only(ch.λ_para) ≈ v_p / ν rtol = 1.0e-14
+    @test only(ch.v_para) ≈ vp_s rtol = 1.0e-14
+    @test only(ch.λ_para) ≈ vp_s / ν rtol = 1.0e-14
     @test only(@. 0.5 * ch.v_para * ch.λ_para) ≈ D_para rtol = 1.0e-14
 
     # streaming along B contributes nothing across it, so it must contribute
@@ -150,8 +155,8 @@ end
     me, m_i = 9.109e-31, 1.673e-27
     Te, B = 5.0, 0.63
 
-    v_p = sqrt(2 * Te * ee / me)
-    coll = parallel_collisional_channel(fill(v_p, 1, 1), fill(0.5 * v_p^2 / 1.0e7, 1, 1))
+    vp_s = sqrt(2 * Te * ee / me)
+    coll = parallel_collisional_channel(fill(vp_s, 1, 1), fill(0.5 * vp_s^2 / 1.0e7, 1, 1))
     bohm = bohm_channel(fill(Te, 1, 1), fill(B, 1, 1), m_i)
 
     @test only(coll.v_para) / only(bohm.v_perp) > 100
@@ -210,13 +215,11 @@ end
 
     # A channel lives on the grid. Accepting an all-scalar call would build a
     # 0-dimensional channel that fails much later, somewhere less obvious.
-    @test_throws ArgumentError DiffusionChannel(1.0, 2.0, 3.0, 4.0)
+    @test_throws ArgumentError DiffusionChannel(1.0, 2.0, 3.0, 4.0; vm_para = 1.0, vm_perp = 3.0)
     # a genuine shape clash is Julia's own error, not a silent reshape
-    @test_throws DimensionMismatch DiffusionChannel(
-        zeros(2, 3), zeros(4, 5), zeros(2, 3), zeros(2, 3)
-    )
+    @test_throws DimensionMismatch DiffusionChannel(zeros(2, 3), zeros(4, 5), zeros(2, 3), zeros(2, 3); vm_para = zeros(2, 3), vm_perp = zeros(2, 3))
     # mixing one field with scalars is the normal case and must work
-    ch = DiffusionChannel(fill(1.0, 2, 3), 2.0, 3.0, 4.0)
+    ch = DiffusionChannel(fill(1.0, 2, 3), 2.0, 3.0, 4.0; vm_para = fill(1.0, 2, 3), vm_perp = 3.0)
     @test size(ch.v_para) == (2, 3)
     @test all(==(2.0), ch.λ_para)
 end
@@ -243,20 +246,14 @@ end
     NR, NZ = G.NR, G.NZ
 
     v_ref = fill(1.0e6, NR, NZ)
-    base = DiffusionChannel(
-        v_ref, @.(2 * tp.Dpara / v_ref),
-        v_ref, @.(2 * tp.Dperp / v_ref)
-    )
+    base = DiffusionChannel(v_ref, @.(2 * tp.Dpara / v_ref), v_ref, @.(2 * tp.Dperp / v_ref); vm_para = v_ref, vm_perp = v_ref)
     base_T = diffusion_tensor(base, F.bR, F.bZ)
 
     if RP.flags.turb_ExB_mixing
         fpara = RP.config.turbulent_diffusion_fraction_along_bpol
         fperp = 1 - fpara
         v_t = fill(1.0e3, NR, NZ)
-        turb = DiffusionChannel(
-            v_t, @.(2 * tp.Dpol_turb * fpara / v_t),
-            v_t, @.(2 * tp.Dpol_turb * fperp / v_t)
-        )
+        turb = DiffusionChannel(v_t, @.(2 * tp.Dpol_turb * fpara / v_t), v_t, @.(2 * tp.Dpol_turb * fperp / v_t); vm_para = v_t, vm_perp = v_t)
         turb_T = diffusion_tensor(turb, F.bpol_R, F.bpol_Z)
         DRR = base_T[1] .+ turb_T[1]
         DRZ = base_T[2] .+ turb_T[2]

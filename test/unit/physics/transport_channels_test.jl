@@ -17,7 +17,7 @@
     # v∥ = v⊥ and λ∥ = λ⊥ must erase b̂ entirely, for EVERY b̂ — not just the
     # axis-aligned ones where D_RZ happens to vanish anyway.
     v, λ = fill(800.0, 2, 3), fill(0.05, 2, 3)
-    ch = DiffusionChannel(v, λ, v, λ)
+    ch = DiffusionChannel(v, λ, v, λ; vm_para = v, vm_perp = v)
     D = 0.5 * 800.0 * 0.05
 
     for θ in (0.0, 0.3, π / 4, 1.1, π / 2, 2.7)
@@ -35,9 +35,10 @@ end
     using RAPID2D: DiffusionChannel, diffusion_tensor
 
     ch = DiffusionChannel(
-        fill(1000.0, 1, 1), fill(0.2, 1, 1),   # D∥ = 100
-        fill(10.0, 1, 1), fill(0.02, 1, 1)
-    )    # D⊥ = 0.1
+        fill(1000.0, 1, 1), fill(0.2, 1, 1),      # D∥ = 100
+        fill(10.0, 1, 1), fill(0.02, 1, 1);      # D⊥ = 0.1
+        vm_para = fill(1000.0, 1, 1), vm_perp = fill(10.0, 1, 1)
+    )
     Dpara, Dperp = 100.0, 0.1
 
     # b̂ = R̂
@@ -59,10 +60,7 @@ end
     # THE discriminating case. With b̂ on an axis D_RZ vanishes, so every
     # axis-aligned test would still pass with the cross term deleted from the
     # code. Only an oblique field exercises it.
-    ch = DiffusionChannel(
-        fill(1000.0, 1, 1), fill(0.2, 1, 1),
-        fill(10.0, 1, 1), fill(0.02, 1, 1)
-    )
+    ch = DiffusionChannel(fill(1000.0, 1, 1), fill(0.2, 1, 1), fill(10.0, 1, 1), fill(0.02, 1, 1); vm_para = fill(1000.0, 1, 1), vm_perp = fill(10.0, 1, 1))
     Dpara, Dperp = 100.0, 0.1
     s = 1 / sqrt(2.0)
 
@@ -91,10 +89,7 @@ end
 
     # The strongest single statement of "the tensor means what we think": its
     # principal axes ARE b̂ and its normal, with eigenvalues D∥ and D⊥.
-    ch = DiffusionChannel(
-        fill(1000.0, 1, 1), fill(0.2, 1, 1),
-        fill(10.0, 1, 1), fill(0.02, 1, 1)
-    )
+    ch = DiffusionChannel(fill(1000.0, 1, 1), fill(0.2, 1, 1), fill(10.0, 1, 1), fill(0.02, 1, 1); vm_para = fill(1000.0, 1, 1), vm_perp = fill(10.0, 1, 1))
     Dpara, Dperp = 100.0, 0.1
 
     θ = 0.6
@@ -122,7 +117,7 @@ end
     λ_para = [0.01 * j for i in 1:NR, j in 1:NZ]
     v_perp = [3.0 * i for i in 1:NR, j in 1:NZ]
     λ_perp = fill(0.002, NR, NZ)
-    ch = DiffusionChannel(v_para, λ_para, v_perp, λ_perp)
+    ch = DiffusionChannel(v_para, λ_para, v_perp, λ_perp; vm_para = v_para, vm_perp = v_perp)
 
     @test channel_D_para(ch) ≈ 0.5 .* v_para .* λ_para rtol = 1.0e-14
     @test channel_D_perp(ch) ≈ 0.5 .* v_perp .* λ_perp rtol = 1.0e-14
@@ -146,20 +141,32 @@ end
 
 # ── the kinetic ceiling ─────────────────────────────────────────────────────
 
-@testitem "Channel ceiling: uses the MEAN speed, not the D-convention speed" begin
-    using RAPID2D: DiffusionChannel, channel_ceiling, MEAN_SPEED_FACTOR
+@testitem "Channel ceiling: takes the declared wall speed, and scales nothing" begin
+    using RAPID2D: DiffusionChannel, channel_ceiling, maxwellian_mean_speed
 
-    # The trap. A channel declares v in the convention D = ½·v·λ, but a one-sided
-    # flux needs the MEAN speed v̄ = √(8/π)·v — a factor 1.596. Both scale as
-    # √(T/m), so no scaling test can separate them; only the absolute ratio can.
-    @test MEAN_SPEED_FACTOR ≈ sqrt(8 / π) rtol = 1.0e-14
-    @test MEAN_SPEED_FACTOR ≈ 1.5958 rtol = 1.0e-4
-
+    # The trap this replaces: the ceiling used to be `¼·(v̄/v)·v` with ONE global
+    # ratio √(8/π). That ratio is v̄/√(T/m), so it was right for a channel declaring
+    # √(T/m) — the gas — and √2 too large for one declaring the most probable speed
+    # √(2T/m) — every collisional channel. A ratio cannot be shared, because which
+    # `v` a channel declares is a property of how the code obtained its D, not of
+    # the population. So the channel carries v̄ and the ceiling scales nothing.
     v = 1000.0
-    ch = DiffusionChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.2, 1, 1))
-    # isotropic, so g is irrelevant; ceiling = ¼·v̄ = ¼·√(8/π)·v
-    @test channel_ceiling(ch, 1.0, 0.0, (1, 0))[1] ≈ 0.25 * sqrt(8 / π) * v rtol = 1.0e-14
-    @test channel_ceiling(ch, 1.0, 0.0, (1, 0))[1] ≈ 0.3989 * v rtol = 1.0e-3
+    ch = DiffusionChannel(
+        fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.2, 1, 1);
+        vm_para = fill(7.0, 1, 1), vm_perp = fill(7.0, 1, 1)
+    )
+    # v̄ deliberately unrelated to v: the ceiling must read the declared value alone
+    @test channel_ceiling(ch, 1.0, 0.0, (1, 0))[1] ≈ 0.25 * 7.0 rtol = 1.0e-14
+    @test channel_ceiling(ch, 0.0, 1.0, (1, 0))[1] ≈ 0.25 * 7.0 rtol = 1.0e-14
+
+    # v̄ = ⟨|v|⟩ over the Maxwellian, from (T, m) and nothing else
+    T, m = 3.0, 3.34e-27
+    @test maxwellian_mean_speed(T, m) ≈ sqrt(8 * T * 1.602176634e-19 / (π * m)) rtol = 1.0e-9
+    # …which sits between the most probable speed and the RMS speed
+    vp_s = sqrt(2 * T * 1.602176634e-19 / m)
+    @test vp_s < maxwellian_mean_speed(T, m) < sqrt(1.5) * vp_s
+    # a temperature that has undershot zero must not raise from `sqrt`
+    @test maxwellian_mean_speed(-1.0e-60, m) == 0.0
 end
 
 @testitem "Channel ceiling: an isotropic channel ignores the face orientation" begin
@@ -169,7 +176,7 @@ end
     # against double-counting the anisotropy: the supply side already carries it
     # through D_nn, so putting a directional factor on the ceiling too is wrong.
     v = 1000.0
-    ch = DiffusionChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.05, 1, 1))
+    ch = DiffusionChannel(fill(v, 1, 1), fill(0.2, 1, 1), fill(v, 1, 1), fill(0.05, 1, 1); vm_para = fill(v, 1, 1), vm_perp = fill(v, 1, 1))
     bR, bZ = cos(0.4), sin(0.4)
 
     c = [channel_ceiling(ch, bR, bZ, o)[1] for o in ((1, 0), (-1, 0), (0, 1), (0, -1))]
@@ -183,14 +190,15 @@ end
     # points straight into (g = 1) can only be reached along B, so a cross-field
     # channel must contribute exactly nothing there.
     ch = DiffusionChannel(
-        fill(0.0, 1, 1), fill(0.0, 1, 1),      # v∥ = 0
-        fill(2500.0, 1, 1), fill(4.0e-4, 1, 1)
+        fill(0.0, 1, 1), fill(0.0, 1, 1),        # v∥ = 0
+        fill(2500.0, 1, 1), fill(4.0e-4, 1, 1);
+        vm_para = fill(0.0, 1, 1), vm_perp = fill(2500.0, 1, 1)
     )
 
     # b̂ = R̂ and an R-face → g = 1
     @test channel_ceiling(ch, 1.0, 0.0, (1, 0))[1] == 0.0
     # the same field on a Z-face → g = 0, full perpendicular ceiling
-    @test channel_ceiling(ch, 1.0, 0.0, (0, 1))[1] ≈ 0.25 * sqrt(8 / π) * 2500.0 rtol = 1.0e-14
+    @test channel_ceiling(ch, 1.0, 0.0, (0, 1))[1] ≈ 0.25 * 2500.0 rtol = 1.0e-14
 end
 
 @testitem "Channel ceiling: a grazing field recovers the sin(alpha) projection" begin
@@ -203,12 +211,13 @@ end
     v_para = 1.5e6
     ch = DiffusionChannel(
         fill(v_para, 1, 1), fill(1.0, 1, 1),
-        fill(0.0, 1, 1), fill(0.0, 1, 1)
-    )       # v⊥ = 0
+        fill(0.0, 1, 1), fill(0.0, 1, 1);        # v⊥ = 0
+        vm_para = fill(v_para, 1, 1), vm_perp = fill(0.0, 1, 1)
+    )
 
     α = 8.0e-3                       # ≈ 0.46°, the manual configuration's pitch
     bR, bZ = sin(α), cos(α)          # b̂ nearly in the wall; R-face → g = sin²α
-    expected = 0.25 * sqrt(8 / π) * v_para * sin(α)
+    expected = 0.25 * v_para * sin(α)
     @test channel_ceiling(ch, bR, bZ, (1, 0))[1] ≈ expected rtol = 1.0e-12
 
     # and it really is a suppression, not a rounding artefact
@@ -222,10 +231,7 @@ end
     # g = (b̂·n̂)² is a FACE property, not a cell property. A staircase corner cell
     # owns one R-face and one Z-face, and they must not share a ceiling unless the
     # field happens to bisect them.
-    ch = DiffusionChannel(
-        fill(1.0e5, 1, 1), fill(1.0, 1, 1),
-        fill(100.0, 1, 1), fill(0.01, 1, 1)
-    )
+    ch = DiffusionChannel(fill(1.0e5, 1, 1), fill(1.0, 1, 1), fill(100.0, 1, 1), fill(0.01, 1, 1); vm_para = fill(1.0e5, 1, 1), vm_perp = fill(100.0, 1, 1))
 
     θ = 0.3                                     # oblique
     bR, bZ = cos(θ), sin(θ)
@@ -251,14 +257,8 @@ end
     # mechanisms, so both fluxes and ceilings add. (Sub-processes that share one
     # speed combine by Matthiessen *inside* a channel and are counted once — that
     # is the gas's three-way λ, already handled by neutral_gas.jl.)
-    fast = DiffusionChannel(
-        fill(1.0e6, 1, 1), fill(1.0, 1, 1),
-        fill(0.0, 1, 1), fill(0.0, 1, 1)
-    )
-    slow = DiffusionChannel(
-        fill(0.0, 1, 1), fill(0.0, 1, 1),
-        fill(60.0, 1, 1), fill(1.0, 1, 1)
-    )
+    fast = DiffusionChannel(fill(1.0e6, 1, 1), fill(1.0, 1, 1), fill(0.0, 1, 1), fill(0.0, 1, 1); vm_para = fill(1.0e6, 1, 1), vm_perp = fill(0.0, 1, 1))
+    slow = DiffusionChannel(fill(0.0, 1, 1), fill(0.0, 1, 1), fill(60.0, 1, 1), fill(1.0, 1, 1); vm_para = fill(0.0, 1, 1), vm_perp = fill(60.0, 1, 1))
     chs = (fast, slow)
     bR, bZ = cos(0.4), sin(0.4)
 

@@ -30,9 +30,7 @@
     "A channel with both a parallel and a cross-field leg, on the grid's shape."
     function both_legs(G; v_para = 3.0e4, λ_para = 0.02, v_perp = 2.0e3, λ_perp = 0.3)
         sz = (G.NR, G.NZ)
-        return RAPID2D.DiffusionChannel(
-            fill(v_para, sz), fill(λ_para, sz), fill(v_perp, sz), fill(λ_perp, sz)
-        )
+        return RAPID2D.DiffusionChannel(fill(v_para, sz), fill(λ_para, sz), fill(v_perp, sz), fill(λ_perp, sz); vm_para = fill(v_para, sz), vm_perp = fill(v_perp, sz))
     end
 end
 
@@ -45,8 +43,8 @@ end
 
     # two mechanisms on two different axes, as a real ion has: collisional along
     # b̂, turbulent along b̂_pol
-    ch1 = DiffusionChannel(fill(3.0e4, G.NR, G.NZ), fill(0.02, G.NR, G.NZ), zeros(G.NR, G.NZ), zeros(G.NR, G.NZ))
-    ch2 = DiffusionChannel(zeros(G.NR, G.NZ), zeros(G.NR, G.NZ), fill(2.0e3, G.NR, G.NZ), fill(0.3, G.NR, G.NZ))
+    ch1 = DiffusionChannel(fill(3.0e4, G.NR, G.NZ), fill(0.02, G.NR, G.NZ), zeros(G.NR, G.NZ), zeros(G.NR, G.NZ); vm_para = fill(3.0e4, G.NR, G.NZ), vm_perp = zeros(G.NR, G.NZ))
+    ch2 = DiffusionChannel(zeros(G.NR, G.NZ), zeros(G.NR, G.NZ), fill(2.0e3, G.NR, G.NZ), fill(0.3, G.NR, G.NZ); vm_para = zeros(G.NR, G.NZ), vm_perp = fill(2.0e3, G.NR, G.NZ))
     cwd = [(ch1, bR, bZ), (ch2, ones(G.NR, G.NZ), zeros(G.NR, G.NZ))]
 
     v = wall_absorption_speeds(cwd, faces, 0.0)
@@ -115,8 +113,8 @@ end
     G = boxed_grid()
     faces = wall_faces(G)
     bR, bZ = oblique_b(G)
-    ch1 = DiffusionChannel(fill(3.0e4, G.NR, G.NZ), fill(0.02, G.NR, G.NZ), zeros(G.NR, G.NZ), zeros(G.NR, G.NZ))
-    ch2 = DiffusionChannel(zeros(G.NR, G.NZ), zeros(G.NR, G.NZ), fill(2.0e3, G.NR, G.NZ), fill(0.3, G.NR, G.NZ))
+    ch1 = DiffusionChannel(fill(3.0e4, G.NR, G.NZ), fill(0.02, G.NR, G.NZ), zeros(G.NR, G.NZ), zeros(G.NR, G.NZ); vm_para = fill(3.0e4, G.NR, G.NZ), vm_perp = zeros(G.NR, G.NZ))
+    ch2 = DiffusionChannel(zeros(G.NR, G.NZ), zeros(G.NR, G.NZ), fill(2.0e3, G.NR, G.NZ), fill(0.3, G.NR, G.NZ); vm_para = zeros(G.NR, G.NZ), vm_perp = fill(2.0e3, G.NR, G.NZ))
     group = IonTransportGroup([1, 2], [ch1, ch2])
     dirs = [(bR, bZ), (ones(G.NR, G.NZ), zeros(G.NR, G.NZ))]
 
@@ -292,8 +290,8 @@ end
     ν = fill(662.0, sz)
 
     function channels(m)
-        v_p = @. sqrt(2 * Ti * 1.602176634e-19 / m)
-        return [parallel_collisional_channel(v_p, (@. 0.5 * v_p^2 / ν)), bohm_channel(Te, Bt, m)]
+        vp_s = @. sqrt(2 * Ti * 1.602176634e-19 / m)
+        return [parallel_collisional_channel(vp_s, (@. 0.5 * vp_s^2 / ν)), bohm_channel(Te, Bt, m)]
     end
     per_species = [channels(2m_p), channels(12m_p)]
     dirs = [(bR, bZ), (bR, bZ)]

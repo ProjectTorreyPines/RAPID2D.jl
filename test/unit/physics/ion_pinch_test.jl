@@ -26,7 +26,7 @@
 # The genuinely multi-species assertions (a trace peaking on the bulk, the exact
 # Z_z linearity, per-species groups each carrying their own 𝐃) need a second
 # species, which `set_ion_species!` does not take yet. They are written out
-# ready-to-run in claudedocs/TODO/ion-inventory-multi-species.md.
+# ready-to-run in internal/docs/src/notes/TODO/ion-inventory-multi-species.md.
 #
 # Default off: the term is real but unvalidated here, and turning it on would
 # move every existing result once a second species exists.

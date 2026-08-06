@@ -128,12 +128,17 @@ It does **not** depend on the boundary condition, so diagnostics built on it
 (sputtering, bombardment rates) are unaffected by the wall treatment: a reflective
 wall still has `Γ_in = Γ_out = v_incident·n_w`, with only the *net* flux zero.
 
-**`v̄`, not `v_th`.** `neutral_gas_thermal_speed` is `√(T/m)`, the convention
-`D = ½·v_th·λ` is written in; the two differ by `√(8/π) = 1.596`, so `¼v_th` here
-would under-count every impact by 37 %. Both go as `√(T/m)`, so no scaling test
-would reveal the swap — hence the ratio is pinned to `0.3989 = ¼√(8/π)`.
+**`vm`, not `vth`.** Every Maxwellian moment goes as `√(T/m)` and they differ only
+by the constant — `√(8/π) = 1.596` between these two — so no scaling test can tell
+them apart, and `¼·vth` here would under-count every impact by 37 % in silence.
+The ratio to `√(T/m)` is pinned at `0.3989 = ¼√(8/π)` for exactly that reason.
+
+Shares [`maxwellian_mean_speed`](@ref) with the channel ceiling rather than
+restating the formula. It was stated twice, and the two copies disagreed: this one
+took `(T, m)` and was right, while the ceiling scaled a channel's declared `v` by
+one shared ratio and was √2 high for every collisional channel.
 """
-v_incident(T_eV, m) = sqrt(8 * T_eV * EE_GAS / (π * m)) / 4
+v_incident(T_eV, m) = maxwellian_mean_speed(T_eV, m) / 4
 
 """
     gross_impingement(n_w, T_eV, m)

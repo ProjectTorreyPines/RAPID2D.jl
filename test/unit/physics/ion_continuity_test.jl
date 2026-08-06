@@ -222,19 +222,21 @@ end
     # for the bulk. A trace species does not collide with itself — it collides
     # with the bulk, and NRL's ion–ion test-particle rate (p.33) scales as
     #
-    #     ν_z ∝ Z_z²Z_i² n_i (μ_i^½/μ_z)(1 + μ_i/μ_z)      v_z ∝ μ_z^-½
+    #     ν_z ∝ Z_z²Z_i² n_i (μ_i^½/μ_z)(1 + μ_i/μ_z)
     #
-    # so μ_z CANCELS out of the diffusivity in the heavy-impurity limit:
+    # With D∥ built by Einstein, D = T/(m_z ν_z), that gives
     #
-    #     D∥_z / D∥_bulk = 2 / [ (Z_z/Z_i)² (1 + μ_i/μ_z) ]
+    #     D∥_z / D∥_bulk = 2√(μ_i/μ_z) / [ (Z_z/Z_i)² (1 + μ_i/μ_z) ]
     #
-    # Using the self-collision μ^-½ instead makes C⁶⁺ 4.2× less diffusive than it
-    # should be.
+    # A strongly coupled species diffuses LESS, and being carried along by the bulk
+    # is convection (the shared u_i) plus the pinch term — not a shared D. See
+    # internal/docs/src/details/impurity-transport-basics.md §4.
     RP = ion_case()
     RP.flags.Atomic_Collision = false          # Coulomb-only, so the ratio is clean
     update_transport_quantities!(RP)
     turb = shared_turbulent_channel(RP)
     m_p = RP.config.constants.mi / 2
+    ee = RP.config.constants.ee
     μ_i, Z_i = 2, 1                            # H₂⁺, the bulk
 
     coll(m, Z) = ion_transport_channels(RP, IonSpecies(:probe, m, Z), turb)[1]
@@ -242,11 +244,13 @@ end
     inw = RP.G.nodes.in_wall_nids
     at(x) = x[inw]
     ref = coll(2m_p, 1)
-    D_ratio(μ_z, Z_z) = 2 / ((Z_z / Z_i)^2 * (1 + μ_i / μ_z))
+    D_ratio(μ_z, Z_z) = 2 * sqrt(μ_i / μ_z) / ((Z_z / Z_i)^2 * (1 + μ_i / μ_z))
 
-    # v∥ still sees mass alone…
+    # the channel's own speed is now the mean speed, so it sees mass alone…
     @test at(coll(12m_p, 1).v_para) ≈ at(ref.v_para) ./ sqrt(6) rtol = 1.0e-12
     @test at(coll(2m_p, 6).v_para) ≈ at(ref.v_para) rtol = 1.0e-12
+    # …and it is the SAME field the wall reads, which is the point of the basis
+    @test coll(12m_p, 1).v_para == coll(12m_p, 1).vm_para
 
     # …but D∥ follows the ion–ion scaling, which is NOT separable in m and Z
     for (μ_z, Z_z) in ((12, 1), (2, 6), (12, 6), (16, 8), (1, 1))
@@ -257,12 +261,30 @@ end
     # the bulk reproduces itself exactly, so nothing about H₂⁺ moves
     @test at(channel_D_para(coll(2m_p, 1))) == at(channel_D_para(ref))
 
-    # C⁶⁺ against the self-collision scaling this replaces: 1/21.0, not 1/88.2
-    @test D_ratio(12, 6) ≈ 1 / 21.0 rtol = 1.0e-3
-    @test 1 / (36 * sqrt(6)) ≈ 1 / 88.2 rtol = 1.0e-3
+    # Absolute, not a ratio: D∥ must BE Einstein at the species' own mass against
+    # the species' own rate. Two independent things — NRL's test-particle
+    # conversion and D = T/(mν) — have to compose, and a ratio test would pass if
+    # both were wrong by the same factor.
+    for (μ_z, Z_z) in ((12, 1), (2, 6), (12, 6), (16, 8))
+        m_z = μ_z * m_p
+        μ = 2m_p / m_z
+        C_z = (Z_z / Z_i)^2 * sqrt(μ) * (1 + μ) / 2
+        want = @. RP.plasma.Ti_eV * ee / (m_z * C_z * RP.transport.νi_coulomb)
+        @test at(channel_D_para(coll(m_z, Z_z))) ≈ at(want) rtol = 1.0e-12
+    end
 
-    # a heavy impurity loses its mass dependence entirely
-    @test D_ratio(1000, 6) ≈ 2 / 36 rtol = 1.0e-2
+    # Structural consequences of that form, read off the CODE and not off a local
+    # formula. Charge and mass enter through different routes, so each is pinned on
+    # its own: ν ∝ Z² at fixed mass, and D ∝ 1/√m once the impurity is heavy enough
+    # that (1 + μ) → 1 — an infinitely heavy species stops diffusing rather than
+    # settling at a mass-free floor.
+    @test at(channel_D_para(coll(2m_p, 6))) ≈ at(channel_D_para(coll(2m_p, 3))) ./ 4 rtol = 1.0e-9
+    # deliberately unphysical masses: the 1/√m asymptote needs μ ≪ 1 to separate
+    # from the (1 + μ) factor, which is still worth 0.15 % at C⁶⁺
+    @test at(channel_D_para(coll(4.0e4 * m_p, 6))) ≈
+        at(channel_D_para(coll(1.0e4 * m_p, 6))) ./ 2 rtol = 1.0e-3
+    @test only(unique(at(channel_D_para(coll(1.0e6 * m_p, 6))))) <
+        only(unique(at(channel_D_para(coll(12m_p, 6))))) / 100
 
     # Bohm is mass-free but NOT charge-free: ρ_s²ω_ci = Te/(ZeB)
     @test at(channel_D_perp(bohm(12m_p, 1))) ≈ at(channel_D_perp(bohm(2m_p, 1))) rtol = 1.0e-12
@@ -331,4 +353,96 @@ end
 
     # …and at Z = 1 the flag is a no-op, so no existing single-species result moves
     @test D⊥(off, turb_off, 1)[inw] ≈ D⊥(RP, turb, 1)[inw] rtol = 1.0e-12
+end
+
+@testitem "The wall speed is the population's MEAN speed, not the D-convention speed" setup = [IonRun] begin
+    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+        channel_ceiling
+
+    # Γ = ¼·n·v̄·|b̂·n̂| is an integral over the Maxwellian, so it needs ⟨|v|⟩ —
+    # a function of (T, m) and of nothing else. The channel's own `v` is
+    # bookkeeping married to `λ` so that ½vλ reproduces D, and which split was
+    # chosen is a property of how the code got D, not of the population. Deriving
+    # v̄ from it makes the wall depend on that choice: the collisional channel
+    # declares vp = √(2T/m) while the gas channel declares vth = √(T/m), and one
+    # global v̄/v ratio cannot be right for both.
+    RP = ion_case()
+    update_transport_quantities!(RP)
+    turb = shared_turbulent_channel(RP)
+    mi = RP.config.constants.mi
+    ee = RP.config.constants.ee
+    coll = ion_transport_channels(RP, IonSpecies(:H2⁺, mi, 1), turb)[1]
+
+    inw = RP.G.nodes.in_wall_nids
+    v̄ = @. sqrt(8 * RP.plasma.Ti_eV * ee / (π * mi))
+    @test channel_ceiling(coll, 1.0, 0.0, (1, 0))[inw] ≈ 0.25 .* v̄[inw] rtol = 1.0e-12
+
+    # …and the magnetic projection rides on top of it unchanged: v⊥ = 0 for a
+    # collisional channel, so a grazing face sees ¼v̄∥·|b̂·n̂| and nothing else.
+    @test all(iszero, coll.v_perp)
+    b = 0.6
+    @test channel_ceiling(coll, b, 0.0, (1, 0))[inw] ≈ 0.25 .* v̄[inw] .* b rtol = 1.0e-12
+end
+
+@testitem "The collisional channel is exact in both limits, and composes at D" setup = [IonRun] begin
+    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+        channel_D_para, channel_D_perp, maxwellian_mean_speed
+
+    # Two mechanisms bound a parallel step: a collision rate and a geometric
+    # length. Each has an exact closed form on its own, and the model is that they
+    # compose as diffusivities. All three claims are checked here against values
+    # built from (T, m, ν, L) alone — nothing is compared to a previous formula.
+    #
+    #   rate alone     D∥ = T/(mν)          Einstein
+    #   length alone   D∥ = ½·vm·L          free streaming, ⟨|v_∥|⟩ = vm/2
+    #   both           1/D∥ = 1/D_ν + 1/D_L
+    #
+    # The last line is the whole content of composing at the level of D. It holds
+    # for no other pairing of moment and coefficient, which is why it is worth
+    # asserting directly rather than through the value it happens to produce.
+    RP = ion_case()
+    update_transport_quantities!(RP)
+    RP.transport.Dpara0 = 0.0                  # no additive floor riding along
+
+    mi = RP.config.constants.mi
+    ee = RP.config.constants.ee
+    inw = RP.G.nodes.in_wall_nids
+    H2⁺ = IonSpecies(:H2⁺, mi, 1)
+    # The ExB channel is mass- and charge-free, so the caller builds it once and
+    # hands the same object to every species — that is what lets a mixture return
+    # it untouched instead of averaging a constant.
+    turb_ref = shared_turbulent_channel(RP)
+    channels(ν, L) = begin
+        fill!(RP.transport.νi_neutral, ν)
+        fill!(RP.transport.νi_coulomb, 0.0)
+        fill!(RP.transport.L_mixing, L)
+        ion_transport_channels(RP, H2⁺, turb_ref)
+    end
+    D(ν, L) = channel_D_para(channels(ν, L)[1])[inw]
+
+    vm = maxwellian_mean_speed.(RP.plasma.Ti_eV, mi)[inw]
+    T_J = (RP.plasma.Ti_eV .* ee)[inw]
+    ν, L = 3.0e5, 0.37                         # L_mixing = 0 means "unset", i.e. unbounded
+
+    @test D(ν, 0.0) ≈ T_J ./ (mi .* ν) rtol = 1.0e-12          # Einstein
+    @test D(0.0, L) ≈ 0.5 .* vm .* L rtol = 1.0e-12            # free streaming
+    @test 1 ./ D(ν, L) ≈ 1 ./ D(ν, 0.0) .+ 1 ./ D(0.0, L) rtol = 1.0e-12
+
+    # Neither mechanism present is not a small diffusivity but no channel at all:
+    # free streaming with nothing to bound it is convection, and the equation
+    # already carries it as −∇·(n𝐮_i).
+    @test all(iszero, D(0.0, 0.0))
+
+    # A parallel channel contributes nothing across the field, in every limit —
+    # otherwise the Bohm channel it sits beside would be double counting D⊥. And
+    # the collision rate is the collisional channel's business alone: Bohm reads
+    # (Te, B, m, Z) and nothing else, so it must not move when ν or L does.
+    bohm_ref = channel_D_perp(channels(ν, L)[2])
+    for (νi, Li) in ((ν, L), (ν, 0.0), (0.0, L), (0.0, 0.0))
+        chs = channels(νi, Li)
+        @test all(iszero, chs[1].v_perp) && all(iszero, chs[1].λ_perp)
+        @test all(iszero, chs[1].vm_perp)
+        @test channel_D_perp(chs[2]) == bohm_ref
+        @test chs[3] === turb_ref               # handed through, not rebuilt
+    end
 end
