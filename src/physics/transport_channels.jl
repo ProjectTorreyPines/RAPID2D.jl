@@ -550,3 +550,75 @@ function bohm_channel(Te_eV, B, m_i, Z::Integer = 1)
         vm_para = zero.(c_s), vm_perp = (@. sqrt(8 / π) * c_s / 8)
     )
 end
+
+# ── the free-streaming ceiling ──────────────────────────────────────────────
+#
+# Not a channel. Everything above this line is a transport MECHANISM, and
+# mechanisms compose harmonically because they are competing termination events
+# (`speed-and-composition.md` §4). A density gradient terminates nothing — a
+# particle in a steep profile does not collide more often — so the ceiling below
+# is a different kind of object: a bound on the TOTAL flux, applied after the
+# mechanisms have composed and after any base diffusivity has been added.
+#
+# Putting it in the harmonic sum instead is what let `Dpara0` escape it.
+
+"""
+    flux_limited_diffusivity(D, ∇n, n, vm, α) -> Float
+
+`D` capped so that the diffusive flux cannot exceed what a Maxwellian can supply,
+
+```
+    Γ = D·|∇n| ≤ α·n·v̄        α = ¼ is Hertz–Knudsen
+```
+
+composed as the **`n = 2`** member of Larsen's flux-limited-diffusion family,
+
+```
+    1/D_limited = √( (1/D)² + (|∇n| / (α·vm·n))² )
+```
+
+`vm` is contracted to be [`maxwellian_mean_speed`](@ref): the ceiling is a one-way
+flux across a surface, `⟨v_n θ(v_n)⟩ = ¼v̄`, and only that moment has the meaning.
+The same `¼v̄` the Robin wall condition uses, now multiplied by the gradient scale
+rather than a geometric one.
+
+**Why `n = 2`.** For `x ≡ D/D_max` the family expands as
+`D_n/D = 1 − xⁿ/n + O(x²ⁿ)`, so the exponent *is* the order of the leading
+correction. This code builds `D∥ = ½vp²/ν = T/(mν)` from a single
+velocity-independent rate — the BGK closure — whose exact linear response is
+`1 − 1.910R²` with `R = λ/Lₙ`: second order, because parity plus analyticity of the
+kernel forbid an odd term. `n = 1` manufactures a first-order term the kinetics do
+not have (0.6 % low against a true 0.002 % at this device's operating point, 15 %
+low at `R = 0.1`); `n = ∞` has none at all and errs the other way. `n = 2` gives
+`1 − 2.000R²`, and minimax over `R ∈ [0.003, 0.3]` picks 2.04, so the integer is a
+rounding rather than a fit. `n = 2` is also the only member whose `D` is smooth at
+`∇n = 0`, since it depends on `(∇n)²` rather than `|∇n|` — and that is where most
+of the grid sits most of the time. Derived in
+`internal/docs/src/notes/design/flux-limiter.md` §1.
+
+**`Lₙ = n/|∇n|` is never formed**, which is the whole structural point: the guard
+that used to patch its non-finite branch had the sign backwards, mapping a flat
+profile (`Lₙ = ∞`, no limit needed) to `D = 0` (maximum limit). Here every
+degenerate case falls out instead of needing one:
+
+| state | returns | why |
+|---|---|---|
+| `∇n = 0` | `D` unchanged, bit for bit | flat profile, Fick at its most valid |
+| `n = 0`, `∇n ≠ 0` | `0` | an empty cell has nothing to supply |
+| `n < 0` | `0` | transient, before `negative_n_correction`; `max(n,0)` sends it to the case above rather than letting it behave like `\\|n\\|` |
+| `vm = 0` | `0` | `T = 0`, nothing crosses any surface |
+| `D = 0` | `0` | already immobile |
+
+`hypot` rather than `sqrt(a^2 + b^2)`: `inv(D)` is genuinely subnormal near
+`D = floatmax()` — which `Dpara_e_coll` reaches whenever the collision frequency
+vanishes — and the naive form overflows to the wrong limit there.
+"""
+function flux_limited_diffusivity(D, ∇n, n, vm, α)
+    g = abs(∇n)
+    # short-circuit, not `ifelse`: this must return D untouched rather than round
+    # trip through inv(hypot(inv(D), 0)) and lose an ulp
+    g > zero(g) || return D
+    supply = α * vm * max(n, zero(n))          # ¼·n·v̄, the one-way flux ceiling
+    supply > zero(supply) || return zero(D)
+    return inv(hypot(inv(D), g / supply))
+end
