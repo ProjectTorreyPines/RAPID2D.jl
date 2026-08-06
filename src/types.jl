@@ -1099,9 +1099,10 @@ mutable struct RAPID{FT <: AbstractFloat}
         iRRC = load_H2_Ion_RRCs()
         tElap = Dict{Symbol, Float64}()
 
-        dim_tt_0D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap0D_Δt_s)) + 1
-        dim_tt_2D = Int(ceil((config.t_end_s - config.t_start_s) / config.snap2D_Δt_s)) + 1
-        diagnostics = Diagnostics{FT}(G.NR, G.NZ, dim_tt_0D, dim_tt_2D)
+        # Empty. Snapshot storage grows as snapshots are taken (see Diagnostics), so
+        # nothing here is sized from `t_end_s` — a constructor cannot know how many
+        # steps will run, and sizing on that guess is what cost 1.5 GiB in 201b1f8.
+        diagnostics = Diagnostics{FT}(G.NR, G.NZ)
 
         flf = FieldLineFollowingResult{FT}(NR, NZ)
 

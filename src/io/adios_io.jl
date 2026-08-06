@@ -13,7 +13,7 @@ export write_to_adiosBP!,
 Write the latest 0D snapshot data to ADIOS2 file.
 """
 function write_latest_snap0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    snap0D = RP.diagnostics.snaps0D[RP.diagnostics.tid_0D]
+    snap0D = RP.diagnostics.snaps0D[end]
     write_to_adiosBP!(RP.AW_snap0D, snap0D)
     return RP
 end
@@ -24,7 +24,7 @@ end
 Write the latest 2D snapshot data to ADIOS2 file.
 """
 function write_latest_snap2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    snap2D = RP.diagnostics.snaps2D[RP.diagnostics.tid_2D]
+    snap2D = RP.diagnostics.snaps2D[end]
     write_to_adiosBP!(RP.AW_snap2D, snap2D)
     return RP
 end

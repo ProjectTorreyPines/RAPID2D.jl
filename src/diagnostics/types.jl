@@ -269,12 +269,17 @@ No legacy Dictionary compatibility layer
 @kwdef mutable struct Diagnostics{FT <: AbstractFloat}
     dims_RZ::Tuple{Int, Int} # Dimensions for R and Z (NR, NZ)
 
+    # Snapshot storage GROWS as snapshots are taken — `update_snaps0D!`/`update_snaps2D!`
+    # push onto these. Nothing is sized from `t_end_s`, so an interval that outruns the
+    # run costs nothing (201b1f8: 5001 preallocated 2-D slots, 1.5 GiB, none of them
+    # ever written), and `length` is the number of snapshots actually recorded rather
+    # than a capacity with a zero-filled tail. `snaps0D[end]` is the latest snapshot;
+    # there is no separate index to fall out of step with it.
+
     # 0D time series snapshots
-    tid_0D::Int = 0 # Last recorded time index for snaps0D
     snaps0D::Vector{Snapshot0D{FT}} = Snapshot0D{FT}[]
 
     # 2D spatial snapshots
-    tid_2D::Int = 0 # Last recorded time index for snaps2D
     snaps2D::Vector{Snapshot2D{FT}} = Snapshot2D{FT}[]
 
     # tracking number of particles (source/loss)
@@ -283,22 +288,6 @@ end
 
 function Diagnostics{FT}(dim_R::Int, dim_Z::Int) where {FT <: AbstractFloat}
     return Diagnostics{FT}(; dims_RZ = (dim_R, dim_Z))
-end
-
-function Diagnostics{FT}(dim_R::Int, dim_Z::Int, dim_tt_0D::Int, dim_tt_2D::Int) where {FT <: AbstractFloat}
-    dims_RZ = (dim_R, dim_Z)
-    # Create empty snapshots with given sizes to preallocate memory
-    snaps0D = [Snapshot0D{FT}() for _ in 1:dim_tt_0D]
-    snaps2D = [Snapshot2D{FT}(dims_RZ = (dim_R, dim_Z)) for _ in 1:dim_tt_2D]
-
-    return Diagnostics{FT}(;
-        dims_RZ,
-        tid_0D = 0, # tid_0D
-        snaps0D,
-        tid_2D = 0, # tid_2D
-        snaps2D,
-        Ntracker = SrcLossTracker{FT}(; dims_RZ)
-    )
 end
 
 # Export everything for external use

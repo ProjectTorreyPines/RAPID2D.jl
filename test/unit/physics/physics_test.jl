@@ -640,14 +640,12 @@ end
 
     # Builds a fresh, fully independent scenario at the given starting Te.
     function build_relaxation_case(Te0)
-        # Snapshot buffers are sized at construction from `t_end_s / snap*_Δt_s`, and
-        # the defaults (20 µs / 100 µs) against `t_end_s = 0.5` preallocate 25 001 0-D
-        # and 5 001 2-D slots — 1.5 GiB per RAPID, of which 1.5 GiB is `snaps2D`.
-        # Nothing here writes or reads them: snapshots are recorded by
-        # `run_simulation!`, and this item drives `advance_timestep!` directly. Three
-        # cases are built, so the item alone asked for ~4.5 GiB and was killing the
-        # ubuntu CI runner whenever the scheduler placed it late. Intervals past
-        # `t_end_s` give two slots and 8 MiB.
+        # The explicit snapshot intervals are REQUIRED, not a tuning choice: `dt` here is
+        # 1 ms and the defaults are 20 µs / 100 µs, so the defaults would ask to record
+        # 50× and 10× more often than the solver steps — which `validate_config!` now
+        # rejects outright. (That same config is what preallocated 1.5 GiB per RAPID
+        # before snapshot storage grew on demand; storage is no longer sized from
+        # `t_end_s`, so the interval only has to be legal, not economical.)
         config = SimulationConfig{FT}(
             NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
             dt = 1.0e-3, t_end_s = 0.5, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
