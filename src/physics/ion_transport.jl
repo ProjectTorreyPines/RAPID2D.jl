@@ -245,7 +245,6 @@ separates the two policies today.
 """
 function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_turb) where {FT <: AbstractFloat}
     pla, tp, F = RP.plasma, RP.transport, RP.fields
-    ee = RP.config.constants.ee
 
     # Competing mechanisms are composed as DIFFUSIVITIES, not as mean free paths:
     #
@@ -301,7 +300,9 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     ν_s = @. tp.νi_neutral + coulomb_scale * tp.νi_coulomb
     # `&`, not `&&`: inside `@.` the comparisons are elementwise masks, and `&&` is
     # control flow rather than a call, so it never becomes a broadcast.
-    inv_D = @. species.mass * ν_s / (pla.Ti_eV * ee) +
+    # `EE`, not `config.constants.ee`: `vm_s` on the line above already converts
+    # eV→J with it, and one expression must not name one constant two ways.
+    inv_D = @. species.mass * ν_s / (pla.Ti_eV * EE) +
         ifelse((tp.L_mixing > 0) & (vm_s > 0), 2 / (vm_s * tp.L_mixing), zero(FT))
     # `inv_D > 0` is false for both Inf⁻¹ = 0 and for a NaN out of 0/0, so the
     # degenerate cases above land on D∥ = 0 without being enumerated.
@@ -692,7 +693,7 @@ is silently wrong rather than loudly missing:
   - `γ_2nd_electron` is one number, so only column 1 yields secondary electrons;
   - the ion charge density is `n·Z` from this species, and would have to become
     `Σ_s n_s Z_s` at every site that builds a current (see
-    `internal_docs/src/notes/TODO/ion-inventory-multi-species.md`).
+    `internal/docs/src/notes/TODO/ion-inventory-multi-species.md`).
 
 `plasma.ni` IS this species' density — not a total over species, and not a
 quantity a second field mirrors.

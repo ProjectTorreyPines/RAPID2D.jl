@@ -20,7 +20,10 @@ Update all transport-related quantities including diffusion coefficients, veloci
 function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     tp = RP.transport
-    @unpack me, ee = RP.config.constants
+    # No `ee` here: the Maxwellian speed helpers convert eV→J themselves, with the
+    # module-level `EE` that `constants.ee` defaults to. Unpacking it as well would
+    # put two names for one constant in scope.
+    @unpack me = RP.config.constants
     # `vp_i` reaches the ion collisional diffusivity and, through the ambipolar
     # average, the ELECTRON one — so a mass that disagrees with the species the
     # ion equation transports would move both.

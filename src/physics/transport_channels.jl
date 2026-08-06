@@ -34,11 +34,15 @@
 # WHICH ONE IS RIGHT is not a matter of taste. It follows from what the mechanism
 # supplies:
 #
-#   vth   λ was back-derived from a MEASURED D under D = ½vλ    (neutral gas)
+#   vth   λ was back-derived from a MEASURED D under D = ½vλ.  NO CALLER TODAY —
+#         the neutral gas used it until the D-level composition removed the
+#         back-derivation entirely. Kept as the reference scale the other two are
+#         quoted against, and as the yardstick `wall_test.jl` pins ¼√(8/π) to.
 #   vp    D is built from a KNOWN RATE — ½vp² = T/m exactly, so
 #         D = ½vp²/ν = T/(mν) reproduces Einstein
 #   vm    anything CROSSING A SURFACE: ⅓vm isotropic diffusion, ½vm = ⟨|v_∥|⟩
-#         along one axis, ¼vm = ⟨v_nθ(v_n)⟩ one-sided at a wall
+#         along one axis, ¼vm = ⟨v_nθ(v_n)⟩ one-sided at a wall.
+#         Every thermal channel declares vm — gas and collisional alike.
 #
 # A factor √2 between vth and vp was a live bug in this file's history. The rule
 # that settles it is derived in
@@ -55,11 +59,17 @@
 scale appearing in `exp(−v_z²/2v_th²)`.
 
 The smallest of the three and the one most often meant by an unqualified "thermal
-speed", so the function name pins which moment is meant. Used where a
-step length was back-derived from a **measured** diffusivity under the
-`D = ½·v·λ` convention — the neutral gas channel.
+speed", so the function name pins which moment is meant.
+
+**No production caller.** The neutral gas channel used it while its `λ` was
+back-derived from a measured diffusivity under `D = ½·v·λ`; composing at `D`
+removed that step, and every thermal channel now declares `vm`. It is retained as
+the reference scale the other two moments are quoted against (`vp = √2·vth`,
+`vm = √(8/π)·vth`) and as the yardstick the wall ratio test pins `¼√(8/π)` to —
+a test that would still pass if both sides drifted together, which is why the
+independent definition is worth keeping.
 """
-maxwellian_thermal_speed(T_eV, m) = sqrt(max(zero(T_eV), T_eV) * EE_GAS / m)
+maxwellian_thermal_speed(T_eV, m) = sqrt(max(zero(T_eV), T_eV) * EE / m)
 
 """
     maxwellian_most_probable_speed(T_eV, m) -> Float
@@ -71,7 +81,7 @@ rate**: `½·vp² = T/m` exactly, so `D = ½·vp²/ν = T/(mν)` reproduces Eins
 Any other moment here would need a different numerical prefactor, so the pair
 `(½, vp)` must be read and changed together.
 """
-maxwellian_most_probable_speed(T_eV, m) = sqrt(2 * max(zero(T_eV), T_eV) * EE_GAS / m)
+maxwellian_most_probable_speed(T_eV, m) = sqrt(2 * max(zero(T_eV), T_eV) * EE / m)
 
 """
     maxwellian_mean_speed(T_eV, m) -> Float
@@ -95,7 +105,7 @@ alone, and `∫₀^∞ v·f₁D(v)dv = ¼vm` exactly. Magnetizing the plasma cha
 axis* is free — `ẑ` becomes `b̂` — so the `¼` survives and the field enters only
 through the projection `|b̂·n̂|` in [`channel_ceiling`](@ref).
 """
-maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE_GAS / (π * m))
+maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE / (π * m))
 
 """
     TransportChannel{FT}
@@ -455,7 +465,7 @@ function turbulent_ExB_channel(E_pol, B_tot, L_mixing, f_para, f_perp)
     # about how fast it delivers to a wall and `v̄ = √(8/π)·v_E` is a modelling
     # choice, not a theorem. It is written out here rather than inherited from a
     # shared constant so that the choice is visible where it is made. A cross-field
-    # delivery model would replace it; see internal_docs/src/notes/TODO/wall-boundary-conditions.md.
+    # delivery model would replace it; see internal/docs/src/notes/TODO/wall-boundary-conditions.md.
     vm_E = @. sqrt(8 / π) * v_E
     return DiffusionChannel(
         v_E, (@. f_para * L_mixing), v_E, (@. f_perp * L_mixing);
@@ -523,13 +533,13 @@ ever unified.
 function bohm_channel(Te_eV, B, m_i, Z::Integer = 1)
     # max(0, ·) because a temperature equation may land microscopically below
     # zero, where `sqrt` raises rather than returning NaN
-    c_s = @. sqrt(max(zero(eltype(Te_eV)), Te_eV * EE_GAS / m_i))   # EE_GAS is the elementary charge
+    c_s = @. sqrt(max(zero(eltype(Te_eV)), Te_eV * EE / m_i))   # EE is the elementary charge
     # `abs(B)`: `Bϕ = R0B0/R` carries the sign of the user's R0B0, and a signed
     # ω_ci would hand back a negative ρ_s — hence a negative λ⊥ and a negative
     # D⊥ = ½v⊥λ⊥, i.e. ANTI-diffusion, for a field that merely points the other
     # way. `D_B` is a magnitude; the gyration sense does not enter it. The
     # electron path states the same thing as `abs(Te/Bϕ)` in `transport.jl`.
-    ω_ci = @. Z * EE_GAS * abs(B) / m_i
+    ω_ci = @. Z * EE * abs(B) / m_i
     ρ_s = @. c_s / ω_ci
     # Bohm is an empirical scaling, not a Maxwellian, so nothing derives its wall
     # delivery speed. `√(8/π)·(c_s/8)` preserves the value this channel has always

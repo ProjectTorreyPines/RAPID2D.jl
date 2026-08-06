@@ -303,7 +303,7 @@ end
         # the undershoot is real, grows with Δt, and shrinks as Δt does. Values
         # measured at D∥/D⊥ = 1000: −7.3e-11 at Δt = 1e-6 rising to −1.7e-2 at
         # Δt = 1e-3. Bounded and transient, not accumulating — see
-        # internal_docs/src/notes/TODO/anisotropic-positivity.md before "fixing" the stencil.
+        # internal/docs/src/notes/TODO/anisotropic-positivity.md before "fixing" the stencil.
         unders = map((1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3)) do dt
             n1 = (sparse(I, size(A, 1), size(A, 2)) - dt * A) \ n0
             return -min(minimum(n1[inw]), 0.0) / maximum(n1[inw])

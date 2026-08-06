@@ -31,13 +31,10 @@
 "H2 molecular mass [kg]."
 const M_H2_GAS = 2.01594 * 1.660539e-27
 
-# Kept module-level rather than read from `PlasmaConstants` so the diffusivity
-# stays a free function of gas state, testable without a RAPID object. Same value
-# as `PlasmaConstants.ee`.
-const EE_GAS = 1.602176634e-19
-
-const KB_EV_PER_K = 8.617333262e-5      # CODATA Boltzmann constant [eV/K]
-const KB_J_PER_K = 1.380649e-23         # CODATA Boltzmann constant [J/K]
+# `EE`, `KB_J_PER_K` and `KB_EV_PER_K` live in `constants.jl`. They were declared
+# here, and `EE` was called `EE_GAS`, while the gas was their only user;
+# `maxwellian_*_speed`, the Bohm channel and the ion channel's Einstein term have
+# since joined, and none of them is about gas.
 
 # ── H2 self-diffusion: NIST TN 2279 ─────────────────────────────────────────
 #
@@ -135,7 +132,7 @@ function neutral_gas_diffusivity(n_gas, T_gas_eV, ν_iz, L_char)
     # so contributes 0 to the sum, which is what keeps a burnt-out cell finite.
     D_elastic = h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
     inv_D = 1 / D_elastic +
-        M_H2_GAS * ν_iz / (T_gas_eV * EE_GAS) +
+        M_H2_GAS * ν_iz / (T_gas_eV * EE) +
         (vm_g > 0 ? 3 / (vm_g * L_char) : oftype(vm_g, Inf))
     return 1 / inv_D
 end
@@ -163,7 +160,7 @@ product `½vλ = D` and the separate `vm` are read downstream.
 function neutral_gas_channel(n_gas, T_gas_eV, ν_iz, L_char)
     vm_g = maxwellian_mean_speed.(T_gas_eV, M_H2_GAS)
     D_elastic = @. h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
-    inv_D = @. 1 / D_elastic + M_H2_GAS * ν_iz / (T_gas_eV * EE_GAS) +
+    inv_D = @. 1 / D_elastic + M_H2_GAS * ν_iz / (T_gas_eV * EE) +
         ifelse(vm_g > 0, 3 / (vm_g * L_char), oftype(vm_g, Inf))
     D = @. 1 / inv_D
     λ = @. ifelse(vm_g > 0, 2 * D / vm_g, zero(vm_g))

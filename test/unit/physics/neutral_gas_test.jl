@@ -49,7 +49,7 @@ end
 
 @testitem "Neutral gas diffusivity: each mechanism is exact alone, and they compose at D" begin
     using RAPID2D: neutral_gas_diffusivity, h2_self_diffusivity, NIST_H2_N_REF,
-        maxwellian_mean_speed, M_H2_GAS, EE_GAS
+        maxwellian_mean_speed, M_H2_GAS, EE
 
     # Three mechanisms bound a molecule's path, and each has an exact closed form
     # when it acts alone. Isolating one means switching the other two off through
@@ -71,7 +71,7 @@ end
     @test neutral_gas_diffusivity(n, T, 0.0, Inf) ≈
         h2_self_diffusivity(T) * NIST_H2_N_REF / n rtol = 1.0e-14
     @test neutral_gas_diffusivity(0.0, T, νiz, Inf) ≈
-        T * EE_GAS / (M_H2_GAS * νiz) rtol = 1.0e-14
+        T * EE / (M_H2_GAS * νiz) rtol = 1.0e-14
     @test neutral_gas_diffusivity(0.0, T, 0.0, L) ≈ vm_g * L / 3 rtol = 1.0e-14
 
     @test 1 / neutral_gas_diffusivity(n, T, νiz, L) ≈

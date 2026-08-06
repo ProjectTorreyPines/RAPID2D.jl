@@ -260,7 +260,7 @@ Contains the plasma state variables including density, temperature, and velocity
     # Electron-neutral reaction frequencies, ν = n_H2_gas · K(E/p, Ē).
     # All four are written by `update_RRCs!` and by nothing else, at exactly one point per
     # step, so every consumer within a step sees the same evaluation state. Read them; do
-    # not re-query the RRC tables (see internal_docs/src/notes/design/rrc-single-evaluation-point.md).
+    # not re-query the RRC tables (see internal/docs/src/notes/design/rrc-single-evaluation-point.md).
     ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
     ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction; drives P_ela [1/s]
@@ -683,7 +683,7 @@ answer there is not a θ at all: this diagonal is local, linear and scalar with
 the rate frozen over the step, so its exact factor `exp(νΔt)` is available for
 one `exp()` — unconditionally positive *and* exact. That is an
 exponential-integrator split rather than a weight, so it is recorded here and
-not implemented. Measurements: `internal_docs/figs/theta_atomic_be_vs_cn.jl`.
+not implemented. Measurements: `internal/docs/figs/theta_atomic_be_vs_cn.jl`.
 
 **One family, one weight, everywhere it appears.** `ν_iz` is a sink in the
 electron equation and a source in the ion equation; both read `growth`, so one

@@ -58,7 +58,7 @@ IonSpecies(name::Symbol, mass::Real, charge::Integer) =
 # one dressed up as physics, and keeping them uncalled would have invited a caller
 # to reach for the wrong one. The forms, the degenerate cases they had to survive,
 # and the 99:1 / 90:10 H₂⁺–C⁶⁺ numbers that separate them are recorded in
-# internal_docs/src/notes/TODO/ion-inventory-multi-species.md, to come back with the mixture.
+# internal/docs/src/notes/TODO/ion-inventory-multi-species.md, to come back with the mixture.
 
 """
     IonTransportPolicy
