@@ -316,6 +316,20 @@ end
         Include_ud_convec_term = false,
         Coulomb_Collision = false,
         negative_n_correction = false,
+        # The premise of this testitem is a SPATIALLY UNIFORM D: it weights the model's
+        # tensor by the initial density and compares that against the realized
+        # spreading, which is only the same number when D does not vary across the
+        # blob. The flux ceiling makes it vary by construction — unlimited at the peak
+        # where ∇n = 0, tight on the flanks — so the two legitimately diverge. Measured
+        # here: model 43.3 vs realized 7.70 with the ceiling on, 56.6 vs 54.9 with it
+        # off.
+        #
+        # That is not the limiter misbehaving. The assertion used to hold only because
+        # `Dpara0` was added AFTER the cap and escaped it entirely; with `Dpara0 = 1e6`
+        # against a ceiling of ¼v̄Lₙ ≈ 2.7e3 at one σ, closing that hole is the point of
+        # the change. Switching the ceiling off here keeps this test measuring the
+        # diffusion operator, which is what it is named for.
+        limit_flux = (state = false, factor = 0.25),
     )
 
     R0 = (config.R_min + config.R_max) / 2

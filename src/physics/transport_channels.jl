@@ -563,19 +563,23 @@ end
 # Putting it in the harmonic sum instead is what let `Dpara0` escape it.
 
 """
-    flux_limited_diffusivity(D, ∇n, n, vm, α) -> Float
+    flux_limited_diffusivity(D, ∇n, n, vm, flux_limit_factor) -> Float
 
 `D` capped so that the diffusive flux cannot exceed what a Maxwellian can supply,
 
 ```
-    Γ = D·|∇n| ≤ α·n·v̄        α = ¼ is Hertz–Knudsen
+    Γ = D·|∇n| ≤ flux_limit_factor·n·v̄        flux_limit_factor = ¼ is Hertz–Knudsen
 ```
 
 composed as the **`n = 2`** member of Larsen's flux-limited-diffusion family,
 
 ```
-    1/D_limited = √( (1/D)² + (|∇n| / (α·vm·n))² )
+    1/D_limited = √( (1/D)² + (|∇n| / (flux_limit_factor·vm·n))² )
 ```
+
+`flux_limit_factor` is `RP.flags.limit_flux.factor`, spelled out rather than `α` because
+`α` is this codebase's Townsend first-ionization coefficient
+(`reaction_rate_coefficients.jl`).
 
 `vm` is contracted to be [`maxwellian_mean_speed`](@ref): the ceiling is a one-way
 flux across a surface, `⟨v_n θ(v_n)⟩ = ¼v̄`, and only that moment has the meaning.
@@ -589,36 +593,69 @@ velocity-independent rate — the BGK closure — whose exact linear response is
 `1 − 1.910R²` with `R = λ/Lₙ`: second order, because parity plus analyticity of the
 kernel forbid an odd term. `n = 1` manufactures a first-order term the kinetics do
 not have (0.6 % low against a true 0.002 % at this device's operating point, 15 %
-low at `R = 0.1`); `n = ∞` has none at all and errs the other way. `n = 2` gives
-`1 − 2.000R²`, and minimax over `R ∈ [0.003, 0.3]` picks 2.04, so the integer is a
-rounding rather than a fit. `n = 2` is also the only member whose `D` is smooth at
-`∇n = 0`, since it depends on `(∇n)²` rather than `|∇n|` — and that is where most
+low at `R = 0.1` — figures from
+`internal/docs/src/notes/design/flux-limiter-review.md` §1.A and Appendix A);
+`n = ∞` has none at all and errs the other way. `n = 2` gives `1 − 2.000R²`, and
+minimax over `R ∈ [0.003, 0.3]` picks 2.04, so the integer is a rounding rather
+than a fit. `n = 1` is not smooth at `∇n = 0`, and `n = 2` is: `n = 1`'s
+`D ∝ (a + b|g|)⁻¹` has unequal one-sided derivatives there, while `n = 2`'s
+`D ∝ (a² + b²g²)^(-1/2)` depends on `g²` and does not — and `∇n ≈ 0` is where most
 of the grid sits most of the time. Derived in
 `internal/docs/src/notes/design/flux-limiter.md` §1.
 
 **`Lₙ = n/|∇n|` is never formed**, which is the whole structural point: the guard
 that used to patch its non-finite branch had the sign backwards, mapping a flat
-profile (`Lₙ = ∞`, no limit needed) to `D = 0` (maximum limit). Here every
-degenerate case falls out instead of needing one:
+profile (`Lₙ = ∞`, no limit needed) to `D = 0` (maximum limit). What replaces it is
+not a set of tamed special cases but the same arithmetic falling through every one
+of them without a branch — a claim about *how* each case is handled, not that every
+one lands on a finite number:
 
 | state | returns | why |
 |---|---|---|
-| `∇n = 0` | `D` unchanged, bit for bit | flat profile, Fick at its most valid |
-| `n = 0`, `∇n ≠ 0` | `0` | an empty cell has nothing to supply |
-| `n < 0` | `0` | transient, before `negative_n_correction`; `max(n,0)` sends it to the case above rather than letting it behave like `\\|n\\|` |
+| `n > 0`, `∇n = 0` | `D` unchanged, bit for bit | flat profile, Fick at its most valid |
+| `n ≤ 0` | `0`, whatever `∇n` does | an empty cell has nothing to supply. **The supply test runs before the flat-profile short-circuit, and the order is load-bearing:** the bound is `D·\\|∇n\\| ≤ ¼n v̄`, whose right-hand side is exactly `0` at `n = 0`. A flat profile then admits any *finite* `D` but not `D = Inf`, since `Inf·0` is `NaN` rather than `≤ 0`. Checking supply first is what makes a vacuum — no gas, no plasma, so `½vp²/ν = Inf` natively — come out at `D = 0` instead of poisoning `∇𝐃∇`. |
+| `n < 0` | `0` | transient, before `negative_n_correction`; `max(n,0)` folds it into the row above rather than letting it behave like `\\|n\\|` |
 | `vm = 0` | `0` | `T = 0`, nothing crosses any surface |
 | `D = 0` | `0` | already immobile |
+| `n > 0`, `∇n = 0`, `D = Inf` | `Inf`, unchanged | **not tamed, and correctly so.** A uniform collisionless plasma really does have no diffusive description; the ceiling has no flux to bound and declines to act. Reachable only with `ν = 0` at live density — no fixture in the suite reaches it. Bounding it needs a *geometric* length (the mfp-truncation ceiling the gas and ion channels already carry as `L_char`/`L_mixing`), which is separate work — see `flux-limiter.md` §1. |
 
-`hypot` rather than `sqrt(a^2 + b^2)`: `inv(D)` is genuinely subnormal near
-`D = floatmax()` — which `Dpara_e_coll` reaches whenever the collision frequency
-vanishes — and the naive form overflows to the wrong limit there.
+**`NaN` is not one of the branches above, and is not caught.** None of the
+following is reachable in production today; recorded because the four fail in
+inconsistent directions, not to guard against something that cannot currently
+happen. Measured: `∇n = NaN` returns `D` unchanged — the short-circuit's `g > 0`
+compares `false` for `NaN`, so this fails **open**, silently disabling the limiter.
+`n = NaN` or `vm = NaN` returns `0.0` — `NaN` poisons `supply = flux_limit_factor·vm·max(n,0)`, and
+`supply > 0` is again `false` for `NaN`, so this fails **closed**, the opposite
+direction. `D = NaN` returns `NaN`, propagated through `hypot` rather than caught
+either way.
+
+Two more edges, both outside anything a caller is expected to hit: `D` at or below
+`floatmax()`'s reciprocal (`≈ 5.56e-309`) returns exactly `0.0`, because `inv(D)`
+itself overflows to `Inf` there before `hypot` ever runs. And a negative `D`
+returns a *positive* value of the same magnitude `-D` would — `hypot` only ever
+sees `inv(D)` squared, so the sign is lost rather than propagated. Unreachable
+given `Dpara0 ≥ 0` and `Dpara_e_eff ≥ 0` upstream, but worth naming as a sign flip
+rather than assumed to be graceful degradation.
+
+`hypot` rather than `sqrt(a^2 + b^2)`: what actually arrives here is `D = Inf`, not
+a subnormal-adjacent value — `Dpara_e_coll` produces it natively whenever the
+collision frequency vanishes, and `inv(Inf) === 0.0` exactly, so that arrival needs
+no special handling. The regime `hypot` defends is `D = floatmax()`, the worst
+finite input the test suite pins rather than one this code's own arithmetic
+produces: there `inv(D)` is genuinely subnormal, and the naive
+`sqrt(inv(D)^2 + (g/supply)^2)` would underflow `inv(D)^2` to exactly `0.0` before
+the `sqrt` runs — underflow, not the overflow an earlier version of this note
+claimed. `hypot` carries the small term through without that loss.
 """
-function flux_limited_diffusivity(D, ∇n, n, vm, α)
+function flux_limited_diffusivity(D, ∇n, n, vm, flux_limit_factor)
+    # Supply first, gradient second. An empty cell has nothing to carry a flux with
+    # whatever the profile does, and taking that branch before the flat-profile
+    # short-circuit is what keeps `D·∇n` from being `Inf·0 = NaN` in a vacuum.
+    supply = flux_limit_factor * vm * max(n, zero(n))  # ¼·n·v̄, the one-way flux ceiling
+    supply > zero(supply) || return zero(D)
     g = abs(∇n)
     # short-circuit, not `ifelse`: this must return D untouched rather than round
     # trip through inv(hypot(inv(D), 0)) and lose an ulp
     g > zero(g) || return D
-    supply = α * vm * max(n, zero(n))          # ¼·n·v̄, the one-way flux ceiling
-    supply > zero(supply) || return zero(D)
     return inv(hypot(inv(D), g / supply))
 end

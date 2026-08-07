@@ -3,7 +3,7 @@
 # Every assertion here is closed-form checkable, so these pin physics rather than a
 # previous implementation. The closure is
 #
-#     1/D_limited = √( (1/D)² + (|∇n| / (α·v̄·n))² )        Larsen n = 2
+#     1/D_limited = √( (1/D)² + (|∇n| / (FLUX_LIMIT_FACTOR·v̄·n))² )        Larsen n = 2
 #
 # and the whole point of writing it in inverse space is that Lₙ = n/|∇n| is never
 # formed: the only division left is by n, and its divergent case (n = 0 with a live
@@ -19,10 +19,10 @@
     # The RAPID2D breakdown regime: 5 eV electrons, the default gas fill.
     const V̄ = 1.496e6      # ⟨|v|⟩ = √(8T/πm)          [m/s]
     const D_FICK = 2.3e4   # T/(mν)                    [m²/s]
-    const α = 0.25         # the Hertz-Knudsen ¼
+    const FLUX_LIMIT_FACTOR = 0.25         # the Hertz-Knudsen ¼
 
-    "The ceiling as a diffusivity, for cross-checking: α·v̄·Lₙ."
-    D_max(∇n, n) = α * V̄ * n / abs(∇n)
+    "The ceiling as a diffusivity, for cross-checking: FLUX_LIMIT_FACTOR·v̄·Lₙ."
+    D_max(∇n, n) = FLUX_LIMIT_FACTOR * V̄ * n / abs(∇n)
 end
 
 @testitem "Flux ceiling: a flat profile is returned untouched, bit for bit" setup = [FluxCeiling] begin
@@ -30,37 +30,50 @@ end
     # ∇∥n = 0 to D = 0 — maximum limit where the correct reading is NO limit. The new
     # form short-circuits before any arithmetic, so the return is `===` identical, not
     # merely approximate: a round trip through inv(hypot(inv(D), 0)) would lose an ulp.
-    for D in (2.3e4, 1.0e-6, 1.0e12, floatmax())
-        @test flux_limited_diffusivity(D, 0.0, 1.0e18, V̄, α) === D
+    # `Inf` is the value this code actually produces (`Dpara_e_coll` reaches it
+    # natively whenever ν = 0, and `typemax(FT) === Inf`); `floatmax()` is a value it
+    # cannot reach on its own but is pinned anyway as the worst finite input.
+    for D in (2.3e4, 1.0e-6, 1.0e12, floatmax(), Inf)
+        @test flux_limited_diffusivity(D, 0.0, 1.0e18, V̄, FLUX_LIMIT_FACTOR) === D
     end
-    # and it must not depend on the density there, including at n = 0
-    @test flux_limited_diffusivity(D_FICK, 0.0, 0.0, V̄, α) === D_FICK
+    # ...and the density must not change that, ANYWHERE THERE ARE PARTICLES
+    for n in (1.0e6, 1.0e15, 1.0e22)
+        @test flux_limited_diffusivity(D_FICK, 0.0, n, V̄, FLUX_LIMIT_FACTOR) === D_FICK
+    end
+    # n = 0 is NOT one of those: an empty cell returns 0 whatever the profile does.
+    # The bound is D·|∇n| ≤ ¼nv̄, and at n = 0 its right-hand side is exactly 0 — a
+    # flat profile then admits any FINITE D but not D = Inf, because Inf·0 is NaN and
+    # not ≤ 0. This is the vacuum case (no gas, no plasma ⟹ every ν = 0 ⟹ ½vp²/ν is
+    # natively Inf); returning D there put NaN into ∇𝐃∇ and made the solve singular.
+    @test flux_limited_diffusivity(D_FICK, 0.0, 0.0, V̄, FLUX_LIMIT_FACTOR) === 0.0
+    @test flux_limited_diffusivity(Inf, 0.0, 0.0, V̄, FLUX_LIMIT_FACTOR) === 0.0
+    @test flux_limited_diffusivity(Inf, 0.0, -1.0e6, V̄, FLUX_LIMIT_FACTOR) === 0.0
 end
 
 @testitem "Flux ceiling: an empty cell supplies no flux" setup = [FluxCeiling] begin
     # n = 0 with a live gradient is the one case where D = 0 is right: there are no
     # particles to carry a flux. It must be exactly zero and finite — never NaN, which
     # is what n/∇n would have produced.
-    @test flux_limited_diffusivity(D_FICK, 1.0e20, 0.0, V̄, α) === 0.0
+    @test flux_limited_diffusivity(D_FICK, 1.0e20, 0.0, V̄, FLUX_LIMIT_FACTOR) === 0.0
     # a transiently negative density (negative_n_correction has not run yet) takes the
     # same branch rather than silently behaving like |n|
-    @test flux_limited_diffusivity(D_FICK, 1.0e20, -1.0e6, V̄, α) === 0.0
+    @test flux_limited_diffusivity(D_FICK, 1.0e20, -1.0e6, V̄, FLUX_LIMIT_FACTOR) === 0.0
     # T = 0 ⟹ v̄ = 0 ⟹ nothing crosses any surface
-    @test flux_limited_diffusivity(D_FICK, 1.0e20, 1.0e18, 0.0, α) === 0.0
+    @test flux_limited_diffusivity(D_FICK, 1.0e20, 1.0e18, 0.0, FLUX_LIMIT_FACTOR) === 0.0
     # and a zero diffusivity stays zero
-    @test flux_limited_diffusivity(0.0, 1.0e20, 1.0e18, V̄, α) === 0.0
+    @test flux_limited_diffusivity(0.0, 1.0e20, 1.0e18, V̄, FLUX_LIMIT_FACTOR) === 0.0
 end
 
 @testitem "Flux ceiling: both limits are exact" setup = [FluxCeiling] begin
-    # D_Fick → ∞: the ceiling alone survives, D → α·v̄·Lₙ. floatmax() and Inf must both
+    # D_Fick → ∞: the ceiling alone survives, D → FLUX_LIMIT_FACTOR·v̄·Lₙ. floatmax() and Inf must both
     # land there — floatmax() because 1/floatmax() is subnormal and a naive
     # D/√(1+(D/D_max)²) would overflow to zero instead.
     ∇n, n = 1.0e20, 1.0e18
     for D in (1.0e30, floatmax(), Inf)
-        @test flux_limited_diffusivity(D, ∇n, n, V̄, α) ≈ D_max(∇n, n) rtol = 1.0e-12
+        @test flux_limited_diffusivity(D, ∇n, n, V̄, FLUX_LIMIT_FACTOR) ≈ D_max(∇n, n) rtol = 1.0e-12
     end
     # Lₙ → ∞: the collisional value alone survives
-    @test flux_limited_diffusivity(D_FICK, 1.0e-30, n, V̄, α) ≈ D_FICK rtol = 1.0e-12
+    @test flux_limited_diffusivity(D_FICK, 1.0e-30, n, V̄, FLUX_LIMIT_FACTOR) ≈ D_FICK rtol = 1.0e-12
 end
 
 @testitem "Flux ceiling: the composition is Larsen n = 2" setup = [FluxCeiling] begin
@@ -68,7 +81,7 @@ end
     # A gradient is not a competing collision event, so this is a ceiling on the total
     # rather than a term in the Matthiessen sum; the arithmetic differs for that reason.
     for (∇n, n) in ((1.0e20, 1.0e18), (1.0e17, 1.0e18), (5.0e21, 3.0e17))
-        got = flux_limited_diffusivity(D_FICK, ∇n, n, V̄, α)
+        got = flux_limited_diffusivity(D_FICK, ∇n, n, V̄, FLUX_LIMIT_FACTOR)
         @test inv(got) ≈ hypot(inv(D_FICK), inv(D_max(∇n, n))) rtol = 1.0e-12
         # and it is strictly below both parents, as every member of the family is
         @test got < D_FICK
@@ -78,9 +91,9 @@ end
 
 @testitem "Flux ceiling: monotone in both arguments" setup = [FluxCeiling] begin
     n = 1.0e18
-    steeper = [flux_limited_diffusivity(D_FICK, g, n, V̄, α) for g in (1.0e18, 1.0e19, 1.0e20, 1.0e21)]
+    steeper = [flux_limited_diffusivity(D_FICK, g, n, V̄, FLUX_LIMIT_FACTOR) for g in (1.0e18, 1.0e19, 1.0e20, 1.0e21)]
     @test issorted(steeper; rev = true)          # steeper gradient ⟹ tighter cap
-    denser = [flux_limited_diffusivity(D_FICK, 1.0e20, ni, V̄, α) for ni in (1.0e16, 1.0e17, 1.0e18, 1.0e19)]
+    denser = [flux_limited_diffusivity(D_FICK, 1.0e20, ni, V̄, FLUX_LIMIT_FACTOR) for ni in (1.0e16, 1.0e17, 1.0e18, 1.0e19)]
     @test issorted(denser)                        # more supply ⟹ looser cap
 end
 
@@ -91,12 +104,12 @@ end
     # exponent is 2 rather than 1 as an earlier revision of the design proposed.
     n = 1.0e18
     for h in (1.0e14, 1.0e15, 1.0e16)
-        @test flux_limited_diffusivity(D_FICK, h, n, V̄, α) ===
-            flux_limited_diffusivity(D_FICK, -h, n, V̄, α)
+        @test flux_limited_diffusivity(D_FICK, h, n, V̄, FLUX_LIMIT_FACTOR) ===
+            flux_limited_diffusivity(D_FICK, -h, n, V̄, FLUX_LIMIT_FACTOR)
     end
     # the one-sided slopes converge to each other as h → 0 (they do not for n = 1,
-    # where they converge to ∓α⁻¹ and differ by a factor of −1)
-    slope(h) = (flux_limited_diffusivity(D_FICK, h, n, V̄, α) - D_FICK) / h
+    # where they converge to ∓D_Fick²/(FLUX_LIMIT_FACTOR·v̄·n) and differ by a factor of −1)
+    slope(h) = (flux_limited_diffusivity(D_FICK, h, n, V̄, FLUX_LIMIT_FACTOR) - D_FICK) / h
     @test abs(slope(1.0e15)) < abs(slope(1.0e18))     # vanishing, i.e. second order
 end
 
@@ -110,8 +123,8 @@ end
     vp = maxwellian_most_probable_speed(Te, me)
     @test vm / vp ≈ sqrt(4 / π) rtol = 1.0e-12
     ∇n, n = 1.0e21, 1.0e18            # deep in the capped regime so the ratio shows
-    @test flux_limited_diffusivity(1.0e30, ∇n, n, vm, α) /
-        flux_limited_diffusivity(1.0e30, ∇n, n, vp, α) ≈ sqrt(4 / π) rtol = 1.0e-10
+    @test flux_limited_diffusivity(1.0e30, ∇n, n, vm, FLUX_LIMIT_FACTOR) /
+        flux_limited_diffusivity(1.0e30, ∇n, n, vp, FLUX_LIMIT_FACTOR) ≈ sqrt(4 / π) rtol = 1.0e-10
 end
 
 # ── the wiring ──────────────────────────────────────────────────────────────
@@ -194,9 +207,10 @@ end
     # wherever the gradient is live, D must sit under the supply ceiling
     live = [k for k in inw if vec(g)[k] > 0 && vec(pla.ne)[k] > 0]
     @test !isempty(live)
-    for k in live
-        @test vec(tp.Dpara)[k] * vec(g)[k] <= 0.25 * vec(pla.ne)[k] * vec(vm)[k] * (1 + 1.0e-9)
-    end
+    # One aggregate assertion, not one @test per node: same check, ~843 fewer
+    # assertions, and the per-node loop this replaces was 69 % of the file's runtime
+    # (measured 72.4s of 104.2s).
+    @test all(k -> vec(tp.Dpara)[k] * vec(g)[k] <= 0.25 * vec(pla.ne)[k] * vec(vm)[k] * (1 + 1.0e-9), live)
     # and the floor is genuinely being cut down, i.e. the test is not vacuous
     @test minimum(vec(tp.Dpara)[live]) < 1.0e12
 end
@@ -275,6 +289,50 @@ end
     @test vec(tp.Dpara)[inw] ≈ vec(expected)[inw] rtol = 1.0e-12
 end
 
+@testitem "Limiter wiring: the empty exterior gets D = 0 from the supply rule, and stays finite" setup = [LimiterRun] begin
+    # flux-limiter-review.md §5: "the guard is currently zeroing D everywhere the
+    # profile is flat, including the whole out-of-wall region ... removing it hands
+    # that region D_Fick instead ... The old bug was accidentally suppressing that
+    # path. Measure it." This is that measurement.
+    #
+    # An earlier revision of this testitem asserted the limiter is a NO-OP on the
+    # exterior, on the reasoning that a flat profile returns D untouched. Measured,
+    # that premise is empty: the exterior of this fixture is not flat-with-particles,
+    # it is `ne = 0` at 720/720 nodes, and the count of exterior nodes that are both
+    # populated and flat is ZERO. So the branch that governs there is the supply rule
+    # (`n ≤ 0 ⟹ D = 0`), not the flat-profile short-circuit.
+    on = limiter_case(; limit = true)
+    off = limiter_case(; limit = false)
+    out = on.G.nodes.out_wall_nids
+    @test !isempty(out)
+    @test all(iszero, vec(on.plasma.ne)[out])        # the premise, pinned
+
+    # THE regression property: whatever value the exterior ends up with, it is finite.
+    # The old guard forced D = 0 there, which was the wrong reason for the right
+    # number and was also masking `Dpara_amb`'s 0/0 (see
+    # notes/TODO/guard-bug-was-holding-the-momentum-solve-up.md).
+    @test all(isfinite, vec(on.transport.Dpara)[out])
+
+    # Not vacuous: the near-wall exterior still carries a substantial diffusivity,
+    # because `extrapolate_field_to_boundary_nodes!` (transport.jl) writes in-wall
+    # values outward AFTER the ceiling has run.
+    @test maximum(vec(on.transport.Dpara)[out]) > 1.0e3
+
+    # Deep exterior — far enough out to have no on-wall neighbour, so extrapolation
+    # never reaches it. Empty of particles, so the ceiling returns exactly 0 at every
+    # one of them. This is the ordering inside `flux_limited_diffusivity` doing its
+    # job: `n ≤ 0` is tested BEFORE the flat-profile short-circuit, so `∇n = 0` does
+    # not let an unbounded D through in a region with nothing to transport.
+    deep = [k for k in out if isempty(on.G.nodes.ngh_on_wall_nids[k])]
+    @test !isempty(deep)
+    @test all(iszero, vec(on.transport.Dpara)[deep])
+
+    # ...and it is the ceiling that does it, not the geometry: with the ceiling off,
+    # those same nodes inherit a nonzero diffusivity despite having no particles.
+    # (Measured: 432 of 592 differ, up to 7.6e3.)
+    @test count(!iszero, vec(off.transport.Dpara)[deep]) > 100
+end
+
 # ── behavioural, 1-D ────────────────────────────────────────────────────────
 #
 # The 1-D problem is the specification. `internal/docs/figs/flux_limiter_1d.jl` holds
@@ -310,7 +368,6 @@ end
 
     const V̄1 = 1.496e6      # ⟨|v|⟩ for 5 eV electrons   [m/s]
     const DF1 = 2.3e4       # T/(mν) at the default fill [m²/s]
-    const Λ1 = 2 * DF1 / V̄1  # D = ½v̄λ ⟹ λ = 3.07 cm      [m]
 
     "∂ₓn by centred differences, one-sided at the ends."
     function ddx(n, dx)
@@ -504,6 +561,42 @@ end
     oblique = limiter_case(; oblique = true)
     inw = oblique.G.nodes.in_wall_nids
     @test maximum(abs, vec(oblique.transport.DRZ)[inw]) > 0
+
+    # Dropping the density smoothing (flux-limiter-review.md §6, decided 2 vs 1) was
+    # conditional: "the 2-D test must therefore report the grid-scale variation of D,
+    # not only inventory and positivity." Measure it as the largest relative jump in
+    # Dpara between cardinal-adjacent in-wall nodes.
+    NR, NZ = oblique.G.NR, oblique.G.NZ
+    inwall = falses(NR, NZ)
+    inwall[inw] .= true
+    Dp = oblique.transport.Dpara
+
+    # A local function, not a bare top-level loop: mutating an accumulator across
+    # `for j, i in ...` iterations at a testitem's top level hits Julia's ambiguous
+    # soft-scope rule and throws `UndefVarError` — a function body scopes normally.
+    function grid_roughness(D, inwall, NR, NZ)
+        worst = 0.0
+        for j in 1:NZ, i in 1:(NR - 1)
+            if inwall[i, j] && inwall[i + 1, j]
+                m = max(abs(D[i, j]), abs(D[i + 1, j]))
+                m > 0 && (worst = max(worst, abs(D[i, j] - D[i + 1, j]) / m))
+            end
+        end
+        for j in 1:(NZ - 1), i in 1:NR
+            if inwall[i, j] && inwall[i, j + 1]
+                m = max(abs(D[i, j]), abs(D[i, j + 1]))
+                m > 0 && (worst = max(worst, abs(D[i, j] - D[i, j + 1]) / m))
+            end
+        end
+        return worst
+    end
+    roughness = grid_roughness(Dp, inwall, NR, NZ)
+    # Measured 0.489: dropping the smoothing leaves real grid-scale structure in D —
+    # adjacent in-wall nodes can differ by close to half their own magnitude — not
+    # numerical noise at the last few bits. Pinned with margin, not inflated to hide
+    # it: if this grows substantially past where it sits today, that is the evidence
+    # the design record asked for that dropping the smoothing needs revisiting.
+    @test roughness < 0.55
 
     # and the axis-aligned case that the design originally proposed does not
     axis = limiter_case(; oblique = false)

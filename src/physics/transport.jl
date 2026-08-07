@@ -20,9 +20,10 @@ Update all transport-related quantities including diffusion coefficients, veloci
 function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     tp = RP.transport
-    # No `ee` here: the Maxwellian speed helpers convert eV→J themselves, with the
-    # module-level `EE` that `constants.ee` defaults to. Unpacking it as well would
-    # put two names for one constant in scope.
+    # The module-level `EE`, not `constants.ee`: the Maxwellian speed helpers convert
+    # eV→J with `EE`, and the ambipolar line below has to match them bit for bit for
+    # its `Te/De ≡ mₑνₑ/e` cancellation to be exact. Unpacking `ee` as well would put
+    # two names for one constant in scope.
     @unpack me = RP.config.constants
     # `vp_i` reaches the ion collisional diffusivity and, through the ambipolar
     # average, the ELECTRON one — so a mass that disagrees with the species the
@@ -85,9 +86,24 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp.Dpara_i_coll = @. FT(0.5) * vp_i^2 / νi_eff
     @. tp.Dpara_i_coll[isnan(tp.Dpara_i_coll)] = typemax(FT) # make NaN to Inf
 
-    # Ambipolar diffusion coefficient (Te+Ti)*(De*Di) /(Ti*De + Te*Di)
-    tp.Dpara_amb = @. (pla.Te_eV + pla.Ti_eV) * tp.Dpara_e_coll * tp.Dpara_i_coll / (pla.Ti_eV * tp.Dpara_e_coll + pla.Te_eV * tp.Dpara_i_coll)
-    @. tp.Dpara_amb[isnan(tp.Dpara_amb)] = typemax(FT) # make NaN to Inf
+    # Ambipolar diffusivity. The textbook form is a mobility-weighted harmonic mean,
+    #
+    #     D_a = (Te+Ti)·De·Di/(Ti·De + Te·Di) = (Te+Ti) / (Ti/Di + Te/De)
+    #
+    # and BOTH limbs of that denominator lose their temperature exactly, because this
+    # code builds D from a known rate rather than measuring it: `De = Te·e/(mₑνₑ)`
+    # makes `Te/De ≡ mₑνₑ/e`, and likewise `Ti/Di ≡ mᵢνᵢ/e`. So the whole coefficient
+    # is a ratio of thermal drive to collisional friction, with no cancelling
+    # temperature anywhere:
+    tp.Dpara_amb = @. EE * (pla.Te_eV + pla.Ti_eV) / (me * ν_sum_mom_iz_ei + mi * νi_eff)
+    #
+    # Identical to the product form to 4e-16 relative wherever that form is finite,
+    # and finite where it is not. The 0/0 this removes was not hypothetical:
+    # `treat_electron_outside_wall!` sets `Te = 0` on every out-wall node, at which
+    # point the product form is `(Ti·0·Di)/(Ti·0 + 0·Di)` and the `NaN → typemax(FT)`
+    # patch that used to follow turned "cold electrons, so no electron diffusion"
+    # into `D_a = Inf`. That is the same inverted sign the flux limiter's old `Lₙ`
+    # guard had, and it made `∇𝐃∇` singular one step later.
 
     # ── how D∥ᵉ is assembled: three stages, and the order is the physics ──────
     #
@@ -100,9 +116,13 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # moves it — so it bounds the sum, not one limb of it. Capping before the addition
     # is what let `Dpara0` transport faster than free streaming.
 
-    # Stage 1. Harmonic average of collision and ambipolar diffusion coefficients.
-    tp.Dpara_e_eff = @. (tp.Dpara_e_coll * tp.Dpara_amb) / (tp.Dpara_e_coll + tp.Dpara_amb)
-    @. tp.Dpara_e_eff[isnan(tp.Dpara_e_eff)] = typemax(FT) # make NaN to Inf
+    # Stage 1. Harmonic mean of the collisional and ambipolar limbs, written in
+    # inverse space — the same move the flux ceiling makes, for the same reason.
+    # `inv(0) === Inf` and `inv(Inf) === 0.0` exactly, so a dead limb (`D = 0`, cold
+    # electrons) shuts the channel and a frictionless one (`D = Inf`, ν → 0) drops
+    # out of it, both without a branch. The product form needed a NaN patch for
+    # precisely those two cases and answered `Inf` to both.
+    tp.Dpara_e_eff = @. inv(inv(tp.Dpara_e_coll) + inv(tp.Dpara_amb))
 
     # Stage 2. A base diffusivity is an independent arrival path, so it ADDS rather
     # than joining the harmonic sum — the same rule the ion channel states.

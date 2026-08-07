@@ -601,6 +601,14 @@ function update_∇𝐃∇_operator!(RP::RAPID{FT}; ∇𝐃∇::DiscretizedOpera
 
         k = 1
 
+        # Face coefficients below are ARITHMETIC averages of their two nodal values
+        # (`half * (CTRR[i+1,j] + CTRR[i,j])`), not harmonic ones — load-bearing now
+        # that the flux limiter can legitimately leave `D = 0` at an empty in-wall
+        # cell (`flux_limited_diffusivity`, transport_channels.jl): arithmetic
+        # averaging only halves that node's face coefficients, whereas a harmonic
+        # average would make it a hard barrier on both faces. If this face rule is
+        # ever changed, that must be fixed first — see
+        # `internal/docs/src/notes/design/flux-limiter.md` §3.
         @inbounds for j in 2:(NZ - 1)
             for i in 2:(NR - 1)
                 factor = inv_Jacob[i, j]
