@@ -66,8 +66,6 @@
         # Test initial state
         @test length(diag.snaps0D) == 0
         @test length(diag.snaps2D) == 0
-        @test diag.tid_0D == 0
-        @test diag.tid_2D == 0
 
         # Test dynamic growth
         for i in 1:5
@@ -75,11 +73,10 @@
             snap0D.step = i * 100
             snap0D.ne = i * 1.0e18
             push!(diag.snaps0D, snap0D)
-            diag.tid_0D += 1
         end
 
         @test length(diag.snaps0D) == 5
-        @test diag.tid_0D == 5
+        @test diag.snaps0D[end].step == 500
         @test diag.snaps0D[3].step == 300
         @test diag.snaps0D[3].ne ≈ 3.0e18
 
@@ -132,29 +129,31 @@
         @test all(snap2D.Te_eV .== 0.0)
     end
 
-    @testset "Pre-allocation Constructor" begin
+    @testset "Growth Preserves Snapshot Independence" begin
+        # There is no preallocating constructor: `Diagnostics` only ever starts empty and
+        # `update_snaps*!` pushes. What preallocation used to guarantee — that every slot
+        # owns its own matrices — has to survive the appended path too, since each pushed
+        # Snapshot2D brings its own storage rather than being handed a prepared one.
         dims_RZ = (12, 18)
-        n_0D, n_2D = 50, 10
+        diag = Diagnostics{Float64}(dims_RZ[1], dims_RZ[2])
 
-        diag = Diagnostics{Float64}(dims_RZ[1], dims_RZ[2], n_0D, n_2D)
+        for i in 1:3
+            push!(diag.snaps0D, Snapshot0D{Float64}())
+            push!(diag.snaps2D, Snapshot2D{Float64}(dims_RZ = dims_RZ))
+        end
 
-        # Verify pre-allocation
-        @test length(diag.snaps0D) == n_0D
-        @test length(diag.snaps2D) == n_2D
-        @test diag.tid_0D == 0  # No snapshots recorded yet
-        @test diag.tid_2D == 0
-
-        # Verify that pre-allocated snapshots are properly initialized
-        @test all(snap -> snap.step == 0, diag.snaps0D)
-        @test all(snap -> snap.time_s == 0.0, diag.snaps0D)
+        @test length(diag.snaps0D) == 3
+        @test length(diag.snaps2D) == 3
         @test all(snap -> snap.dims_RZ == dims_RZ, diag.snaps2D)
         @test all(snap -> size(snap.ne) == dims_RZ, diag.snaps2D)
 
-        # Test that we can modify pre-allocated snapshots independently
         diag.snaps0D[1].ne = 1.5e19
         diag.snaps0D[2].ne = 2.8e19
         @test diag.snaps0D[1].ne ≈ 1.5e19
         @test diag.snaps0D[2].ne ≈ 2.8e19
+
+        diag.snaps2D[1].ne[1, 1] = 7.7e19
+        @test diag.snaps2D[2].ne[1, 1] == 0.0   # separate backing arrays
     end
 
     @testset "Critical Broadcasting Safety" begin

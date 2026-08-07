@@ -54,7 +54,51 @@ function validate_config!(config::SimulationConfig{FT}) where {FT <: AbstractFlo
         throw(ArgumentError("Z_min must be less than Z_max"))
     end
 
+    normalize_snapshot_intervals!(config)
+
     return nothing
+end
+
+"""
+    normalize_snapshot_intervals!(config::SimulationConfig{FT}) where {FT<:AbstractFloat}
+
+Round `snap0D_Δt_s` and `snap2D_Δt_s` to the nearest multiple of `dt`; reject either below `dt`.
+
+`is_snap*_time` is only evaluated at multiples of `dt`, so a non-integer interval has
+sample times that fall between steps and vanish: at `dt = 1 µs`, `Δt = 2.5 µs` records at
+5 and 10 µs but not 2.5 or 7.5. The interval is also the DENOMINATOR of the source/loss
+rates in `measure_snap0D!`, so a mismatch is wrong physics, not just sparse sampling.
+
+Below `dt` is an error, not a clamp — recording more often than the solver steps has no
+reading, and it is what preallocated 1.5 GiB in a 500-step run (201b1f8).
+
+`isapprox`, not `==`: `9e-8` is three times `3e-8`, but the round trip lands on
+`8.999999999999999e-8` and an exact test would perturb the value it is protecting.
+"""
+function normalize_snapshot_intervals!(config::SimulationConfig{FT}) where {FT <: AbstractFloat}
+    config.dt > 0 || throw(ArgumentError("dt must be positive, got $(config.dt)"))
+
+    for fld in (:snap0D_Δt_s, :snap2D_Δt_s)
+        Δt = getfield(config, fld)
+
+        if Δt < config.dt
+            throw(
+                ArgumentError(
+                    "$fld = $Δt s is below dt = $(config.dt) s. Snapshots cannot be recorded " *
+                        "more often than the simulation steps; set $fld to at least dt."
+                )
+            )
+        end
+
+        snapped = round(Δt / config.dt) * config.dt
+        if !isapprox(snapped, Δt; rtol = 1.0e-9)
+            @warn "$fld is not an integer multiple of dt; snapshots at the in-between " *
+                "times would be silently dropped. Snapping to the nearest multiple." fld original = Δt dt = config.dt adjusted = snapped
+            setfield!(config, fld, FT(snapped))
+        end
+    end
+
+    return config
 end
 
 # Export the function
@@ -732,10 +776,8 @@ end
 
 
 function initialize_diagnostics!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    dim_tt_0D = Int(ceil((RP.config.t_end_s - RP.config.t_start_s) / RP.config.snap0D_Δt_s)) + 1
-    dim_tt_2D = Int(ceil((RP.config.t_end_s - RP.config.t_start_s) / RP.config.snap2D_Δt_s)) + 1
-
-    RP.diagnostics = Diagnostics{FT}(RP.G.NR, RP.G.NZ, dim_tt_0D, dim_tt_2D)
+    # Fresh and empty — this DISCARDS any snapshots already recorded.
+    RP.diagnostics = Diagnostics{FT}(RP.G.NR, RP.G.NZ)
     return RP
 end
 
