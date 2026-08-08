@@ -107,6 +107,98 @@ through the projection `|b̂·n̂|` in [`channel_ceiling`](@ref).
 """
 maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE / (π * m))
 
+# ─── The random-step vocabulary ──────────────────────────────────────────────
+#
+# Every geometric bound on a diffusivity here is `D = v̄·L/d`; only `d` differs, so
+# it is a type rather than a literal scattered across call sites. `d` is an angular
+# average of the same `v̄` (internal/docs/src/details/speed-and-composition.md):
+#
+#     d = 3   isotropic,   ⟨v_z²/|v|⟩ = v̄/3   — a neutral molecule
+#     d = 2   along-axis,  ⟨|v_x|⟩    = v̄/2   — a magnetized particle on b̂
+#
+# The wall ceiling's `¼` is not a third member: it is the `½` at the arithmetic
+# mean of two distances (`wall_step_ceiling`).
+
+"""
+    RandomStepModel
+
+Which directions a species can take its random step in. Selects the denominator
+`d` in `D = v̄·L/d`; see [`geometric_diffusivity`](@ref).
+"""
+abstract type RandomStepModel end
+
+"Free in all three directions: a neutral molecule. `D = v̄L/3`."
+struct IsotropicStep <: RandomStepModel end
+
+"Confined to one axis, `b̂`: a magnetized particle. `D = v̄L/2`."
+struct AlongAxisStep <: RandomStepModel end
+
+step_denominator(::IsotropicStep) = 3
+step_denominator(::AlongAxisStep) = 2
+
+# A step model is scalar config, not a container — the same declaration `Base`
+# makes for `AbstractString`, so broadcasts take it as-is instead of iterating it.
+Base.broadcastable(model::RandomStepModel) = Ref(model)
+
+# Negative or NaN inputs are programming errors, and a negative product would pass
+# through `min` silently as a very tight ceiling — reject at the door.
+@inline function _check_step_inputs(vm, L)
+    (isnan(vm) || isnan(L)) && throw(DomainError((vm, L), "speed and length must not be NaN"))
+    vm < zero(vm) && throw(DomainError(vm, "mean speed must be non-negative"))
+    L < zero(L) && throw(DomainError(L, "step length must be non-negative"))
+    return nothing
+end
+
+# Result type from the argument TYPES, not their product: `0 * Inf` is a legitimate
+# input here, and `zero(vm * L)` would be asking `zero` about a `NaN`.
+@inline _step_float(vm, L) = float(promote_type(typeof(vm), typeof(L)))
+
+"""
+    geometric_diffusivity(vm, L, model::RandomStepModel)
+
+The diffusivity a random walk of step `L` at speed `vm` can produce: `vm·L/d`.
+
+**Zero wins over infinity**: a dead speed or a zero length means no diffusion, and
+the branch is taken before the multiply so `0 * Inf` never becomes `NaN`.
+"""
+function geometric_diffusivity(vm, L, model::RandomStepModel)
+    _check_step_inputs(vm, L)
+    T = _step_float(vm, L)
+    (iszero(vm) || iszero(L)) && return zero(T)
+    return T(vm * L / step_denominator(model))
+end
+
+"""
+    inv_geometric_diffusivity(vm, L, model::RandomStepModel)
+
+`d/(vm·L)`, for reciprocal sums of competing mechanisms: one that cannot act
+contributes `0`, one that acts instantly contributes `Inf`. Computed directly
+rather than as `inv(geometric_diffusivity(...))` — the round trip costs an ulp,
+and the neutral-gas refactor is required to be bit-identical.
+"""
+function inv_geometric_diffusivity(vm, L, model::RandomStepModel)
+    _check_step_inputs(vm, L)
+    T = _step_float(vm, L)
+    (iszero(vm) || iszero(L)) && return T(Inf)
+    return T(step_denominator(model)) / (vm * L)
+end
+
+"""
+    wall_step_ceiling(vm, Lc_forward, Lc_backward)
+
+The largest parallel diffusivity the geometry can carry: `vm·(Lf + Lb)/4`.
+
+The two distances bound **disjoint halves of velocity space**, so they enter as
+an arithmetic mean under the along-axis `½` — not harmonically; they are not
+competing events. Symmetric lengths recover `½v̄L`. Either length `Inf` ⟹ that
+half is unbounded and the ceiling is absent; `vm = 0` or both lengths `0` ⟹ `0`.
+"""
+function wall_step_ceiling(vm, Lc_forward, Lc_backward)
+    _check_step_inputs(vm, Lc_forward)
+    _check_step_inputs(vm, Lc_backward)
+    return geometric_diffusivity(vm, (Lc_forward + Lc_backward) / 2, AlongAxisStep())
+end
+
 """
     TransportChannel{FT}
 
@@ -549,4 +641,113 @@ function bohm_channel(Te_eV, B, m_i, Z::Integer = 1)
         zero.(c_s), zero.(c_s), (@. c_s / 8), ρ_s;
         vm_para = zero.(c_s), vm_perp = (@. sqrt(8 / π) * c_s / 8)
     )
+end
+
+# ── the free-streaming ceiling ──────────────────────────────────────────────
+#
+# Not a channel. Everything above this line is a transport MECHANISM, and
+# mechanisms compose harmonically because they are competing termination events
+# (`speed-and-composition.md` §4). A density gradient terminates nothing — a
+# particle in a steep profile does not collide more often — so the ceiling below
+# is a different kind of object: a bound on the TOTAL flux, applied after the
+# mechanisms have composed and after any base diffusivity has been added.
+#
+# Putting it in the harmonic sum instead is what let `Dpara0` escape it.
+
+"""
+    flux_limited_diffusivity(D, ∇n, n, vm, flux_limit_factor) -> Float
+
+`D` capped so that the diffusive flux cannot exceed what a Maxwellian can supply,
+
+```
+    Γ = D·|∇n| ≤ flux_limit_factor·n·v̄        flux_limit_factor = ¼ is Hertz–Knudsen
+```
+
+composed as the **`n = 2`** member of Larsen's flux-limited-diffusion family,
+
+```
+    1/D_limited = √( (1/D)² + (|∇n| / (flux_limit_factor·vm·n))² )
+```
+
+`flux_limit_factor` is `RP.flags.limit_flux.factor`, spelled out rather than `α` because
+`α` is this codebase's Townsend first-ionization coefficient
+(`reaction_rate_coefficients.jl`).
+
+`vm` is contracted to be [`maxwellian_mean_speed`](@ref): the ceiling is a one-way
+flux across a surface, `⟨v_n θ(v_n)⟩ = ¼v̄`, and only that moment has the meaning.
+The same `¼v̄` the Robin wall condition uses, now multiplied by the gradient scale
+rather than a geometric one.
+
+**Why `n = 2`.** For `x ≡ D/D_max` the family expands as
+`D_n/D = 1 − xⁿ/n + O(x²ⁿ)`, so the exponent *is* the order of the leading
+correction. This code builds `D∥ = ½vp²/ν = T/(mν)` from a single
+velocity-independent rate — the BGK closure — whose exact linear response is
+`1 − 1.910R²` with `R = λ/Lₙ`: second order, because parity plus analyticity of the
+kernel forbid an odd term. `n = 1` manufactures a first-order term the kinetics do
+not have (0.6 % low against a true 0.002 % at this device's operating point, 15 %
+low at `R = 0.1` — figures from
+`internal/docs/src/notes/design/flux-limiter-review.md` §1.A and Appendix A);
+`n = ∞` has none at all and errs the other way. `n = 2` gives `1 − 2.000R²`, and
+minimax over `R ∈ [0.003, 0.3]` picks 2.04, so the integer is a rounding rather
+than a fit. `n = 1` is not smooth at `∇n = 0`, and `n = 2` is: `n = 1`'s
+`D ∝ (a + b|g|)⁻¹` has unequal one-sided derivatives there, while `n = 2`'s
+`D ∝ (a² + b²g²)^(-1/2)` depends on `g²` and does not — and `∇n ≈ 0` is where most
+of the grid sits most of the time. Derived in
+`internal/docs/src/notes/design/flux-limiter.md` §1.
+
+**`Lₙ = n/|∇n|` is never formed**, which is the whole structural point: the guard
+that used to patch its non-finite branch had the sign backwards, mapping a flat
+profile (`Lₙ = ∞`, no limit needed) to `D = 0` (maximum limit). What replaces it is
+not a set of tamed special cases but the same arithmetic falling through every one
+of them without a branch — a claim about *how* each case is handled, not that every
+one lands on a finite number:
+
+| state | returns | why |
+|---|---|---|
+| `n > 0`, `∇n = 0` | `D` unchanged, bit for bit | flat profile, Fick at its most valid |
+| `n ≤ 0` | `0`, whatever `∇n` does | an empty cell has nothing to supply. **The supply test runs before the flat-profile short-circuit, and the order is load-bearing:** the bound is `D·\\|∇n\\| ≤ ¼n v̄`, whose right-hand side is exactly `0` at `n = 0`. A flat profile then admits any *finite* `D` but not `D = Inf`, since `Inf·0` is `NaN` rather than `≤ 0`. Checking supply first is what makes a vacuum — no gas, no plasma, so `½vp²/ν = Inf` natively — come out at `D = 0` instead of poisoning `∇𝐃∇`. |
+| `n < 0` | `0` | transient, before `negative_n_correction`; `max(n,0)` folds it into the row above rather than letting it behave like `\\|n\\|` |
+| `vm = 0` | `0` | `T = 0`, nothing crosses any surface |
+| `D = 0` | `0` | already immobile |
+| `n > 0`, `∇n = 0`, `D = Inf` | `Inf`, unchanged | **not tamed, and correctly so.** A uniform collisionless plasma really does have no diffusive description; the ceiling has no flux to bound and declines to act. Reachable only with `ν = 0` at live density — no fixture in the suite reaches it. Bounding it needs a *geometric* length (the mfp-truncation ceiling the gas and ion channels already carry as `L_char`/`L_mixing`), which is separate work — see `flux-limiter.md` §1. |
+
+**`NaN` is not one of the branches above, and is not caught.** None of the
+following is reachable in production today; recorded because the four fail in
+inconsistent directions, not to guard against something that cannot currently
+happen. Measured: `∇n = NaN` returns `D` unchanged — the short-circuit's `g > 0`
+compares `false` for `NaN`, so this fails **open**, silently disabling the limiter.
+`n = NaN` or `vm = NaN` returns `0.0` — `NaN` poisons `supply = flux_limit_factor·vm·max(n,0)`, and
+`supply > 0` is again `false` for `NaN`, so this fails **closed**, the opposite
+direction. `D = NaN` returns `NaN`, propagated through `hypot` rather than caught
+either way.
+
+Two more edges, both outside anything a caller is expected to hit: `D` at or below
+`floatmax()`'s reciprocal (`≈ 5.56e-309`) returns exactly `0.0`, because `inv(D)`
+itself overflows to `Inf` there before `hypot` ever runs. And a negative `D`
+returns a *positive* value of the same magnitude `-D` would — `hypot` only ever
+sees `inv(D)` squared, so the sign is lost rather than propagated. Unreachable
+given `Dpara0 ≥ 0` and `Dpara_e_eff ≥ 0` upstream, but worth naming as a sign flip
+rather than assumed to be graceful degradation.
+
+`hypot` rather than `sqrt(a^2 + b^2)`: what actually arrives here is `D = Inf`, not
+a subnormal-adjacent value — `Dpara_e_coll` produces it natively whenever the
+collision frequency vanishes, and `inv(Inf) === 0.0` exactly, so that arrival needs
+no special handling. The regime `hypot` defends is `D = floatmax()`, the worst
+finite input the test suite pins rather than one this code's own arithmetic
+produces: there `inv(D)` is genuinely subnormal, and the naive
+`sqrt(inv(D)^2 + (g/supply)^2)` would underflow `inv(D)^2` to exactly `0.0` before
+the `sqrt` runs — underflow, not the overflow an earlier version of this note
+claimed. `hypot` carries the small term through without that loss.
+"""
+function flux_limited_diffusivity(D, ∇n, n, vm, flux_limit_factor)
+    # Supply first, gradient second. An empty cell has nothing to carry a flux with
+    # whatever the profile does, and taking that branch before the flat-profile
+    # short-circuit is what keeps `D·∇n` from being `Inf·0 = NaN` in a vacuum.
+    supply = flux_limit_factor * vm * max(n, zero(n))  # ¼·n·v̄, the one-way flux ceiling
+    supply > zero(supply) || return zero(D)
+    g = abs(∇n)
+    # short-circuit, not `ifelse`: this must return D untouched rather than round
+    # trip through inv(hypot(inv(D), 0)) and lose an ulp
+    g > zero(g) || return D
+    return inv(hypot(inv(D), g / supply))
 end

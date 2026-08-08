@@ -386,20 +386,24 @@ end
 
 @testitem "The collisional channel is exact in both limits, and composes at D" setup = [IonRun] begin
     using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
-        channel_D_para, channel_D_perp, maxwellian_mean_speed
+        channel_D_para, channel_D_perp, maxwellian_mean_speed, wall_step_ceiling
 
-    # Two mechanisms bound a parallel step: a collision rate and a geometric
-    # length. Each has an exact closed form on its own, and the model is that they
-    # compose as diffusivities. All three claims are checked here against values
-    # built from (T, m, ν, L) alone — nothing is compared to a previous formula.
+    # Two mechanisms bound a parallel step: a collision rate and a geometric length.
+    # Each has an exact closed form on its own, and they compose as a HARD MINIMUM.
     #
-    #   rate alone     D∥ = T/(mν)          Einstein
-    #   length alone   D∥ = ½·vm·L          free streaming, ⟨|v_∥|⟩ = vm/2
-    #   both           1/D∥ = 1/D_ν + 1/D_L
+    #   rate alone       D∥ = T/(mν)                  Einstein
+    #   geometry alone   D∥ = ¼·vm·(Lc_f + Lc_b)      free streaming to the wall
+    #   both             D∥ = min of the two
     #
-    # The last line is the whole content of composing at the level of D. It holds
-    # for no other pairing of moment and coefficient, which is why it is worth
-    # asserting directly rather than through the value it happens to produce.
+    # `min`, not a reciprocal sum, and the geometric length is the distance to the
+    # wall ALONG B rather than `L_mixing`. Both changed together and for one reason:
+    # an absorbing wall is a boundary, not a competing collision. A collision
+    # randomises a particle's direction and so composes by Matthiessen; a wall removes
+    # it, which bounds the step outright. `L_mixing` was also the wrong length — it is
+    # poloidal, shorter than the parallel distance by B/B_pol (~60× on a startup
+    # field) — and it now serves the turbulent ExB channel alone.
+    #
+    # See internal/docs/src/notes/design/random-step-ceiling.md.
     RP = ion_case()
     update_transport_quantities!(RP)
     RP.transport.Dpara0 = 0.0                  # no additive floor riding along
@@ -422,16 +426,37 @@ end
 
     vm = maxwellian_mean_speed.(RP.plasma.Ti_eV, mi)[inw]
     T_J = (RP.plasma.Ti_eV .* ee)[inw]
-    ν, L = 3.0e5, 0.37                         # L_mixing = 0 means "unset", i.e. unbounded
+    ν, L = 3.0e5, 0.37
+    # The geometric limb, built from the field-line trace rather than from `L_mixing`.
+    D_wall = wall_step_ceiling.(vm, RP.flf.Lc_forward[inw], RP.flf.Lc_backward[inw])
+    einstein = T_J ./ (mi .* ν)
 
-    @test D(ν, 0.0) ≈ T_J ./ (mi .* ν) rtol = 1.0e-12          # Einstein
-    @test D(0.0, L) ≈ 0.5 .* vm .* L rtol = 1.0e-12            # free streaming
-    @test 1 ./ D(ν, L) ≈ 1 ./ D(ν, 0.0) .+ 1 ./ D(0.0, L) rtol = 1.0e-12
+    # Where the collisions are the tighter of the two, the answer is exactly Einstein —
+    # the ceiling is inert rather than blended, which is what makes it a backstop.
+    binds_ν = findall(einstein .< D_wall)
+    @test !isempty(binds_ν)                                     # else the next line is vacuous
+    @test D(ν, 0.0)[binds_ν] ≈ einstein[binds_ν] rtol = 1.0e-12
 
-    # Neither mechanism present is not a small diffusivity but no channel at all:
-    # free streaming with nothing to bound it is convection, and the equation
-    # already carries it as −∇·(n𝐮_i).
-    @test all(iszero, D(0.0, 0.0))
+    # Collisionless is NOT zero. The old formula answered zero to "no collisions", which
+    # is backwards: an unbounded mean free path means the wall is what stops the
+    # particle, and D∥ is exactly the free-streaming value ¼v̄(Lc_f + Lc_b).
+    @test D(0.0, 0.0) ≈ D_wall rtol = 1.0e-12
+    @test all(>(0), D(0.0, 0.0))
+
+    # Composition is a hard MINIMUM, not a reciprocal sum. An absorbing wall is a
+    # boundary rather than a competing termination event: a collision randomises a
+    # direction and so adds inversely, while a wall removes the particle and bounds the
+    # step outright. Asserting the difference matters — the two agree to within 30 % at
+    # the crossover and would be hard to tell apart from the value alone.
+    @test D(ν, 0.0) ≈ min.(einstein, D_wall) rtol = 1.0e-12
+    bosanquet = 1 ./ (1 ./ einstein .+ 1 ./ D_wall)
+    @test any(k -> !isapprox(D(ν, 0.0)[k], bosanquet[k]; rtol = 1.0e-6), eachindex(einstein))
+
+    # `L_mixing` NO LONGER REACHES THIS CHANNEL. It is a poloidal length and this is a
+    # parallel step — measured, they differ by B/B_pol — so it now serves the turbulent
+    # ExB channel alone. Sweeping it must move nothing here.
+    @test D(ν, 0.0) == D(ν, L)
+    @test D(0.0, 0.0) == D(0.0, 10.0 * L)
 
     # A parallel channel contributes nothing across the field, in every limit —
     # otherwise the Bohm channel it sits beside would be double counting D⊥. And

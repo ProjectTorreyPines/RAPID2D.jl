@@ -816,14 +816,25 @@ Contains boolean flags that control various aspects of the simulation.
     evolve_Te_inWall_only::Bool = false       # Only evolve Te inside wall
     Damp_Transp_outWall::Bool = true          # Damp transport outside wall
 
-    # artificial limiters to avoid numerical instabilities
-    limit_acceleration::NamedTuple = (
+    # Artificial limiters to avoid numerical instabilities.
+    #
+    # Spelled `@NamedTuple{...}` rather than a bare `::NamedTuple`: the bare form is a
+    # UnionAll, so `.state` and `.factor` both infer as `Any` and every read is a
+    # dynamic lookup — including `if RP.flags.limit_flux.state`, which becomes a
+    # dynamic branch. Naming the fields costs nothing and makes `factor` concretely
+    # `FT` at the point of use, so callers need no local conversion.
+    #
+    # The one cost: assignment now needs BOTH fields in THIS order, since `convert`
+    # for named tuples matches on the name tuple rather than by name. A partial or
+    # reordered update is a `MethodError`, not a silent drop; write it as
+    #     RP.flags.limit_flux = merge(RP.flags.limit_flux, (state = false,))
+    limit_acceleration::@NamedTuple{state::Bool, factor::FT} = (
         state = true,                         # Enable acceleration limiting
-        factor = 0.5,                          # Limiting factor (accel < factor*max(u_para))
+        factor = FT(0.5),                     # Limiting factor (accel < factor*max(u_para))
     )
-    limit_flux::NamedTuple = (
+    limit_flux::@NamedTuple{state::Bool, factor::FT} = (
         state = true,                         # Enable flux limiting
-        factor = 0.25,                          # Limiting factor (Deff = min(D_SH, factor*speed*Ln))
+        factor = FT(0.25),                    # ¼ of the Hertz-Knudsen one-way flux ¼·n·v̄
     )
 
     # Numerical settings
@@ -1044,7 +1055,7 @@ mutable struct RAPID{FT <: AbstractFloat}
 
     # Physical components
     config::SimulationConfig{FT}      # Simulation configuration
-    flags::SimulationFlags            # Simulation flags
+    flags::SimulationFlags{FT}        # Simulation flags
     plasma::PlasmaState{FT}           # Plasma state variables
     fields::Fields{FT}                # Field variables
     transport::Transport{FT}          # Transport coefficients
@@ -1063,7 +1074,7 @@ mutable struct RAPID{FT <: AbstractFloat}
     # many ionizations happened, so electrons, ions and neutrals cannot disagree.
     reactions::ReactionState{FT}
     tElap::Dict{Symbol, Float64}      # Elapsed times
-    diagnostics::Diagnostics   # Diagnostic data
+    diagnostics::Diagnostics{FT}   # Diagnostic data
 
     # Field-Line-Following analysis
     flf::FieldLineFollowingResult{FT}  # Results of field line following analysis

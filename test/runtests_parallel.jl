@@ -125,15 +125,52 @@ function blank_ranges(src, cuts)
     return String(take!(io))
 end
 
+# Names the body pulls in with `using M: a, b` / `import M: a, b` (`a as b` yields `b`).
+#
+# These must be listed STATICALLY because they cannot be discovered at run time: since
+# Julia 1.11 such a binding is reachable (`isdefined` is true, `Setup.a` resolves) but NOT
+# enumerable — `names(M; all = true)` lists only bindings DEFINED in M, `imported = true`
+# adds only `import`ed ones, and `usings = true` dumps every exported name of every
+# `using`ed module (>1000 for Test + RAPID2D). So the export loop below cannot see them,
+# and a testitem using such a name bare dies with UndefVarError.
+function imported_names(body)
+    syms = Symbol[]
+    pos = firstindex(body)
+    while true
+        ex, np = Meta.parse(body, pos; raise = false)
+        (ex === nothing || np <= pos) && break
+        if ex isa Expr && (ex.head === :using || ex.head === :import)
+            for clause in ex.args
+                # `using M` (no colon) binds nothing importable; only `M: a, b` does.
+                (clause isa Expr && clause.head === :(:)) || continue
+                for a in clause.args[2:end]
+                    if a isa Expr && a.head === :as
+                        push!(syms, a.args[2])
+                    elseif a isa Expr && a.head === :. && length(a.args) == 1
+                        push!(syms, a.args[1])
+                    end
+                end
+            end
+        end
+        np > lastindex(body) && break
+        pos = np
+    end
+    return unique(syms)
+end
+
 # A @testsetup module needs its OWN imports — unlike @testsnippet, which is inlined into a
-# testitem that already had `using RAPID2D` injected. Add that, then auto-export every
-# binding so `using .Name` exposes them unqualified, reproducing @testsnippet's flat scope.
+# testitem that already had `using RAPID2D` injected. Add that, then export everything the
+# body brought in, so `using .Name` exposes it unqualified: the static list above for
+# imported names, the runtime loop for defined ones.
 function to_testsetup(name, body)
+    imported = imported_names(body)
+    reexport = isempty(imported) ? "" : "    export " * join(imported, ", ")
     return """
     @testsetup module $name
         using Test
         using RAPID2D
     $body
+    $reexport
         for var"#en" in names(@__MODULE__; all = true)
             startswith(string(var"#en"), "#") && continue
             var"#en" in (:eval, :include) && continue
