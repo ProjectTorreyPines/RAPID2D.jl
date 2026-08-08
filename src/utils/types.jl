@@ -5,7 +5,7 @@ Why a trace ended, and what `Lc` holds for each outcome:
 
 - `:wall`        — distance to the vessel along `B`
 - `:closed`      — one circuit length (the geometry repeats after it)
-- `:null`        — `2πR`: `Bpol = 0` means purely toroidal, a closed circle
+- `:null`        — `2πR`: `Bpol = 0` means purely toroidal, a closed circle (`min_Bpol = 0`)
 - `:trace_limit` — `Inf`: the budget (`max_Lpol`/`max_steps`) ran out, distance UNKNOWN
 
 `Inf` therefore has exactly one meaning — the measurement failed — and
@@ -77,7 +77,7 @@ Result of tracing a single magnetic field line in one direction.
 # Fields
 - `Lpol::FT`: Poloidal length traveled
 - `Lc::FT`: Connection length traveled
-- `min_Bpol::FT`: Minimum poloidal field encountered
+- `min_Bpol::FT`: Minimum poloidal field on the line; `0` iff `termination === :null`
 - `steps::Int`: Number of integration steps taken
 - `termination::Symbol`: Why the trace ended, see [`FLF_TERMINATIONS`](@ref)
 - `is_closed::Bool`: Whether field line closed (360° circulation)

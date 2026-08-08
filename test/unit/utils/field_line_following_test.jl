@@ -417,6 +417,49 @@ end
     @test 0.29 < res.final_Z < 0.302
 end
 
+@testitem "FLF trace: a null publishes min_Bpol = 0, not what it last measured" setup = [FLFFields] begin
+    using RAPID2D: my_interpolation, trace_single_field_line
+
+    n = (length(R1D), length(Z1D))
+    never = box_wall(-Inf, Inf, -Inf, Inf)
+
+    # `min_Bpol` is the smallest poloidal field ON the line, and `:null` is the claim that
+    # the line reached zero. Publishing anything else contradicts the termination shipped
+    # beside it: `termination === :null` and `min_Bpol == 0` are the same statement.
+
+    # Null at the start: the accumulator is still at its `Inf` seed, which is not a field
+    # magnitude at all.
+    zero_pol = my_interpolation(R1D, Z1D, zeros(n...))
+    res_start = trace_single_field_line(
+        1.5, 0.0, 1, zero_pol, zero_pol, my_interpolation(R1D, Z1D, fill(1.0, n...)),
+        0.001, 100, 10.0, never
+    )
+    @test res_start.termination === :null
+    @test res_start.min_Bpol == 0
+
+    # Null reached mid-trace (the ramp fixture above): here the running minimum is a real
+    # measurement, ≈ 0.1 — finite and plausible, and still the wrong answer.
+    BZ = [z < 0.275 ? 0.1 : 0.0 for _ in R1D, z in Z1D]
+    res_mid = trace_single_field_line(
+        1.5, 0.0, 1,
+        my_interpolation(R1D, Z1D, zeros(n...); method = :linear),
+        my_interpolation(R1D, Z1D, BZ; method = :linear),
+        my_interpolation(R1D, Z1D, zeros(n...); method = :linear),
+        0.001, 10_000, 5.0, never
+    )
+    @test res_mid.termination === :null
+    @test res_mid.min_Bpol == 0
+
+    # The other half of the biconditional: a wall hit measured a genuine minimum and must
+    # not be zeroed along with it.
+    res_wall = trace_single_field_line(
+        1.5, 0.0, 1, straight_field(; BZ = 0.1)..., 0.001, 10_000, 5.0,
+        box_wall(0.6, 2.4, -0.8, 0.8)
+    )
+    @test res_wall.termination === :wall
+    @test res_wall.min_Bpol ≈ 0.1
+end
+
 @testitem "FLF validation: a step-loop refresh degrades gracefully instead of dying" setup = [FLFStartup] begin
     using RAPID2D: validate_field_line_terminations!
 

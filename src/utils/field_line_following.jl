@@ -199,11 +199,13 @@ function trace_single_field_line(
 
     if Bpol == 0
         # `Bpol = 0` means purely toroidal: the line is a closed circle, `Lc = 2πR`.
-        # `Lpol` keeps its existing `Inf` — its honest value here is a separate
-        # question, since `Lpol_tot` feeds `L_mixing`
-        # (internal/docs/src/notes/TODO/L-mixing-serves-two-lengths.md).
+        # `Lpol` keeps its existing `Inf` — its honest value here is a separate question,
+        # since `Lpol_tot` feeds `L_mixing`
+        # (internal/docs/src/notes/TODO/L-mixing-serves-two-lengths.md). `min_Bpol` is
+        # zero by the same token that makes this `:null`, not the `Inf` seed.
         return SingleTraceResult{FT}(;
-            Lpol = FT(Inf), Lc = FT(2π) * R_current, min_Bpol, steps, termination = :null,
+            Lpol = FT(Inf), Lc = FT(2π) * R_current, min_Bpol = zero(FT), steps,
+            termination = :null,
             is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
         )
     end
@@ -235,7 +237,7 @@ function trace_single_field_line(
         # false) or threw in the cell-state checker (`floor(Int, NaN)`).
         if !(isfinite(R_current) && isfinite(Z_current))
             return SingleTraceResult{FT}(;
-                Lpol = FT(Inf), Lc = Lc + FT(2π) * R_prev, min_Bpol, steps,
+                Lpol = FT(Inf), Lc = Lc + FT(2π) * R_prev, min_Bpol = zero(FT), steps,
                 termination = :null,
                 is_closed = false, hit_wall = false, final_R = R_prev, final_Z = Z_prev
             )
@@ -252,7 +254,7 @@ function trace_single_field_line(
             # Same reading as the starting null above, with the distance already walked
             # to get here: the line runs `Lc` to this point and then closes toroidally.
             return SingleTraceResult{FT}(;
-                Lpol = FT(Inf), Lc = Lc + FT(2π) * R_current, min_Bpol, steps,
+                Lpol = FT(Inf), Lc = Lc + FT(2π) * R_current, min_Bpol = zero(FT), steps,
                 termination = :null,
                 is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
             )
