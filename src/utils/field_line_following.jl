@@ -120,10 +120,14 @@ function is_in_wall_by_cell_state(
     Rid = floor(Int, (R - Rmin) * inv_dR) + 1
     Zid = floor(Int, (Z - Zmin) * inv_dZ) + 1
 
-    # Convert 2D indices to linear index
-    nid = (Zid - 1) * NR + Rid
+    # Bound R FIRST: the linear index alone folds `Rid = NR+1` onto the valid index of
+    # `(1, Zid+1)`, so a rightward escape used to read as "still inside".
+    if Rid < 1 || Rid > NR
+        return false  # Outside domain = wall
+    end
 
-    # Check bounds and return cell state
+    # With R bounded, the linear check below is exactly a bound on Zid.
+    nid = (Zid - 1) * NR + Rid
     if nid < 1 || nid > length(cell_state)
         return false  # Outside domain = wall
     end
@@ -194,8 +198,12 @@ function trace_single_field_line(
     Bpol = sqrt(BR^2 + BZ^2)
 
     if Bpol == 0
+        # `Bpol = 0` means purely toroidal: the line is a closed circle, `Lc = 2πR`.
+        # `Lpol` keeps its existing `Inf` — its honest value here is a separate
+        # question, since `Lpol_tot` feeds `L_mixing`
+        # (internal/docs/src/notes/TODO/L-mixing-serves-two-lengths.md).
         return SingleTraceResult{FT}(;
-            Lpol = FT(Inf), Lc = FT(Inf), min_Bpol, steps,
+            Lpol = FT(Inf), Lc = FT(2π) * R_current, min_Bpol, steps, termination = :null,
             is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
         )
     end
@@ -204,8 +212,9 @@ function trace_single_field_line(
     for step in 1:max_steps
         # Check wall boundary
         if !wall_checker(R_current, Z_current)
+            # THE ONLY EXIT THAT PUBLISHES A FINITE `Lc`.
             return SingleTraceResult{FT}(;
-                Lpol, Lc, min_Bpol, steps,
+                Lpol, Lc, min_Bpol, steps, termination = :wall,
                 is_closed = false, hit_wall = true, final_R = R_current, final_Z = Z_current
             )
         end
@@ -219,6 +228,19 @@ function trace_single_field_line(
             dl, R_current, Z_current, interp_BR, interp_BZ
         )
 
+        # The RK4 stages divide by Bpol at their lookahead points, so a step poking
+        # into a Bpol = 0 region comes back NaN before the committed-position check
+        # below can see it. Still a null termination, at the last position actually
+        # reached; unguarded, the NaN misread as a wall hit (NaN comparisons are
+        # false) or threw in the cell-state checker (`floor(Int, NaN)`).
+        if !(isfinite(R_current) && isfinite(Z_current))
+            return SingleTraceResult{FT}(;
+                Lpol = FT(Inf), Lc = Lc + FT(2π) * R_prev, min_Bpol, steps,
+                termination = :null,
+                is_closed = false, hit_wall = false, final_R = R_prev, final_Z = Z_prev
+            )
+        end
+
         # Calculate magnetic field components at new position
         BR = interp_BR(R_current, Z_current)
         BZ = interp_BZ(R_current, Z_current)
@@ -227,8 +249,11 @@ function trace_single_field_line(
         Bpol = sqrt(BR^2 + BZ^2)
 
         if Bpol == 0
+            # Same reading as the starting null above, with the distance already walked
+            # to get here: the line runs `Lc` to this point and then closes toroidally.
             return SingleTraceResult{FT}(;
-                Lpol = FT(Inf), Lc = FT(Inf), min_Bpol, steps,
+                Lpol = FT(Inf), Lc = Lc + FT(2π) * R_current, min_Bpol, steps,
+                termination = :null,
                 is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
             )
         end
@@ -247,8 +272,10 @@ function trace_single_field_line(
 
         # Check maximum poloidal length
         if Lpol > max_Lpol
+            # `Lc = Inf` means UNKNOWN, not "no wall": the trace was still going when
+            # the budget ran out. `Lpol` keeps the distance actually travelled.
             return SingleTraceResult{FT}(;
-                Lpol, Lc, min_Bpol, steps,
+                Lpol, Lc = FT(Inf), min_Bpol, steps, termination = :trace_limit,
                 is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
             )
         end
@@ -269,8 +296,11 @@ function trace_single_field_line(
 
                 # Check for 360° circulation
                 if abs(total_angle) >= 2π - closure_tolerance
+                    # `Lc` is the CIRCUIT length, not `Inf`: the geometry repeats
+                    # after one circuit, so a longer step reaches nowhere new — a
+                    # measured bound, same standing as a wall distance.
                     return SingleTraceResult{FT}(;
-                        Lpol, Lc, min_Bpol, steps,
+                        Lpol, Lc, min_Bpol, steps, termination = :closed,
                         is_closed = true, hit_wall = false, final_R = R_current, final_Z = Z_current
                     )
                 end
@@ -281,11 +311,36 @@ function trace_single_field_line(
     end
 
 
-    # Reached maximum steps
+    # Reached maximum steps — the same physical condition as `Lpol > max_Lpol` above
+    # (`max_step_per_direction = floor(max_Lpol/step_size)` makes them trip together),
+    # so it carries the same status rather than one of its own.
     return SingleTraceResult{FT}(;
-        Lpol, Lc, min_Bpol, steps,
+        Lpol, Lc = FT(Inf), min_Bpol, steps, termination = :trace_limit,
         is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
     )
+end
+
+"""
+    _finalize_total_lengths!(flf) -> flf
+
+Totals are plain sums of the per-direction lengths, collapsed onto one direction only
+where BOTH terminations are `:closed` — the two directions then retraced one circuit.
+The gate must be the termination pair, not `is_closed`: that flag is set by *either*
+direction, and a half-closed pair holds two different real measurements — collapsing
+there overwrote the backward one, and `Lpol_tot` feeds `L_mixing`. Per-direction `Lc`
+is never touched here.
+"""
+function _finalize_total_lengths!(flf::FieldLineFollowingResult)
+    @. flf.Lpol_tot = flf.Lpol_forward + flf.Lpol_backward
+    @. flf.Lc_tot = flf.Lc_forward + flf.Lc_backward
+
+    both_closed = (flf.termination_forward .=== :closed) .&
+        (flf.termination_backward .=== :closed)
+    for arr in (flf.Lpol_backward, flf.Lpol_tot)
+        @. arr[both_closed] = flf.Lpol_forward[both_closed]
+    end
+    @. flf.Lc_tot[both_closed] = flf.Lc_forward[both_closed]
+    return flf
 end
 
 """
@@ -377,6 +432,10 @@ function flf_analysis_field_lines_rz_plane!(
 
     empty!(flf.closed_surface_nids)  # Clear previous results
     fill!(flf.is_closed, false)  # Reset closed flags
+    # Back to "no trace has run" rather than to a plausible status, so a node the loop
+    # below fails to reach cannot pass a topology check on a stale answer.
+    fill!(flf.termination_forward, :unset)
+    fill!(flf.termination_backward, :unset)
 
     @inbounds for i in 1:NR, j in 1:NZ
         R0, Z0 = R1D[i], Z1D[j]
@@ -389,9 +448,14 @@ function flf_analysis_field_lines_rz_plane!(
 
         # Backward tracing (skip if already closed)
         backward_result = if forward_result.is_closed
-            SingleTraceResult(
-                forward_result.Lpol, forward_result.Lc, forward_result.min_Bpol,
-                forward_result.steps, true, false, R0, Z0
+            # The one construction site that never runs the tracer: a closed forward
+            # trace already covers the circuit. Keyword form — positional args silently
+            # reshuffle when a field is added.
+            SingleTraceResult{FT}(;
+                Lpol = forward_result.Lpol, Lc = forward_result.Lc,
+                min_Bpol = forward_result.min_Bpol, steps = forward_result.steps,
+                termination = :closed, is_closed = true, hit_wall = false,
+                final_R = R0, final_Z = Z0
             )
         else
             trace_single_field_line(
@@ -407,6 +471,8 @@ function flf_analysis_field_lines_rz_plane!(
         flf.Lc_backward[i, j] = backward_result.Lc
         flf.min_Bpol[i, j] = min(forward_result.min_Bpol, backward_result.min_Bpol)
         flf.step[i, j] = forward_result.steps + backward_result.steps
+        flf.termination_forward[i, j] = forward_result.termination
+        flf.termination_backward[i, j] = backward_result.termination
 
         if forward_result.is_closed || backward_result.is_closed
             flf.is_closed[i, j] = true
@@ -414,17 +480,7 @@ function flf_analysis_field_lines_rz_plane!(
         end
     end
 
-    # Calculate total lengths
-    @. flf.Lpol_tot = flf.Lpol_forward + flf.Lpol_backward
-    @. flf.Lc_tot = flf.Lc_forward + flf.Lc_backward
-
-    # Handle closed field lines (total = forward = backward for closed lines)
-    @. flf.Lpol_backward[flf.is_closed] = flf.Lpol_forward[flf.is_closed]
-    @. flf.Lc_backward[flf.is_closed] = flf.Lc_forward[flf.is_closed]
-
-    # For closed field lines, total equals one direction
-    @. flf.Lpol_tot[flf.is_closed] = flf.Lpol_forward[flf.is_closed]
-    @. flf.Lc_tot[flf.is_closed] = flf.Lc_forward[flf.is_closed]
+    _finalize_total_lengths!(flf)
 
     # Set NaN values for points outside wall
     if out_wall_idx !== nothing
@@ -458,14 +514,121 @@ function flf_analysis_field_lines_rz_plane(RP::RAPID)
     )
 end
 
-function flf_analysis_field_lines_rz_plane!(RP::RAPID)
-    return flf_analysis_field_lines_rz_plane!(
+"""
+    validate_field_line_terminations!(RP; strict = true) -> RP.flf
+
+Check that every **in-wall** node has a topology transport can act on.
+
+`:trace_limit` means the distance is UNKNOWN (`Lc = Inf`), and silently disabling the
+geometric ceiling on a failed measurement is the failure it exists to prevent:
+
+- `strict = true` (setup): throw — a run must not start from an unmeasured geometry.
+- `strict = false` (periodic step-loop refresh): warn once and substitute the
+  conservative `Lpol_partial · Btot/Bpol` — at least that much was walked, so the
+  ceiling gets tighter than truth, never looser. Termination stays `:trace_limit`.
+
+`:unset` (an untraced node) is a code bug and throws in both modes. `:null` and a
+half-closed pair only warn — both publish finite lengths, so the ceiling stays active.
+Out-of-wall nodes are not validated: a trace starting outside returns `:wall` at zero
+distance before its first step.
+"""
+function validate_field_line_terminations!(RP::RAPID; strict::Bool = true)
+    flf = RP.flf
+    tf, tb = flf.termination_forward, flf.termination_backward
+    nids = RP.G.nodes.in_wall_nids
+    # `R2D`/`Z2D` accept a linear node id directly — no hand-rolled index arithmetic.
+    coords(nid) = (RP.G.R2D[nid], RP.G.Z2D[nid])
+
+    unmeasured = [n for n in nids if tf[n] === :unset || tb[n] === :unset]
+    isempty(unmeasured) || throw(
+        ArgumentError(
+            "field-line following left $(length(unmeasured)) of $(length(nids)) in-wall " *
+                "nodes untraced, e.g. at (R, Z) = $(coords(first(unmeasured))). " *
+                "Transport cannot read a length that was never measured."
+        )
+    )
+
+    budget = [n for n in nids if tf[n] === :trace_limit || tb[n] === :trace_limit]
+    if !isempty(budget)
+        examples = join((string(coords(n)) for n in first(budget, 3)), ", ")
+        strict && throw(
+            ArgumentError(
+                "field-line tracing ran out of budget at $(length(budget)) of " *
+                    "$(length(nids)) in-wall nodes, e.g. (R, Z) = $examples. " *
+                    "The distance to the wall there is UNKNOWN, not infinite, so the " *
+                    "geometric transport ceiling cannot be switched off on its account. " *
+                    "The budget was max_Lpol = $(flf.max_Lpol) m over at most " *
+                    "$(flf.max_step) steps, derived as 3× the domain diagonal; raise it " *
+                    "(or shrink the domain) if these field lines are genuinely that long."
+            )
+        )
+        # Non-strict (step-loop refresh): substitute the partial parallel length
+        # actually walked, `Lpol_partial · Btot/Bpol` — the true distance is at least
+        # that, so the ceiling gets tighter than truth, never looser. Termination stays
+        # `:trace_limit`: this is a fallback length, not a reclassification.
+        F = RP.fields
+        for n in budget
+            ratio = F.Btot[n] / hypot(F.BR[n], F.BZ[n])
+            for (t, Lc, Lpol) in (
+                    (tf, flf.Lc_forward, flf.Lpol_forward),
+                    (tb, flf.Lc_backward, flf.Lpol_backward),
+                )
+                t[n] === :trace_limit || continue
+                fb = Lpol[n] * ratio
+                # Belt: a degenerate node must not re-inject Inf.
+                Lc[n] = isfinite(fb) ? fb : oftype(Lc[n], 2π) * RP.G.R2D[n]
+            end
+            flf.Lc_tot[n] = flf.Lc_forward[n] + flf.Lc_backward[n]
+        end
+        # `maxlog`: the same struggling trace would otherwise re-warn every FLF_nstep.
+        @warn(
+            "field-line tracing ran out of budget; substituted the partial walked " *
+                "length as a conservative wall distance (ceiling tighter than truth, " *
+                "never looser). Raise max_Lpol if these lines are genuinely that long.",
+            nodes = "$(length(budget))/$(length(nids))",
+            example_RZ = coords(first(budget)),
+            max_Lpol = flf.max_Lpol,
+            maxlog = 1
+        )
+    end
+
+    # Warnings from here down: each leaves the ceiling off at the affected nodes, which
+    # is the behaviour that predates this contract, so none of them is a regression.
+    # `maxlog = 1`: static geometry would re-warn identically on every FLF refresh.
+    nulls = [n for n in nids if tf[n] === :null || tb[n] === :null]
+    isempty(nulls) || @warn(
+        "field-line tracing hit a Bpol null; the field is purely toroidal there, so the " *
+            "line is treated as a closed circle of circumference 2πR",
+        nodes = "$(length(nulls))/$(length(nids))",
+        example_RZ = coords(first(nulls)),
+        maxlog = 1
+    )
+
+    half_closed = [n for n in nids if (tf[n] === :closed) ⊻ (tb[n] === :closed)]
+    isempty(half_closed) || @warn(
+        "closure detected in one direction only — likely a strongly curved open line " *
+            "(the detector accumulates turning angle, not return-to-start). Both " *
+            "directions still published finite lengths, so the ceiling stays active.",
+        nodes = "$(length(half_closed))/$(length(nids))",
+        example_RZ = coords(first(half_closed)),
+        maxlog = 1
+    )
+
+    return flf
+end
+
+function flf_analysis_field_lines_rz_plane!(RP::RAPID; strict::Bool = true)
+    flf_analysis_field_lines_rz_plane!(
         RP.flf,
         RP.G.R1D, RP.G.Z1D, RP.fields.BR, RP.fields.BZ, RP.fields.Bϕ,
         RP.G.cell_state .>= 0; # Use cell_state as boolean mask
         dR = RP.G.dR, dZ = RP.G.dZ,
         out_wall_idx = RP.G.nodes.out_wall_nids
     )
+    # Validated HERE so the setup call and every periodic refresh share one gate; the
+    # lower-level array API stays unvalidated and separately testable. `strict` picks
+    # the failure policy — throw at setup, warn-and-fallback in the step loop.
+    return validate_field_line_terminations!(RP; strict)
 end
 
 # Helper function to create 2D interpolation that matches MATLAB's griddedInterpolant behavior
@@ -475,12 +638,19 @@ function my_interpolation(R1D::Vector{FT}, Z1D::Vector{FT}, data_2d::Matrix{FT};
     r1d = range(R1D[1], stop = R1D[end], length = length(R1D))
     z1d = range(Z1D[1], stop = Z1D[end], length = length(Z1D))
 
+    # `ClampExtrap`, not the default `NoExtrap`: RK4 evaluates up to one step BEYOND
+    # the current position before the next wall check can stop the trace, so a trace on
+    # the last grid node queries just outside the domain — which `NoExtrap` answered
+    # with a run-killing DomainError. Outside the grid there is no field data, so the
+    # edge IS a wall; the clamped step is discarded by the very next wall check, and
+    # flat clamping cannot diverge the way extending the cubic would.
+    extrap = ClampExtrap()
     if method == :nearst
-        itp = constant_interp((r1d, z1d), data_2d)
+        itp = constant_interp((r1d, z1d), data_2d; extrap)
     elseif method == :linear
-        itp = linear_interp((r1d, z1d), data_2d)
+        itp = linear_interp((r1d, z1d), data_2d; extrap)
     elseif method == :cubic
-        itp = cubic_interp((r1d, z1d), data_2d)
+        itp = cubic_interp((r1d, z1d), data_2d; extrap)
     end
     return itp
 end
