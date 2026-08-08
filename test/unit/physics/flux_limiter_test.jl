@@ -131,7 +131,7 @@ end
 #
 # Three stages, and the order is the physics:
 #
-#   1  1/D_ch = Σ_p 1/D_p        competing termination events    (PR #11, unchanged)
+#   1  1/D_ch = Σ_p 1/D_p        competing termination events    (unchanged)
 #   2  D∥ = D_ch + Dpara0        independent arrival paths       (unchanged)
 #   3  cap(D∥, ¼·v̄·Lₙ)           a causality bound on the TOTAL  (new, LAST)
 #
@@ -327,10 +327,20 @@ end
     @test !isempty(deep)
     @test all(iszero, vec(on.transport.Dpara)[deep])
 
-    # ...and it is the ceiling that does it, not the geometry: with the ceiling off,
-    # those same nodes inherit a nonzero diffusivity despite having no particles.
-    # (Measured: 432 of 592 differ, up to 7.6e3.)
-    @test count(!iszero, vec(off.transport.Dpara)[deep]) > 100
+    # Turning the FLUX ceiling off no longer restores them, and that is not a
+    # regression — there are two ceilings on `Dpara` now and the deep exterior fails
+    # both. `Lc_forward = Lc_backward = 0` outside the wall (a trace starting there is
+    # already at a wall), so `wall_step_ceiling` returns exactly 0 and the geometric
+    # ceiling zeroes the region on its own, through the same formula that bounds the
+    # interior rather than through a special case.
+    @test all(iszero, vec(off.transport.Dpara)[deep])
+    @test all(iszero, vec(off.flf.Lc_forward)[deep])
+    @test all(iszero, vec(off.flf.Lc_backward)[deep])
+    # Not vacuous about WHICH ceiling: in-wall, where the geometry does supply a
+    # length, the two runs still differ — so `limit = false` really did disable
+    # something.
+    inw = on.G.nodes.in_wall_nids
+    @test any(n -> on.transport.Dpara[n] != off.transport.Dpara[n], inw)
 end
 
 # ── behavioural, 1-D ────────────────────────────────────────────────────────

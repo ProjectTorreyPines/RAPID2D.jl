@@ -192,7 +192,10 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
 
                 if RP.step == 1 || mod(RP.step, RP.flags.FLF_nstep) == 0
                     @timeit RAPID_TIMER "field_line_following" begin
-                        flf_analysis_field_lines_rz_plane!(RP)
+                        # `strict = false`: a mid-run refresh warns and substitutes a
+                        # conservative length instead of killing the run; setup
+                        # (`initialize!`) keeps the strict default.
+                        flf_analysis_field_lines_rz_plane!(RP; strict = false)
                         # if !isempty(RP.flf.closed_surface_nids)
                         #     RP.flags.FLF_nstep=1;
                         # end

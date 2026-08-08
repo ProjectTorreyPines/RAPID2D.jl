@@ -157,6 +157,11 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     update_external_fields!(RP)
     combine_external_and_self_fields!(RP)
 
+    # Measure field-line geometry BEFORE transport is first built: an unmeasured `flf`
+    # reads as zero length and would cap D∥ at zero everywhere on step 0. The step-1
+    # refresh in `run_simulation!` answers a different question ("has the field moved").
+    flf_analysis_field_lines_rz_plane!(RP)
+
     # Initialize plasma and transport
     initialize_plasma_and_transport!(RP)
 

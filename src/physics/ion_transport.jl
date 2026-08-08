@@ -302,14 +302,21 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
     # control flow rather than a call, so it never becomes a broadcast.
     # `EE`, not `config.constants.ee`: `vm_s` on the line above already converts
     # eV→J with it, and one expression must not name one constant two ways.
-    inv_D = @. species.mass * ν_s / (pla.Ti_eV * EE) +
-        ifelse((tp.L_mixing > 0) & (vm_s > 0), 2 / (vm_s * tp.L_mixing), zero(FT))
-    # `inv_D > 0` is false for both Inf⁻¹ = 0 and for a NaN out of 0/0, so the
-    # degenerate cases above land on D∥ = 0 without being enumerated.
-    D_para = @. ifelse(inv_D > 0, 1 / inv_D, zero(FT))
-    # A base diffusivity is an independent arrival path, so it ADDS rather than
-    # joining the harmonic sum.
-    tp.Dpara0 > zero(FT) && (@. D_para += tp.Dpara0)
+    # Enumerated, not collapsed onto zero: cold (T ≤ 0) means no diffusion, while
+    # collisionless (ν = 0) means unbounded. The old `inv_D > 0 ? 1/inv_D : 0` answered
+    # zero to both — backwards for exactly the case this ceiling exists for.
+    D_coll = @. ifelse(
+        pla.Ti_eV <= zero(FT),
+        zero(FT),
+        ifelse(ν_s > zero(FT), pla.Ti_eV * EE / (species.mass * ν_s), FT(Inf))
+    )
+    # A base diffusivity is an independent arrival path: it ADDS.
+    D0 = @. D_coll + tp.Dpara0
+    # Hard ceiling on the TOTAL — inside the sum, `Dpara0` would escape it. The length
+    # is the PARALLEL wall distance from the trace, not `L_mixing` (poloidal, ~60×
+    # shorter; it now serves the turbulent channel alone — see
+    # internal/docs/src/notes/TODO/L-mixing-serves-two-lengths.md).
+    D_para = @. min(D0, wall_step_ceiling(vm_s, RP.flf.Lc_forward, RP.flf.Lc_backward))
     # The channel carries `vm_s` as its own speed as well: with D the primitive,
     # λ∥ = 2D∥/vm is a derived quantity and the bookkeeping speed no longer has a
     # convention of its own to disagree with the wall's.
@@ -347,11 +354,22 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
 
     channels = isnothing(shared_turb) ? [collisional, bohm] : [collisional, bohm, shared_turb]
     for (name, ch) in zip(ION_MECHANISMS, channels)
-        _finite_channel(ch) || throw(
+        _finite_channel(ch) && continue
+        # Same predicate as the gate that fired — see `_channel_nonfinite_mask`.
+        bad = findall(_channel_nonfinite_mask(ch))
+        detail = join(
+            (
+                "(R,Z)=($(round(RP.G.R2D[n], digits = 4)), $(round(RP.G.Z2D[n], digits = 4))) " *
+                    "$(RP.flf.termination_forward[n])/$(RP.flf.termination_backward[n])"
+                    for n in first(bad, 3)
+            ), "; "
+        )
+        throw(
             ArgumentError(
-                "the $name channel of $(species.name) is not finite. A field line that " *
-                    "never reaches a wall gives an unbounded L_mixing, and a cell with no " *
-                    "collisions gives an unbounded mean free path; both make D = ½vλ diverge"
+                "the $name channel of $(species.name) is not finite at $(length(bad)) node(s): " *
+                    "$detail. Every classified trace publishes a finite length " *
+                    "(`FLF_TERMINATIONS`), so this points at a degenerate channel input " *
+                    "— e.g. the E×B speed where B_tot = 0 — not at open geometry."
             )
         )
     end
@@ -361,10 +379,18 @@ end
 "Mechanism names, in the order [`ion_transport_channels`](@ref) returns them."
 const ION_MECHANISMS = ("collisional", "Bohm", "turbulent ExB")
 
-_finite_channel(ch::DiffusionChannel) =
-    all(isfinite, ch.v_para) && all(isfinite, ch.λ_para) &&
-    all(isfinite, ch.v_perp) && all(isfinite, ch.λ_perp) &&
-    all(isfinite, ch.vm_para) && all(isfinite, ch.vm_perp)
+# The gate runs on every ion-transport build, so it allocates nothing: short-circuiting
+# scans, ~0.1 ms/channel at 200×250 against the 2–14 ms factorization it protects (a
+# non-finite D otherwise surfaces as a SingularException several calls away, naming no
+# node). The mask is error-path only; both derive from `_channel_fields`, so the gate
+# and the report cannot disagree about "non-finite".
+_channel_fields(ch::DiffusionChannel) =
+    (ch.v_para, ch.λ_para, ch.v_perp, ch.λ_perp, ch.vm_para, ch.vm_perp)
+
+_finite_channel(ch::DiffusionChannel) = all(a -> all(isfinite, a), _channel_fields(ch))
+
+_channel_nonfinite_mask(ch::DiffusionChannel) =
+    broadcast((x...) -> !all(isfinite, x), _channel_fields(ch)...)
 
 """
     ion_channel_directions(RP) -> Vector{Tuple}
