@@ -131,9 +131,12 @@ function neutral_gas_diffusivity(n_gas, T_gas_eV, ν_iz, L_char)
     # The measured elastic value enters as itself. n_gas → 0 sends it to Inf and
     # so contributes 0 to the sum, which is what keeps a burnt-out cell finite.
     D_elastic = h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
+    # The neutral wall REFLECTS — a competing scattering event, so it joins the
+    # reciprocal sum; the charged species' absorbing wall is a hard cap instead
+    # (`wall_step_ceiling`).
     inv_D = 1 / D_elastic +
         M_H2_GAS * ν_iz / (T_gas_eV * EE) +
-        (vm_g > 0 ? 3 / (vm_g * L_char) : oftype(vm_g, Inf))
+        inv_geometric_diffusivity(vm_g, L_char, IsotropicStep())
     return 1 / inv_D
 end
 
@@ -160,8 +163,9 @@ product `½vλ = D` and the separate `vm` are read downstream.
 function neutral_gas_channel(n_gas, T_gas_eV, ν_iz, L_char)
     vm_g = maxwellian_mean_speed.(T_gas_eV, M_H2_GAS)
     D_elastic = @. h2_self_diffusivity(T_gas_eV) * NIST_H2_N_REF / n_gas
+    step_model = IsotropicStep()   # broadcasts as a scalar via Base.broadcastable
     inv_D = @. 1 / D_elastic + M_H2_GAS * ν_iz / (T_gas_eV * EE) +
-        ifelse(vm_g > 0, 3 / (vm_g * L_char), oftype(vm_g, Inf))
+        inv_geometric_diffusivity(vm_g, L_char, step_model)
     D = @. 1 / inv_D
     λ = @. ifelse(vm_g > 0, 2 * D / vm_g, zero(vm_g))
     return DiffusionChannel(

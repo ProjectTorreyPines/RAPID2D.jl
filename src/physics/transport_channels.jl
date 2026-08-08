@@ -107,6 +107,98 @@ through the projection `|b̂·n̂|` in [`channel_ceiling`](@ref).
 """
 maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE / (π * m))
 
+# ─── The random-step vocabulary ──────────────────────────────────────────────
+#
+# Every geometric bound on a diffusivity here is `D = v̄·L/d`; only `d` differs, so
+# it is a type rather than a literal scattered across call sites. `d` is an angular
+# average of the same `v̄` (internal/docs/src/details/speed-and-composition.md):
+#
+#     d = 3   isotropic,   ⟨v_z²/|v|⟩ = v̄/3   — a neutral molecule
+#     d = 2   along-axis,  ⟨|v_x|⟩    = v̄/2   — a magnetized particle on b̂
+#
+# The wall ceiling's `¼` is not a third member: it is the `½` at the arithmetic
+# mean of two distances (`wall_step_ceiling`).
+
+"""
+    RandomStepModel
+
+Which directions a species can take its random step in. Selects the denominator
+`d` in `D = v̄·L/d`; see [`geometric_diffusivity`](@ref).
+"""
+abstract type RandomStepModel end
+
+"Free in all three directions: a neutral molecule. `D = v̄L/3`."
+struct IsotropicStep <: RandomStepModel end
+
+"Confined to one axis, `b̂`: a magnetized particle. `D = v̄L/2`."
+struct AlongAxisStep <: RandomStepModel end
+
+step_denominator(::IsotropicStep) = 3
+step_denominator(::AlongAxisStep) = 2
+
+# A step model is scalar config, not a container — the same declaration `Base`
+# makes for `AbstractString`, so broadcasts take it as-is instead of iterating it.
+Base.broadcastable(model::RandomStepModel) = Ref(model)
+
+# Negative or NaN inputs are programming errors, and a negative product would pass
+# through `min` silently as a very tight ceiling — reject at the door.
+@inline function _check_step_inputs(vm, L)
+    (isnan(vm) || isnan(L)) && throw(DomainError((vm, L), "speed and length must not be NaN"))
+    vm < zero(vm) && throw(DomainError(vm, "mean speed must be non-negative"))
+    L < zero(L) && throw(DomainError(L, "step length must be non-negative"))
+    return nothing
+end
+
+# Result type from the argument TYPES, not their product: `0 * Inf` is a legitimate
+# input here, and `zero(vm * L)` would be asking `zero` about a `NaN`.
+@inline _step_float(vm, L) = float(promote_type(typeof(vm), typeof(L)))
+
+"""
+    geometric_diffusivity(vm, L, model::RandomStepModel)
+
+The diffusivity a random walk of step `L` at speed `vm` can produce: `vm·L/d`.
+
+**Zero wins over infinity**: a dead speed or a zero length means no diffusion, and
+the branch is taken before the multiply so `0 * Inf` never becomes `NaN`.
+"""
+function geometric_diffusivity(vm, L, model::RandomStepModel)
+    _check_step_inputs(vm, L)
+    T = _step_float(vm, L)
+    (iszero(vm) || iszero(L)) && return zero(T)
+    return T(vm * L / step_denominator(model))
+end
+
+"""
+    inv_geometric_diffusivity(vm, L, model::RandomStepModel)
+
+`d/(vm·L)`, for reciprocal sums of competing mechanisms: one that cannot act
+contributes `0`, one that acts instantly contributes `Inf`. Computed directly
+rather than as `inv(geometric_diffusivity(...))` — the round trip costs an ulp,
+and the neutral-gas refactor is required to be bit-identical.
+"""
+function inv_geometric_diffusivity(vm, L, model::RandomStepModel)
+    _check_step_inputs(vm, L)
+    T = _step_float(vm, L)
+    (iszero(vm) || iszero(L)) && return T(Inf)
+    return T(step_denominator(model)) / (vm * L)
+end
+
+"""
+    wall_step_ceiling(vm, Lc_forward, Lc_backward)
+
+The largest parallel diffusivity the geometry can carry: `vm·(Lf + Lb)/4`.
+
+The two distances bound **disjoint halves of velocity space**, so they enter as
+an arithmetic mean under the along-axis `½` — not harmonically; they are not
+competing events. Symmetric lengths recover `½v̄L`. Either length `Inf` ⟹ that
+half is unbounded and the ceiling is absent; `vm = 0` or both lengths `0` ⟹ `0`.
+"""
+function wall_step_ceiling(vm, Lc_forward, Lc_backward)
+    _check_step_inputs(vm, Lc_forward)
+    _check_step_inputs(vm, Lc_backward)
+    return geometric_diffusivity(vm, (Lc_forward + Lc_backward) / 2, AlongAxisStep())
+end
+
 """
     TransportChannel{FT}
 
