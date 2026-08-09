@@ -90,9 +90,28 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Backward Euler by default (θ_imp.decay = 1): this equation is
             # friction-dominated, and at large Δt BE lands on u∞ = S/ν while CN
             # rings about it forever. The formula stays written for a general θ.
-            θu = RP.flags.θ_imp.decay
+            #
+            # With `scheme.decay = ExpRB` the weight stops being a constant and
+            # becomes the friction's own fitted one, θ(z) with z = −νΔt, per cell.
+            # BE is its Δt→∞ limit, so this cannot be worse where BE was chosen;
+            # it recovers second order where the step resolves the friction, which
+            # is exactly where BE's first order costs the most.
+            exprb_decay = RP.flags.scheme.decay === ExpRB
+            z_decay = exprb_decay ? (@. cap_exprb_z(-ν_sum_mom_iz_ei * dt)) : nothing
+            B_decay = exprb_decay ? bernoulli_B.(z_decay) : nothing
+            # A scalar for the θ-scheme, a per-cell field for ExpRB. `θu` weights
+            # the FRICTION and the ledger that records it; `θ_op` weights this
+            # equation's nonlocal operators (convection, ExB diffusion), which the
+            # fit does not reach and which therefore keep today's constant either
+            # way. Splitting them is what keeps `scheme.decay` from silently
+            # changing the transport treatment too.
+            θ_op = RP.flags.θ_imp.decay
+            θu = exprb_decay ? exprb_theta.(z_decay) : θ_op
 
             # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
+            # This is a LEDGER of the exchange integrated over the step, so it must
+            # use the quadrature the update actually performed — θ(z) under ExpRB,
+            # not the constant that is no longer being applied.
             if RP.flags.Coulomb_Collision
                 @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one_FT - θu) * pla.ue_para)
             end
@@ -107,9 +126,12 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 accel_para_tilde = qe * F.E_para_tot / me
 
                 # #2: Advection term (1-θ)*[-(𝐮⋅∇)*ue_para]
+                # θ_op, not θu: these are NONLOCAL operators, and the fitted weight
+                # belongs to the friction's eigenvalue, not to theirs. They keep the
+                # constant they use today whatever `scheme.decay` says.
                 if RP.flags.Include_ud_convec_term
-                    accel_para_tilde .+= (one_FT - θu) * (-OP.𝐮∇ * pla.ue_para)
-                    @. OP.A_LHS += θu * dt * OP.𝐮∇
+                    accel_para_tilde .+= (one_FT - θ_op) * (-OP.𝐮∇ * pla.ue_para)
+                    @. OP.A_LHS += θ_op * dt * OP.𝐮∇
                 end
 
                 # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
@@ -119,22 +141,37 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
 
                 # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom + ν_ei_eff)*ue_para]
-                @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
+                if exprb_decay
+                    # The uⁿ coefficient is B(−z), applied to the RHS below rather
+                    # than accumulated here — see the note there.
+                    OP.A_LHS += @views spdiagm((B_decay .- one_FT)[:])
+                else
+                    @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
 
-                # Add collision frequency to diagonal elements using spdiagm
-                OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz_ei[:])
+                    # Add collision frequency to diagonal elements using spdiagm
+                    OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz_ei[:])
+                end
 
                 # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
                 @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
 
-                # #6: turbulent Diffusive term by ExB mixing
+                # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
                 if RP.flags.Include_ud_diffu_term
-                    accel_para_tilde .+= (one_FT - θu) * (OP.∇𝐃∇ * pla.ue_para)
-                    @. OP.A_LHS -= θu * dt * OP.∇𝐃∇
+                    accel_para_tilde .+= (one_FT - θ_op) * (OP.∇𝐃∇ * pla.ue_para)
+                    @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
                 end
 
-                # Set-up the RHS
-                @. OP.RHS = pla.ue_para + dt * accel_para_tilde
+                # Set-up the RHS. Under ExpRB the uⁿ coefficient is B(−z), formed as
+                # B(z) + z rather than as the algebraically equal 1 − (1−θ)νΔt: with
+                # z = −νΔt that subtraction has both terms approaching 1 as the step
+                # outruns the friction, and it cancels to nothing exactly where the
+                # true value is small but meaningful (B(30) = 2.8e-12). This is the
+                # concrete case of the trap the design note describes.
+                if exprb_decay
+                    @. OP.RHS = (B_decay + z_decay) * pla.ue_para + dt * accel_para_tilde
+                else
+                    @. OP.RHS = pla.ue_para + dt * accel_para_tilde
+                end
 
                 # Solve the momentum equation
                 @timeit RAPID_TIMER "ue_para LinearSolve" begin
@@ -142,9 +179,16 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 end
             else
 
-                inv_factor = @. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt)
+                # Same two coefficients as the assembled path: 1/B(z) divides the
+                # increment, and B(−z) = B(z) + z scales uⁿ.
+                inv_factor = exprb_decay ?
+                    (@. one_FT / B_decay) :
+                    (@. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt))
+                u_coeff = exprb_decay ?
+                    (@. B_decay + z_decay) :
+                    (@. one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
                 @. pla.ue_para = inv_factor * (
-                    pla.ue_para * (one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
+                    pla.ue_para * u_coeff
                         + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
                 )
 
@@ -808,14 +852,34 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             θ_tr = RP.flags.θ_imp.transport
             θ_gr = RP.flags.θ_imp.growth
 
+            # Ionization is a GROWTH eigenvalue, z = +ν_iz·Δt, and it is the exact
+            # local Jacobian: ν_iz does not depend on n. So ExpRB is not an
+            # approximation here, it reproduces e^(νΔt) at any step — while every θ
+            # has a pole on this branch (BE's at z = 1, CN's at z = 2) past which it
+            # returns a NEGATIVE density.
+            exprb_growth = RP.flags.src && RP.flags.scheme.growth === ExpRB
+            z_gr = exprb_growth ? (@. cap_exprb_z(pla.ν_en_iz * dt)) : nothing
+            # Unlike the decay families, this z is POSITIVE and so can reach the
+            # cap — a cell asking to multiply its density by more than e³⁰ in one
+            # step is a step nothing resolves, and it should say so.
+            exprb_growth && _warn_if_z_capped(z_gr)
+            B_gr = exprb_growth ? bernoulli_B.(z_gr) : nothing
+
             # Weight each family's explicit half in place, then close the RHS —
             # the same accumulation order the explicit branch below uses, so that
             # θ = 0 reproduces it bit for bit rather than merely algebraically.
             @. op.RHS *= (one(FT) - θ_tr)
-            if RP.flags.src
-                @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
+            if exprb_growth
+                # nⁿ coefficient is B(−z) = B(z) + z. Unlike the decay branch, the
+                # subtraction that cancels here is on the LHS, not this one — see
+                # the assembly below.
+                @. op.RHS = (B_gr + z_gr) * pla.ne + dt * op.RHS
+            else
+                if RP.flags.src
+                    @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
+                end
+                @. op.RHS = pla.ne + dt * op.RHS
             end
-            @. op.RHS = pla.ne + dt * op.RHS
 
             # Build LHS operator. Every term is gated by the SAME flag that gated
             # its explicit half above: all three used to be added unconditionally,
@@ -831,8 +895,17 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # factorization wants it stable.
             θ_d = RP.flags.diffu ? θ_tr : zero(FT)
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
-            θ_s = RP.flags.src ? θ_gr : zero(FT)
+            θ_s = (RP.flags.src && !exprb_growth) ? θ_gr : zero(FT)
             @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
+            if exprb_growth
+                # B(z) on the diagonal, added as a deviation from the identity so
+                # the sparsity pattern (and the cached factorization) is untouched.
+                # This is the side that cancels on a growth branch: the θ form's
+                # 1 − θ·νΔt goes to zero and then negative as θz passes 1, which is
+                # BE's pole at z = 1 and CN's at z = 2. B(z) stays strictly positive
+                # at every z, so the matrix stays an M-matrix at every Δt.
+                op.A_LHS += @views spdiagm((B_gr .- one(FT))[:])
+            end
 
             # Solve the linear system (cached factorization; pattern is step-stable)
             @timeit RAPID_TIMER "ne LinearSolve`" begin

@@ -154,10 +154,10 @@ end
     #  2. z is NEGATIVE throughout, on BOTH directions. Heating up toward the
     #     fixed point does not make ∂P/∂Tₑ positive — the approach is a relaxation
     #     from below, not a runaway — so **B's growth branch is not exercised by
-    #     any real-physics case here.** It is covered by the kernel tests and by
-    #     construction (one formula spans both signs, with no branch to take), but
-    #     a 2D configuration that actually reaches z > 0 has not been found, and
-    #     nothing in this file should be read as evidence that it has.
+    #     the Tₑ equation at all.** Nothing in this file should be read as evidence
+    #     about it. The real-physics case for z > 0 is the continuity equation's
+    #     ionization source, covered in exprb_growth_test.jl: at z = 10 in one step
+    #     ExpRB reproduces e¹⁰ while Crank–Nicolson returns a negative density.
     r = only(run_ladder(; Te₀ = 19.19, dts = [6.0e-5], t_end = 3.0e-4, scheme = ExpRB))
     @info "z = λ_Te·Δt over a 600× step run" r.z_min r.z_max EXPRB_Z_MAX
     @test r.z_max < EXPRB_Z_MAX

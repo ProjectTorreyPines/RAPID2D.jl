@@ -66,12 +66,54 @@ rectangle at 0 or 1. Storing a *rate* instead would have left a genuine question
 Exposed because a consumer may still care how the integral was formed — an
 energy term pairing `E(Tₑⁿ⁺¹)` with a channel evaluated at ½ is inconsistent at
 `O(Δt)` even though the particle count is not.
+
+This method answers from the flags alone, which is enough while every family runs
+a θ-scheme. Under `scheme.<family> == ExpRB` the weight is fitted to the family's
+own eigenvalue and differs per cell and per step; use `reaction_θ(RP, channel)`,
+which covers both and reduces to this one.
 """
 function reaction_θ(flags::SimulationFlags{FT}, channel::Symbol) where {FT <: AbstractFloat}
     haskey(REACTION_STOICHIOMETRY, channel) ||
         throw(ArgumentError("no reaction channel called $channel"))
     flags.Implicit || return zero(FT)
     return getproperty(flags.θ_imp, REACTION_STOICHIOMETRY[channel].θ)
+end
+
+"""
+    reaction_θ(RP, channel) -> FT | Matrix{FT}
+
+The same weight, but able to answer when it is no longer a constant.
+
+Under `scheme.<family> == ExpRB` the quadrature is the fitted `θ(z)` of
+[`exprb_theta`](@ref) with `z` the family's own eigenvalue times `Δt` — a
+different number in every cell, and a different one every step. The θ-scheme
+answer above cannot express that, so the ledger has to ask the state.
+
+Still a θ-scheme weight in `(0, 1)` at every `z`, so nothing downstream has to
+learn a new contract: `Nₖ = Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]` reads the same, and one
+ionization still makes exactly one electron and one ion because both sides read
+the single published count rather than re-deriving it.
+
+Throws rather than guessing if a family is switched to `ExpRB` without its rate
+being wired here — a ledger quietly formed at the wrong weight is the failure
+`ReactionCounts` exists to prevent.
+"""
+function reaction_θ(RP::RAPID{FT}, channel::Symbol) where {FT <: AbstractFloat}
+    haskey(REACTION_STOICHIOMETRY, channel) ||
+        throw(ArgumentError("no reaction channel called $channel"))
+    RP.flags.Implicit || return zero(FT)
+
+    family = REACTION_STOICHIOMETRY[channel].θ
+    getproperty(RP.flags.scheme, family) === ExpRB || return reaction_θ(RP.flags, channel)
+
+    family === :growth || throw(
+        ArgumentError(
+            "scheme.$family = ExpRB, but the rate behind channel :$channel is not " *
+                "wired into reaction_θ. Wire it, or the event count would be formed " *
+                "at a weight the solve did not use."
+        )
+    )
+    return exprb_theta.(cap_exprb_z.(RP.plasma.ν_en_iz .* RP.dt))
 end
 
 """
@@ -101,7 +143,9 @@ function update_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     if RP.flags.src
         # θ comes from the table, not from this line: a `:decay` channel added
         # later then picks up backward Euler by existing.
-        θ = reaction_θ(RP.flags, :iz)
+        # From RP, not from flags alone: under ExpRB the weight is the fitted θ(z)
+        # of the step just taken, per cell. Broadcasting below covers both forms.
+        θ = reaction_θ(RP, :iz)
         dt = RP.dt
         @. N.iz = dt * ((one(FT) - θ) * RP.prev_n + θ * pla.ne) * pla.ν_en_iz
     else

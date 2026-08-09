@@ -76,6 +76,33 @@ over `z ∈ ±[1e-18, 200]` against `BigFloat`. A truncated series would be wors
 @inline bernoulli_B(z::T) where {T <: AbstractFloat} = iszero(z) ? one(T) : z / expm1(z)
 
 """
+    exprb_theta(z)
+
+The θ whose amplification matches `ExpRB`'s: `θ(z) = 1/z − 1/(eᶻ−1) = (1 − B(z))/z`,
+with `θ(0) = ½`.
+
+**Never build the scheme from this.** The diagonal `1 − θz` is a subtraction that
+cancels as `θz → 1` — ~1 % wrong by `z = 36` and gone past it — which is why
+[`bernoulli_B`](@ref) exists and why the assembled form uses `B(z)` and `B(−z)`
+directly. This function is for *ledgers*: a consumer that records
+`∫ … dt ≈ Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]` needs to know which quadrature the step
+actually used, and under `ExpRB` that is a per-cell number rather than a constant.
+Here θ is an output, never a divisor, so the cancellation cannot propagate.
+
+Monotone on `(0, 1)` for every `z`, with the limits `ImplicitWeights` assigns by
+hand: `θ → 1` (BE) as `z → −∞`, `θ → ½` (CN) at `z = 0`, `θ → 0` (FE) as
+`z → +∞`. So a ledger keeps reading a valid θ-weight whatever the step does.
+
+Series below `|z| = 1e-4`, where `1 − B(z)` loses digits to cancellation
+(`B → 1`). Unlike the scheme itself, this one genuinely needs it.
+"""
+@inline function exprb_theta(z::T) where {T <: AbstractFloat}
+    return abs(z) < T(1.0e-4) ?
+        evalpoly(z, (T(0.5), -T(1) / T(12), zero(T), T(1) / T(720))) :
+        (one(T) - bernoulli_B(z)) / z
+end
+
+"""
     _warn_if_z_capped(z) -> z
 
 Warn once if any entry of an already-capped `z` sits at [`EXPRB_Z_MAX`](@ref).
@@ -93,4 +120,4 @@ function _warn_if_z_capped(z::AbstractArray{T}) where {T <: AbstractFloat}
     return z
 end
 
-export bernoulli_B, cap_exprb_z, EXPRB_Z_MAX
+export bernoulli_B, exprb_theta, cap_exprb_z, EXPRB_Z_MAX
