@@ -94,6 +94,7 @@ end
 # overwrite that precedes THAT. Order is load-bearing throughout.
 @testitem "Physics: density transport RHS terms" begin
     using RAPID2D.Statistics
+    using RAPID2D.LinearAlgebra: opnorm
 
     # Explicit scheme with diffusion, convection and ionization all ON — this checks the
     # individual RHS operators rather than an end-to-end evolution.
@@ -138,13 +139,13 @@ end
     RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
     mean_inside_ne = mean(RP.plasma.ne[RP.G.nodes.in_wall_nids])
     # The assembled operator annihilates a constant only up to cancellation, and
-    # that residual scales with ‖𝐃∇‖ — so the bound has to as well. A tolerance
-    # written against ne alone is really a tolerance against whatever D the RRC
-    # tables happened to give, and moves when they are corrected.
+    # that residual is bounded by ‖A‖∞·‖n‖∞·eps — so the tolerance has to carry the
+    # operator norm too. Written against ne alone it is really a tolerance against
+    # whatever D the RRC tables happened to give, and moves when they are corrected.
     @test all(
         isapprox.(
             RHS_diffu[RP.G.nodes.inWall_deepInWall_nids], 0.0,
-            atol = 1.0e-12 * mean_inside_ne * maximum(abs, op.∇𝐃∇.matrix)
+            atol = 1.0e-12 * mean_inside_ne * opnorm(op.∇𝐃∇.matrix, Inf)
         )
     )
 

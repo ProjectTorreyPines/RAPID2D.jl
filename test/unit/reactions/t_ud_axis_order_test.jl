@@ -12,13 +12,15 @@
     T, u = iz.T_eV, iz.ud_para
     @test size(iz.raw_data) == (length(T), length(u))
 
-    cold = iz.raw_data[1, 1]                 # T = 1 meV, zero drift
-    warm = iz.raw_data[findfirst(≥(50.0), T), 1]
-    @test cold == 0.0
-    @test warm > 1.0e-15
+    # Resolve the grid indices first: a `findfirst` that misses returns `nothing` and
+    # would error on indexing rather than say which assumption broke.
+    i_warm, i_below = findfirst(≥(50.0), T), findfirst(≥(0.1), T)
+    @test i_warm !== nothing && i_below !== nothing   # the grid spans 1 meV … 3 keV
+
+    @test iz.raw_data[1, 1] == 0.0                    # T = 1 meV, zero drift
+    @test iz.raw_data[i_warm, 1] > 1.0e-15
     # Monotone rise across the threshold, which the transposed read does not give.
-    below = iz.raw_data[findfirst(≥(0.1), T), 1]
-    @test below < 1.0e-20
+    @test iz.raw_data[i_below, 1] < 1.0e-20
 
     # The ion file's orientation is NOT re-checked here on purpose. Every physical
     # signature available for it — Particle_Exchange's 1.64–20.1 eV support,
@@ -57,6 +59,7 @@ end
 end
 
 @testitem "T_ud tables: the reader follows the file's declared axis order" begin
+    # h5open/attrs via RAPID2D: HDF5 is its dependency, not the test environment's.
     using RAPID2D: H2_Ion_RRCs, h5open, attrs
 
     # Three ways of storing the same surface must load identically: unstamped
@@ -72,7 +75,7 @@ end
     end
 
     function write_variant(; order, transpose)
-        path = joinpath(mktempdir(; cleanup = false), "iRRCs_T_ud.h5")
+        path = joinpath(mktempdir(), "iRRCs_T_ud.h5")
         h5open(path, "w") do f
             f["T_eV"] = T
             f["ud_para"] = u
@@ -95,7 +98,7 @@ end
     end
 
     # An axis_order nobody has defined is a mistake, not a third layout to guess.
-    bad = joinpath(mktempdir(; cleanup = false), "iRRCs_T_ud.h5")
+    bad = joinpath(mktempdir(), "iRRCs_T_ud.h5")
     h5open(bad, "w") do f
         f["T_eV"] = T
         f["ud_para"] = u
