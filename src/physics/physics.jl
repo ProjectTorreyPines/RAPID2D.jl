@@ -19,6 +19,7 @@ export update_ue_para!,
     update_Ti!,
     update_coulomb_collision_parameters!,
     update_electron_heating_powers!,
+    update_electron_power_jacobian!,
     update_ion_heating_powers!,
     solve_electron_continuity_equation!,
     solve_ion_continuity_equation!,
@@ -524,6 +525,106 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             @views ePowers.equi[on_out_wall_nids] .= zero_FT
             @views ePowers.heat[on_out_wall_nids] .= zero_FT
         end
+
+        return RP
+    end # @timeit
+end
+
+"""
+    update_electron_power_jacobian!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Write `plasma.λ_Te = (2/3e)·∂P/∂Tₑ` [1/s], the local eigenvalue of the electron
+energy equation — signed, so `λ < 0` is relaxation and `λ > 0` is runaway
+heating, and `z = λΔt` covers both with one formula.
+
+**This exists because the energy sink has no rate to factor.** `update_ue_para!`
+is unconditionally stable because its sink is *written* as `νu`, so `ν` moves to
+the denominator; `ePowers.tot` is one number produced by a table lookup, and no
+`θ` can weight an operator that is not there. Linearising the power supplies the
+missing rate.
+
+Term for term against [`update_electron_heating_powers!`](@ref) — they must be
+edited together, which the finite-difference oracle in
+`test/unit/physics/power_jacobian_test.jl` is what enforces. With
+`ν'_X ≡ ∂ν_X/∂Tₑ` from `plasma.dν_dTe` and `u_e² = u_R²+u_ϕ²+u_Z²`:
+
+```math
+\\begin{aligned}
+\\partial P_{\\rm drag}/\\partial T_e &= m_e u_e^2\\,\\nu'_{\\rm mom,tot} \\\\
+\\partial P_{\\rm ela}/\\partial T_e &= \\tfrac{2m_e}{m_{\\rm H_2}}\\tfrac{3}{2}e
+    \\bigl[\\nu_{\\rm mom,ela} + (T_e-T_{\\rm gas})\\nu'_{\\rm mom,ela}\\bigr] \\\\
+\\partial P_{\\rm exc}/\\partial T_e &= e\\,\\varepsilon_{\\rm exc}\\,\\nu'_{\\rm exc,eff} \\\\
+\\partial P_{\\rm iz}/\\partial T_e &= e\\,\\varepsilon_{\\rm iz}\\,\\nu'_{\\rm iz} \\\\
+\\partial P_{\\rm dil}/\\partial T_e &= \\nu'_{\\rm iz}\\bigl(\\tfrac{3}{2}T_e e
+    - \\tfrac12 m_e u_e^2\\bigr) + \\tfrac{3}{2}e\\,\\nu_{\\rm iz}
+\\end{aligned}
+```
+
+**One trap.** `Ē` is built from `ue_para` while `P_drag` and `P_dilution` use
+`ue_mag_sq`. They coincide for a purely toroidal field and not once `mean_ExB` or
+diamagnetic drifts are on; do not substitute one for the other.
+
+**Transport is not here.** `P_diffu`, `P_conv` and `P_heat` are nonlocal — they
+keep `θ_imp.transport`, and `λ_Te` is the diagonal the B-form fits *alongside*
+them, in the same assembled solve.
+
+**`∂ν_ei/∂Tₑ` is omitted** and warned about. It is Spitzer-like, not a table
+lookup, and lives outside the RRC path. Omitting it under-damps, and the fixed
+point of the energy equation does not depend on `λ` at all, so the converged
+answer is unaffected — only the transient. In the breakdown configuration
+`Coulomb_Collision = false` and it is identically zero anyway.
+"""
+function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "update_electron_power_jacobian!" begin
+        pla = RP.plasma
+        RP.flags.scheme.atomic === ExpRB || return RP
+
+        @unpack ee, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
+        m_H2 = RP.config.constants.mi
+        zero_FT = zero(FT)
+        dν = pla.dν_dTe
+
+        fill!(pla.λ_Te, zero_FT)
+
+        if RP.flags.Atomic_Collision
+            # Same velocity magnitude update_electron_heating_powers! charges the
+            # drag and the dilution with — NOT ue_para, which is what Ē is built
+            # from. The two differ as soon as a perpendicular drift is on.
+            ue_mag_sq = @. pla.ueR^FT(2.0) + pla.ueϕ^FT(2.0) + pla.ueZ^FT(2.0)
+
+            @. pla.λ_Te += (
+                me * ue_mag_sq * dν.mom_tot                                   # P_drag
+                    - (FT(2.0) * me / m_H2) * FT(1.5) * ee * (
+                    pla.ν_en_mom_ela + (pla.Te_eV - pla.T_gas_eV) * dν.mom_ela  # P_ela
+                )
+                    - ee * char_exc_erg_eV * dν.exc_eff                           # P_exc
+            )
+
+            if RP.flags.src
+                @. pla.λ_Te += -(
+                    ee * iz_erg_eV * dν.iz                                    # P_iz
+                        + dν.iz * (FT(1.5) * pla.Te_eV * ee - FT(0.5) * me * ue_mag_sq)
+                        + FT(1.5) * ee * pla.ν_en_iz                              # P_dilution
+                )
+            end
+        end
+
+        if RP.flags.Coulomb_Collision
+            @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from λ_Te: ν_ei is Spitzer-like, " *
+                "not an RRC surface, so P_equi and P_drag's Coulomb half are left out. " *
+                "This under-damps the transient; the fixed point is λ-independent and " *
+                "unaffected." maxlog = 1
+        end
+
+        # No power outside the wall, so no rate of change of it either.
+        on_out_wall_nids = RP.G.nodes.on_out_wall_nids
+        if !isempty(on_out_wall_nids)
+            @views pla.λ_Te[on_out_wall_nids] .= zero_FT
+        end
+
+        # (2/3e)·∂P/∂Tₑ: the power is per electron [W] and Tₑ is in eV, so ee
+        # converts J/eV and the 2/3 comes from (3/2)e·∂Tₑ/∂t = P.
+        @. pla.λ_Te *= FT(2.0) / FT(3.0) / ee
 
         return RP
     end # @timeit
