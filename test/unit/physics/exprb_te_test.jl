@@ -14,8 +14,10 @@
     # positive equilibrium at all — Te_sat comes out negative and the run walks
     # off the table. Not a physical statement, just what a constant-rate table
     # implies; the real table's thresholds are what normally prevent it.
-    function te_RAPID(; Te_eV, u_para = -5.0e6, E_para = -50.0, pressure = 5.0e-3,
-            implicit = true)
+    function te_RAPID(;
+            Te_eV, u_para = -5.0e6, E_para = -50.0, pressure = 5.0e-3,
+            implicit = true
+        )
         config = SimulationConfig{Float64}(
             NR = 8, NZ = 8, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
             dt = 1.0e-8, t_end_s = 1.0e-6, R0B0 = 1.0,
@@ -170,38 +172,20 @@ end
             else
                 @test all(RP.plasma.Te_eV[inw] .<= Te_sat)     # heated, never overshot
             end
+
+            # The gate is not vacuous: a coefficient that happened to sit near 1
+            # would pass everything above. Forward Euler on the same problem at
+            # this step does not.
+            if nsteps == 4
+                fe = with_constant_surfaces!(te_RAPID(; Te_eV = Te₀); K = 2.0e-15)
+                update_RRCs!(fe)
+                march!(fe, dt, nsteps)
+                @test maximum(abs, fe.plasma.Te_eV[inw] .- exact[inw]) /
+                    maximum(exact[inw]) > 0.5
+            end
         end
         @info "ExpRB exact on the linear problem" label Te₀ Te_sat
     end
-end
-
-@testitem "ExpRB Tₑ: forward Euler fails the same ladder, so the gate is not vacuous" setup = [ExpRBTeFixtures] begin
-    using RAPID2D: ExpRB, ForwardEuler, update_RRCs!
-
-    # A test that only ever sees a passing scheme cannot tell a working fit from a
-    # coefficient that happens to be near 1. FE on the same problem at z ≈ −24
-    # diverges — that is the failure this whole change exists to remove.
-    probe = with_constant_surfaces!(te_RAPID(; Te_eV = 5.0); K = 2.0e-15)
-    update_RRCs!(probe)
-    p = linear_te_problem(probe)
-    inw = probe.G.nodes.in_wall_nids
-    τ = 1 / minimum(abs, p.λ[inw])
-    Te₀ = 3 * p.Te_sat[first(inw)]
-    t_end = 12τ
-    dt = t_end / 4                     # z = λΔt ≈ −3, past FE's |1 − z| < 1
-
-    fe = with_constant_surfaces!(te_RAPID(; Te_eV = Te₀); K = 2.0e-15)
-    update_RRCs!(fe)
-    march!(fe, dt, 4)
-
-    ex = with_constant_surfaces!(te_RAPID(; Te_eV = Te₀); K = 2.0e-15)
-    ex.flags.scheme.atomic = ExpRB
-    update_RRCs!(ex)
-    march!(ex, dt, 4)
-
-    exact = exact_Te(linear_te_problem(ex), Te₀, t_end)
-    @test ex.plasma.Te_eV[inw] ≈ exact[inw] rtol = 1.0e-12
-    @test maximum(abs, fe.plasma.Te_eV[inw] .- exact[inw]) / maximum(exact[inw]) > 0.5
 end
 
 @testitem "ExpRB Tₑ: off is bit-for-bit the current scheme" setup = [ExpRBTeFixtures] begin

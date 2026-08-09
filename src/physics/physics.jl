@@ -161,12 +161,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                     @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
                 end
 
-                # Set-up the RHS. Under ExpRB the uⁿ coefficient is B(−z), formed as
-                # B(z) + z rather than as the algebraically equal 1 − (1−θ)νΔt: with
-                # z = −νΔt that subtraction has both terms approaching 1 as the step
-                # outruns the friction, and it cancels to nothing exactly where the
-                # true value is small but meaningful (B(30) = 2.8e-12). This is the
-                # concrete case of the trap the design note describes.
+                # Under ExpRB the uⁿ coefficient is B(−z), formed as B(z) + z rather
+                # than the algebraically equal 1 − (1−θ)νΔt — that subtraction cancels
+                # to nothing exactly where the true value is small but meaningful.
                 if exprb_decay
                     @. OP.RHS = (B_decay + z_decay) * pla.ue_para + dt * accel_para_tilde
                 else
@@ -316,11 +313,8 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         two_thirds_FT = FT(2.0) / FT(3.0)
 
-        # `B(z)` with `z = λ_Te·Δt`: the exponential Rosenbrock–Euler coefficient
-        # for the atomic power's own eigenvalue. `B ≡ 1` would make the off path
-        # correct by arithmetic, but it is branched instead so the off path does no
-        # arithmetic at all — no allocation, and "unchanged" holds structurally
-        # rather than to within round-off.
+        # `B(z)` with `z = λ_Te·Δt`. Branched rather than relying on B(0) = 1, so
+        # the off path does no arithmetic at all and "unchanged" holds structurally.
         exprb_atomic = RP.flags.scheme.atomic === ExpRB
         B_atomic = if exprb_atomic
             update_electron_power_jacobian!(RP)
@@ -359,15 +353,10 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                     OP.A_LHS .-= two_thirds_FT * (@views dt * θimp * (-FT(1.5) * OP.∇𝐮 + spdiagm(FT(0.5) * div_u[:])))
                 end
 
-                # The B-form's two coefficients. Writing the LHS as a deviation
-                # from the identity keeps the sparsity pattern byte-identical to
-                # `OP.II`, so the cached symbolic factorization stays valid — the
-                # whole fit costs one changed value per diagonal entry.
-                #
-                # The source term needs no B: with S = (2/3e)P⁰ − λTₑⁿ the two-
-                # coefficient form B(z)Tₑⁿ⁺¹ = B(−z)Tₑⁿ + ΔtS collapses through
-                # B(−z) = B(z) + z, and the λTₑⁿ pieces cancel exactly. What is
-                # left is today's RHS with Tₑⁿ scaled by B.
+                # LHS written as a deviation from the identity, so the sparsity
+                # pattern — and the cached symbolic factorization — is untouched.
+                # The source needs no B: with S = (2/3e)P⁰ − λTₑⁿ, B(−z) = B(z) + z
+                # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by B.
                 if exprb_atomic
                     OP.A_LHS += @views spdiagm((B_atomic .- one(FT))[:])
                     OP.RHS .= B_atomic .* pla.Te_eV +
@@ -612,45 +601,24 @@ end
     update_electron_power_jacobian!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Write `plasma.λ_Te = (2/3e)·∂P/∂Tₑ` [1/s], the local eigenvalue of the electron
-energy equation — signed, so `λ < 0` is relaxation and `λ > 0` is runaway
-heating, and `z = λΔt` covers both with one formula.
+energy equation — signed, so `z = λΔt` covers relaxation and runaway with one
+formula.
 
-**This exists because the energy sink has no rate to factor.** `update_ue_para!`
-is unconditionally stable because its sink is *written* as `νu`, so `ν` moves to
-the denominator; `ePowers.tot` is one number produced by a table lookup, and no
-`θ` can weight an operator that is not there. Linearising the power supplies the
-missing rate.
+**Why it exists.** `update_ue_para!` is stable because its sink is *written* as
+`νu`, so `ν` moves to the denominator. `ePowers.tot` is one number from a table
+lookup and no `θ` can weight an absent operator; linearising supplies the rate.
 
-Term for term against [`update_electron_heating_powers!`](@ref) — they must be
-edited together, which the finite-difference oracle in
-`test/unit/physics/power_jacobian_test.jl` is what enforces. With
-`ν'_X ≡ ∂ν_X/∂Tₑ` from `plasma.dν_dTe` and `u_e² = u_R²+u_ϕ²+u_Z²`:
-
-```math
-\\begin{aligned}
-\\partial P_{\\rm drag}/\\partial T_e &= m_e u_e^2\\,\\nu'_{\\rm mom,tot} \\\\
-\\partial P_{\\rm ela}/\\partial T_e &= \\tfrac{2m_e}{m_{\\rm H_2}}\\tfrac{3}{2}e
-    \\bigl[\\nu_{\\rm mom,ela} + (T_e-T_{\\rm gas})\\nu'_{\\rm mom,ela}\\bigr] \\\\
-\\partial P_{\\rm exc}/\\partial T_e &= e\\,\\varepsilon_{\\rm exc}\\,\\nu'_{\\rm exc,eff} \\\\
-\\partial P_{\\rm iz}/\\partial T_e &= e\\,\\varepsilon_{\\rm iz}\\,\\nu'_{\\rm iz} \\\\
-\\partial P_{\\rm dil}/\\partial T_e &= \\nu'_{\\rm iz}\\bigl(\\tfrac{3}{2}T_e e
-    - \\tfrac12 m_e u_e^2\\bigr) + \\tfrac{3}{2}e\\,\\nu_{\\rm iz}
-\\end{aligned}
-```
+Term for term against [`update_electron_heating_powers!`](@ref) — edit them
+together. `test/unit/physics/power_jacobian_test.jl` finite-differences the real
+assembled power, which is what catches a term present there and missing here.
 
 **One trap.** `Ē` is built from `ue_para` while `P_drag` and `P_dilution` use
-`ue_mag_sq`. They coincide for a purely toroidal field and not once `mean_ExB` or
-diamagnetic drifts are on; do not substitute one for the other.
+`ue_mag_sq`; they differ once `mean_ExB` or diamagnetic drifts are on.
 
-**Transport is not here.** `P_diffu`, `P_conv` and `P_heat` are nonlocal — they
-keep `θ_imp.transport`, and `λ_Te` is the diagonal the B-form fits *alongside*
-them, in the same assembled solve.
-
-**`∂ν_ei/∂Tₑ` is omitted** and warned about. It is Spitzer-like, not a table
-lookup, and lives outside the RRC path. Omitting it under-damps, and the fixed
-point of the energy equation does not depend on `λ` at all, so the converged
-answer is unaffected — only the transient. In the breakdown configuration
-`Coulomb_Collision = false` and it is identically zero anyway.
+**Scope.** Transport (`P_diffu`, `P_conv`, `P_heat`) is nonlocal and keeps
+`θ_imp.transport`. `∂ν_ei/∂Tₑ` is omitted and warned about: it is Spitzer-like,
+not an RRC surface. Omitting it under-damps the transient only — the fixed point
+does not depend on `λ`.
 """
 function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_power_jacobian!" begin
@@ -852,11 +820,10 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             θ_tr = RP.flags.θ_imp.transport
             θ_gr = RP.flags.θ_imp.growth
 
-            # Ionization is a GROWTH eigenvalue, z = +ν_iz·Δt, and it is the exact
-            # local Jacobian: ν_iz does not depend on n. So ExpRB is not an
-            # approximation here, it reproduces e^(νΔt) at any step — while every θ
-            # has a pole on this branch (BE's at z = 1, CN's at z = 2) past which it
-            # returns a NEGATIVE density.
+            # A GROWTH eigenvalue, z = +ν_iz·Δt, and the EXACT local Jacobian since
+            # ν_iz does not depend on n — so ExpRB reproduces e^(νΔt) at any step,
+            # while every θ has a pole here (BE at z = 1, CN at z = 2) past which it
+            # returns a negative density.
             exprb_growth = RP.flags.src && RP.flags.scheme.growth === ExpRB
             z_gr = exprb_growth ? (@. cap_exprb_z(pla.ν_en_iz * dt)) : nothing
             # Unlike the decay families, this z is POSITIVE and so can reach the
@@ -898,12 +865,10 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             θ_s = (RP.flags.src && !exprb_growth) ? θ_gr : zero(FT)
             @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
             if exprb_growth
-                # B(z) on the diagonal, added as a deviation from the identity so
-                # the sparsity pattern (and the cached factorization) is untouched.
-                # This is the side that cancels on a growth branch: the θ form's
-                # 1 − θ·νΔt goes to zero and then negative as θz passes 1, which is
-                # BE's pole at z = 1 and CN's at z = 2. B(z) stays strictly positive
-                # at every z, so the matrix stays an M-matrix at every Δt.
+                # B(z) on the diagonal, as a deviation from the identity so the
+                # pattern is untouched. This is the side that cancels on a growth
+                # branch — the θ form's 1 − θνΔt passes through zero at the poles —
+                # and B(z) > 0 at every z keeps the matrix an M-matrix.
                 op.A_LHS += @views spdiagm((B_gr .- one(FT))[:])
             end
 
@@ -913,9 +878,8 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
         elseif RP.flags.src && RP.flags.scheme.growth === ExpRB
-            # Same two coefficients as the assembled path — the explicit branch is
-            # not a place where the fit stops applying, only one where there is no
-            # matrix. `op.RHS` still holds transport, which is not part of λ and so
+            # Same two coefficients as the assembled path: no matrix is not the same
+            # as no fit. `op.RHS` still holds transport, which is not part of λ and
             # rides the increment like any other frozen source.
             z_gr = @. cap_exprb_z(pla.ν_en_iz * dt)
             _warn_if_z_capped(z_gr)

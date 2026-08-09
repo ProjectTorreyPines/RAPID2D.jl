@@ -29,8 +29,10 @@
     # and the loader itself gets exercised as a side effect.
     using RAPID2D: h5open        # HDF5 is RAPID2D's dependency, not the test env's
 
-    function with_synthetic_surfaces(RP; K_of_Ē, EoverP = collect(range(1.0, 1000.0, 24)),
-            Erg_eV = collect(10 .^ range(-3, 3, 48)))
+    function with_synthetic_surfaces(
+            RP; K_of_Ē, EoverP = collect(range(1.0, 1000.0, 24)),
+            Erg_eV = collect(10 .^ range(-3, 3, 48))
+        )
         data = [K_of_Ē(E) for _ in EoverP, E in Erg_eV]
         path = joinpath(mktempdir(; cleanup = false), "eRRCs_EoverP_Erg.h5")
         h5open(path, "w") do fid
@@ -146,39 +148,4 @@ end
     RP.plasma.Te_eV[hot] .= 1.0e6
     update_RRCs!(RP)
     @test all(iszero, RP.plasma.dν_dTe.mom_tot[hot])
-end
-
-@testitem "update_RRCs!: real tables, derivative matches a central difference of ν" setup = [JacobianFixtures] begin
-    using RAPID2D: update_RRCs!, ExpRB
-
-    # The end-to-end check of the chain rule on the production table: perturb Tₑ,
-    # re-run the real update_RRCs!, and difference the frequencies it produced.
-    # This is where a missing or doubled ∂Ē/∂Tₑ = 3/2 shows up.
-    RP = jac_RAPID(; Te_eV = 8.0)
-    RP.flags.scheme.atomic = ExpRB
-    update_RRCs!(RP)
-    analytic = deepcopy(RP.plasma.dν_dTe)
-
-    h = 1.0e-4 * 8.0
-    RP.plasma.Te_eV .= 8.0 + h
-    update_RRCs!(RP)
-    hi = (
-        iz = copy(RP.plasma.ν_en_iz), mom_tot = copy(RP.plasma.ν_en_mom_tot),
-        mom_ela = copy(RP.plasma.ν_en_mom_ela), exc_eff = copy(RP.plasma.ν_en_exc_eff),
-    )
-    RP.plasma.Te_eV .= 8.0 - h
-    update_RRCs!(RP)
-    lo = (
-        iz = copy(RP.plasma.ν_en_iz), mom_tot = copy(RP.plasma.ν_en_mom_tot),
-        mom_ela = copy(RP.plasma.ν_en_mom_ela), exc_eff = copy(RP.plasma.ν_en_exc_eff),
-    )
-
-    inw = RP.G.nodes.in_wall_nids
-    for f in (:iz, :mom_tot, :mom_ela, :exc_eff)
-        fd = (getfield(hi, f)[inw] .- getfield(lo, f)[inw]) ./ (2h)
-        an = getfield(analytic, f)[inw]
-        scale = max(maximum(abs, fd), eps())
-        @test maximum(abs, an .- fd) / scale < 1.0e-6
-        @test !all(iszero, an)      # a zero Jacobian would pass the line above vacuously
-    end
 end

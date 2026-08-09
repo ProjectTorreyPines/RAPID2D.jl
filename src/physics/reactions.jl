@@ -82,38 +82,37 @@ end
 """
     reaction_θ(RP, channel) -> FT | Matrix{FT}
 
-The same weight, but able to answer when it is no longer a constant.
+The same weight, able to answer when it is no longer a constant.
 
-Under `scheme.<family> == ExpRB` the quadrature is the fitted `θ(z)` of
-[`exprb_theta`](@ref) with `z` the family's own eigenvalue times `Δt` — a
-different number in every cell, and a different one every step. The θ-scheme
-answer above cannot express that, so the ledger has to ask the state.
+Under `scheme.<family> == ExpRB` the quadrature is [`exprb_theta`](@ref) at the
+family's own `z = λΔt` — per cell, per step. Still in `(0, 1)`, so
+`Nₖ = Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]` reads unchanged downstream.
 
-Still a θ-scheme weight in `(0, 1)` at every `z`, so nothing downstream has to
-learn a new contract: `Nₖ = Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]` reads the same, and one
-ionization still makes exactly one electron and one ion because both sides read
-the single published count rather than re-deriving it.
+**`ExpRB` is checked before `Implicit`, and the order is load-bearing.** For a
+θ-scheme the two coincide — no matrix means no weight, so an explicit solve
+integrates its source at `θ = 0`. `ExpRB` separates them: its explicit branch
+applies the same `B(z)`, and a ledger formed at `0` there under-reports every
+event (3.6 % at `z = 0.15`, growing with `z`).
 
 Throws rather than guessing if a family is switched to `ExpRB` without its rate
-being wired here — a ledger quietly formed at the wrong weight is the failure
-`ReactionCounts` exists to prevent.
+being wired here.
 """
 function reaction_θ(RP::RAPID{FT}, channel::Symbol) where {FT <: AbstractFloat}
     haskey(REACTION_STOICHIOMETRY, channel) ||
         throw(ArgumentError("no reaction channel called $channel"))
-    RP.flags.Implicit || return zero(FT)
 
     family = REACTION_STOICHIOMETRY[channel].θ
-    getproperty(RP.flags.scheme, family) === ExpRB || return reaction_θ(RP.flags, channel)
-
-    family === :growth || throw(
-        ArgumentError(
-            "scheme.$family = ExpRB, but the rate behind channel :$channel is not " *
-                "wired into reaction_θ. Wire it, or the event count would be formed " *
-                "at a weight the solve did not use."
+    if getproperty(RP.flags.scheme, family) === ExpRB
+        family === :growth || throw(
+            ArgumentError(
+                "scheme.$family = ExpRB, but the rate behind channel :$channel is not " *
+                    "wired into reaction_θ. Wire it, or the event count would be formed " *
+                    "at a weight the solve did not use."
+            )
         )
-    )
-    return exprb_theta.(cap_exprb_z.(RP.plasma.ν_en_iz .* RP.dt))
+        return exprb_theta.(cap_exprb_z.(RP.plasma.ν_en_iz .* RP.dt))
+    end
+    return RP.flags.Implicit ? reaction_θ(RP.flags, channel) : zero(FT)
 end
 
 """

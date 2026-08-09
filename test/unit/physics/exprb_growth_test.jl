@@ -5,8 +5,10 @@
 
     # Pure growth: no transport in the continuity equation, so the only thing
     # acting is the ionization source and dn/dt = +ν_iz·n exactly.
-    function growth_RAPID(; n₀ = 1.0e14, Te_eV = 8.0, EoverP = 100.0, u_para = -1.0e6,
-            pressure = 5.0e-3, implicit = true, diffu = false)
+    function growth_RAPID(;
+            n₀ = 1.0e14, Te_eV = 8.0, EoverP = 100.0, u_para = -1.0e6,
+            pressure = 5.0e-3, implicit = true, diffu = false
+        )
         config = SimulationConfig{Float64}(
             NR = 6, NZ = 6, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
             dt = 1.0e-8, t_end_s = 1.0, R0B0 = 1.0,
@@ -128,13 +130,10 @@ end
     ν = copy(RP.plasma.ν_en_iz)
     solve_electron_continuity_equation!(RP)
 
+    # That θ IS the fitted weight is asserted in "the ledger reads the fitted
+    # weight on BOTH solve paths"; what is checked here is the count built from it.
     θ = reaction_θ(RP, :iz)
-    @test θ isa AbstractMatrix                       # per cell, not a constant
     inw = RP.G.nodes.in_wall_nids
-    @test θ[inw] ≈ exprb_theta.(ν[inw] .* RP.dt) rtol = 1.0e-14
-    @test all(0 .< θ[inw] .< 1)                      # still a valid θ-weight
-    @test any(θ[inw] .!= RP.flags.θ_imp.growth)      # and not the constant
-
     counts = check_reaction_counts(RP)
     expected = @. RP.dt * ((1 - θ) * prev + θ * RP.plasma.ne) * ν
     @test counts.iz[inw] ≈ expected[inw] rtol = 1.0e-12
@@ -153,15 +152,55 @@ end
     # disagree with the electron equation regardless of which weight formed it.
     # Also the discrete statement of "one ionization makes one electron and one
     # ion" — Δnₑ from the solve must equal the count it published.
-    RP = growth_RAPID()
-    RP.flags.scheme.growth = ExpRB
-    RP.dt = 1.0e-5
-    prev = copy(RP.plasma.ne)
-    solve_electron_continuity_equation!(RP)
+    #
+    # BOTH solve paths. `Implicit = false` is not a place where the fit stops
+    # applying — the explicit branch runs the same two coefficients, so the ledger
+    # owes the same quadrature. Two earlier tests each covered half of this
+    # (one loops over `implicit` but checks only `ne`; this one checked the count
+    # but only implicitly), and the gap between them is exactly where the count
+    # and the solve were free to disagree.
+    for implicit in (true, false)
+        RP = growth_RAPID(; implicit = implicit)
+        RP.flags.scheme.growth = ExpRB
+        RP.dt = 1.0e-5
+        prev = copy(RP.plasma.ne)
+        solve_electron_continuity_equation!(RP)
 
-    counts = check_reaction_counts(RP)
-    inw = RP.G.nodes.in_wall_nids
-    Δne = RP.plasma.ne .- prev
-    @test Δne[inw] ≈ net_electron_count(counts)[inw] rtol = 1.0e-10
-    @test net_ion_count(counts, :H2⁺)[inw] ≈ net_electron_count(counts)[inw] rtol = 1.0e-14
+        counts = check_reaction_counts(RP)
+        inw = RP.G.nodes.in_wall_nids
+        Δne = RP.plasma.ne .- prev
+        @test Δne[inw] ≈ net_electron_count(counts)[inw] rtol = 1.0e-10
+        @test net_ion_count(counts, :H2⁺)[inw] ≈ net_electron_count(counts)[inw] rtol = 1.0e-14
+    end
+end
+
+@testitem "ExpRB growth: the ledger reads the fitted weight on BOTH solve paths" setup = [ExpRBGrowthFixtures] begin
+    using RAPID2D: ExpRB, Theta, reaction_θ, exprb_theta, cap_exprb_z
+
+    # `reaction_θ` answered `Implicit || return 0` before consulting `scheme`, which
+    # was right while "explicit" and "unweighted" meant the same thing. ExpRB
+    # separates them: the explicit branch of the continuity solve applies B(z) and
+    # therefore integrated the source with θ_fit(z), not with 0. A ledger formed at
+    # 0 under-reports every ionization — measurably, not marginally.
+    for implicit in (true, false)
+        RP = growth_RAPID(; implicit = implicit)
+        RP.flags.scheme.growth = ExpRB
+        RP.dt = 2.0e-5
+        inw = RP.G.nodes.in_wall_nids
+        expected = exprb_theta.(cap_exprb_z.(RP.plasma.ν_en_iz .* RP.dt))
+
+        θ = reaction_θ(RP, :iz)
+        @test θ isa AbstractMatrix                    # per cell on both paths
+        @test θ[inw] ≈ expected[inw] rtol = 1.0e-14
+        @test all(0 .< θ[inw] .< 1)
+    end
+
+    # And the pre-existing meaning of `Implicit = false` is untouched where the
+    # family still runs a θ-scheme: a forward-Euler source really is integrated at
+    # θ = 0, and that must keep reading 0 rather than the growth family's constant.
+    off = growth_RAPID(; implicit = false)
+    @test off.flags.scheme.growth === Theta
+    @test reaction_θ(off, :iz) == 0.0
+    on = growth_RAPID(; implicit = true)
+    @test reaction_θ(on, :iz) == on.flags.θ_imp.growth
 end

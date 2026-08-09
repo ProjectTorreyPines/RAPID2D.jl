@@ -1,49 +1,34 @@
 """
 Exponential Rosenbrock–Euler coefficients for the local (diagonal) rates.
 
-The scheme this file supports advances a term whose local Jacobian `λ = ∂f/∂y` is
-known as
-
 ```math
 y^{n+1} = y^{n} + \\frac{\\Delta t\\, f(y^{n})}{B(\\lambda\\Delta t)},
 \\qquad B(z) = \\frac{z}{e^{z}-1}
 ```
 
-— forward Euler with `B` as a divisor on the increment. It is
-`y + hφ₁(hJ)f(y)` with `φ₁(z) = (eᶻ−1)/z = 1/B(z)`, i.e. exponential
-Rosenbrock–Euler (`exprb2`): second order, L-stable when stiff, and **exact** for
-the frozen-coefficient problem `dy/dt = λy + S` at every `Δt`, growth included.
+— forward Euler with `B` as a divisor on the increment, i.e. `y + hφ₁(hJ)f(y)`
+with `φ₁ = 1/B` (`exprb2`): second order, L-stable when stiff, and **exact** for
+`dy/dt = λy + S` at every `Δt`, growth included.
 
-`B` is the Bernoulli function of Scharfetter–Gummel, and the same coefficients
-read as a θ-scheme give the exponentially-fitted weight
-`θ(z) = 1/z − 1/(eᶻ−1)`. **That weight is never formed here** — building the
-diagonal as `1 − θz` is a subtraction that cancels as `θz → 1`, ~1 % wrong by
-`z = 36` and gone entirely past it. The identities used instead are
+The assembled form uses `B(z)` and `B(-z) = B(z) + z` directly and **never forms
+the equivalent θ**; see [`exprb_theta`](@ref) for why.
 
-```math
-1-\\theta(z)z = B(z), \\qquad 1+\\bigl(1-\\theta(z)\\bigr)z = B(-z) = B(z) + z,
-\\qquad \\frac{B(-z)}{B(z)} = e^{z}.
-```
-
-Derivation, measurements and scope: `internal/docs/src/notes/design/implicit-atomic-power.md`
+Derivation and measurements: `internal/docs/src/notes/design/implicit-atomic-power.md`
 §3.6–3.7. What is built and how it is gated: `exprb-implementation.md`.
 """
 
 """
     EXPRB_Z_MAX
 
-Upper cap on `z = λΔt` before it reaches [`bernoulli_B`](@ref).
+Upper cap on `z = λΔt`, growth side only.
 
-Only *growth* needs capping. `expm1` overflows at `z ≈ 709` (`Float64`) and
-`z ≈ 88` (`Float32`), and `B` then returns exactly `0.0` — the diagonal is
-annihilated and the row is left to the transport operator alone. The cap sits far
-below that, where conditioning starts to matter rather than where arithmetic
-fails: the spread across a mixed-sign grid goes like `|z_decay|·e^(z_growth)/z_growth`,
-so `z_growth ≈ 16` already puts `κ` near `5e7`. A cell whose temperature grows by
-`e³⁰` inside one step is not a step anyone should be taking.
+`expm1` overflows at `z ≈ 709` (`Float64`) / `88` (`Float32`) and `B` then returns
+exactly `0.0`, annihilating the diagonal. The cap sits far below that, where
+conditioning starts to cost digits: the spread across a mixed-sign grid goes like
+`|z_decay|·e^(z_growth)/z_growth`, so `z_growth ≈ 16` already puts `κ` near `5e7`.
 
-Decay is never capped — `B(z) → |z|` as `z → −∞` is bounded, benign, and exactly
-the "this cell fully relaxed inside the step" limit the scheme exists to capture.
+Decay is never capped — `B(z) → |z|` as `z → −∞` is bounded and is exactly the
+"this cell fully relaxed inside the step" limit the scheme exists to capture.
 """
 const EXPRB_Z_MAX = 30
 
@@ -51,7 +36,6 @@ const EXPRB_Z_MAX = 30
     cap_exprb_z(z)
 
 Clamp `z = λΔt` from above at [`EXPRB_Z_MAX`](@ref), preserving the type of `z`.
-See that constant for why only the growth side is capped.
 """
 @inline cap_exprb_z(z::T) where {T <: AbstractFloat} = min(z, T(EXPRB_Z_MAX))
 
@@ -60,41 +44,30 @@ See that constant for why only the growth side is capped.
 
 `B(z) = z/(eᶻ − 1)`, with `B(0) = 1`.
 
-Strictly positive and finite for every finite `z`. That is the property the
-assembled matrix depends on: with `B` on the diagonal the system stays an
-M-matrix at any `Δt`, whereas a θ-scheme's `1 − θz` changes sign on a growth cell
-once `θz > 1` and no amount of rescaling repairs it.
+**Strictly positive and finite for every finite `z`** — that is what keeps the
+assembled matrix an M-matrix at any `Δt`, where a θ-scheme's `1 − θz` changes sign
+on a growth cell once `θz > 1`. `B(0) = 1` makes the forward-Euler fallback exact
+rather than approximate.
 
-`B(0) = 1` is what makes falling back to forward Euler exact rather than
-approximate — a term handed `z = 0` contributes nothing.
-
-No series expansion near zero. `expm1` exists to keep `eᶻ − 1` accurate where it
-cancels, so `z/expm1(z)` inherits that: measured max relative error **1.9e-16**
-over `z ∈ ±[1e-18, 200]` against `BigFloat`. A truncated series would be worse.
-`z` is expected to have passed through [`cap_exprb_z`](@ref).
+No series expansion near zero: `expm1` already keeps `eᶻ − 1` accurate where it
+cancels, measured max relative error **1.9e-16** over `z ∈ ±[1e-18, 200]` against
+`BigFloat`. Expects `z` to have passed through [`cap_exprb_z`](@ref).
 """
 @inline bernoulli_B(z::T) where {T <: AbstractFloat} = iszero(z) ? one(T) : z / expm1(z)
 
 """
     exprb_theta(z)
 
-The θ whose amplification matches `ExpRB`'s: `θ(z) = 1/z − 1/(eᶻ−1) = (1 − B(z))/z`,
-with `θ(0) = ½`.
+The θ whose amplification matches `ExpRB`'s: `θ(z) = (1 − B(z))/z`, with `θ(0) = ½`.
 
-**Never build the scheme from this.** The diagonal `1 − θz` is a subtraction that
-cancels as `θz → 1` — ~1 % wrong by `z = 36` and gone past it — which is why
-[`bernoulli_B`](@ref) exists and why the assembled form uses `B(z)` and `B(−z)`
-directly. This function is for *ledgers*: a consumer that records
-`∫ … dt ≈ Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]` needs to know which quadrature the step
-actually used, and under `ExpRB` that is a per-cell number rather than a constant.
-Here θ is an output, never a divisor, so the cancellation cannot propagate.
+**For ledgers only — never build the scheme from this.** The diagonal `1 − θz` is
+a subtraction that cancels as `θz → 1`: ~1 % wrong by `z = 36` and gone past it.
+A consumer recording `∫ … dt ≈ Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]` needs the quadrature the
+step actually used, and here θ is an output rather than a divisor.
 
-Monotone on `(0, 1)` for every `z`, with the limits `ImplicitWeights` assigns by
-hand: `θ → 1` (BE) as `z → −∞`, `θ → ½` (CN) at `z = 0`, `θ → 0` (FE) as
-`z → +∞`. So a ledger keeps reading a valid θ-weight whatever the step does.
-
-Series below `|z| = 1e-4`, where `1 − B(z)` loses digits to cancellation
-(`B → 1`). Unlike the scheme itself, this one genuinely needs it.
+Monotone in `(0, 1)` at every `z`, with limits `θ → 1` (BE) as `z → −∞`, `½` (CN)
+at `0`, `0` (FE) as `z → +∞`. Series below `|z| = 1e-4`, where `1 − B(z)` loses
+digits to cancellation.
 """
 @inline function exprb_theta(z::T) where {T <: AbstractFloat}
     return abs(z) < T(1.0e-4) ?
@@ -105,12 +78,8 @@ end
 """
     _warn_if_z_capped(z) -> z
 
-Warn once if any entry of an already-capped `z` sits at [`EXPRB_Z_MAX`](@ref).
-
-The cap keeps the arithmetic sound, but a cell that wanted `z > 30` is asking to
-grow by more than `e³⁰` in one step, and at that point the *step* is the problem,
-not the coefficient. Silence would let a run report a plausible number built on a
-step nothing resolves.
+Warn once if any entry of an already-capped `z` sits at [`EXPRB_Z_MAX`](@ref) — a
+cell asking to grow by more than `e³⁰` in one step means the *step* is the problem.
 """
 function _warn_if_z_capped(z::AbstractArray{T}) where {T <: AbstractFloat}
     n = count(==(T(EXPRB_Z_MAX)), z)

@@ -30,8 +30,10 @@ end
 @testsnippet ExpRBDecayFixtures begin
     using RAPID2D: ExpRB, Theta, update_ue_para!, update_RRCs!, bernoulli_B, exprb_theta
 
-    function ud_RAPID(; u₀ = 0.0, E_para = -50.0, pressure = 5.0e-3, implicit = true,
-            coulomb = false)
+    function ud_RAPID(;
+            u₀ = 0.0, E_para = -50.0, pressure = 5.0e-3, implicit = true,
+            coulomb = false
+        )
         config = SimulationConfig{Float64}(
             NR = 6, NZ = 6, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
             dt = 1.0e-8, t_end_s = 1.0, R0B0 = 1.0,

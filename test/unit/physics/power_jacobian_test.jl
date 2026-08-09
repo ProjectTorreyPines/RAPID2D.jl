@@ -3,8 +3,10 @@
         update_RRCs!, update_electron_heating_powers!, update_electron_power_jacobian!
     using RAPID2D: h5open        # HDF5 is RAPID2D's dependency, not the test env's
 
-    function pj_RAPID(; Te_eV = 5.0, u_para = -1.0e5, E_para = -50.0,
-            pressure = 5.0e-3, coulomb = false)
+    function pj_RAPID(;
+            Te_eV = 5.0, u_para = -1.0e5, E_para = -50.0,
+            pressure = 5.0e-3, coulomb = false
+        )
         config = SimulationConfig{Float64}(
             NR = 8, NZ = 8, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
             dt = 1.0e-8, t_end_s = 1.0e-6, R0B0 = 1.0,

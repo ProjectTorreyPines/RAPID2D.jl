@@ -1,4 +1,4 @@
-@testitem "bernoulli_B: the identity B(-z)/B(z) = exp(z), without ever forming θ" begin
+@testitem "bernoulli_B: the identity B(-z)/B(z) = exp(z)" begin
     using RAPID2D: bernoulli_B
 
     # B(z) = z/(e^z − 1) is the coefficient that makes the local update exact for
@@ -83,19 +83,11 @@ end
     @test cap_exprb_z(-1.0e6) == -1.0e6      # decay is never capped: B → |z| is benign
     @test cap_exprb_z(1.0f4) === 30.0f0      # type-preserving
 
-    # A capped z still yields a usable (positive, finite) diagonal.
+    # A capped z still yields a usable (positive, finite) diagonal — at either
+    # width, since RAPID2D is FT-generic and Float32 overflows 40× sooner.
     @test 0 < bernoulli_B(cap_exprb_z(1.0e6)) < 1.0e-11
-end
-
-@testitem "bernoulli_B: Float32 path stays finite and positive" begin
-    using RAPID2D: bernoulli_B, cap_exprb_z
-
-    # RAPID2D is FT-generic, so the kernel is exercised at Float32 too. Without
-    # the cap this range would overflow expm1 and return B = 0.
     b32 = bernoulli_B.(cap_exprb_z.(Float32.(range(-100.0, 100.0, 501))))
-    @test eltype(b32) === Float32
-    @test all(isfinite, b32)
-    @test all(>(0), b32)
+    @test eltype(b32) === Float32 && all(isfinite, b32) && all(>(0), b32)
     @test bernoulli_B(0.0f0) === 1.0f0
 end
 
