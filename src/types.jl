@@ -220,7 +220,15 @@ neither can be misread, so the short literature names are safe again.
   it: multiplying by the uncapped `ν` booked `(z/z_cap)×` the electrons born.
 
 The asymmetry is deliberate — a rate where the step is not yet known, an exponent
-where a consumer needs the exact value a solve committed to.
+where a consumer needs the exact value a solve committed to. Only `z_growth` is
+stored, and only because it has a **second** consumer; `atomic` caps its exponent
+the same way and keeps it local, since no ledger reads Tₑ's quadrature.
+
+**Named for the family, not the channel** — not `ν_iz_Δt`, which it is not (the
+cap is the whole point), and not `z_iz`. A second growth channel sums into the
+same diagonal, `dnₑ/dt = (ν_iz + ν_diz)nₑ`, so there is one `B` and one `z`; what
+becomes per-channel is the rate ratio, `N_k = (ν_k/ν_family)·z_growth·[…]`. Today
+that ratio is 1, which is the only reason the count reads `z_growth·[…]` directly.
 """
 @kwdef mutable struct ExpRBTerms{FT <: AbstractFloat}
     dims::Tuple{Int, Int}
