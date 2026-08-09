@@ -57,10 +57,65 @@ struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
     itp  # Interpolant; clamps to the table boundary outside its bounds
 
     function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractArray{FT}) where {FT <: AbstractFloat}
+        size(raw_data) == (length(T_eV), length(ud_para)) || throw(
+            DimensionMismatch(
+                "surface is $(size(raw_data)) but the axes are " *
+                    "($(length(T_eV)) T_eV, $(length(ud_para)) ud_para). Axis 1 is " *
+                    "TEMPERATURE — see T_ud_axis_order."
+            )
+        )
         # ClampExtrap: out-of-domain (T, u_d) queries clamp to the nearest boundary rate.
         itp = linear_interp((T_eV, ud_para), raw_data; extrap = ClampExtrap())
         return new{FT}(T_eV, ud_para, raw_data, itp)
     end
+end
+
+"""
+    T_ud_axis_order(h5fid) -> Symbol
+    read_T_ud_surface(h5fid, name, order) -> Matrix
+
+Read one `(T, u_d)` surface in [`RRC_T_ud`](@ref)'s own axis order, whichever way the
+file stores it.
+
+`RRC_T_ud(T_eV, ud_para, A)` means `A[i, j]` is the rate at `T_eV[i]`, `ud_para[j]`.
+**The shipped files store the transpose** — axis 1 = drift, axis 2 = temperature — and
+because both axes have the same length (100×100, 200×200) nothing raised for as long as
+they have existed. It returned the right number at the wrong point.
+
+The evidence, and why the files rather than the reader are the odd one out, is in
+`internal/docs/src/notes/issues/ion-rrc-table-transposed.md`. In one line: the electron
+`Ionization` surface read the constructor's way is 3.6e-14 m³/s at `T = 19` meV, which a
+15.4 eV threshold forbids; read the other way it is zero below 1.7 eV and rises through
+the tens of eV.
+
+The layout is therefore a property of the file, declared by an `axis_order` attribute:
+
+| `axis_order` | meaning |
+|---|---|
+| `"T_eV,ud_para"` | already the constructor's order — read as-is |
+| `"ud_para,T_eV"` | the legacy layout — `permutedims` on read |
+| absent | legacy. On this repository's history, an unstamped file is a transposed one |
+
+**Transposing on read rather than rewriting the files is deliberate.** They are 2.6 MB of
+binary, git keeps every version, and the ion cross-section overhaul will regenerate them
+anyway — at which point it writes them in the constructor's order, stamps them, and
+nothing here changes. Paying the blob twice to be correct in between buys nothing.
+"""
+function T_ud_axis_order(h5fid)
+    haskey(attrs(h5fid), "axis_order") || return :transposed
+    order = read_attribute(h5fid, "axis_order")
+    order == "T_eV,ud_para" && return :as_stored
+    order == "ud_para,T_eV" && return :transposed
+    throw(
+        ArgumentError(
+            "unknown axis_order \"$order\": expected \"T_eV,ud_para\" or \"ud_para,T_eV\""
+        )
+    )
+end
+
+function read_T_ud_surface(h5fid, name::AbstractString, order::Symbol)
+    A = read(h5fid, name)
+    return order === :as_stored ? A : permutedims(A)
 end
 
 """
@@ -153,12 +208,14 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
 
         # Create RRC_T_ud objects for each reaction type from the given H5 file
         h5fid = h5open(eRRC_T_ud_fileName, "r")
+        order = T_ud_axis_order(h5fid)
         T_eV = read(h5fid, "T_eV")
         ud_para = read(h5fid, "ud_para")
-        Dissoc_Ionz = RRC_T_ud(T_eV, ud_para, read(h5fid, "Dissoc_Ionz"))
-        Halpha = RRC_T_ud(T_eV, ud_para, read(h5fid, "Halpha"))
-        Recomb_H2Ion = RRC_T_ud(T_eV, ud_para, read(h5fid, "Recomb_H2Ion"))
-        Recomb_H3Ion = RRC_T_ud(T_eV, ud_para, read(h5fid, "Recomb_H3Ion"))
+        srf(name) = read_T_ud_surface(h5fid, name, order)
+        Dissoc_Ionz = RRC_T_ud(T_eV, ud_para, srf("Dissoc_Ionz"))
+        Halpha = RRC_T_ud(T_eV, ud_para, srf("Halpha"))
+        Recomb_H2Ion = RRC_T_ud(T_eV, ud_para, srf("Recomb_H2Ion"))
+        Recomb_H3Ion = RRC_T_ud(T_eV, ud_para, srf("Recomb_H3Ion"))
         close(h5fid)
 
 
@@ -219,13 +276,15 @@ struct H2_Ion_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
     function H2_Ion_RRCs(iRRCs_T_ud_fileName::String)
         # Create RRC_T_ud objects for each reaction type from the given H5 file
         h5fid = h5open(iRRCs_T_ud_fileName, "r")
+        order = T_ud_axis_order(h5fid)
         T_eV = read(h5fid, "T_eV")
         ud_para = read(h5fid, "ud_para")
-        Elastic = RRC_T_ud(T_eV, ud_para, read(h5fid, "Elastic"))
-        Charge_Exchange = RRC_T_ud(T_eV, ud_para, read(h5fid, "Charge_Exchange"))
-        Target_Ionization = RRC_T_ud(T_eV, ud_para, read(h5fid, "Target_Ionization"))
-        Projectile_Dissociation = RRC_T_ud(T_eV, ud_para, read(h5fid, "Projectile_Dissociation"))
-        Particle_Exchange = RRC_T_ud(T_eV, ud_para, read(h5fid, "Particle_Exchange"))
+        srf(name) = read_T_ud_surface(h5fid, name, order)
+        Elastic = RRC_T_ud(T_eV, ud_para, srf("Elastic"))
+        Charge_Exchange = RRC_T_ud(T_eV, ud_para, srf("Charge_Exchange"))
+        Target_Ionization = RRC_T_ud(T_eV, ud_para, srf("Target_Ionization"))
+        Projectile_Dissociation = RRC_T_ud(T_eV, ud_para, srf("Projectile_Dissociation"))
+        Particle_Exchange = RRC_T_ud(T_eV, ud_para, srf("Particle_Exchange"))
         close(h5fid)
 
         FT = eltype(T_eV)  # Determine the floating-point type from the data
