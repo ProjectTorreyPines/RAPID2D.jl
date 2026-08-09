@@ -166,6 +166,39 @@ function ElectronHeatingPowers{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
 end
 
 """
+    ElectronRateJacobians{FT}
+
+`∂ν/∂Tₑ` [1/(s·eV)] for the electron-neutral frequencies, one field per member of
+`PlasmaState`'s `ν_en_*` set — the table half of `∂P/∂Tₑ`.
+
+Written by [`update_RRCs!`](@ref) alongside the frequencies themselves, at the
+same evaluation point, and only when `flags.scheme.atomic == ExpRB`. Zero
+otherwise; nothing reads them then.
+
+Each is `n_H2_gas · (3/2) · ∂K/∂Ē`. The `3/2` is `∂Ē/∂Tₑ` for
+`Ē = 3/2·Tₑ + ½mₑu∥²/e` at fixed `u` — constant, which is what keeps the chain
+rule to one scalar multiply and lets `RRC_EoverP_Erg.dK_dĒ` stand in directly.
+
+Evaluated at the step-entry state `(Tₑⁿ, uⁿ)`, like the frequencies: both come
+from the `update_RRCs!` at the end of the previous iteration. Not at `u^{n+1}`,
+despite the sequential split putting `update_ue_para!` first. Harmless — the
+fixed point of the energy equation does not depend on the Jacobian at all — but
+it is a lag, and a term that pretends otherwise will drift.
+"""
+@kwdef mutable struct ElectronRateJacobians{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+
+    iz::Matrix{FT} = zeros(FT, dims)        # ∂ν_en_iz/∂Tₑ
+    mom_tot::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_tot/∂Tₑ
+    mom_ela::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_ela/∂Tₑ
+    exc_eff::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_exc_eff/∂Tₑ
+end
+
+function ElectronRateJacobians{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return ElectronRateJacobians{FT}(dims = dimensions)
+end
+
+"""
     IonHeatingPowers{FT<:AbstractFloat}
 
 Contains the power terms for ion energy equation.
@@ -265,6 +298,12 @@ Contains the plasma state variables including density, temperature, and velocity
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
     ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction; drives P_ela [1/s]
     ν_en_exc_eff::Matrix{FT} = zeros(FT, dims) # Excitation rate normalized to char_exc_erg_eV [1/s]
+    # ∂ν/∂Tₑ for the four frequencies above, written by the same `update_RRCs!` at
+    # the same evaluation point — and only when `flags.scheme.atomic == ExpRB`.
+    dν_dTe::ElectronRateJacobians{FT} = ElectronRateJacobians{FT}(dims)
+    # (2/3e)·∂P/∂Tₑ [1/s], signed: the local eigenvalue of the energy equation.
+    # Written by `update_electron_power_jacobian!`; `z = λ_Te·Δt` is what B(z) takes.
+    λ_Te::Matrix{FT} = zeros(FT, dims)
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 

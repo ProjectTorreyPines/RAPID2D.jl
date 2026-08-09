@@ -19,7 +19,31 @@ Stores both raw data and an interpolation object for efficient calculation of ra
 - `EoverP::Vector{FT}`: Electric field over pressure (E/p) coordinates
 - `Erg_eV::Vector{FT}`: Particle energy in eV
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp`: Interpolant; clamps to the table boundary outside its bounds"""
+- `itp`: Interpolant; clamps to the table boundary outside its bounds
+- `dK_dĒ`: `∂K/∂Ē` at the same point — see below
+
+# The derivative surface
+
+`dK_dĒ` is the analytic `∂K/∂Ē` of the same bilinear interpolant, callable with
+the same query shapes as `itp` (single point, SoA batch, in-place batch). It is
+what makes `∂P/∂Tₑ` available without finite differencing: `Ē = 3/2·Tₑ + …`, so
+`∂Ē/∂Tₑ = 3/2` is a constant and the chain rule is one scalar multiply.
+
+**Its extrapolation differs from `itp`'s, per axis, and the asymmetry is load-bearing.**
+
+- `E/p` — `ClampExtrap`, matching `itp`. `E/p` carries no `Tₑ` dependence, so it
+  never enters `∂/∂Tₑ`; and below the table's minimum `E/p` an ordinary low-field
+  cell must clamp rather than raise.
+- `Ē` — `NoExtrap`. Outside the table the value is frozen, so the true
+  `∂K/∂Ē` is zero, but FastInterpolations' `ClampExtrap` clamps the *coordinate*
+  and then returns the boundary cell's one-sided slope. That is an upstream bug
+  (values are unaffected; only derivative views are wrong, and only out of
+  bounds). Until it is fixed, a `DomainError` beats a silent `∂P/∂Tₑ` that claims
+  a dependence the value does not have. Unreachable from below in practice —
+  `min_Te = 0.001` puts `Ē ≥ 1.5e-3` above the table's `1e-3`.
+
+When the upstream fix lands, drop the second interpolant and take
+`deriv_view(itp, (0, 1))` directly."""
 struct RRC_EoverP_Erg{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
     # 2 variables for given reaction rate coefficient
     EoverP::Vector{FT}  # Electric field over pressure (E/p) coordinates
@@ -27,12 +51,17 @@ struct RRC_EoverP_Erg{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT
 
     raw_data::AbstractArray{FT}
     itp  # Interpolant; clamps to the table boundary outside its bounds
+    dK_dĒ  # ∂K/∂Ē of the same interpolant; clamps on E/p, raises on Ē (see above)
 
     function RRC_EoverP_Erg(EoverP::Vector{FT}, Erg_eV::Vector{FT}, raw_data::AbstractArray{FT}) where {FT <: AbstractFloat}
         # ClampExtrap: below the table's minimum E/p the rate relaxes to the room-T
         # Maxwellian (bottom row), not 0 — E/p=0 means no field, not no collisions.
         itp = linear_interp((EoverP, Erg_eV), raw_data; extrap = ClampExtrap())
-        return new{FT}(EoverP, Erg_eV, raw_data, itp)
+        itp_d = linear_interp(
+            (EoverP, Erg_eV), raw_data;
+            extrap = (ClampExtrap(), NoExtrap())
+        )
+        return new{FT}(EoverP, Erg_eV, raw_data, itp, deriv_view(itp_d, (0, 1)))
     end
 end
 
@@ -392,6 +421,11 @@ diagnostic-only and are still fetched live at snapshot cadence.
 """
 function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
+    # ∂P/∂Tₑ is assembled from ∂ν/∂Tₑ, and those must be differentiated at the
+    # state the frequencies were evaluated at — so they are materialized here and
+    # nowhere else, for the same reason the frequencies are. Skipped entirely when
+    # no consumer wants them, so the default configuration pays nothing.
+    want_jacobian = RP.flags.scheme.atomic === ExpRB
 
     if RP.flags.Atomic_Collision
         K_mom_tot = get_electron_RRC(RP, :Total_Momentum)
@@ -400,6 +434,12 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         @. pla.ν_en_mom_tot = pla.n_H2_gas * K_mom_tot
         @. pla.ν_en_mom_ela = pla.n_H2_gas * K_mom_ela
         @. pla.ν_en_exc_eff = pla.n_H2_gas * K_exc_eff
+
+        if want_jacobian
+            update_rate_jacobian!(RP, :Total_Momentum, pla.dν_dTe.mom_tot)
+            update_rate_jacobian!(RP, :Momentum_by_ela, pla.dν_dTe.mom_ela)
+            update_rate_jacobian!(RP, :Total_Excitation, pla.dν_dTe.exc_eff)
+        end
     end
 
     # ν_en_iz is consumed by the parallel momentum drag (gated on Atomic_Collision) *and*
@@ -417,19 +457,58 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         elseif RP.flags.Ionz_method == "Xsec"
             K_iz = get_electron_RRC(RP, :Ionization)
             @. pla.ν_en_iz = pla.n_H2_gas * K_iz
+            want_jacobian && update_rate_jacobian!(RP, :Ionization, pla.dν_dTe.iz)
         else
             error("Unknown ionization method: $(RP.flags.Ionz_method)")
         end
 
-        # No ionization outside the wall
+        # No ionization outside the wall — and therefore no dependence of it on Tₑ
+        # there either, or the diagonal would carry a rate the physics does not.
         pla.ν_en_iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+        want_jacobian && (pla.dν_dTe.iz[RP.G.nodes.on_out_wall_nids] .= zero(FT))
     end
 
     return RP
 end
 
+"""
+    update_rate_jacobian!(RP, reaction, out) -> out
+
+Write `∂ν/∂Tₑ = n_H2_gas · (3/2) · ∂K/∂Ē` for one `(E/p, Ē)` surface into `out`.
+
+The `3/2` is `∂Ē/∂Tₑ` for `Ē = 3/2·Tₑ + ½mₑu∥²/e` at fixed `u`. It being a
+constant is the whole reason this is cheap: no coordinate-dependent chain rule,
+no second gradient component (`E/p` carries no `Tₑ` dependence), one batched
+derivative evaluation per surface at roughly the cost of the value evaluation
+the same surface already pays.
+
+Queried at the same `(E/p, Ē)` the value path uses, built here rather than
+reused from [`get_electron_RRC`](@ref) only because that function returns values;
+the coordinates are recomputed identically, including its no-gas guard.
+"""
+function update_rate_jacobian!(
+        RP::RAPID{FT}, reaction::Symbol, out::AbstractMatrix{FT}
+    ) where {FT <: AbstractFloat}
+    rrc = getfield(RP.eRRCs, reaction)
+    rrc isa RRC_EoverP_Erg ||
+        throw(ArgumentError("∂/∂Tₑ is defined for (E/p, Ē) surfaces; $reaction is not one"))
+
+    me, ee = RP.config.constants.me, RP.config.constants.ee
+    mean_Ke_eV = @. FT(1.5) * RP.plasma.Te_eV + FT(0.5) * me * RP.plasma.ue_para^2 / ee
+    abs_Epara_over_pGas = @. abs(
+        RP.fields.E_para_tot / (RP.plasma.n_H2_gas * RP.plasma.T_gas_eV * ee)
+    )
+    @. abs_Epara_over_pGas = ifelse(
+        isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT)
+    )
+
+    rrc.dK_dĒ(out, (abs_Epara_over_pGas, mean_Ke_eV))
+    @. out *= RP.plasma.n_H2_gas * FT(1.5)
+    return out
+end
+
 # Export types and functions for reaction rate coefficients
-export update_RRCs!
+export update_RRCs!, update_rate_jacobian!
 export AbstractReactionRateCoefficient
 export RRC_EoverP_Erg, RRC_T_ud, RRC_T_ud_gFac
 export Electron_RRCs, H2_Ion_RRCs
