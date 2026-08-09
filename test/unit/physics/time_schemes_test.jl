@@ -109,7 +109,7 @@ end
 end
 
 @testitem "scheme: ExpRB on the atomic power needs a differentiable rate" begin
-    using RAPID2D: SimulationFlags, ExpRB, validate_scheme_flags
+    using RAPID2D: SimulationFlags, ExpRB, LinearResponse, validate_scheme_flags
 
     # Legacy comparison paths have no rate to differentiate. Rather than carry a
     # dν/dTe = 0 branch for each of them forever, the combination is refused —
@@ -117,6 +117,7 @@ end
     for (field, bad) in ((:Ionz_method, "Townsend_coeff"), (:ud_method, "Lloyd_fit"))
         flags = SimulationFlags{Float64}()
         flags.scheme.atomic = ExpRB
+        flags.exprb_eigenvalue = LinearResponse      # KnownRate takes no derivative
         setproperty!(flags, field, bad)
         err = try
             validate_scheme_flags(flags)
@@ -133,6 +134,7 @@ end
     # ExpRB off — validation must not narrow what already works.
     ok = SimulationFlags{Float64}()
     ok.scheme.atomic = ExpRB
+    ok.exprb_eigenvalue = LinearResponse
     @test validate_scheme_flags(ok) === ok
 
     legacy = SimulationFlags{Float64}()
@@ -141,7 +143,7 @@ end
 end
 
 @testitem "scheme: initialize! is where the refusal actually lands" begin
-    using RAPID2D: ExpRB
+    using RAPID2D: ExpRB, LinearResponse
 
     function small_RAPID()
         config = SimulationConfig{Float64}(
@@ -157,6 +159,7 @@ end
     # wrong Jacobian several thousand steps in.
     RP = small_RAPID()
     RP.flags.scheme.atomic = ExpRB
+    RP.flags.exprb_eigenvalue = LinearResponse
     RP.flags.Ionz_method = "Townsend_coeff"
     @test_throws ArgumentError initialize!(RP)
 

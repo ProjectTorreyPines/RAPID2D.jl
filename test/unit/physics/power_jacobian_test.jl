@@ -1,5 +1,5 @@
 @testsnippet PowerJacobianFixtures begin
-    using RAPID2D: RRC_EoverP_Erg, Electron_RRCs, ExpRB, ForwardEuler,
+    using RAPID2D: RRC_EoverP_Erg, Electron_RRCs, ExpRB, ForwardEuler, LinearResponse,
         update_RRCs!, update_electron_heating_powers!, update_electron_power_jacobian!
     using RAPID2D: h5open        # HDF5 is RAPID2D's dependency, not the test env's
 
@@ -21,6 +21,8 @@
         RP.flags.Coulomb_Collision = coulomb
         RP.flags.Include_Te_diffu_term = false
         RP.flags.Include_Te_convec_term = false
+        # This file measures the full ∂f/∂y; KnownRate is a different question.
+        RP.flags.exprb_eigenvalue = LinearResponse
         RP.flags.Include_heat_flux_term = heat_flux
         initialize!(RP)
         RP.plasma.Te_eV .= Te_eV

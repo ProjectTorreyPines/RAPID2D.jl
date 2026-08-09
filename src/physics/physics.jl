@@ -655,9 +655,70 @@ differentiated, as its ion counterpart is.
 """
 function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_power_jacobian!" begin
-        pla = RP.plasma
         RP.flags.scheme.atomic === ExpRB || return RP
+        # One branch per step, not per cell. Split into two functions because the
+        # two policies share no arithmetic — one reads rates, the other
+        # differentiates surfaces.
+        if RP.flags.exprb_eigenvalue === KnownRate
+            return _eig_Te_from_known_rates!(RP)
+        end
+        return _eig_Te_from_linear_response!(RP)
+    end # @timeit
+end
 
+"""
+    _eig_Te_from_known_rates!(RP)
+
+`λ_Tₑ` from the terms whose `Tₑ` is written down, and nothing else:
+
+```
+(3/2)e·dTₑ/dt = A − 𝔅·Tₑ,
+𝔅 = (2mₑ/m_H₂)·ν_ela·(3/2)e  +  (3/2)e·ν_iz  +  2μ·(3/2)e·ν_ei
+```
+
+from `P_ela`, `P_dilution` and `P_equi` — an exact rearrangement of
+[`update_electron_heating_powers!`](@ref), not a linearisation. `𝔅` sums
+non-negative rates, so `λ = −(2/3e)𝔅 ≤ 0` always: no pole, no growth branch, no
+cap. `P_drag`, `P_exc` and `P_iz` carry no explicit `Tₑ` and stay in the source,
+which is where their `Tₑ` dependence is discarded — see [`EigenvalueSource`](@ref)
+for what that costs.
+"""
+function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    @unpack ee, me = RP.config.constants
+    m_H2 = RP.config.constants.mi
+    zero_FT = zero(FT)
+
+    fill!(pla.exprb.eig_Te, zero_FT)
+
+    if RP.flags.Atomic_Collision
+        @. pla.exprb.eig_Te -= (FT(2.0) * me / m_H2) * pla.ν_en_mom_ela * FT(1.5) * ee
+        RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee * pla.ν_en_iz
+    end
+    if RP.flags.Coulomb_Collision
+        m_i = bulk_ion_mass(RP)
+        μ_reduced = m_i * me / (m_i + me)^2
+        @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
+    end
+
+    on_out_wall_nids = RP.G.nodes.on_out_wall_nids
+    isempty(on_out_wall_nids) || (@views pla.exprb.eig_Te[on_out_wall_nids] .= zero_FT)
+
+    @. pla.exprb.eig_Te *= FT(2.0) / FT(3.0) / ee
+    return RP
+end
+
+"""
+    _eig_Te_from_linear_response!(RP)
+
+`λ_Tₑ = (2/3e)·∂P/∂Tₑ` in full: every explicit `Tₑ` of
+[`_eig_Te_from_known_rates!`](@ref) **plus** the chain rule through
+`Ē = (3/2)Tₑ + ½mₑu∥²/e` into every rate coefficient. A superset, and the only
+part of it that can be positive.
+"""
+function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "_eig_Te_from_linear_response!" begin
+        pla = RP.plasma
         @unpack ee, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
         m_H2 = RP.config.constants.mi
         zero_FT = zero(FT)
@@ -771,20 +832,30 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         zero_FT = zero(FT)
         fill!(pla.exprb.eig_Ti, zero_FT)
 
+        # The ion split falls out of the product rule: `P_atomic = ν_a·ΔE` gives
+        # `−ν_a·(3/2)e` from ΔE's explicit T_i — the stated rate — and `dν_a·ΔE`
+        # from the tables. Only the second is a linear response.
+        linear_response = RP.flags.exprb_eigenvalue === LinearResponse
+
         if RP.flags.Atomic_Collision
-            ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
-            ΔE = @. (
-                FT(0.5) * mi * ui_mag_sq - FT(1.5) * (pla.Ti_eV - pla.T_gas_eV) * ee
-            )
             K_ela, K_cx = get_H2_ion_RRC(RP, :Elastic), get_H2_ion_RRC(RP, :Charge_Exchange)
-            dK_ela, dK_cx = ion_rate_jacobian(RP, :Elastic), ion_rate_jacobian(RP, :Charge_Exchange)
             ν_a = @. pla.n_H2_gas * (FT(0.5) * K_ela + K_cx)
-            dν_a = @. pla.n_H2_gas * (FT(0.5) * dK_ela + dK_cx)
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
                 @. ν_a += Z_i * pla.ν_en_iz          # electron rate: no T_i dependence
             end
-            @. pla.exprb.eig_Ti += dν_a * ΔE - ν_a * FT(1.5) * ee
+            @. pla.exprb.eig_Ti -= ν_a * FT(1.5) * ee
+
+            if linear_response
+                ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
+                ΔE = @. (
+                    FT(0.5) * mi * ui_mag_sq - FT(1.5) * (pla.Ti_eV - pla.T_gas_eV) * ee
+                )
+                dK_ela = ion_rate_jacobian(RP, :Elastic)
+                dK_cx = ion_rate_jacobian(RP, :Charge_Exchange)
+                dν_a = @. pla.n_H2_gas * (FT(0.5) * dK_ela + dK_cx)
+                @. pla.exprb.eig_Ti += dν_a * ΔE
+            end
         end
 
         if RP.flags.Coulomb_Collision

@@ -836,6 +836,36 @@ whose coupled mode's eigenvalue is not any diagonal entry).
 @enum TimeScheme ForwardEuler Theta ExpRB
 
 """
+    EigenvalueSource
+
+Where [`ExpRB`](@ref TimeScheme) gets the `λ` it puts in `B(λΔt)`. Orthogonal to
+[`TimeScheme`](@ref): that names the integrator, this names its input.
+
+| value | `λ` | what it assumes |
+|---|---|---|
+| `KnownRate` | the rate the model already states as `ν·y` | nothing — exact algebra |
+| `LinearResponse` | that **plus** `∂ν/∂y` from the tables, i.e. the full `∂f/∂y` | that today's slope holds across the step |
+
+`LinearResponse` is a superset, not an alternative: it is the whole Jacobian and
+contains every term `KnownRate` has.
+
+Both yield a rate; the axis is whether a derivative was taken. That is also which
+one can change sign — `KnownRate` sums non-negative rates, so its `λ ≤ 0` and no
+growth branch exists for it to have; `LinearResponse` reaches `+1.67e5 1/s` on a
+cold-start avalanche below `Tₑ ≈ 1.2 eV`, which is real physics and also where
+exponentiating a stale slope costs the most.
+
+Neither is uniformly better, which is why this is a flag. Measured on a 0-D
+discharge at 2000× the resolved step: cooling from 19 eV, `LinearResponse` is
+1.9 % against `KnownRate`'s 6.0 %; heating from 0.03 eV it is 7.3 % against
+1.2 %. `KnownRate` is the default because it assumes less.
+
+The continuity equation cannot tell them apart: `∂ν_iz/∂n = 0` exactly, so both
+give `λ = ν_iz` — and the switch must be bit-for-bit there.
+"""
+@enum EigenvalueSource KnownRate LinearResponse
+
+"""
     TimeSchemes(; transport, growth, decay, gas, atomic)
 
 The [`TimeScheme`](@ref) each family runs, sibling of [`ImplicitWeights`](@ref)
@@ -1041,6 +1071,7 @@ Contains boolean flags that control various aspects of the simulation.
     # `scheme.<family> == Theta`. Defaults reproduce current behaviour — see
     # `TimeSchemes`, and `validate_scheme_flags` for the combinations refused.
     scheme::TimeSchemes = TimeSchemes()
+    exprb_eigenvalue::EigenvalueSource = KnownRate  # what feeds B(λΔt); see EigenvalueSource
     Adapt_dt::Bool = false                    # Use adaptive time stepping
 
     # Temperature limits
@@ -1096,17 +1127,36 @@ Called from `initialize!`; `TimeSchemes`' own `setproperty!` cannot do this
 because the conflict is between two independent fields.
 """
 function validate_scheme_flags(flags::SimulationFlags)
-    if flags.scheme.atomic === ExpRB
+    # Only LinearResponse differentiates the tables; KnownRate reads a rate the
+    # model already states and so works with every rate path.
+    if flags.scheme.atomic === ExpRB && flags.exprb_eigenvalue === LinearResponse
         for (name, wanted) in ((:Ionz_method, "Xsec"), (:ud_method, "Xsec"))
             got = getproperty(flags, name)
             got == wanted || throw(
                 ArgumentError(
-                    "scheme.atomic = ExpRB needs a differentiable rate, and " *
+                    "exprb_eigenvalue = LinearResponse needs a differentiable rate, and " *
                         "$name = \"$got\" has none — it is a legacy comparison path. " *
-                        "Set $name = \"$wanted\", or scheme.atomic = ForwardEuler."
+                        "Set $name = \"$wanted\", or exprb_eigenvalue = KnownRate, " *
+                        "which takes no derivative."
                 )
             )
         end
+    end
+
+    # Selecting a policy a family cannot honour must fail, not fall back: the
+    # momentum equation uses λ = −ν_sum, and its linear response
+    # −(mₑu∥²/e)·∂ν/∂Ē — up to 122 % of that on a measured transient — is not
+    # computed anywhere.
+    if flags.scheme.decay === ExpRB && flags.exprb_eigenvalue === LinearResponse
+        throw(
+            ArgumentError(
+                "exprb_eigenvalue = LinearResponse is not available for scheme.decay: " *
+                    "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz + ν_ei_eff), the " *
+                    "stated rate, and nothing computes the −(mₑu∥²/e)·∂ν/∂Ē that " *
+                    "completes it. Use exprb_eigenvalue = KnownRate, or " *
+                    "scheme.decay = Theta."
+            )
+        )
     end
 
     # The exact routing condition in `advance_timestep!`. Written as the same
@@ -1433,4 +1483,5 @@ RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(conf
 
 # Export types
 export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState
-export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags
+export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags,
+    EigenvalueSource, KnownRate, LinearResponse
