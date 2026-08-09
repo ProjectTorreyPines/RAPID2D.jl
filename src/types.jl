@@ -301,9 +301,11 @@ Contains the plasma state variables including density, temperature, and velocity
     # ∂ν/∂Tₑ for the four frequencies above, written by the same `update_RRCs!` at
     # the same evaluation point — and only when `flags.scheme.atomic == ExpRB`.
     dν_dTe::ElectronRateJacobians{FT} = ElectronRateJacobians{FT}(dims)
-    # (2/3e)·∂P/∂Tₑ [1/s], signed: the local eigenvalue of the energy equation.
-    # Written by `update_electron_power_jacobian!`; `z = λ_Te·Δt` is what B(z) takes.
+    # (2/3e)·∂P/∂T [1/s], signed: the local eigenvalue of each energy equation.
+    # Written by `update_electron_power_jacobian!` / `update_ion_power_jacobian!`;
+    # `z = λ·Δt` is what B(z) takes. Both gated on `flags.scheme.atomic == ExpRB`.
     λ_Te::Matrix{FT} = zeros(FT, dims)
+    λ_Ti::Matrix{FT} = zeros(FT, dims)
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 

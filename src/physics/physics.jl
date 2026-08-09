@@ -20,6 +20,7 @@ export update_ue_para!,
     update_coulomb_collision_parameters!,
     update_electron_heating_powers!,
     update_electron_power_jacobian!,
+    update_ion_power_jacobian!,
     update_ion_heating_powers!,
     solve_electron_continuity_equation!,
     solve_ion_continuity_equation!,
@@ -93,9 +94,16 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             #
             # With `scheme.decay = ExpRB` the weight stops being a constant and
             # becomes the friction's own fitted one, θ(z) with z = −νΔt, per cell.
-            # BE is its Δt→∞ limit, so this cannot be worse where BE was chosen;
-            # it recovers second order where the step resolves the friction, which
-            # is exactly where BE's first order costs the most.
+            # It recovers second order where the step resolves the friction, where
+            # BE is only first order.
+            #
+            # It is NOT uniformly better than BE here, and the measurement says so:
+            # θ_fit(z) < 1 on a decay branch, so ExpRB is LESS implicit than BE and
+            # tracks Crank–Nicolson. With ν lagged at the step-entry state, BE's
+            # extra damping overshoots the saturated drift least once the step
+            # outruns the rate — measured 1.89 (BE) vs 2.14 (ExpRB) peak |u∥|/u_sat
+            # at 315× the reference step in `claudedocs/exprb_dt_scan.jl`. What
+            # ExpRB buys on this equation is order, not monotonicity.
             exprb_decay = RP.flags.scheme.decay === ExpRB
             z_decay = exprb_decay ? (@. cap_exprb_z(-ν_sum_mom_iz_ei * dt)) : nothing
             B_decay = exprb_decay ? bernoulli_B.(z_decay) : nothing
@@ -257,14 +265,28 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Calculate acceleration from electric field
             qi = cnst.ee
 
-            # Apply backward Euler time integration
             one_FT = one(FT)
-            θ = one_FT  # Backward Euler
-            @. pla.ui_para = (
-                pla.ui_para * (one_FT - (one_FT - θ) * RP.dt * eff_atomic_coll_freq) +
-                    RP.dt * qi * RP.fields.E_para_tot / m_i
-            ) /
-                (one_FT + θ * RP.dt * eff_atomic_coll_freq)
+            if RP.flags.scheme.decay === ExpRB
+                # Same equation and same family as `update_ue_para!`: a sink written
+                # as ν·u, so B(z) with z = −νΔt replaces the constant weight. Same
+                # caveat too — see there: this is second order where BE is first,
+                # but it is not the least-overshooting choice at a coarse step.
+                z = @. cap_exprb_z(-eff_atomic_coll_freq * RP.dt)
+                B = bernoulli_B.(z)
+                @. pla.ui_para = (
+                    (B + z) * pla.ui_para + RP.dt * qi * RP.fields.E_para_tot / m_i
+                ) / B
+            else
+                # θ = 1 outright rather than `θ_imp.decay`: this equation has never
+                # read the weight store, and wiring it up here would be a silent
+                # behaviour change for anyone who has set it.
+                θ = one_FT  # Backward Euler
+                @. pla.ui_para = (
+                    pla.ui_para * (one_FT - (one_FT - θ) * RP.dt * eff_atomic_coll_freq) +
+                        RP.dt * qi * RP.fields.E_para_tot / m_i
+                ) /
+                    (one_FT + θ * RP.dt * eff_atomic_coll_freq)
+            end
 
             # Add electron-ion momentum transfer effect
             if RP.flags.Coulomb_Collision
@@ -418,8 +440,17 @@ function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         dt = RP.dt
         pla = RP.plasma
 
-        # Update ion temperature using forward Euler
-        @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / (ee)
+        # Forward Euler with B as a divisor on the increment, the same treatment
+        # `update_Te!` gives the electron power and for the same reason: `iPowers.tot`
+        # is a number from a table lookup with no operator for a θ to weigh.
+        if RP.flags.scheme.atomic === ExpRB
+            update_ion_power_jacobian!(RP)
+            z = @. cap_exprb_z(pla.λ_Ti * dt)
+            _warn_if_z_capped(z)
+            @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / ee / bernoulli_B(z)
+        else
+            @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / (ee)
+        end
 
         # Apply temperature limits (same as electrons for simplicity)
         @. pla.Ti_eV = max(pla.Ti_eV, RP.config.min_Te)
@@ -677,6 +708,68 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # converts J/eV and the 2/3 comes from (3/2)e·∂Tₑ/∂t = P.
         @. pla.λ_Te *= FT(2.0) / FT(3.0) / ee
 
+        return RP
+    end # @timeit
+end
+
+"""
+    update_ion_power_jacobian!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+
+Write `plasma.λ_Ti = (2/3e)·∂P_i/∂T_i` [1/s], the ion sibling of
+[`update_electron_power_jacobian!`](@ref).
+
+Term for term against [`update_ion_heating_powers!`](@ref) — edit them together.
+With `ν_a` the effective atomic collision frequency and `ΔE` the per-collision
+energy change it multiplies:
+
+- `P_atomic = ν_a·ΔE` gives `∂ν_a/∂T_i·ΔE − ν_a·(3/2)e`. The second half needs no
+  table at all; the first comes from [`ion_rate_jacobian`](@ref).
+- `Z·ν_iz` inside `ν_a` is the ELECTRON ionization rate and carries no `T_i`
+  dependence, so it contributes to `ν_a` but not to `∂ν_a/∂T_i`.
+- `P_equi` gives `−2(m_i m_e/(m_i+m_e)²)(3/2)e·ν_ei`, with `∂ν_ei/∂T_i` omitted for
+  the reason its electron counterpart is.
+
+The rate coefficients are re-queried here rather than read from `plasma`: unlike
+the electron frequencies, the ion ones are never materialized — `update_ion_heating_powers!`
+looks them up live, so evaluating at the same `(T_i, |u_i∥|)` is what keeps the
+Jacobian on the power it linearises.
+"""
+function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "update_ion_power_jacobian!" begin
+        pla = RP.plasma
+        RP.flags.scheme.atomic === ExpRB || return RP
+
+        @unpack ee, me = RP.config.constants
+        mi = bulk_ion_mass(RP)
+        zero_FT = zero(FT)
+        fill!(pla.λ_Ti, zero_FT)
+
+        if RP.flags.Atomic_Collision
+            ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
+            ΔE = @. (
+                FT(0.5) * mi * ui_mag_sq - FT(1.5) * (pla.Ti_eV - pla.T_gas_eV) * ee
+            )
+            K_ela, K_cx = get_H2_ion_RRC(RP, :Elastic), get_H2_ion_RRC(RP, :Charge_Exchange)
+            dK_ela, dK_cx = ion_rate_jacobian(RP, :Elastic), ion_rate_jacobian(RP, :Charge_Exchange)
+            ν_a = @. pla.n_H2_gas * (FT(0.5) * K_ela + K_cx)
+            dν_a = @. pla.n_H2_gas * (FT(0.5) * dK_ela + dK_cx)
+            if RP.flags.src
+                Z_i = FT(bulk_ion_charge(RP))
+                @. ν_a += Z_i * pla.ν_en_iz          # electron rate: no T_i dependence
+            end
+            @. pla.λ_Ti += dν_a * ΔE - ν_a * FT(1.5) * ee
+        end
+
+        if RP.flags.Coulomb_Collision
+            @. pla.λ_Ti -= (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * pla.ν_ei
+        end
+
+        on_out_wall_nids = RP.G.nodes.on_out_wall_nids
+        if !isempty(on_out_wall_nids)
+            @views pla.λ_Ti[on_out_wall_nids] .= zero_FT
+        end
+
+        @. pla.λ_Ti *= FT(2.0) / FT(3.0) / ee
         return RP
     end # @timeit
 end

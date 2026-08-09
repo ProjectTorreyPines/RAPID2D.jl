@@ -71,6 +71,17 @@ Used for reactions where the rate depends on temperature and drift velocity.
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
 - `itp`: Interpolant; clamps to the table boundary outside its bounds
+- `dK_dT`: `∂K/∂T` at the same point
+
+# The derivative surface
+
+Mirror of [`RRC_EoverP_Erg`](@ref)'s, and simpler: temperature is this table's
+own first axis, so there is no chain rule at all — `∂ν/∂T = n_gas·∂K/∂T`.
+
+Same per-axis asymmetry, for the same reason. `u_d` clamps as `itp` does; `T`
+uses `NoExtrap` and callers clamp it themselves, because out of range the value
+is frozen and the honest derivative is `0`, not the boundary cell's slope
+(FastInterpolations returns the latter — upstream bug, derivative views only).
 """
 struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
     # 2 variables for given reaction rate coefficient
@@ -79,6 +90,7 @@ struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 
     raw_data::AbstractArray{FT}
     itp  # Interpolant; clamps to the table boundary outside its bounds
+    dK_dT  # ∂K/∂T of the same interpolant; raises on T, clamps on u_d (see above)
 
     function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractArray{FT}) where {FT <: AbstractFloat}
         size(raw_data) == (length(T_eV), length(ud_para)) || throw(
@@ -90,7 +102,11 @@ struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
         )
         # ClampExtrap: out-of-domain (T, u_d) queries clamp to the nearest boundary rate.
         itp = linear_interp((T_eV, ud_para), raw_data; extrap = ClampExtrap())
-        return new{FT}(T_eV, ud_para, raw_data, itp)
+        itp_d = linear_interp(
+            (T_eV, ud_para), raw_data;
+            extrap = (NoExtrap(), ClampExtrap())
+        )
+        return new{FT}(T_eV, ud_para, raw_data, itp, deriv_view(itp_d, (1, 0)))
     end
 end
 
@@ -140,6 +156,30 @@ end
 function read_T_ud_surface(h5fid, name::AbstractString, order::Symbol)
     A = read(h5fid, name)
     return order === :as_stored ? A : permutedims(A)
+end
+
+"""
+    ion_rate_jacobian(RP, reaction) -> Matrix
+
+`∂K/∂T_i` for one `(T, u_d)` ion surface, at the same `(T_i, |u_i∥|)` the value
+path uses, with the out-of-range mask [`update_rate_jacobian!`](@ref) applies for
+the electron surfaces and for the same reason.
+
+Returns `∂K/∂T`, not `∂ν/∂T`: the caller owns the `n_gas` and the per-channel
+weights (`½` on elastic), exactly as it owns them for the value.
+"""
+function ion_rate_jacobian(RP::RAPID{FT}, reaction::Symbol) where {FT <: AbstractFloat}
+    rrc = getfield(RP.iRRCs, reaction)
+    rrc isa RRC_T_ud ||
+        throw(ArgumentError("∂/∂T_i is defined for (T, u_d) surfaces; $reaction is not one"))
+
+    T_lo, T_hi = first(rrc.T_eV), last(rrc.T_eV)
+    T_query = clamp.(RP.plasma.Ti_eV, T_lo, T_hi)
+    out = rrc.dK_dT((T_query, abs.(RP.plasma.ui_para)))
+    # Exact equality is the in-range test — `clamp` returns its argument untouched
+    # inside the interval and a bound outside it.
+    @. out = ifelse(RP.plasma.Ti_eV == T_query, out, zero(FT))
+    return out
 end
 
 """
@@ -518,7 +558,7 @@ function update_rate_jacobian!(
 end
 
 # Export types and functions for reaction rate coefficients
-export update_RRCs!, update_rate_jacobian!
+export update_RRCs!, update_rate_jacobian!, ion_rate_jacobian
 export AbstractReactionRateCoefficient
 export RRC_EoverP_Erg, RRC_T_ud, RRC_T_ud_gFac
 export Electron_RRCs, H2_Ion_RRCs
