@@ -1,5 +1,5 @@
 @testitem "exprb_theta: the weight a ledger should record, valid at every z" begin
-    using RAPID2D: exprb_theta, exprb_B
+    using RAPID2D: exprb_theta, exprb_bern
 
     # θ(z) = (1 − B(z))/z is what `ExpRB` amounts to when read as a θ-scheme. It
     # is never used to BUILD the scheme — 1 − θz cancels — but a consumer that
@@ -20,7 +20,7 @@
     @test exprb_theta(1.0e6) ≈ 0.0 atol = 1.0e-5    # fast growth  → FE
 
     # The series branch joins the closed form continuously and beats it near zero.
-    @test exprb_theta(1.0e-4) ≈ (1 - exprb_B(1.0e-4)) / 1.0e-4 rtol = 1.0e-9
+    @test exprb_theta(1.0e-4) ≈ (1 - exprb_bern(1.0e-4)) / 1.0e-4 rtol = 1.0e-9
     θ_big(z) = Float64((big(1.0) - big(z) / expm1(big(z))) / big(z))
     for z in (1.0e-12, -1.0e-9, 1.0e-6, -1.0e-5, 1.0e-3, -2.0)
         @test exprb_theta(z) ≈ θ_big(z) rtol = 1.0e-13
@@ -28,7 +28,7 @@
 end
 
 @testsnippet ExpRBDecayFixtures begin
-    using RAPID2D: ExpRB, Theta, update_ue_para!, update_RRCs!, exprb_B, exprb_theta
+    using RAPID2D: ExpRB, Theta, update_ue_para!, update_RRCs!, exprb_bern, exprb_theta
 
     function ud_RAPID(;
             u₀ = 0.0, E_para = -50.0, pressure = 5.0e-3, implicit = true,

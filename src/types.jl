@@ -201,7 +201,7 @@ end
 """
     ExpRBTerms{FT<:AbstractFloat}
 
-What [`exprb_B`](@ref) is evaluated at, per family. A namespace, because `z` and
+What [`exprb_bern`](@ref) is evaluated at, per family. A namespace, because `z` and
 `λ` are the most overloaded letters here — `z` is the vertical coordinate and the
 charge state, `λ` is a mean free path and the Coulomb logarithm — and behind
 `plasma.exprb` neither can be misread.
@@ -822,7 +822,7 @@ much* weight a θ-scheme gets; this says *whether a θ-scheme is what runs*.
 | `ExpRB` | `B(λΔt)` on the diagonal | — (opt-in) |
 
 `ExpRB` is exponential Rosenbrock–Euler, `y ← y + Δt·f(y)/B(λΔt)` with
-`B(z) = z/(eᶻ−1)` ([`exprb_B`](@ref)). Second order, L-stable when stiff,
+`B(z) = z/(eᶻ−1)` ([`exprb_bern`](@ref)). Second order, L-stable when stiff,
 and exact for the frozen-coefficient problem at every `Δt` — including growth,
 where every θ has a pole (BE's at `z = 1`, CN's at `z = 2`). It is not a trade
 against `Theta`: `θ_fit(z) = ½ − z/12 + O(z³)`, so where the step resolves the

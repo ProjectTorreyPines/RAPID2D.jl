@@ -106,7 +106,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # order, not monotonicity.
             decay_is_exprb = RP.flags.scheme.decay === ExpRB
             decay_exponent = decay_is_exprb ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
-            diag_decay = decay_is_exprb ? exprb_B.(decay_exponent) : nothing
+            diag_decay = decay_is_exprb ? exprb_bern.(decay_exponent) : nothing
             # A scalar for the θ-scheme, a per-cell field for ExpRB. `θu` weights
             # the FRICTION and the ledger that records it; `θ_op` weights this
             # equation's nonlocal operators (convection, ExB diffusion), which the
@@ -272,7 +272,7 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 # caveat too — see there: this is second order where BE is first,
                 # but it is not the least-overshooting choice at a coarse step.
                 z = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
-                B = exprb_B.(z)
+                B = exprb_bern.(z)
                 @. pla.ui_para = (
                     (B + z) * pla.ui_para + RP.dt * qi * RP.fields.E_para_tot / m_i
                 ) / B
@@ -342,7 +342,7 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             update_electron_power_jacobian!(RP)
             z = @. exprb_cap_exponent(pla.exprb.eig_Te * dt)
             _warn_if_exprb_capped(z)
-            exprb_B.(z)
+            exprb_bern.(z)
         else
             nothing
         end
@@ -447,7 +447,7 @@ function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             update_ion_power_jacobian!(RP)
             z = @. exprb_cap_exponent(pla.exprb.eig_Ti * dt)
             _warn_if_exprb_capped(z)
-            @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / ee / exprb_B(z)
+            @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / ee / exprb_bern(z)
         else
             @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / (ee)
         end
@@ -952,7 +952,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         fit_growth = RP.flags.src && growth_is_exprb
         diag_growth = if fit_growth
             _warn_if_exprb_capped(pla.exprb.z_growth)
-            exprb_B.(pla.exprb.z_growth)
+            exprb_bern.(pla.exprb.z_growth)
         else
             nothing
         end

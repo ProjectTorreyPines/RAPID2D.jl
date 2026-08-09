@@ -1,5 +1,5 @@
 @testsnippet ExpRBLadderFixtures begin
-    using RAPID2D: ExpRB, ForwardEuler, update_RRCs!, update_Te!, exprb_B, exprb_cap_exponent
+    using RAPID2D: ExpRB, ForwardEuler, update_RRCs!, update_Te!, exprb_bern, exprb_cap_exponent
 
     # The real table, at the E/p of the design note's Fig 7 cool-down. E/p is not
     # a knob — it is |E∥|/(n_gas·T_gas·e) — so the field is solved for instead of

@@ -1,7 +1,7 @@
 @testsnippet ExpRBGrowthFixtures begin
     using RAPID2D: ExpRB, Theta, update_RRCs!, solve_electron_continuity_equation!,
         reaction_θ, check_reaction_counts, net_electron_count, net_ion_count,
-        exprb_B, exprb_theta, exprb_cap_exponent
+        exprb_bern, exprb_theta, exprb_cap_exponent
 
     # Pure growth: no transport in the continuity equation, so the only thing
     # acting is the ionization source and dn/dt = +ν_iz·n exactly.

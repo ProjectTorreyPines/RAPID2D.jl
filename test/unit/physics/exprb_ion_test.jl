@@ -1,7 +1,7 @@
 @testsnippet ExpRBIonFixtures begin
     using RAPID2D: ExpRB, ForwardEuler, Theta, update_ui_para!, update_Ti!,
         update_ion_heating_powers!, update_ion_power_jacobian!, ion_rate_jacobian,
-        get_H2_ion_RRC, exprb_B, exprb_cap_exponent, bulk_ion_mass, bulk_ion_charge
+        get_H2_ion_RRC, exprb_bern, exprb_cap_exponent, bulk_ion_mass, bulk_ion_charge
 
     # 0-D-like: no ion transport, so the only thing acting on u_i∥ and T_i is the
     # local rate the scheme fits.

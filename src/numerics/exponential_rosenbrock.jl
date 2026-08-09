@@ -40,7 +40,7 @@ Clamp `z = λΔt` from above at [`EXPRB_MAX_EXPONENT`](@ref), preserving the typ
 @inline exprb_cap_exponent(z::T) where {T <: AbstractFloat} = min(z, T(EXPRB_MAX_EXPONENT))
 
 """
-    exprb_B(z)
+    exprb_bern(z)
 
 `B(z) = z/(eᶻ − 1)`, with `B(0) = 1`.
 
@@ -53,7 +53,7 @@ No series expansion near zero: `expm1` already keeps `eᶻ − 1` accurate where
 cancels, measured max relative error **1.9e-16** over `z ∈ ±[1e-18, 200]` against
 `BigFloat`. Expects `z` to have passed through [`exprb_cap_exponent`](@ref).
 """
-@inline exprb_B(z::T) where {T <: AbstractFloat} = iszero(z) ? one(T) : z / expm1(z)
+@inline exprb_bern(z::T) where {T <: AbstractFloat} = iszero(z) ? one(T) : z / expm1(z)
 
 """
     exprb_theta(z)
@@ -72,7 +72,7 @@ digits to cancellation.
 @inline function exprb_theta(z::T) where {T <: AbstractFloat}
     return abs(z) < T(1.0e-4) ?
         evalpoly(z, (T(0.5), -T(1) / T(12), zero(T), T(1) / T(720))) :
-        (one(T) - exprb_B(z)) / z
+        (one(T) - exprb_bern(z)) / z
 end
 
 """
@@ -89,4 +89,4 @@ function _warn_if_exprb_capped(z::AbstractArray{T}) where {T <: AbstractFloat}
     return z
 end
 
-export exprb_B, exprb_theta, exprb_cap_exponent, EXPRB_MAX_EXPONENT
+export exprb_bern, exprb_theta, exprb_cap_exponent, EXPRB_MAX_EXPONENT

@@ -1,6 +1,6 @@
 @testsnippet ExpRBTeFixtures begin
     using RAPID2D: Electron_RRCs, ExpRB, ForwardEuler, update_RRCs!, update_Te!,
-        update_electron_heating_powers!, exprb_B
+        update_electron_heating_powers!, exprb_bern
     using RAPID2D: h5open        # HDF5 is RAPID2D's dependency, not the test env's
 
     # A 0D-like configuration: no transport in the energy equation, so A_LHS is
@@ -217,7 +217,7 @@ end
 
 @testitem "ExpRB Tₑ: the diagonal is B(z), and the sparsity pattern is untouched" setup = [ExpRBTeFixtures] begin
     using RAPID2D: ExpRB, update_RRCs!, update_electron_heating_powers!,
-        update_electron_power_jacobian!, exprb_B, exprb_cap_exponent
+        update_electron_power_jacobian!, exprb_bern, exprb_cap_exponent
 
     # The change to the assembled system is meant to be two coefficients, not a
     # new operator: A_LHS gains diag(B − 1) and the RHS multiplies Tₑⁿ by B. If
@@ -247,7 +247,7 @@ end
     # And the diagonal difference is exactly B(z) − 1.
     update_electron_heating_powers!(RP)
     update_electron_power_jacobian!(RP)
-    B = exprb_B.(exprb_cap_exponent.(RP.plasma.exprb.eig_Te .* RP.dt))
+    B = exprb_bern.(exprb_cap_exponent.(RP.plasma.exprb.eig_Te .* RP.dt))
     @test all(B .> 0)
     @test any(B .!= 1)                                 # the fit is actually doing something
 end
