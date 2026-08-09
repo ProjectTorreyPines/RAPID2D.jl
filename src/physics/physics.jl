@@ -265,11 +265,27 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         dt = RP.dt
         pla = RP.plasma
         OP = RP.operators
-        # Only the transport terms of the energy equation are θ-weighted here —
-        # the atomic power terms enter `ePowers.tot` explicitly.
+        # Only the transport terms of the energy equation are θ-weighted here.
+        # The atomic power enters `ePowers.tot`, which carries no operator for a θ
+        # to multiply — `scheme.atomic` is what decides its treatment instead.
         θimp = RP.flags.θ_imp.transport
 
         two_thirds_FT = FT(2.0) / FT(3.0)
+
+        # `B(z)` with `z = λ_Te·Δt`: the exponential Rosenbrock–Euler coefficient
+        # for the atomic power's own eigenvalue. `B ≡ 1` would make the off path
+        # correct by arithmetic, but it is branched instead so the off path does no
+        # arithmetic at all — no allocation, and "unchanged" holds structurally
+        # rather than to within round-off.
+        exprb_atomic = RP.flags.scheme.atomic === ExpRB
+        B_atomic = if exprb_atomic
+            update_electron_power_jacobian!(RP)
+            z = @. cap_exprb_z(pla.λ_Te * dt)
+            _warn_if_z_capped(z)
+            bernoulli_B.(z)
+        else
+            nothing
+        end
 
         # Apply time integration method based on flag
         if RP.flags.Implicit
@@ -299,7 +315,22 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                     OP.A_LHS .-= two_thirds_FT * (@views dt * θimp * (-FT(1.5) * OP.∇𝐮 + spdiagm(FT(0.5) * div_u[:])))
                 end
 
-                OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
+                # The B-form's two coefficients. Writing the LHS as a deviation
+                # from the identity keeps the sparsity pattern byte-identical to
+                # `OP.II`, so the cached symbolic factorization stays valid — the
+                # whole fit costs one changed value per diagonal entry.
+                #
+                # The source term needs no B: with S = (2/3e)P⁰ − λTₑⁿ the two-
+                # coefficient form B(z)Tₑⁿ⁺¹ = B(−z)Tₑⁿ + ΔtS collapses through
+                # B(−z) = B(z) + z, and the λTₑⁿ pieces cancel exactly. What is
+                # left is today's RHS with Tₑⁿ scaled by B.
+                if exprb_atomic
+                    OP.A_LHS += @views spdiagm((B_atomic .- one(FT))[:])
+                    OP.RHS .= B_atomic .* pla.Te_eV +
+                        two_thirds_FT * (dt * ePowers_tilde / ee)
+                else
+                    OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
+                end
 
                 # Solve the linear system (cached factorization; pattern is step-stable)
                 @timeit RAPID_TIMER "Te_eV LinearSolve" begin
@@ -307,6 +338,9 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                     solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
                 end
             end
+        elseif exprb_atomic
+            # Forward Euler with B as a divisor on the increment.
+            @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee / B_atomic
         else
             # Explicit method (forward Euler)
             @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee
@@ -609,7 +643,12 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
             end
         end
 
-        if RP.flags.Coulomb_Collision
+        # Gated on the terms being PRESENT, not on the flag. `ePowers.drag`'s
+        # Coulomb half is charged unconditionally inside `Atomic_Collision`, using
+        # whatever `sptz_fac·ν_ei` initialization left behind — so it survives
+        # `Coulomb_Collision = false`, unlike `ePowers.equi`. A flag-gated warning
+        # would stay silent in exactly the case where the omission is unannounced.
+        if any(!iszero, pla.sptz_fac .* pla.ν_ei)
             @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from λ_Te: ν_ei is Spitzer-like, " *
                 "not an RRC surface, so P_equi and P_drag's Coulomb half are left out. " *
                 "This under-damps the transient; the fixed point is λ-independent and " *

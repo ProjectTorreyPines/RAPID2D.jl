@@ -31,6 +31,15 @@
         RP.plasma.ueϕ .= u_para .* RP.fields.bϕ
         RP.plasma.ueZ .= u_para .* RP.fields.bZ
         RP.fields.E_para_tot .= E_para
+        if !coulomb
+            # `ePowers.drag`'s Coulomb half is charged inside `Atomic_Collision`,
+            # not inside `Coulomb_Collision`, so initialization's leftover
+            # sptz_fac·ν_ei survives the flag being off. "Coulomb off" has to mean
+            # the terms are absent, or the Jacobian comparison is against a power
+            # that carries a contribution nobody asked for.
+            RP.plasma.sptz_fac .= 0.0
+            RP.plasma.ν_ei .= 0.0
+        end
         return RP
     end
 

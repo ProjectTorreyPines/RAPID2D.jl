@@ -75,4 +75,22 @@ over `z ∈ ±[1e-18, 200]` against `BigFloat`. A truncated series would be wors
 """
 @inline bernoulli_B(z::T) where {T <: AbstractFloat} = iszero(z) ? one(T) : z / expm1(z)
 
+"""
+    _warn_if_z_capped(z) -> z
+
+Warn once if any entry of an already-capped `z` sits at [`EXPRB_Z_MAX`](@ref).
+
+The cap keeps the arithmetic sound, but a cell that wanted `z > 30` is asking to
+grow by more than `e³⁰` in one step, and at that point the *step* is the problem,
+not the coefficient. Silence would let a run report a plausible number built on a
+step nothing resolves.
+"""
+function _warn_if_z_capped(z::AbstractArray{T}) where {T <: AbstractFloat}
+    n = count(==(T(EXPRB_Z_MAX)), z)
+    n > 0 && @warn "ExpRB: z = λΔt capped at $EXPRB_Z_MAX on $n cell(s). Those cells " *
+        "would grow by more than e^$EXPRB_Z_MAX in one step — the step is the " *
+        "problem, not the coefficient. Reduce Δt." maxlog = 1
+    return z
+end
+
 export bernoulli_B, cap_exprb_z, EXPRB_Z_MAX
