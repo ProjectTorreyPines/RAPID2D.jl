@@ -738,6 +738,109 @@ function Base.setproperty!(w::ImplicitWeights{FT}, name::Symbol, θ) where {FT <
 end
 
 """
+    TimeScheme
+
+Which algorithm advances a family of terms. [`ImplicitWeights`](@ref) says *how
+much* weight a θ-scheme gets; this says *whether a θ-scheme is what runs*.
+
+| value | update | families today |
+|---|---|---|
+| `ForwardEuler` | the term enters the RHS unweighted | `atomic` |
+| `Theta` | `θ_imp.<family>` is read | `transport`, `growth`, `decay`, `gas` |
+| `ExpRB` | `B(λΔt)` on the diagonal | — (opt-in) |
+
+`ExpRB` is exponential Rosenbrock–Euler, `y ← y + Δt·f(y)/B(λΔt)` with
+`B(z) = z/(eᶻ−1)` ([`bernoulli_B`](@ref)). Second order, L-stable when stiff,
+and exact for the frozen-coefficient problem at every `Δt` — including growth,
+where every θ has a pole (BE's at `z = 1`, CN's at `z = 2`). It is not a trade
+against `Theta`: `θ_fit(z) = ½ − z/12 + O(z³)`, so where the step resolves the
+rate `ExpRB` *is* Crank–Nicolson.
+
+Reserved for later, both foreseen by the design note: `PicardBE` (§6.3,
+self-consistent backward Euler for very large `Δt`) and `BlockExpRB` (§3.8,
+`B(𝐙)` as a matrix function on the spectrum — impurity charge-state chains,
+whose coupled mode's eigenvalue is not any diagonal entry).
+"""
+@enum TimeScheme ForwardEuler Theta ExpRB
+
+"""
+    TimeSchemes(; transport, growth, decay, gas, atomic)
+
+The [`TimeScheme`](@ref) each family runs, sibling of [`ImplicitWeights`](@ref)
+and split into the same families — because that split is by the character of the
+operator, which is exactly the line `ExpRB` can and cannot cross.
+
+Defaults reproduce current behaviour term for term, so a fresh object is inert.
+Note `atomic` starts at `ForwardEuler` while everything else starts at `Theta`:
+Tₑ's atomic power is not weakly weighted today, it is *unweighted*, and that
+asymmetry is the whole reason `update_ue_para!` survives a 310× step and
+`update_Te!` does not.
+
+**What cannot be set, and why.** `B(z)` fits the *local* eigenvalue — one
+diagonal entry. A diffusion operator's stiff mode `~4D/h²` is a property of the
+operator and the mesh, not of any one cell, so no per-cell fit can see it:
+`transport` and `gas` are therefore `Theta` permanently, and assigning `ExpRB`
+to them throws. `atomic = Theta` throws too — that is the design note's §3.1,
+measured at first order against `ExpRB`'s second, which is why `θ_imp` has no
+`atomic` member for it to read.
+
+Validated on assignment, for the reason [`ImplicitWeights`](@ref) is: a
+configuration mistake should fail where it was written.
+"""
+mutable struct TimeSchemes
+    transport::TimeScheme
+    growth::TimeScheme
+    decay::TimeScheme
+    gas::TimeScheme
+    atomic::TimeScheme
+
+    function TimeSchemes(transport, growth, decay, gas, atomic)
+        s = (
+            transport = transport, growth = growth, decay = decay,
+            gas = gas, atomic = atomic,
+        )
+        for (name, scheme) in pairs(s)
+            _check_time_scheme(name, scheme)
+        end
+        return new(s...)
+    end
+end
+
+function TimeSchemes(;
+        transport = Theta, growth = Theta, decay = Theta,
+        gas = Theta, atomic = ForwardEuler
+    )
+    return TimeSchemes(transport, growth, decay, gas, atomic)
+end
+
+function _check_time_scheme(name::Symbol, scheme::TimeScheme)
+    if scheme === ExpRB && (name === :transport || name === :gas)
+        throw(
+            ArgumentError(
+                "scheme.$name = ExpRB is not available: ExpRB fits the LOCAL (diagonal) " *
+                    "eigenvalue, and $name is a nonlocal operator whose stiff mode ~4D/h² " *
+                    "belongs to the mesh, not to any one cell — no per-cell fit can see it. " *
+                    "Use Theta (θ_imp.$name)."
+            )
+        )
+    elseif scheme === Theta && name === :atomic
+        throw(
+            ArgumentError(
+                "scheme.atomic = Theta is not available: θ on the linearised atomic power " *
+                    "is design note §3.1, measured at FIRST order against ExpRB's second " *
+                    "for the same Jacobian and one expm1 less. Use ExpRB, or ForwardEuler " *
+                    "for the current behaviour. (θ_imp has no `atomic` member by design.)"
+            )
+        )
+    end
+    return scheme
+end
+
+function Base.setproperty!(s::TimeSchemes, name::Symbol, scheme::TimeScheme)
+    return setfield!(s, name, _check_time_scheme(name, scheme))
+end
+
+"""
     SimulationFlags
 
 Contains boolean flags that control various aspects of the simulation.
@@ -846,6 +949,11 @@ Contains boolean flags that control various aspects of the simulation.
     # that transport, atomic rates and the ledger all used to share, the separate
     # `θ_gas` that had already broken out of it, and an inline `θu = 1`.
     θ_imp::ImplicitWeights{FT} = ImplicitWeights{FT}()
+    # WHICH algorithm each family runs, where `θ_imp` says how much weight a
+    # θ-scheme gets. Orthogonal: `θ_imp.<family>` is read only where
+    # `scheme.<family> == Theta`. Defaults reproduce current behaviour — see
+    # `TimeSchemes`, and `validate_scheme_flags` for the combinations refused.
+    scheme::TimeSchemes = TimeSchemes()
     Adapt_dt::Bool = false                    # Use adaptive time stepping
 
     # Temperature limits
@@ -874,6 +982,40 @@ Contains boolean flags that control various aspects of the simulation.
     # Initial parameters
     ini_gFac::FT = FT(1.0)                   # Initial g factor value
     gamma_2nd_electron::FT = FT(0.1)         # Secondary electron emission coefficient
+end
+
+"""
+    validate_scheme_flags(flags) -> flags
+
+Refuse [`TimeScheme`](@ref) choices that the rest of `flags` cannot support.
+
+`scheme.atomic = ExpRB` needs `∂P/∂Tₑ`, and every term of it must be
+differentiable. The legacy rate paths are not: `Ionz_method = "Townsend_coeff"`
+sets `ν_iz = α|u∥|` with no `Tₑ` dependence at all, and `ud_method` other than
+`"Xsec"` fixes the drift algebraically without a friction rate. Each could be
+carried as a `∂ν/∂Tₑ = 0` branch, but they are comparison paths on their way out
+and should not shape the new code — so the combination is refused instead.
+
+Refusal is one-directional: nothing here narrows what already works. With
+`scheme.atomic = ForwardEuler` every legacy combination passes untouched.
+
+Called from `initialize!`; `TimeSchemes`' own `setproperty!` cannot do this
+because the conflict is between two independent fields.
+"""
+function validate_scheme_flags(flags::SimulationFlags)
+    if flags.scheme.atomic === ExpRB
+        for (name, wanted) in ((:Ionz_method, "Xsec"), (:ud_method, "Xsec"))
+            got = getproperty(flags, name)
+            got == wanted || throw(
+                ArgumentError(
+                    "scheme.atomic = ExpRB needs a differentiable rate, and " *
+                        "$name = \"$got\" has none — it is a legacy comparison path. " *
+                        "Set $name = \"$wanted\", or scheme.atomic = ForwardEuler."
+                )
+            )
+        end
+    end
+    return flags
 end
 
 """
@@ -1180,3 +1322,4 @@ RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(conf
 
 # Export types
 export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState
+export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags
