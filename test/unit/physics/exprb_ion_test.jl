@@ -1,7 +1,7 @@
 @testsnippet ExpRBIonFixtures begin
     using RAPID2D: ExpRB, ForwardEuler, Theta, update_ui_para!, update_Ti!,
         update_ion_heating_powers!, update_ion_power_jacobian!, ion_rate_jacobian,
-        get_H2_ion_RRC, bernoulli_B, cap_exprb_z, bulk_ion_mass, bulk_ion_charge
+        get_H2_ion_RRC, exprb_B, exprb_cap_exponent, bulk_ion_mass, bulk_ion_charge
 
     # 0-D-like: no ion transport, so the only thing acting on u_i∥ and T_i is the
     # local rate the scheme fits.
@@ -161,12 +161,12 @@ end
     @test all(iszero, ion_rate_jacobian(hot, :Elastic))
 end
 
-@testitem "λ_Ti: agrees with a central difference of the assembled ion power" setup = [ExpRBIonFixtures] begin
+@testitem "eig_Ti: agrees with a central difference of the assembled ion power" setup = [ExpRBIonFixtures] begin
     using RAPID2D: ExpRB, update_ion_heating_powers!, update_ion_power_jacobian!
 
     # The oracle that catches a term present in iPowers.tot and missing from the
     # Jacobian — the failure a hand-written product rule actually has.
-    function lambda_fd(RP, Ti, h)
+    function eig_fd(RP, Ti, h)
         ee = RP.config.constants.ee
         P(T) = (RP.plasma.Ti_eV .= T; update_ion_heating_powers!(RP); copy(RP.plasma.iPowers.tot))
         hi, lo = P(Ti + h), P(Ti - h)
@@ -181,14 +181,14 @@ end
         RP.flags.scheme.atomic = ExpRB
         update_ion_heating_powers!(RP)
         update_ion_power_jacobian!(RP)
-        λ = copy(RP.plasma.λ_Ti)
-        fd = lambda_fd(RP, Ti, 1.0e-5 * Ti)
+        eig = copy(RP.plasma.exprb.eig_Ti)
+        fd = eig_fd(RP, Ti, 1.0e-5 * Ti)
 
         inw = RP.G.nodes.in_wall_nids
         scale = max(maximum(abs, fd[inw]), eps())
-        @test maximum(abs, λ[inw] .- fd[inw]) / scale < 1.0e-5
-        @test !all(iszero, λ[inw])
-        @test all(<(0), λ[inw])          # collisional relaxation toward the gas
+        @test maximum(abs, eig[inw] .- fd[inw]) / scale < 1.0e-5
+        @test !all(iszero, eig[inw])
+        @test all(<(0), eig[inw])          # collisional relaxation toward the gas
     end
 end
 
@@ -196,7 +196,7 @@ end
     using RAPID2D: ExpRB, ForwardEuler, update_ion_heating_powers!,
         update_ion_power_jacobian!
 
-    # Δt derived from the measured λ_Ti, so this states a fact about the scheme
+    # Δt derived from the measured eig_Ti, so this states a fact about the scheme
     # rather than a guess about the rates. At Δt = 10τ forward Euler's
     # amplification is |1 + λΔt| = 9: a relaxation becomes a sign flip, and only
     # the clamp keeps the run on the page.
@@ -205,8 +205,8 @@ end
     update_ion_heating_powers!(probe)
     update_ion_power_jacobian!(probe)
     inw = probe.G.nodes.in_wall_nids
-    @test all(<(0), probe.plasma.λ_Ti[inw])
-    Δt = 10 / maximum(abs, probe.plasma.λ_Ti[inw])
+    @test all(<(0), probe.plasma.exprb.eig_Ti[inw])
+    Δt = 10 / maximum(abs, probe.plasma.exprb.eig_Ti[inw])
 
     ref = ion_RAPID(; Ti_eV = 30.0)
     ref.flags.scheme.atomic = ExpRB

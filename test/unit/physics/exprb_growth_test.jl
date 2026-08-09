@@ -1,7 +1,7 @@
 @testsnippet ExpRBGrowthFixtures begin
     using RAPID2D: ExpRB, Theta, update_RRCs!, solve_electron_continuity_equation!,
         reaction_θ, check_reaction_counts, net_electron_count, net_ion_count,
-        bernoulli_B, exprb_theta, cap_exprb_z
+        exprb_B, exprb_theta, exprb_cap_exponent
 
     # Pure growth: no transport in the continuity equation, so the only thing
     # acting is the ionization source and dn/dt = +ν_iz·n exactly.
@@ -175,7 +175,7 @@ end
 end
 
 @testitem "ExpRB growth: the ledger reads the fitted weight on BOTH solve paths" setup = [ExpRBGrowthFixtures] begin
-    using RAPID2D: ExpRB, Theta, reaction_θ, exprb_theta, cap_exprb_z
+    using RAPID2D: ExpRB, Theta, reaction_θ, exprb_theta, exprb_cap_exponent
 
     # `reaction_θ` answered `Implicit || return 0` before consulting `scheme`, which
     # was right while "explicit" and "unweighted" meant the same thing. ExpRB
@@ -192,7 +192,7 @@ end
         RP.flags.scheme.growth = ExpRB
         RP.dt = 2.0e-5
         inw = RP.G.nodes.in_wall_nids
-        expected = exprb_theta.(cap_exprb_z.(RP.plasma.ν_en_iz .* RP.dt))
+        expected = exprb_theta.(exprb_cap_exponent.(RP.plasma.ν_en_iz .* RP.dt))
         solve_electron_continuity_equation!(RP)
 
         θ = reaction_θ(RP, :iz)
@@ -212,7 +212,7 @@ end
 end
 
 @testitem "ExpRB growth: the ledger counts the growth the cap allowed, not the one it refused" setup = [ExpRBGrowthFixtures] begin
-    using RAPID2D: ExpRB, Theta, EXPRB_Z_MAX
+    using RAPID2D: ExpRB, Theta, EXPRB_MAX_EXPONENT
 
     # One ionization makes one electron, so with no transport the published count
     # IS the density increase — an identity the quadrature satisfies by
@@ -234,10 +234,10 @@ end
     ν_probe = maximum(growth_RAPID().plasma.ν_en_iz[growth_RAPID().G.nodes.in_wall_nids])
 
     for implicit in (true, false)
-        # z ≈ 40: past EXPRB_Z_MAX, so the solve caps and the ledger must follow.
+        # z ≈ 40: past EXPRB_MAX_EXPONENT, so the solve caps and the ledger must follow.
         RP = growth_RAPID(; implicit = implicit)
         RP.flags.scheme.growth = ExpRB
-        @test ν_probe * (40 / ν_probe) > EXPRB_Z_MAX
+        @test ν_probe * (40 / ν_probe) > EXPRB_MAX_EXPONENT
         counted, born = counted_vs_born(RP, 40 / ν_probe)
         @test counted ≈ born rtol = 1.0e-12
 

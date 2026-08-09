@@ -1,5 +1,5 @@
 @testsnippet ExpRBLadderFixtures begin
-    using RAPID2D: ExpRB, ForwardEuler, update_RRCs!, update_Te!, bernoulli_B, cap_exprb_z
+    using RAPID2D: ExpRB, ForwardEuler, update_RRCs!, update_Te!, exprb_B, exprb_cap_exponent
 
     # The real table, at the E/p of the design note's Fig 7 cool-down. E/p is not
     # a knob — it is |E∥|/(n_gas·T_gas·e) — so the field is solved for instead of
@@ -55,7 +55,7 @@
             te = @view RP.plasma.Te_eV[inw]
             lo = min(lo, minimum(te)); hi = max(hi, maximum(te))
             if RP.flags.scheme.atomic === ExpRB
-                z = @view RP.plasma.λ_Te[inw]
+                z = @view RP.plasma.exprb.eig_Te[inw]
                 z_lo = min(z_lo, minimum(z) * dt); z_hi = max(z_hi, maximum(z) * dt)
             end
         end
@@ -139,7 +139,7 @@ end
 end
 
 @testitem "ExpRB Tₑ: a real run's z stays negative and far below the cap" setup = [ExpRBLadderFixtures] begin
-    using RAPID2D: ExpRB, EXPRB_Z_MAX
+    using RAPID2D: ExpRB, EXPRB_MAX_EXPONENT
 
     # The design note concedes that whether |λ_reaction| dominates the transport
     # norm "has NOT been measured [in a real 2D run] and should be". This is that
@@ -159,7 +159,7 @@ end
     #     ionization source, covered in exprb_growth_test.jl: at z = 10 in one step
     #     ExpRB reproduces e¹⁰ while Crank–Nicolson returns a negative density.
     r = only(run_ladder(; Te₀ = 19.19, dts = [6.0e-5], t_end = 3.0e-4, scheme = ExpRB))
-    @info "z = λ_Te·Δt over a 600× step run" r.z_min r.z_max EXPRB_Z_MAX
-    @test r.z_max < EXPRB_Z_MAX
+    @info "z = eig_Te·Δt over a 600× step run" r.z_min r.z_max EXPRB_MAX_EXPONENT
+    @test r.z_max < EXPRB_MAX_EXPONENT
     @test r.z_max < 0                   # decay everywhere — see (2) above
 end

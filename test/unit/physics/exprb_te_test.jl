@@ -1,6 +1,6 @@
 @testsnippet ExpRBTeFixtures begin
     using RAPID2D: Electron_RRCs, ExpRB, ForwardEuler, update_RRCs!, update_Te!,
-        update_electron_heating_powers!, bernoulli_B
+        update_electron_heating_powers!, exprb_B
     using RAPID2D: h5open        # HDF5 is RAPID2D's dependency, not the test env's
 
     # A 0D-like configuration: no transport in the energy equation, so A_LHS is
@@ -108,11 +108,11 @@
                 - ee * c.char_exc_erg_eV * ν
                 - ee * c.iz_erg_eV * ν_iz
         )
-        return (Te_sat = A ./ 𝔅, λ = @.(-(2 / 3) * 𝔅 / ee))
+        return (Te_sat = A ./ 𝔅, eig = @.(-(2 / 3) * 𝔅 / ee))
     end
 
     # The exact trajectory of dTe/dt = λ(Te − Te_sat), node by node.
-    exact_Te(p, Te₀, t) = @. p.Te_sat + (Te₀ - p.Te_sat) * exp(p.λ * t)
+    exact_Te(p, Te₀, t) = @. p.Te_sat + (Te₀ - p.Te_sat) * exp(p.eig * t)
 
     function march!(RP, dt, nsteps)
         for _ in 1:nsteps
@@ -146,8 +146,8 @@ end
     update_RRCs!(probe)
     p = linear_te_problem(probe)
     inw = probe.G.nodes.in_wall_nids
-    @test all(<(0), p.λ[inw])                          # a relaxation, in both cases
-    τ = 1 / minimum(abs, p.λ[inw])                     # the SLOWEST node sets the run
+    @test all(<(0), p.eig[inw])                          # a relaxation, in both cases
+    τ = 1 / minimum(abs, p.eig[inw])                     # the SLOWEST node sets the run
     Te_sat = p.Te_sat[first(inw)]
 
     # Both solve paths. `Implicit = false` is not a place where the fit stops
@@ -217,7 +217,7 @@ end
 
 @testitem "ExpRB Tₑ: the diagonal is B(z), and the sparsity pattern is untouched" setup = [ExpRBTeFixtures] begin
     using RAPID2D: ExpRB, update_RRCs!, update_electron_heating_powers!,
-        update_electron_power_jacobian!, bernoulli_B, cap_exprb_z
+        update_electron_power_jacobian!, exprb_B, exprb_cap_exponent
 
     # The change to the assembled system is meant to be two coefficients, not a
     # new operator: A_LHS gains diag(B − 1) and the RHS multiplies Tₑⁿ by B. If
@@ -247,7 +247,7 @@ end
     # And the diagonal difference is exactly B(z) − 1.
     update_electron_heating_powers!(RP)
     update_electron_power_jacobian!(RP)
-    B = bernoulli_B.(cap_exprb_z.(RP.plasma.λ_Te .* RP.dt))
+    B = exprb_B.(exprb_cap_exponent.(RP.plasma.exprb.eig_Te .* RP.dt))
     @test all(B .> 0)
     @test any(B .!= 1)                                 # the fit is actually doing something
 end

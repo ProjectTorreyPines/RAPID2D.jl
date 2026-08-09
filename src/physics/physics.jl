@@ -105,8 +105,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # at 315× the reference step. What ExpRB buys on this equation is
             # order, not monotonicity.
             exprb_decay = RP.flags.scheme.decay === ExpRB
-            z_decay = exprb_decay ? (@. cap_exprb_z(-ν_sum_mom_iz_ei * dt)) : nothing
-            B_decay = exprb_decay ? bernoulli_B.(z_decay) : nothing
+            decay_exponent = exprb_decay ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
+            B_decay = exprb_decay ? exprb_B.(decay_exponent) : nothing
             # A scalar for the θ-scheme, a per-cell field for ExpRB. `θu` weights
             # the FRICTION and the ledger that records it; `θ_op` weights this
             # equation's nonlocal operators (convection, ExB diffusion), which the
@@ -114,7 +114,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # way. Splitting them is what keeps `scheme.decay` from silently
             # changing the transport treatment too.
             θ_op = RP.flags.θ_imp.decay
-            θu = exprb_decay ? exprb_theta.(z_decay) : θ_op
+            θu = exprb_decay ? exprb_theta.(decay_exponent) : θ_op
 
             # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
             # This is a LEDGER of the exchange integrated over the step, so it must
@@ -173,7 +173,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 # than the algebraically equal 1 − (1−θ)νΔt — that subtraction cancels
                 # to nothing exactly where the true value is small but meaningful.
                 if exprb_decay
-                    @. OP.RHS = (B_decay + z_decay) * pla.ue_para + dt * accel_para_tilde
+                    @. OP.RHS = (B_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
                 else
                     @. OP.RHS = pla.ue_para + dt * accel_para_tilde
                 end
@@ -190,7 +190,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                     (@. one_FT / B_decay) :
                     (@. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt))
                 u_coeff = exprb_decay ?
-                    (@. B_decay + z_decay) :
+                    (@. B_decay + decay_exponent) :
                     (@. one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
                 @. pla.ue_para = inv_factor * (
                     pla.ue_para * u_coeff
@@ -271,8 +271,8 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 # as ν·u, so B(z) with z = −νΔt replaces the constant weight. Same
                 # caveat too — see there: this is second order where BE is first,
                 # but it is not the least-overshooting choice at a coarse step.
-                z = @. cap_exprb_z(-eff_atomic_coll_freq * RP.dt)
-                B = bernoulli_B.(z)
+                z = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
+                B = exprb_B.(z)
                 @. pla.ui_para = (
                     (B + z) * pla.ui_para + RP.dt * qi * RP.fields.E_para_tot / m_i
                 ) / B
@@ -335,14 +335,14 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         two_thirds_FT = FT(2.0) / FT(3.0)
 
-        # `B(z)` with `z = λ_Te·Δt`. Branched rather than relying on B(0) = 1, so
+        # `B(z)` with `z = exprb.eig_Te·Δt`. Branched rather than relying on B(0) = 1, so
         # the off path does no arithmetic at all and "unchanged" holds structurally.
         exprb_atomic = RP.flags.scheme.atomic === ExpRB
         B_atomic = if exprb_atomic
             update_electron_power_jacobian!(RP)
-            z = @. cap_exprb_z(pla.λ_Te * dt)
-            _warn_if_z_capped(z)
-            bernoulli_B.(z)
+            z = @. exprb_cap_exponent(pla.exprb.eig_Te * dt)
+            _warn_if_exprb_capped(z)
+            exprb_B.(z)
         else
             nothing
         end
@@ -445,9 +445,9 @@ function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # is a number from a table lookup with no operator for a θ to weigh.
         if RP.flags.scheme.atomic === ExpRB
             update_ion_power_jacobian!(RP)
-            z = @. cap_exprb_z(pla.λ_Ti * dt)
-            _warn_if_z_capped(z)
-            @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / ee / bernoulli_B(z)
+            z = @. exprb_cap_exponent(pla.exprb.eig_Ti * dt)
+            _warn_if_exprb_capped(z)
+            @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / ee / exprb_B(z)
         else
             @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / (ee)
         end
@@ -631,7 +631,7 @@ end
 """
     update_electron_power_jacobian!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Write `plasma.λ_Te = (2/3e)·∂P/∂Tₑ` [1/s], the local eigenvalue of the electron
+Write `plasma.exprb.eig_Te = (2/3e)·∂P/∂Tₑ` [1/s], the local eigenvalue of the electron
 energy equation — signed, so `z = λΔt` covers relaxation and runaway with one
 formula.
 
@@ -663,7 +663,7 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
         zero_FT = zero(FT)
         dν = pla.dν_dTe
 
-        fill!(pla.λ_Te, zero_FT)
+        fill!(pla.exprb.eig_Te, zero_FT)
 
         if RP.flags.Atomic_Collision
             # Same velocity magnitude update_electron_heating_powers! charges the
@@ -671,7 +671,7 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # from. The two differ as soon as a perpendicular drift is on.
             ue_mag_sq = @. pla.ueR^FT(2.0) + pla.ueϕ^FT(2.0) + pla.ueZ^FT(2.0)
 
-            @. pla.λ_Te += (
+            @. pla.exprb.eig_Te += (
                 me * ue_mag_sq * dν.mom_tot                                   # P_drag
                     - (FT(2.0) * me / m_H2) * FT(1.5) * ee * (
                     pla.ν_en_mom_ela + (pla.Te_eV - pla.T_gas_eV) * dν.mom_ela  # P_ela
@@ -680,7 +680,7 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
             )
 
             if RP.flags.src
-                @. pla.λ_Te += -(
+                @. pla.exprb.eig_Te += -(
                     ee * iz_erg_eV * dν.iz                                    # P_iz
                         + dν.iz * (FT(1.5) * pla.Te_eV * ee - FT(0.5) * me * ue_mag_sq)
                         + FT(1.5) * ee * pla.ν_en_iz                              # P_dilution
@@ -701,11 +701,11 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # would call it once per cell.
             m_i = bulk_ion_mass(RP)
             μ_reduced = m_i * me / (m_i + me)^2
-            @. pla.λ_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
+            @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
         end
 
         if RP.flags.Include_heat_flux_term
-            @warn "scheme.atomic = ExpRB omits P_heat from λ_Te: its −∇⋅(Tₑ𝐮) half is an " *
+            @warn "scheme.atomic = ExpRB omits P_heat from exprb.eig_Te: its −∇⋅(Tₑ𝐮) half is an " *
                 "operator, not a diagonal entry, and its pointwise −Tₑ(𝐮⋅∇ln n) half was " *
                 "not measured separately. Nothing weights P_heat implicitly either, so " *
                 "with Include_heat_flux_term on that power alone advances at forward " *
@@ -718,7 +718,7 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # `Coulomb_Collision = false`, unlike `ePowers.equi`. A flag-gated warning
         # would stay silent in exactly the case where the omission is unannounced.
         if any(!iszero, pla.sptz_fac .* pla.ν_ei)
-            @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from λ_Te: ν_ei is Spitzer-like, " *
+            @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from exprb.eig_Te: ν_ei is Spitzer-like, " *
                 "not an RRC surface, so the Tₑ dependence THROUGH ν_ei — in P_equi and in " *
                 "P_drag's Coulomb half — is left out. P_equi's explicit (Tₑ−T_i) factor " *
                 "is differentiated. This under-damps the transient; the fixed point is " *
@@ -728,12 +728,12 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # No power outside the wall, so no rate of change of it either.
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
         if !isempty(on_out_wall_nids)
-            @views pla.λ_Te[on_out_wall_nids] .= zero_FT
+            @views pla.exprb.eig_Te[on_out_wall_nids] .= zero_FT
         end
 
         # (2/3e)·∂P/∂Tₑ: the power is per electron [W] and Tₑ is in eV, so ee
         # converts J/eV and the 2/3 comes from (3/2)e·∂Tₑ/∂t = P.
-        @. pla.λ_Te *= FT(2.0) / FT(3.0) / ee
+        @. pla.exprb.eig_Te *= FT(2.0) / FT(3.0) / ee
 
         return RP
     end # @timeit
@@ -742,7 +742,7 @@ end
 """
     update_ion_power_jacobian!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Write `plasma.λ_Ti = (2/3e)·∂P_i/∂T_i` [1/s], the ion sibling of
+Write `plasma.exprb.eig_Ti = (2/3e)·∂P_i/∂T_i` [1/s], the ion sibling of
 [`update_electron_power_jacobian!`](@ref).
 
 Term for term against [`update_ion_heating_powers!`](@ref) — edit them together.
@@ -769,7 +769,7 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         @unpack ee, me = RP.config.constants
         mi = bulk_ion_mass(RP)
         zero_FT = zero(FT)
-        fill!(pla.λ_Ti, zero_FT)
+        fill!(pla.exprb.eig_Ti, zero_FT)
 
         if RP.flags.Atomic_Collision
             ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
@@ -784,19 +784,19 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 Z_i = FT(bulk_ion_charge(RP))
                 @. ν_a += Z_i * pla.ν_en_iz          # electron rate: no T_i dependence
             end
-            @. pla.λ_Ti += dν_a * ΔE - ν_a * FT(1.5) * ee
+            @. pla.exprb.eig_Ti += dν_a * ΔE - ν_a * FT(1.5) * ee
         end
 
         if RP.flags.Coulomb_Collision
-            @. pla.λ_Ti -= (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * pla.ν_ei
+            @. pla.exprb.eig_Ti -= (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * pla.ν_ei
         end
 
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
         if !isempty(on_out_wall_nids)
-            @views pla.λ_Ti[on_out_wall_nids] .= zero_FT
+            @views pla.exprb.eig_Ti[on_out_wall_nids] .= zero_FT
         end
 
-        @. pla.λ_Ti *= FT(2.0) / FT(3.0) / ee
+        @. pla.exprb.eig_Ti *= FT(2.0) / FT(3.0) / ee
         return RP
     end # @timeit
 end
@@ -945,15 +945,15 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # scheme is on, `src` or not, so `reaction_θ` never reads a previous step's.
         exprb_growth = RP.flags.scheme.growth === ExpRB
         if exprb_growth
-            @. pla.z_growth = cap_exprb_z(pla.ν_en_iz * dt)
+            @. pla.exprb.z_growth = exprb_cap_exponent(pla.ν_en_iz * dt)
         end
         # Unlike the decay families, this z is POSITIVE and so can reach the cap —
         # a cell asking to multiply its density by more than e³⁰ in one step is a
         # step nothing resolves, and it should say so.
         apply_growth = RP.flags.src && exprb_growth
-        B_gr = if apply_growth
-            _warn_if_z_capped(pla.z_growth)
-            bernoulli_B.(pla.z_growth)
+        B_growth = if apply_growth
+            _warn_if_exprb_capped(pla.exprb.z_growth)
+            exprb_B.(pla.exprb.z_growth)
         else
             nothing
         end
@@ -972,7 +972,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 # nⁿ coefficient is B(−z) = B(z) + z. Unlike the decay branch, the
                 # subtraction that cancels here is on the LHS, not this one — see
                 # the assembly below.
-                @. op.RHS = (B_gr + pla.z_growth) * pla.ne + dt * op.RHS
+                @. op.RHS = (B_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS
             else
                 if RP.flags.src
                     @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
@@ -1001,7 +1001,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 # pattern is untouched. This is the side that cancels on a growth
                 # branch — the θ form's 1 − θνΔt passes through zero at the poles —
                 # and B(z) > 0 at every z keeps the matrix an M-matrix.
-                op.A_LHS += @views spdiagm((B_gr .- one(FT))[:])
+                op.A_LHS += @views spdiagm((B_growth .- one(FT))[:])
             end
 
             # Solve the linear system (cached factorization; pattern is step-stable)
@@ -1013,7 +1013,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # Same two coefficients as the assembled path: no matrix is not the same
             # as no fit. `op.RHS` still holds transport, which is not part of λ and
             # rides the increment like any other frozen source.
-            @. pla.ne = ((B_gr + pla.z_growth) * pla.ne + dt * op.RHS) / B_gr
+            @. pla.ne = ((B_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / B_growth
         else
             if RP.flags.src
                 @. op.RHS += pla.ne * pla.ν_en_iz

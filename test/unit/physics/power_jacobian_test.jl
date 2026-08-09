@@ -64,19 +64,19 @@
         return RP
     end
 
-    # λ_Te at the current state, through the production path.
-    function lambda_at(RP)
+    # eig_Te at the current state, through the production path.
+    function eig_at(RP)
         update_RRCs!(RP)
         update_electron_heating_powers!(RP)
         update_electron_power_jacobian!(RP)
-        return copy(RP.plasma.λ_Te)
+        return copy(RP.plasma.exprb.eig_Te)
     end
 
     # The design note §6.1 reference: central-difference the WHOLE assembled power.
     # Kept as the oracle rather than the implementation because it re-derives
     # nothing — any term added to ePowers.tot is differentiated automatically,
     # which is exactly what makes it survive a rewrite of the term list.
-    function lambda_fd(RP; h_rel = 1.0e-5)
+    function eig_fd(RP; h_rel = 1.0e-5)
         ee = RP.config.constants.ee
         Te0 = copy(RP.plasma.Te_eV)
         h = @. h_rel * max(abs(Te0), 1.0)
@@ -95,7 +95,7 @@
     end
 end
 
-@testitem "λ_Te: exact against a hand-computed Jacobian on an Ē-linear table" setup = [PowerJacobianFixtures] begin
+@testitem "eig_Te: exact against a hand-computed Jacobian on an Ē-linear table" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB
 
     # Bilinear interpolation reproduces K = a + b·Ē exactly, so ∂K/∂Ē = b to
@@ -106,7 +106,7 @@ end
     a, b = 2.0e-15, 3.5e-17
     RP = with_surfaces(pj_RAPID(; Te_eV = 5.0); K_of_Ē = Ē -> a + b * Ē)
     RP.flags.scheme.atomic = ExpRB
-    λ = lambda_at(RP)
+    eig = eig_at(RP)
 
     cnst = RP.config.constants
     ee, me, char_exc_erg_eV, iz_erg_eV = cnst.ee, cnst.me, cnst.char_exc_erg_eV, cnst.iz_erg_eV
@@ -127,14 +127,14 @@ end
             - ee * iz_erg_eV * dν_iz
             - (dν_iz * (1.5 * pla.Te_eV * ee - 0.5 * me * ue_sq) + 1.5 * ee * ν_iz)
     )
-    @test λ[inw] ≈ ((2 / 3) .* dP ./ ee)[inw] rtol = 1.0e-12
+    @test eig[inw] ≈ ((2 / 3) .* dP ./ ee)[inw] rtol = 1.0e-12
 
     # A cooling-dominated state has λ < 0, and that sign is the whole point: it is
     # what B(z) reads to decide between damping and amplifying the FE increment.
-    @test all(<(0), λ[inw])
+    @test all(<(0), eig[inw])
 end
 
-@testitem "λ_Te: agrees with a central difference of the real assembled power" setup = [PowerJacobianFixtures] begin
+@testitem "eig_Te: agrees with a central difference of the real assembled power" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB
 
     # The oracle of design note §6.1, on the production table. This is the test
@@ -145,17 +145,17 @@ end
     for Te in (1.0, 5.0, 20.0), E_para in (-20.0, -200.0)
         RP = pj_RAPID(; Te_eV = Te, E_para = E_para)
         RP.flags.scheme.atomic = ExpRB
-        λ = lambda_at(RP)
-        fd = lambda_fd(RP)
+        eig = eig_at(RP)
+        fd = eig_fd(RP)
 
         inw = RP.G.nodes.in_wall_nids
         scale = max(maximum(abs, fd[inw]), eps())
-        @test maximum(abs, λ[inw] .- fd[inw]) / scale < 1.0e-5
-        @test !all(iszero, λ[inw])          # otherwise the line above is vacuous
+        @test maximum(abs, eig[inw] .- fd[inw]) / scale < 1.0e-5
+        @test !all(iszero, eig[inw])          # otherwise the line above is vacuous
     end
 end
 
-@testitem "λ_Te: zero wherever the power it linearises is zero" setup = [PowerJacobianFixtures] begin
+@testitem "eig_Te: zero wherever the power it linearises is zero" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB, ForwardEuler
 
     # update_electron_heating_powers! zeroes every power outside the wall. A
@@ -163,23 +163,23 @@ end
     # whose power is identically zero.
     RP = pj_RAPID()
     RP.flags.scheme.atomic = ExpRB
-    λ = lambda_at(RP)
+    eig = eig_at(RP)
     out = RP.G.nodes.on_out_wall_nids
     @test !isempty(out)
     @test all(iszero, RP.plasma.ePowers.tot[out])
-    @test all(iszero, λ[out])
+    @test all(iszero, eig[out])
 
-    # With the scheme off, λ_Te is never written at all — B(0) = 1 then makes the
+    # With the scheme off, eig_Te is never written at all — B(0) = 1 then makes the
     # whole term vanish from the update rather than contribute a stale value.
     off = pj_RAPID()
     @test off.flags.scheme.atomic === ForwardEuler
     update_RRCs!(off)
     update_electron_heating_powers!(off)
     update_electron_power_jacobian!(off)
-    @test all(iszero, off.plasma.λ_Te)
+    @test all(iszero, off.plasma.exprb.eig_Te)
 end
 
-@testitem "λ_Te: the ν_ei omission is announced, not hidden" setup = [PowerJacobianFixtures] begin
+@testitem "eig_Te: the ν_ei omission is announced, not hidden" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB
     const Warn = Base.CoreLogging.Warn      # Logging is stdlib, not a test dependency
 
@@ -190,15 +190,15 @@ end
     # an omitted term someone later measures as an accuracy loss must be findable.
     RP = pj_RAPID(; coulomb = true)
     RP.flags.scheme.atomic = ExpRB
-    @test_logs (:warn,) match_mode = :any lambda_at(RP)
+    @test_logs (:warn,) match_mode = :any eig_at(RP)
 
     # Coulomb off is the breakdown configuration and warns about nothing.
     quiet = pj_RAPID(; coulomb = false)
     quiet.flags.scheme.atomic = ExpRB
-    @test_logs min_level = Warn lambda_at(quiet)
+    @test_logs min_level = Warn eig_at(quiet)
 end
 
-@testitem "λ_Te: the equilibration term is differentiated, not lumped in with ∂ν_ei/∂Tₑ" setup = [PowerJacobianFixtures] begin
+@testitem "eig_Te: the equilibration term is differentiated, not lumped in with ∂ν_ei/∂Tₑ" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB
 
     # `P_equi = 2μ(3/2)e(Tₑ − T_i)ν_ei` is subtracted from `ePowers.tot`, so it
@@ -217,11 +217,11 @@ end
         RP.plasma.ν_ei .= ν_ei
         RP.plasma.Ti_eV .= 0.3 * Te
 
-        λ = lambda_at(RP)
-        fd = lambda_fd(RP)
+        eig = eig_at(RP)
+        fd = eig_fd(RP)
         inw = RP.G.nodes.in_wall_nids
         scale = max(maximum(abs, fd[inw]), eps())
-        @test maximum(abs, λ[inw] .- fd[inw]) / scale < 1.0e-5
+        @test maximum(abs, eig[inw] .- fd[inw]) / scale < 1.0e-5
     end
 
     # Its sign is not a matter of regime: −ν_ei times positive constants, so it can
@@ -233,26 +233,26 @@ end
     cold.flags.scheme.atomic = ExpRB
     cold.plasma.ν_ei .= 0.0
     inw = hot.G.nodes.in_wall_nids
-    @test all(lambda_at(hot)[inw] .< lambda_at(cold)[inw])
+    @test all(eig_at(hot)[inw] .< eig_at(cold)[inw])
 end
 
-@testitem "λ_Te: the heat-flux omission is announced too" setup = [PowerJacobianFixtures] begin
+@testitem "eig_Te: the heat-flux omission is announced too" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB
     const Warn = Base.CoreLogging.Warn
 
     # `ePowers.heat` is the one power with NEITHER an implicit half (nothing adds
-    # it to A_LHS) nor a place in λ_Te, so with the flag on it is plain forward
+    # it to A_LHS) nor a place in eig_Te, so with the flag on it is plain forward
     # Euler inside a step that is otherwise fitted. Its `−Tₑ(𝐮·∇ln n)` half is
     # genuinely pointwise in Tₑ and could join the diagonal; its `−∇⋅(Tₑ𝐮)` half
     # is an operator and could not, and splitting one nonlocal term in half is a
     # measurement this change did not make. Left out — but not left silent.
     RP = pj_RAPID(; coulomb = false, heat_flux = true)
     RP.flags.scheme.atomic = ExpRB
-    @test_logs (:warn,) match_mode = :any lambda_at(RP)
+    @test_logs (:warn,) match_mode = :any eig_at(RP)
 
     # Off by default, and then there is nothing to announce.
     quiet = pj_RAPID(; coulomb = false)
     @test !quiet.flags.Include_heat_flux_term
     quiet.flags.scheme.atomic = ExpRB
-    @test_logs min_level = Warn lambda_at(quiet)
+    @test_logs min_level = Warn eig_at(quiet)
 end

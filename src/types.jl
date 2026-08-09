@@ -199,6 +199,42 @@ function ElectronRateJacobians{FT}(dimensions::Tuple{Int, Int}) where {FT <: Abs
 end
 
 """
+    ExpRBTerms{FT<:AbstractFloat}
+
+What [`exprb_B`](@ref) is evaluated at, one entry per family that can run
+[`ExpRB`](@ref TimeScheme). Grouped rather than spread across `PlasmaState`
+because the two symbols this scheme lives on — `z` for `λΔt` and `λ` for the
+eigenvalue — are the two most overloaded letters in the code: `z` is the
+vertical coordinate and the charge state, `λ` is a mean free path
+(`TransportChannels.λ_para`) and the Coulomb logarithm. Behind `plasma.exprb`
+neither can be misread, so the short literature names are safe again.
+
+# Fields
+- `eig_Te`, `eig_Ti` — `(2/3e)·∂P/∂T` [1/s], signed, the local eigenvalue of each
+  energy equation. Written by `update_electron_power_jacobian!` and
+  `update_ion_power_jacobian!` under `scheme.atomic == ExpRB`; `z = eig·Δt` is
+  formed at the point of use, since it depends on the step.
+- `z_growth` — `cap(ν_iz·Δt)`, dimensionless, the growth exponent the last
+  continuity solve **actually used**, cap included. Stored rather than re-derived
+  because `reaction_θ` and `update_reaction_counts!` must weight the ledger with
+  it: multiplying by the uncapped `ν` booked `(z/z_cap)×` the electrons born.
+
+The asymmetry is deliberate — a rate where the step is not yet known, an exponent
+where a consumer needs the exact value a solve committed to.
+"""
+@kwdef mutable struct ExpRBTerms{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+
+    eig_Te::Matrix{FT} = zeros(FT, dims)
+    eig_Ti::Matrix{FT} = zeros(FT, dims)
+    z_growth::Matrix{FT} = zeros(FT, dims)
+end
+
+function ExpRBTerms{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return ExpRBTerms{FT}(dims = dimensions)
+end
+
+"""
     IonHeatingPowers{FT<:AbstractFloat}
 
 Contains the power terms for ion energy equation.
@@ -301,17 +337,9 @@ Contains the plasma state variables including density, temperature, and velocity
     # ∂ν/∂Tₑ for the four frequencies above, written by the same `update_RRCs!` at
     # the same evaluation point — and only when `flags.scheme.atomic == ExpRB`.
     dν_dTe::ElectronRateJacobians{FT} = ElectronRateJacobians{FT}(dims)
-    # (2/3e)·∂P/∂T [1/s], signed: the local eigenvalue of each energy equation.
-    # Written by `update_electron_power_jacobian!` / `update_ion_power_jacobian!`;
-    # `z = λ·Δt` is what B(z) takes. Both gated on `flags.scheme.atomic == ExpRB`.
-    λ_Te::Matrix{FT} = zeros(FT, dims)
-    λ_Ti::Matrix{FT} = zeros(FT, dims)
-    # The growth `z = ν_iz·Δt` the last continuity solve used — CAPPED as the solve
-    # capped it. Written by `solve_electron_continuity_equation!` under
-    # `scheme.growth == ExpRB` and read by `reaction_θ` / `update_reaction_counts!`,
-    # so the ledger cannot weight events with a z the solve refused: multiplying by
-    # the uncapped ν booked `(z/z_cap)×` the electrons that were born.
-    z_growth::Matrix{FT} = zeros(FT, dims)
+    # What `B` is evaluated at, per family. Written only where the matching
+    # `flags.scheme.<family>` is `ExpRB`; see [`ExpRBTerms`](@ref).
+    exprb::ExpRBTerms{FT} = ExpRBTerms{FT}(dims)
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
@@ -797,7 +825,7 @@ much* weight a θ-scheme gets; this says *whether a θ-scheme is what runs*.
 | `ExpRB` | `B(λΔt)` on the diagonal | — (opt-in) |
 
 `ExpRB` is exponential Rosenbrock–Euler, `y ← y + Δt·f(y)/B(λΔt)` with
-`B(z) = z/(eᶻ−1)` ([`bernoulli_B`](@ref)). Second order, L-stable when stiff,
+`B(z) = z/(eᶻ−1)` ([`exprb_B`](@ref)). Second order, L-stable when stiff,
 and exact for the frozen-coefficient problem at every `Δt` — including growth,
 where every θ has a pole (BE's at `z = 1`, CN's at `z = 2`). It is not a trade
 against `Theta`: `θ_fit(z) = ½ − z/12 + O(z³)`, so where the step resolves the

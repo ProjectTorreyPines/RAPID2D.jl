@@ -1,5 +1,5 @@
 @testitem "exprb_theta: the weight a ledger should record, valid at every z" begin
-    using RAPID2D: exprb_theta, bernoulli_B
+    using RAPID2D: exprb_theta, exprb_B
 
     # θ(z) = (1 − B(z))/z is what `ExpRB` amounts to when read as a θ-scheme. It
     # is never used to BUILD the scheme — 1 − θz cancels — but a consumer that
@@ -20,7 +20,7 @@
     @test exprb_theta(1.0e6) ≈ 0.0 atol = 1.0e-5    # fast growth  → FE
 
     # The series branch joins the closed form continuously and beats it near zero.
-    @test exprb_theta(1.0e-4) ≈ (1 - bernoulli_B(1.0e-4)) / 1.0e-4 rtol = 1.0e-9
+    @test exprb_theta(1.0e-4) ≈ (1 - exprb_B(1.0e-4)) / 1.0e-4 rtol = 1.0e-9
     θ_big(z) = Float64((big(1.0) - big(z) / expm1(big(z))) / big(z))
     for z in (1.0e-12, -1.0e-9, 1.0e-6, -1.0e-5, 1.0e-3, -2.0)
         @test exprb_theta(z) ≈ θ_big(z) rtol = 1.0e-13
@@ -28,7 +28,7 @@
 end
 
 @testsnippet ExpRBDecayFixtures begin
-    using RAPID2D: ExpRB, Theta, update_ue_para!, update_RRCs!, bernoulli_B, exprb_theta
+    using RAPID2D: ExpRB, Theta, update_ue_para!, update_RRCs!, exprb_B, exprb_theta
 
     function ud_RAPID(;
             u₀ = 0.0, E_para = -50.0, pressure = 5.0e-3, implicit = true,
@@ -69,7 +69,7 @@ end
         pla = RP.plasma
         ν = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
         u_sat = @. c.qe * RP.fields.E_para_tot / (c.me * ν)
-        return (u_sat = u_sat, λ = -ν)
+        return (u_sat = u_sat, eig = -ν)
     end
 
     function march_ud!(RP, dt, nsteps)
@@ -91,7 +91,7 @@ end
     probe = ud_RAPID()
     p = drift_problem(probe)
     inw = probe.G.nodes.in_wall_nids
-    τ = 1 / minimum(abs, p.λ[inw])
+    τ = 1 / minimum(abs, p.eig[inw])
     t_end = 10τ
 
     # Both solve paths: with no matrix, B divides the increment and B(−z) scales
@@ -106,7 +106,7 @@ end
             march_ud!(RP, dt, nsteps)
 
             q = drift_problem(RP)
-            exact = @. q.u_sat + (u₀ - q.u_sat) * exp(q.λ * t_end)
+            exact = @. q.u_sat + (u₀ - q.u_sat) * exp(q.eig * t_end)
             @test RP.plasma.ue_para[inw] ≈ exact[inw] rtol = 1.0e-12
         end
         @info "ExpRB decay exact on the drift" label u₀
@@ -123,7 +123,7 @@ end
     probe = ud_RAPID()
     p = drift_problem(probe)
     inw = probe.G.nodes.in_wall_nids
-    τ = 1 / minimum(abs, p.λ[inw])
+    τ = 1 / minimum(abs, p.eig[inw])
     t_end = τ                      # mid-transient: the fixed point cannot hide the error
     dt = t_end / 8                 # z ≈ −0.125, well resolved
 
@@ -131,7 +131,7 @@ end
     ex = ud_RAPID(); ex.flags.scheme.decay = ExpRB; march_ud!(ex, dt, 8)
 
     q = drift_problem(ex)
-    exact = @. q.u_sat + (0.0 - q.u_sat) * exp(q.λ * t_end)
+    exact = @. q.u_sat + (0.0 - q.u_sat) * exp(q.eig * t_end)
     err(x) = maximum(abs, x[inw] .- exact[inw]) / maximum(abs, exact[inw])
 
     @info "ExpRB vs BE mid-transient" err(be.plasma.ue_para) err(ex.plasma.ue_para)
