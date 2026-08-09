@@ -94,13 +94,10 @@ integrates its source at `θ = 0`. `ExpRB` separates them: its explicit branch
 applies the same `B(z)`, and a ledger formed at `0` there under-reports every
 event (3.6 % at `z = 0.15`, growing with `z`).
 
-The `z` comes from `plasma.exprb.z_growth`, which the continuity solve stored — it is
-**not** re-derived from `ν_en_iz` here. Re-deriving it would drop the cap the
-solve applied, and a capped step would then be weighted at a `z` nothing ran.
-
-So this reports the quadrature of **the last solve**, which is the only step it
-can describe. Before the first `solve_electron_continuity_equation!` of a run
-`exprb.z_growth` is zero and the answer is `½`; there are no events to weight yet.
+`z` is read from `plasma.exprb.z_growth` rather than re-derived, so a capped step
+is weighted at the `z` that ran. This therefore reports **the last solve's**
+quadrature; before the first one `z_growth` is zero and the answer is `½`, with
+no events to weight.
 
 Throws rather than guessing if a family is switched to `ExpRB` without its rate
 being wired here.

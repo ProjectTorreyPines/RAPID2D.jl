@@ -201,34 +201,23 @@ end
 """
     ExpRBTerms{FT<:AbstractFloat}
 
-What [`exprb_B`](@ref) is evaluated at, one entry per family that can run
-[`ExpRB`](@ref TimeScheme). Grouped rather than spread across `PlasmaState`
-because the two symbols this scheme lives on — `z` for `λΔt` and `λ` for the
-eigenvalue — are the two most overloaded letters in the code: `z` is the
-vertical coordinate and the charge state, `λ` is a mean free path
-(`TransportChannels.λ_para`) and the Coulomb logarithm. Behind `plasma.exprb`
-neither can be misread, so the short literature names are safe again.
+What [`exprb_B`](@ref) is evaluated at, per family. A namespace, because `z` and
+`λ` are the most overloaded letters here — `z` is the vertical coordinate and the
+charge state, `λ` is a mean free path and the Coulomb logarithm — and behind
+`plasma.exprb` neither can be misread.
 
 # Fields
-- `eig_Te`, `eig_Ti` — `(2/3e)·∂P/∂T` [1/s], signed, the local eigenvalue of each
-  energy equation. Written by `update_electron_power_jacobian!` and
-  `update_ion_power_jacobian!` under `scheme.atomic == ExpRB`; `z = eig·Δt` is
-  formed at the point of use, since it depends on the step.
-- `z_growth` — `cap(ν_iz·Δt)`, dimensionless, the growth exponent the last
-  continuity solve **actually used**, cap included. Stored rather than re-derived
-  because `reaction_θ` and `update_reaction_counts!` must weight the ledger with
-  it: multiplying by the uncapped `ν` booked `(z/z_cap)×` the electrons born.
+- `eig_Te`, `eig_Ti` — `(2/3e)·∂P/∂T` [1/s], signed. Written by
+  `update_electron_power_jacobian!` / `update_ion_power_jacobian!` under
+  `scheme.atomic == ExpRB`. `z = eig·Δt` is formed where it is used.
+- `z_growth` — `cap(ν_iz·Δt)`: the exponent the last continuity solve used, cap
+  included. `reaction_θ` and `update_reaction_counts!` must weight the ledger
+  with this and not `Δt·ν`, which is larger whenever the cap bound.
 
-The asymmetry is deliberate — a rate where the step is not yet known, an exponent
-where a consumer needs the exact value a solve committed to. Only `z_growth` is
-stored, and only because it has a **second** consumer; `atomic` caps its exponent
-the same way and keeps it local, since no ledger reads Tₑ's quadrature.
-
-**Named for the family, not the channel** — not `ν_iz_Δt`, which it is not (the
-cap is the whole point), and not `z_iz`. A second growth channel sums into the
-same diagonal, `dnₑ/dt = (ν_iz + ν_diz)nₑ`, so there is one `B` and one `z`; what
-becomes per-channel is the rate ratio, `N_k = (ν_k/ν_family)·z_growth·[…]`. Today
-that ratio is 1, which is the only reason the count reads `z_growth·[…]` directly.
+Stored only where a *second* consumer needs the value a solve committed to —
+`atomic` caps identically and keeps its exponent local. Named for the family, not
+`ν_iz_Δt` (it is not that) nor `z_iz`: a second growth channel sums into the same
+diagonal, so one `z` serves both and the channel enters as a rate ratio.
 """
 @kwdef mutable struct ExpRBTerms{FT <: AbstractFloat}
     dims::Tuple{Int, Int}

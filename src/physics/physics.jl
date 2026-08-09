@@ -104,9 +104,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # outruns the rate — measured 1.89 (BE) vs 2.14 (ExpRB) peak |u∥|/u_sat
             # at 315× the reference step. What ExpRB buys on this equation is
             # order, not monotonicity.
-            exprb_decay = RP.flags.scheme.decay === ExpRB
-            decay_exponent = exprb_decay ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
-            B_decay = exprb_decay ? exprb_B.(decay_exponent) : nothing
+            decay_is_exprb = RP.flags.scheme.decay === ExpRB
+            decay_exponent = decay_is_exprb ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
+            diag_decay = decay_is_exprb ? exprb_B.(decay_exponent) : nothing
             # A scalar for the θ-scheme, a per-cell field for ExpRB. `θu` weights
             # the FRICTION and the ledger that records it; `θ_op` weights this
             # equation's nonlocal operators (convection, ExB diffusion), which the
@@ -114,7 +114,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # way. Splitting them is what keeps `scheme.decay` from silently
             # changing the transport treatment too.
             θ_op = RP.flags.θ_imp.decay
-            θu = exprb_decay ? exprb_theta.(decay_exponent) : θ_op
+            θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
 
             # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
             # This is a LEDGER of the exchange integrated over the step, so it must
@@ -149,10 +149,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
 
                 # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom + ν_ei_eff)*ue_para]
-                if exprb_decay
+                if decay_is_exprb
                     # The uⁿ coefficient is B(−z), applied to the RHS below rather
                     # than accumulated here — see the note there.
-                    OP.A_LHS += @views spdiagm((B_decay .- one_FT)[:])
+                    OP.A_LHS += @views spdiagm((diag_decay .- one_FT)[:])
                 else
                     @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
 
@@ -172,8 +172,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 # Under ExpRB the uⁿ coefficient is B(−z), formed as B(z) + z rather
                 # than the algebraically equal 1 − (1−θ)νΔt — that subtraction cancels
                 # to nothing exactly where the true value is small but meaningful.
-                if exprb_decay
-                    @. OP.RHS = (B_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
+                if decay_is_exprb
+                    @. OP.RHS = (diag_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
                 else
                     @. OP.RHS = pla.ue_para + dt * accel_para_tilde
                 end
@@ -186,11 +186,11 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
                 # Same two coefficients as the assembled path: 1/B(z) divides the
                 # increment, and B(−z) = B(z) + z scales uⁿ.
-                inv_factor = exprb_decay ?
-                    (@. one_FT / B_decay) :
+                inv_factor = decay_is_exprb ?
+                    (@. one_FT / diag_decay) :
                     (@. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt))
-                u_coeff = exprb_decay ?
-                    (@. B_decay + decay_exponent) :
+                u_coeff = decay_is_exprb ?
+                    (@. diag_decay + decay_exponent) :
                     (@. one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
                 @. pla.ue_para = inv_factor * (
                     pla.ue_para * u_coeff
@@ -337,8 +337,8 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # `B(z)` with `z = exprb.eig_Te·Δt`. Branched rather than relying on B(0) = 1, so
         # the off path does no arithmetic at all and "unchanged" holds structurally.
-        exprb_atomic = RP.flags.scheme.atomic === ExpRB
-        B_atomic = if exprb_atomic
+        atomic_is_exprb = RP.flags.scheme.atomic === ExpRB
+        diag_atomic = if atomic_is_exprb
             update_electron_power_jacobian!(RP)
             z = @. exprb_cap_exponent(pla.exprb.eig_Te * dt)
             _warn_if_exprb_capped(z)
@@ -379,9 +379,9 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 # pattern — and the cached symbolic factorization — is untouched.
                 # The source needs no B: with S = (2/3e)P⁰ − λTₑⁿ, B(−z) = B(z) + z
                 # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by B.
-                if exprb_atomic
-                    OP.A_LHS += @views spdiagm((B_atomic .- one(FT))[:])
-                    OP.RHS .= B_atomic .* pla.Te_eV +
+                if atomic_is_exprb
+                    OP.A_LHS += @views spdiagm((diag_atomic .- one(FT))[:])
+                    OP.RHS .= diag_atomic .* pla.Te_eV +
                         two_thirds_FT * (dt * ePowers_tilde / ee)
                 else
                     OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
@@ -393,9 +393,9 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                     solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
                 end
             end
-        elseif exprb_atomic
+        elseif atomic_is_exprb
             # Forward Euler with B as a divisor on the increment.
-            @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee / B_atomic
+            @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee / diag_atomic
         else
             # Explicit method (forward Euler)
             @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee
@@ -939,19 +939,18 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # while every θ has a pole here (BE at z = 1, CN at z = 2) past which it
         # returns a negative density.
         #
-        # Derived ONCE, here, and stored: both solve paths below and the ledger in
-        # `update_reaction_counts!` need the same z, and the cap is what makes
-        # "the same" load-bearing rather than incidental. Written whenever the
-        # scheme is on, `src` or not, so `reaction_θ` never reads a previous step's.
-        exprb_growth = RP.flags.scheme.growth === ExpRB
-        if exprb_growth
-            @. pla.exprb.z_growth = exprb_cap_exponent(pla.ν_en_iz * dt)
-        end
-        # Unlike the decay families, this z is POSITIVE and so can reach the cap —
-        # a cell asking to multiply its density by more than e³⁰ in one step is a
-        # step nothing resolves, and it should say so.
-        apply_growth = RP.flags.src && exprb_growth
-        B_growth = if apply_growth
+        # Derived ONCE and stored, because `update_reaction_counts!` must weight
+        # its ledger with the same z — cap included. Written whether or not `src`
+        # is on, so `reaction_θ` never reads a previous step's.
+        #
+        # Unlike decay this z is POSITIVE and can reach the cap: a cell asking to
+        # multiply its density by more than e³⁰ in one step is a step nothing
+        # resolves, and it should say so.
+        growth_is_exprb = RP.flags.scheme.growth === ExpRB
+        growth_is_exprb && @. pla.exprb.z_growth = exprb_cap_exponent(pla.ν_en_iz * dt)
+
+        fit_growth = RP.flags.src && growth_is_exprb
+        diag_growth = if fit_growth
             _warn_if_exprb_capped(pla.exprb.z_growth)
             exprb_B.(pla.exprb.z_growth)
         else
@@ -968,11 +967,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # the same accumulation order the explicit branch below uses, so that
             # θ = 0 reproduces it bit for bit rather than merely algebraically.
             @. op.RHS *= (one(FT) - θ_tr)
-            if apply_growth
+            if fit_growth
                 # nⁿ coefficient is B(−z) = B(z) + z. Unlike the decay branch, the
                 # subtraction that cancels here is on the LHS, not this one — see
                 # the assembly below.
-                @. op.RHS = (B_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS
+                @. op.RHS = (diag_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS
             else
                 if RP.flags.src
                     @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
@@ -994,14 +993,14 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # factorization wants it stable.
             θ_d = RP.flags.diffu ? θ_tr : zero(FT)
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
-            θ_s = (RP.flags.src && !apply_growth) ? θ_gr : zero(FT)
+            θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
             @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
-            if apply_growth
+            if fit_growth
                 # B(z) on the diagonal, as a deviation from the identity so the
                 # pattern is untouched. This is the side that cancels on a growth
                 # branch — the θ form's 1 − θνΔt passes through zero at the poles —
                 # and B(z) > 0 at every z keeps the matrix an M-matrix.
-                op.A_LHS += @views spdiagm((B_growth .- one(FT))[:])
+                op.A_LHS += @views spdiagm((diag_growth .- one(FT))[:])
             end
 
             # Solve the linear system (cached factorization; pattern is step-stable)
@@ -1009,11 +1008,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 factorize!(op.ne_solver, op.A_LHS.matrix)
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
-        elseif apply_growth
+        elseif fit_growth
             # Same two coefficients as the assembled path: no matrix is not the same
             # as no fit. `op.RHS` still holds transport, which is not part of λ and
             # rides the increment like any other frozen source.
-            @. pla.ne = ((B_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / B_growth
+            @. pla.ne = ((diag_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / diag_growth
         else
             if RP.flags.src
                 @. op.RHS += pla.ne * pla.ν_en_iz
