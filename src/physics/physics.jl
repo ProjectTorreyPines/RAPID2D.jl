@@ -659,7 +659,7 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # One branch per step, not per cell. Split into two functions because the
         # two policies share no arithmetic — one reads rates, the other
         # differentiates surfaces.
-        if RP.flags.exprb_eigenvalue === KnownRate
+        if RP.flags.exprb_eigenvalue === FrozenResponse
             return _eig_Te_from_known_rates!(RP)
         end
         return _eig_Te_from_linear_response!(RP)

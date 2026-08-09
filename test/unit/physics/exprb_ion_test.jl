@@ -22,7 +22,7 @@
         RP.flags.Coulomb_Collision = false
         RP.flags.Ti_evolve = true
         RP.flags.ud_evolve = true
-        # This file measures the full ∂f/∂y; KnownRate is a different question.
+        # This file measures the full ∂f/∂y; FrozenResponse is a different question.
         RP.flags.exprb_eigenvalue = LinearResponse
         initialize!(RP)
         RP.config.min_Te = 1.0e-8

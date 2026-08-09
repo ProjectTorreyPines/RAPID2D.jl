@@ -21,7 +21,7 @@
         RP.flags.Coulomb_Collision = coulomb
         RP.flags.Include_Te_diffu_term = false
         RP.flags.Include_Te_convec_term = false
-        # This file measures the full ∂f/∂y; KnownRate is a different question.
+        # This file measures the full ∂f/∂y; FrozenResponse is a different question.
         RP.flags.exprb_eigenvalue = LinearResponse
         RP.flags.Include_heat_flux_term = heat_flux
         initialize!(RP)

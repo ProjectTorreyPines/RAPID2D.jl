@@ -117,7 +117,7 @@ end
     for (field, bad) in ((:Ionz_method, "Townsend_coeff"), (:ud_method, "Lloyd_fit"))
         flags = SimulationFlags{Float64}()
         flags.scheme.atomic = ExpRB
-        flags.exprb_eigenvalue = LinearResponse      # KnownRate takes no derivative
+        flags.exprb_eigenvalue = LinearResponse      # FrozenResponse takes no derivative
         setproperty!(flags, field, bad)
         err = try
             validate_scheme_flags(flags)

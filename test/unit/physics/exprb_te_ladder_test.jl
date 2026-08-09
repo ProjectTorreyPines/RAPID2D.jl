@@ -25,7 +25,7 @@
         RP.flags.Include_Te_convec_term = false
         RP.flags.Include_heat_flux_term = false
         # The ladder's claim — ExpRB lands where forward Euler does not — is about
-        # the full ∂f/∂y. KnownRate on this branch is barely distinguishable from
+        # the full ∂f/∂y. FrozenResponse on this branch is barely distinguishable from
         # forward Euler; see EigenvalueSource for the measurement.
         RP.flags.exprb_eigenvalue = LinearResponse
         initialize!(RP)

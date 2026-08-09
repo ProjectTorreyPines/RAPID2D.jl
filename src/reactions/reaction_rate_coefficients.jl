@@ -460,7 +460,7 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # state the frequencies were evaluated at — so they are materialized here and
     # nowhere else, for the same reason the frequencies are. Skipped entirely when
     # no consumer wants them, so the default configuration pays nothing.
-    # Only LinearResponse reads these surfaces; under KnownRate nothing does,
+    # Only LinearResponse reads these surfaces; under FrozenResponse nothing does,
     # so nothing pays to build them.
     want_jacobian = RP.flags.scheme.atomic === ExpRB &&
         RP.flags.exprb_eigenvalue === LinearResponse
