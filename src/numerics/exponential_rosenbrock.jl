@@ -1,21 +1,20 @@
-"""
-Exponential Rosenbrock–Euler coefficients for the local (diagonal) rates.
-
-```math
-y^{n+1} = y^{n} + \\frac{\\Delta t\\, f(y^{n})}{B(\\lambda\\Delta t)},
-\\qquad B(z) = \\frac{z}{e^{z}-1}
-```
-
-— forward Euler with `B` as a divisor on the increment, i.e. `y + hφ₁(hJ)f(y)`
-with `φ₁ = 1/B` (`exprb2`): second order, L-stable when stiff, and **exact** for
-`dy/dt = λy + S` at every `Δt`, growth included.
-
-The assembled form uses `B(z)` and `B(-z) = B(z) + z` directly and **never forms
-the equivalent θ**; see [`exprb_theta`](@ref) for why.
-
-Derivation and measurements: `internal/docs/src/notes/design/implicit-atomic-power.md`
-§3.6–3.7. What is built and how it is gated: `exprb-implementation.md`.
-"""
+# Exponential Rosenbrock–Euler coefficients for the local (diagonal) rates.
+#
+#     yⁿ⁺¹ = yⁿ + Δt·f(yⁿ)/B(λΔt),    B(z) = z/(eᶻ − 1)
+#
+# — forward Euler with `B` as a divisor on the increment, i.e. `y + hφ₁(hJ)f(y)`
+# with `φ₁ = 1/B` (`exprb2`): second order, L-stable when stiff, and exact for
+# `dy/dt = λy + S` at every `Δt`, growth included.
+#
+# The assembled form uses `B(z)` and `B(-z) = B(z) + z` directly and never forms
+# the equivalent θ; see `exprb_theta` for why.
+#
+# A comment, not a docstring: Julia binds a string to the expression that follows
+# it, and the next expression here is another string — so as a `"""..."""` block
+# this bound to nothing and `?` never reached it.
+#
+# Derivation and measurements: internal/docs/src/notes/design/implicit-atomic-power.md
+# §3.6–3.7. What is built and how it is gated: exprb-implementation.md.
 
 """
     EXPRB_Z_MAX

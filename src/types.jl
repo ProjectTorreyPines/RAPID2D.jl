@@ -306,6 +306,12 @@ Contains the plasma state variables including density, temperature, and velocity
     # `z = λ·Δt` is what B(z) takes. Both gated on `flags.scheme.atomic == ExpRB`.
     λ_Te::Matrix{FT} = zeros(FT, dims)
     λ_Ti::Matrix{FT} = zeros(FT, dims)
+    # The growth `z = ν_iz·Δt` the last continuity solve used — CAPPED as the solve
+    # capped it. Written by `solve_electron_continuity_equation!` under
+    # `scheme.growth == ExpRB` and read by `reaction_θ` / `update_reaction_counts!`,
+    # so the ledger cannot weight events with a z the solve refused: multiplying by
+    # the uncapped ν booked `(z/z_cap)×` the electrons that were born.
+    z_growth::Matrix{FT} = zeros(FT, dims)
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
@@ -825,6 +831,11 @@ to them throws. `atomic = Theta` throws too — that is the design note's §3.1,
 measured at first order against `ExpRB`'s second, which is why `θ_imp` has no
 `atomic` member for it to read.
 
+`ForwardEuler` throws on every family but `atomic`, because nothing would read
+it: those four solvers branch on `ExpRB` and otherwise consult `θ_imp`, so the
+value would be ignored rather than obeyed. Unweighted stepping is
+`flags.Implicit = false`, a separate and still separate question.
+
 Validated on assignment, for the reason [`ImplicitWeights`](@ref) is: a
 configuration mistake should fail where it was written.
 """
@@ -871,6 +882,16 @@ function _check_time_scheme(name::Symbol, scheme::TimeScheme)
                     "is design note §3.1, measured at FIRST order against ExpRB's second " *
                     "for the same Jacobian and one expm1 less. Use ExpRB, or ForwardEuler " *
                     "for the current behaviour. (θ_imp has no `atomic` member by design.)"
+            )
+        )
+    elseif scheme === ForwardEuler && name !== :atomic
+        throw(
+            ArgumentError(
+                "scheme.$name = ForwardEuler is not available: the $name solvers branch on " *
+                    "ExpRB and otherwise read θ_imp.$name, so this value would be ignored " *
+                    "rather than obeyed — growth would still run at θ_imp.growth and decay " *
+                    "at backward Euler. Unweighted stepping is `flags.Implicit = false`, " *
+                    "which is a different question. Use Theta or ExpRB."
             )
         )
     end
@@ -1037,6 +1058,12 @@ sets `ν_iz = α|u∥|` with no `Tₑ` dependence at all, and `ud_method` other 
 carried as a `∂ν/∂Tₑ = 0` branch, but they are comparison paths on their way out
 and should not shape the new code — so the combination is refused instead.
 
+`scheme.decay = ExpRB` is honoured by `update_ue_para!` and by nothing else. The
+combined momentum–Ampère solver builds the same `u∥` equation with `θ = 1` fixed,
+and `advance_timestep!` routes to it on `|I_tor| ≥ Ampere_Itor_threshold` — a
+*runtime* condition, so the pairing would not fail but revert to backward Euler
+part way through a run. Refused until that block carries `B(z)` itself.
+
 Refusal is one-directional: nothing here narrows what already works. With
 `scheme.atomic = ForwardEuler` every legacy combination passes untouched.
 
@@ -1055,6 +1082,24 @@ function validate_scheme_flags(flags::SimulationFlags)
                 )
             )
         end
+    end
+
+    # The exact routing condition in `advance_timestep!`. Written as the same
+    # conjunction rather than a looser one, so the refusal costs no configuration
+    # that actually reaches `update_ue_para!`.
+    if flags.scheme.decay === ExpRB && flags.Ampere && flags.E_para_self_EM &&
+            flags.ud_evolve && flags.ud_method == "Xsec"
+        throw(
+            ArgumentError(
+                "scheme.decay = ExpRB is not available with Ampere = true, " *
+                    "E_para_self_EM = true, ud_evolve = true and ud_method = \"Xsec\": " *
+                    "above Ampere_Itor_threshold that combination solves u∥ in the " *
+                    "combined momentum–Ampère block, which fixes θ = 1 and would " *
+                    "silently revert to backward Euler mid-run. Only update_ue_para! " *
+                    "carries B(z) today. Turn one of those flags off, or use " *
+                    "scheme.decay = Theta."
+            )
+        )
     end
     return flags
 end

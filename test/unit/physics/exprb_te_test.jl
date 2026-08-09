@@ -150,13 +150,20 @@ end
     τ = 1 / minimum(abs, p.λ[inw])                     # the SLOWEST node sets the run
     Te_sat = p.Te_sat[first(inw)]
 
-    for (label, Te₀_factor) in (("cool-down", 3.0), ("heat-up", 0.05))
+    # Both solve paths. `Implicit = false` is not a place where the fit stops
+    # applying, only one where there is no matrix to put B on the diagonal of —
+    # there it divides the increment instead, and the two must agree because the
+    # closed form does not know which one ran.
+    for (label, Te₀_factor) in (("cool-down", 3.0), ("heat-up", 0.05)),
+            implicit in (true, false)
         Te₀ = Te₀_factor * Te_sat
         t_end = 12τ
 
         for nsteps in (2048, 64, 4, 1)                 # down to ONE step for the whole run
             dt = t_end / nsteps
-            RP = with_constant_surfaces!(te_RAPID(; Te_eV = Te₀); K = 2.0e-15)
+            RP = with_constant_surfaces!(
+                te_RAPID(; Te_eV = Te₀, implicit = implicit); K = 2.0e-15
+            )
             RP.flags.scheme.atomic = ExpRB
             update_RRCs!(RP)
             march!(RP, dt, nsteps)

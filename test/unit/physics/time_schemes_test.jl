@@ -40,6 +40,23 @@ end
     # `atomic` member precisely so this cannot be configured by accident.
     @test_throws ArgumentError s.atomic = Theta
 
+    # `ForwardEuler` on a θ-weighted family would be READ BY NOTHING: those solvers
+    # branch on ExpRB and otherwise consult θ_imp, so `growth = ForwardEuler` runs
+    # at θ_imp.growth = ½ and `decay = ForwardEuler` at backward Euler. An enum
+    # whose values are silently ignored is worse than no enum — explicit stepping
+    # is `flags.Implicit = false`, which is a different question and stays one.
+    @test_throws ArgumentError s.transport = ForwardEuler
+    @test_throws ArgumentError s.growth = ForwardEuler
+    @test_throws ArgumentError s.decay = ForwardEuler
+    @test_throws ArgumentError s.gas = ForwardEuler
+    fe_err = try
+        s.growth = ForwardEuler
+    catch e
+        sprint(showerror, e)
+    end
+    @test occursin("flags.Implicit", fe_err)
+    @test (s.transport, s.growth, s.decay, s.gas) === (Theta, Theta, Theta, Theta)
+
     # The rejections carry their reason, not just a type name.
     err = try
         s.transport = ExpRB
@@ -146,4 +163,70 @@ end
     # And the default configuration still initializes — validation refuses in one
     # direction only, it must not narrow what already works.
     @test initialize!(small_RAPID()) isa RAPID
+end
+
+@testitem "scheme: ExpRB decay is refused where the coupled Ampère solve would ignore it" begin
+    using RAPID2D: SimulationFlags, ExpRB, Theta, validate_scheme_flags
+
+    # `solve_combined_momentum_Ampere_equations_with_coils!` assembles the same u∥
+    # equation — same ν_en_mom_tot + ν_en_iz + ν_ei_eff — with θ = 1 hard-coded, and
+    # never reads `scheme`. `advance_timestep!` routes to it once |I_tor| crosses
+    # `Ampere_Itor_threshold`, so the pairing does not fail: it reverts to backward
+    # Euler PART WAY THROUGH a run and books `Rue_ei` at a different quadrature on
+    # either side of the crossing. Refused until the coupled block carries B(z).
+    flags = SimulationFlags{Float64}()
+    flags.scheme.decay = ExpRB
+    flags.Ampere = true
+    err = try
+        validate_scheme_flags(flags)
+        nothing
+    catch e
+        sprint(showerror, e)
+    end
+    @test err !== nothing
+    @test occursin("Ampere", err)
+    @test occursin("update_ue_para!", err)      # names the path that DOES honour it
+
+    # Dropping any one flag of the route sends the step back to `update_ue_para!`,
+    # which honours the fit — so the refusal must be about the route, not about
+    # ExpRB. Narrowing more than the defect requires would cost a real capability.
+    for off in (:Ampere, :E_para_self_EM, :ud_evolve)
+        ok = SimulationFlags{Float64}()
+        ok.scheme.decay = ExpRB
+        ok.Ampere = true
+        setproperty!(ok, off, false)
+        @test validate_scheme_flags(ok) === ok
+    end
+    legacy = SimulationFlags{Float64}()      # ud_method gates the coupled call too
+    legacy.scheme.decay = ExpRB
+    legacy.Ampere = true
+    legacy.ud_method = "Lloyd_fit"
+    @test validate_scheme_flags(legacy) === legacy
+
+    # With ExpRB off the coupled path is untouched: validation refuses in one
+    # direction only.
+    base = SimulationFlags{Float64}()
+    base.Ampere = true
+    @test base.scheme.decay === Theta
+    @test validate_scheme_flags(base) === base
+end
+
+@testitem "scheme: the coupled Ampère solve refuses ExpRB at the call, not silently" begin
+    using RAPID2D: ExpRB, solve_combined_momentum_Ampere_equations_with_coils!
+
+    # The validator runs at `initialize!`; flags are mutable afterwards and tests
+    # routinely flip them. A backstop at the entry of the solver that cannot honour
+    # the flag is what makes "silently reverts to BE" unreachable rather than
+    # merely unconfigured.
+    config = SimulationConfig{Float64}(
+        NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    # cleanup = false: `initialize!` opens ADIOS2 writers into Output_path, and
+    # their finalizers run at process exit — after a cleaning tempdir is gone.
+    config.Output_path = mktempdir(; cleanup = false)
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.scheme.decay = ExpRB
+    @test_throws ArgumentError solve_combined_momentum_Ampere_equations_with_coils!(RP)
 end

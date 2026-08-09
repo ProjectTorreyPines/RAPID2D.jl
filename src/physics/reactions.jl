@@ -94,6 +94,14 @@ integrates its source at `θ = 0`. `ExpRB` separates them: its explicit branch
 applies the same `B(z)`, and a ledger formed at `0` there under-reports every
 event (3.6 % at `z = 0.15`, growing with `z`).
 
+The `z` comes from `plasma.z_growth`, which the continuity solve stored — it is
+**not** re-derived from `ν_en_iz` here. Re-deriving it would drop the cap the
+solve applied, and a capped step would then be weighted at a `z` nothing ran.
+
+So this reports the quadrature of **the last solve**, which is the only step it
+can describe. Before the first `solve_electron_continuity_equation!` of a run
+`z_growth` is zero and the answer is `½`; there are no events to weight yet.
+
 Throws rather than guessing if a family is switched to `ExpRB` without its rate
 being wired here.
 """
@@ -110,7 +118,7 @@ function reaction_θ(RP::RAPID{FT}, channel::Symbol) where {FT <: AbstractFloat}
                     "at a weight the solve did not use."
             )
         )
-        return exprb_theta.(cap_exprb_z.(RP.plasma.ν_en_iz .* RP.dt))
+        return exprb_theta.(RP.plasma.z_growth)
     end
     return RP.flags.Implicit ? reaction_θ(RP.flags, channel) : zero(FT)
 end
@@ -145,8 +153,16 @@ function update_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # From RP, not from flags alone: under ExpRB the weight is the fitted θ(z)
         # of the step just taken, per cell. Broadcasting below covers both forms.
         θ = reaction_θ(RP, :iz)
-        dt = RP.dt
-        @. N.iz = dt * ((one(FT) - θ) * RP.prev_n + θ * pla.ne) * pla.ν_en_iz
+        if RP.flags.scheme.growth === ExpRB
+            # `z_growth`, not `Δt·ν_en_iz`: the two differ exactly when the solve
+            # capped, and then `Δt·ν` books (z/z_cap)× the electrons that were born
+            # — 4/3 at z = 40 — so the ion source and the gas sink would outrun the
+            # continuity equation they are supposed to mirror.
+            @. N.iz = pla.z_growth * ((one(FT) - θ) * RP.prev_n + θ * pla.ne)
+        else
+            dt = RP.dt
+            @. N.iz = dt * ((one(FT) - θ) * RP.prev_n + θ * pla.ne) * pla.ν_en_iz
+        end
     else
         fill!(N.iz, zero(FT))
     end

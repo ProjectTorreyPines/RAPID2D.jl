@@ -182,12 +182,18 @@ end
     # separates them: the explicit branch of the continuity solve applies B(z) and
     # therefore integrated the source with θ_fit(z), not with 0. A ledger formed at
     # 0 under-reports every ionization — measurably, not marginally.
+    #
+    # Asked AFTER the solve, because that is what the question means: `reaction_θ`
+    # reports the quadrature the step performed, reading the z the solve stored.
+    # `expected` is still derived independently from ν and Δt, so this remains an
+    # oracle rather than a restatement of the cache.
     for implicit in (true, false)
         RP = growth_RAPID(; implicit = implicit)
         RP.flags.scheme.growth = ExpRB
         RP.dt = 2.0e-5
         inw = RP.G.nodes.in_wall_nids
         expected = exprb_theta.(cap_exprb_z.(RP.plasma.ν_en_iz .* RP.dt))
+        solve_electron_continuity_equation!(RP)
 
         θ = reaction_θ(RP, :iz)
         @test θ isa AbstractMatrix                    # per cell on both paths
@@ -203,4 +209,51 @@ end
     @test reaction_θ(off, :iz) == 0.0
     on = growth_RAPID(; implicit = true)
     @test reaction_θ(on, :iz) == on.flags.θ_imp.growth
+end
+
+@testitem "ExpRB growth: the ledger counts the growth the cap allowed, not the one it refused" setup = [ExpRBGrowthFixtures] begin
+    using RAPID2D: ExpRB, Theta, EXPRB_Z_MAX
+
+    # One ionization makes one electron, so with no transport the published count
+    # IS the density increase — an identity the quadrature satisfies by
+    # construction, at any θ and at any step. It is what lets the ion source and
+    # the gas sink read `N.iz` instead of re-deriving the growth.
+    #
+    # Above the cap the solve advances with `z_cap` while the ledger multiplied by
+    # the uncapped `ν_en_iz`, and the count came out `(z/z_cap)×` too large — 4/3
+    # at `z = 40`. Ion production and neutral depletion then exceed the electrons
+    # actually born, on a branch that only warns.
+    function counted_vs_born(RP, dt)
+        RP.dt = dt
+        n_before = copy(RP.plasma.ne)
+        solve_electron_continuity_equation!(RP)
+        inw = RP.G.nodes.in_wall_nids
+        return check_reaction_counts(RP).iz[inw], (RP.plasma.ne .- n_before)[inw]
+    end
+
+    ν_probe = maximum(growth_RAPID().plasma.ν_en_iz[growth_RAPID().G.nodes.in_wall_nids])
+
+    for implicit in (true, false)
+        # z ≈ 40: past EXPRB_Z_MAX, so the solve caps and the ledger must follow.
+        RP = growth_RAPID(; implicit = implicit)
+        RP.flags.scheme.growth = ExpRB
+        @test ν_probe * (40 / ν_probe) > EXPRB_Z_MAX
+        counted, born = counted_vs_born(RP, 40 / ν_probe)
+        @test counted ≈ born rtol = 1.0e-12
+
+        # z ≈ 2: below the cap, where the identity already held. The fix must not
+        # buy the capped branch at the cost of the ordinary one.
+        ok = growth_RAPID(; implicit = implicit)
+        ok.flags.scheme.growth = ExpRB
+        counted, born = counted_vs_born(ok, 2 / ν_probe)
+        @test counted ≈ born rtol = 1.0e-12
+    end
+
+    # The identity is a property of the quadrature, not of ExpRB: Crank–Nicolson
+    # satisfies it too, below its pole. Asserting it here says the ledger contract
+    # is what the cap broke, not the ledger.
+    cn = growth_RAPID()
+    @test cn.flags.scheme.growth === Theta
+    counted, born = counted_vs_born(cn, 1 / ν_probe)
+    @test counted ≈ born rtol = 1.0e-12
 end

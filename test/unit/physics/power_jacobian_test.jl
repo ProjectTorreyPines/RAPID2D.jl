@@ -5,7 +5,7 @@
 
     function pj_RAPID(;
             Te_eV = 5.0, u_para = -1.0e5, E_para = -50.0,
-            pressure = 5.0e-3, coulomb = false
+            pressure = 5.0e-3, coulomb = false, heat_flux = false
         )
         config = SimulationConfig{Float64}(
             NR = 8, NZ = 8, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
@@ -21,7 +21,7 @@
         RP.flags.Coulomb_Collision = coulomb
         RP.flags.Include_Te_diffu_term = false
         RP.flags.Include_Te_convec_term = false
-        RP.flags.Include_heat_flux_term = false
+        RP.flags.Include_heat_flux_term = heat_flux
         initialize!(RP)
         RP.plasma.Te_eV .= Te_eV
         RP.plasma.ne .= 1.0e16
@@ -194,6 +194,65 @@ end
 
     # Coulomb off is the breakdown configuration and warns about nothing.
     quiet = pj_RAPID(; coulomb = false)
+    quiet.flags.scheme.atomic = ExpRB
+    @test_logs min_level = Warn lambda_at(quiet)
+end
+
+@testitem "λ_Te: the equilibration term is differentiated, not lumped in with ∂ν_ei/∂Tₑ" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB
+
+    # `P_equi = 2μ(3/2)e(Tₑ − T_i)ν_ei` is subtracted from `ePowers.tot`, so it
+    # carries a Tₑ derivative that needs no table at all: `−2μ(3/2)e·ν_ei` at
+    # frozen ν_ei, and unconditionally stabilizing. Only `∂ν_ei/∂Tₑ` is
+    # Spitzer-like, and the omission had been written wide enough to drop both.
+    # `update_ion_power_jacobian!` keeps this exact term, so the two Jacobians
+    # disagreed about one piece of physics.
+    #
+    # The central-difference oracle above runs Coulomb-OFF, where P_equi is
+    # identically zero on both sides — which is how a missing term survived an
+    # oracle built to catch missing terms.
+    for Te in (1.0, 5.0), ν_ei in (1.0e8, 1.0e10)
+        RP = pj_RAPID(; Te_eV = Te, coulomb = true)
+        RP.flags.scheme.atomic = ExpRB
+        RP.plasma.ν_ei .= ν_ei
+        RP.plasma.Ti_eV .= 0.3 * Te
+
+        λ = lambda_at(RP)
+        fd = lambda_fd(RP)
+        inw = RP.G.nodes.in_wall_nids
+        scale = max(maximum(abs, fd[inw]), eps())
+        @test maximum(abs, λ[inw] .- fd[inw]) / scale < 1.0e-5
+    end
+
+    # Its sign is not a matter of regime: −ν_ei times positive constants, so it can
+    # only damp. That is the whole reason omitting it was tolerable-but-wrong.
+    hot = pj_RAPID(; Te_eV = 5.0, coulomb = true)
+    hot.flags.scheme.atomic = ExpRB
+    hot.plasma.ν_ei .= 1.0e10
+    cold = pj_RAPID(; Te_eV = 5.0, coulomb = true)
+    cold.flags.scheme.atomic = ExpRB
+    cold.plasma.ν_ei .= 0.0
+    inw = hot.G.nodes.in_wall_nids
+    @test all(lambda_at(hot)[inw] .< lambda_at(cold)[inw])
+end
+
+@testitem "λ_Te: the heat-flux omission is announced too" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB
+    const Warn = Base.CoreLogging.Warn
+
+    # `ePowers.heat` is the one power with NEITHER an implicit half (nothing adds
+    # it to A_LHS) nor a place in λ_Te, so with the flag on it is plain forward
+    # Euler inside a step that is otherwise fitted. Its `−Tₑ(𝐮·∇ln n)` half is
+    # genuinely pointwise in Tₑ and could join the diagonal; its `−∇⋅(Tₑ𝐮)` half
+    # is an operator and could not, and splitting one nonlocal term in half is a
+    # measurement this change did not make. Left out — but not left silent.
+    RP = pj_RAPID(; coulomb = false, heat_flux = true)
+    RP.flags.scheme.atomic = ExpRB
+    @test_logs (:warn,) match_mode = :any lambda_at(RP)
+
+    # Off by default, and then there is nothing to announce.
+    quiet = pj_RAPID(; coulomb = false)
+    @test !quiet.flags.Include_heat_flux_term
     quiet.flags.scheme.atomic = ExpRB
     @test_logs min_level = Warn lambda_at(quiet)
 end

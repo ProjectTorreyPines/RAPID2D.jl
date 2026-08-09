@@ -102,8 +102,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # tracks Crank–Nicolson. With ν lagged at the step-entry state, BE's
             # extra damping overshoots the saturated drift least once the step
             # outruns the rate — measured 1.89 (BE) vs 2.14 (ExpRB) peak |u∥|/u_sat
-            # at 315× the reference step in `claudedocs/exprb_dt_scan.jl`. What
-            # ExpRB buys on this equation is order, not monotonicity.
+            # at 315× the reference step. What ExpRB buys on this equation is
+            # order, not monotonicity.
             exprb_decay = RP.flags.scheme.decay === ExpRB
             z_decay = exprb_decay ? (@. cap_exprb_z(-ν_sum_mom_iz_ei * dt)) : nothing
             B_decay = exprb_decay ? bernoulli_B.(z_decay) : nothing
@@ -646,10 +646,12 @@ assembled power, which is what catches a term present there and missing here.
 **One trap.** `Ē` is built from `ue_para` while `P_drag` and `P_dilution` use
 `ue_mag_sq`; they differ once `mean_ExB` or diamagnetic drifts are on.
 
-**Scope.** Transport (`P_diffu`, `P_conv`, `P_heat`) is nonlocal and keeps
-`θ_imp.transport`. `∂ν_ei/∂Tₑ` is omitted and warned about: it is Spitzer-like,
-not an RRC surface. Omitting it under-damps the transient only — the fixed point
-does not depend on `λ`.
+**Scope.** `P_diffu` and `P_conv` are nonlocal and keep `θ_imp.transport`;
+`P_heat` is nonlocal too but carries no implicit half at all, so it stays
+forward Euler. `∂ν_ei/∂Tₑ` is omitted and warned about: it is Spitzer-like, not
+an RRC surface. Omitting it under-damps the transient only — the fixed point
+does not depend on `λ`. `P_equi`'s explicit `(Tₑ − T_i)` factor *is*
+differentiated, as its ion counterpart is.
 """
 function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_power_jacobian!" begin
@@ -686,6 +688,30 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
             end
         end
 
+        if RP.flags.Coulomb_Collision
+            # ePowers.tot SUBTRACTS equi, so ∂/∂Tₑ of 2μ(3/2)e(Tₑ−T_i)ν_ei enters
+            # negative. At frozen ν_ei this is pure algebra — no RRC surface — and
+            # it can only damp, which is why leaving it out was an unforced loss
+            # rather than a trade. `update_ion_power_jacobian!` carries the same
+            # term; the two must agree about one piece of physics.
+            #
+            # bulk_ion_mass, not the m_H2 unpacked above: one is the ion Tₑ
+            # equilibrates with, the other the neutral it recoils off. Equal for
+            # H₂/H₂⁺ and unequal for any other declared ion. Hoisted, because `@.`
+            # would call it once per cell.
+            m_i = bulk_ion_mass(RP)
+            μ_reduced = m_i * me / (m_i + me)^2
+            @. pla.λ_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
+        end
+
+        if RP.flags.Include_heat_flux_term
+            @warn "scheme.atomic = ExpRB omits P_heat from λ_Te: its −∇⋅(Tₑ𝐮) half is an " *
+                "operator, not a diagonal entry, and its pointwise −Tₑ(𝐮⋅∇ln n) half was " *
+                "not measured separately. Nothing weights P_heat implicitly either, so " *
+                "with Include_heat_flux_term on that power alone advances at forward " *
+                "Euler inside a fitted step." maxlog = 1
+        end
+
         # Gated on the terms being PRESENT, not on the flag. `ePowers.drag`'s
         # Coulomb half is charged unconditionally inside `Atomic_Collision`, using
         # whatever `sptz_fac·ν_ei` initialization left behind — so it survives
@@ -693,9 +719,10 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # would stay silent in exactly the case where the omission is unannounced.
         if any(!iszero, pla.sptz_fac .* pla.ν_ei)
             @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from λ_Te: ν_ei is Spitzer-like, " *
-                "not an RRC surface, so P_equi and P_drag's Coulomb half are left out. " *
-                "This under-damps the transient; the fixed point is λ-independent and " *
-                "unaffected." maxlog = 1
+                "not an RRC surface, so the Tₑ dependence THROUGH ν_ei — in P_equi and in " *
+                "P_drag's Coulomb half — is left out. P_equi's explicit (Tₑ−T_i) factor " *
+                "is differentiated. This under-damps the transient; the fixed point is " *
+                "λ-independent and unaffected." maxlog = 1
         end
 
         # No power outside the wall, so no rate of change of it either.
@@ -907,33 +934,45 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
         end
 
+        # A GROWTH eigenvalue, z = +ν_iz·Δt, and the EXACT local Jacobian since
+        # ν_iz does not depend on n — so ExpRB reproduces e^(νΔt) at any step,
+        # while every θ has a pole here (BE at z = 1, CN at z = 2) past which it
+        # returns a negative density.
+        #
+        # Derived ONCE, here, and stored: both solve paths below and the ledger in
+        # `update_reaction_counts!` need the same z, and the cap is what makes
+        # "the same" load-bearing rather than incidental. Written whenever the
+        # scheme is on, `src` or not, so `reaction_θ` never reads a previous step's.
+        exprb_growth = RP.flags.scheme.growth === ExpRB
+        if exprb_growth
+            @. pla.z_growth = cap_exprb_z(pla.ν_en_iz * dt)
+        end
+        # Unlike the decay families, this z is POSITIVE and so can reach the cap —
+        # a cell asking to multiply its density by more than e³⁰ in one step is a
+        # step nothing resolves, and it should say so.
+        apply_growth = RP.flags.src && exprb_growth
+        B_gr = if apply_growth
+            _warn_if_z_capped(pla.z_growth)
+            bernoulli_B.(pla.z_growth)
+        else
+            nothing
+        end
+
         # update electron density
         if RP.flags.Implicit
             # 0 = forward Euler, ½ = Crank-Nicolson, 1 = backward Euler, per family.
             θ_tr = RP.flags.θ_imp.transport
             θ_gr = RP.flags.θ_imp.growth
 
-            # A GROWTH eigenvalue, z = +ν_iz·Δt, and the EXACT local Jacobian since
-            # ν_iz does not depend on n — so ExpRB reproduces e^(νΔt) at any step,
-            # while every θ has a pole here (BE at z = 1, CN at z = 2) past which it
-            # returns a negative density.
-            exprb_growth = RP.flags.src && RP.flags.scheme.growth === ExpRB
-            z_gr = exprb_growth ? (@. cap_exprb_z(pla.ν_en_iz * dt)) : nothing
-            # Unlike the decay families, this z is POSITIVE and so can reach the
-            # cap — a cell asking to multiply its density by more than e³⁰ in one
-            # step is a step nothing resolves, and it should say so.
-            exprb_growth && _warn_if_z_capped(z_gr)
-            B_gr = exprb_growth ? bernoulli_B.(z_gr) : nothing
-
             # Weight each family's explicit half in place, then close the RHS —
             # the same accumulation order the explicit branch below uses, so that
             # θ = 0 reproduces it bit for bit rather than merely algebraically.
             @. op.RHS *= (one(FT) - θ_tr)
-            if exprb_growth
+            if apply_growth
                 # nⁿ coefficient is B(−z) = B(z) + z. Unlike the decay branch, the
                 # subtraction that cancels here is on the LHS, not this one — see
                 # the assembly below.
-                @. op.RHS = (B_gr + z_gr) * pla.ne + dt * op.RHS
+                @. op.RHS = (B_gr + pla.z_growth) * pla.ne + dt * op.RHS
             else
                 if RP.flags.src
                     @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
@@ -955,9 +994,9 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # factorization wants it stable.
             θ_d = RP.flags.diffu ? θ_tr : zero(FT)
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
-            θ_s = (RP.flags.src && !exprb_growth) ? θ_gr : zero(FT)
+            θ_s = (RP.flags.src && !apply_growth) ? θ_gr : zero(FT)
             @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
-            if exprb_growth
+            if apply_growth
                 # B(z) on the diagonal, as a deviation from the identity so the
                 # pattern is untouched. This is the side that cancels on a growth
                 # branch — the θ form's 1 − θνΔt passes through zero at the poles —
@@ -970,14 +1009,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 factorize!(op.ne_solver, op.A_LHS.matrix)
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
-        elseif RP.flags.src && RP.flags.scheme.growth === ExpRB
+        elseif apply_growth
             # Same two coefficients as the assembled path: no matrix is not the same
             # as no fit. `op.RHS` still holds transport, which is not part of λ and
             # rides the increment like any other frozen source.
-            z_gr = @. cap_exprb_z(pla.ν_en_iz * dt)
-            _warn_if_z_capped(z_gr)
-            B_gr = bernoulli_B.(z_gr)
-            @. pla.ne = ((B_gr + z_gr) * pla.ne + dt * op.RHS) / B_gr
+            @. pla.ne = ((B_gr + pla.z_growth) * pla.ne + dt * op.RHS) / B_gr
         else
             if RP.flags.src
                 @. op.RHS += pla.ne * pla.ν_en_iz
@@ -1539,6 +1575,29 @@ function solve_Ampere_equation(RP::RAPID{FT}; plasma::Bool = true, coils::Bool =
 end
 
 """
+    _refuse_exprb_decay(flags, fname)
+
+Throw if `scheme.decay = ExpRB` reaches a solver that fixes `θ = 1`.
+
+`validate_scheme_flags` refuses the same pairing at `initialize!`, which is where
+a user meets it. This is the backstop: flags stay mutable afterwards, and both
+callers here are reached through a *runtime* current threshold rather than a
+configuration, so "silently reverts to backward Euler" has to be unreachable and
+not merely unconfigured.
+"""
+function _refuse_exprb_decay(flags::SimulationFlags, fname::AbstractString)
+    flags.scheme.decay === ExpRB && throw(
+        ArgumentError(
+            "$fname fixes θ = 1 for the u∥ friction and cannot honour " *
+                "scheme.decay = ExpRB — only update_ue_para! carries B(z) today. " *
+                "Reaching here means the flag was set after initialize!, which " *
+                "validate_scheme_flags would have refused."
+        )
+    )
+    return nothing
+end
+
+"""
     solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
                                                         tolerance=1e-3,
                                                         max_iter=10,
@@ -1570,6 +1629,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
         max_iter::Int = 10,
         relaxation_w::FT = 0.5
     ) where {FT <: AbstractFloat}
+    _refuse_exprb_decay(RP.flags, "solve_coupled_momentum_Ampere_equations_with_coils!")
 
     # Aliases for readability
     pla = RP.plasma
@@ -1915,6 +1975,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         max_iter::Int = 10,
         relaxation_w::FT = 0.5
     ) where {FT <: AbstractFloat}
+    _refuse_exprb_decay(RP.flags, "solve_combined_momentum_Ampere_equations_with_coils!")
     @timeit RAPID_TIMER "solve_combined_momentum_Ampere_equations_with_coils!" begin
         # Aliases for readability
         pla = RP.plasma

@@ -94,10 +94,14 @@ end
     τ = 1 / minimum(abs, p.λ[inw])
     t_end = 10τ
 
-    for (label, u₀) in (("from rest", 0.0), ("from above u_sat", 3 * p.u_sat[first(inw)]))
+    # Both solve paths: with no matrix, B divides the increment and B(−z) scales
+    # uⁿ — the same two coefficients the assembled form puts on either side. The
+    # closed form cannot tell them apart, so neither may the answer.
+    for (label, u₀) in (("from rest", 0.0), ("from above u_sat", 3 * p.u_sat[first(inw)])),
+            implicit in (true, false)
         for nsteps in (1024, 32, 1)
             dt = t_end / nsteps
-            RP = ud_RAPID(; u₀ = u₀)
+            RP = ud_RAPID(; u₀ = u₀, implicit = implicit)
             RP.flags.scheme.decay = ExpRB
             march_ud!(RP, dt, nsteps)
 
