@@ -1,6 +1,6 @@
 @testsnippet JacobianFixtures begin
     using RAPID2D: RRC_EoverP_Erg, Electron_RRCs, load_electron_RRCs, ExpRB, ForwardEuler,
-        LinearResponse
+        FullLinearResponse
 
     # A RAPID with a workable plasma state, small enough to be cheap.
     function jac_RAPID(; Te_eV = 5.0, ne = 1.0e16, pressure = 5.0e-3)
@@ -15,8 +15,8 @@
         RP = RAPID{Float64}(config)
         RP.flags.Atomic_Collision = true
         RP.flags.src = true
-        # The derivative surfaces exist for LinearResponse and for nothing else.
-        RP.flags.exprb_eigenvalue = LinearResponse
+        # The derivative surfaces exist for FullLinearResponse and for nothing else.
+        RP.flags.exprb_eigenvalue = FullLinearResponse
         initialize!(RP)
         RP.plasma.Te_eV .= Te_eV
         RP.plasma.ne .= ne

@@ -1,5 +1,5 @@
 @testsnippet ExpRBIonFixtures begin
-    using RAPID2D: ExpRB, ForwardEuler, Theta, LinearResponse, update_ui_para!, update_Ti!,
+    using RAPID2D: ExpRB, ForwardEuler, Theta, FullLinearResponse, update_ui_para!, update_Ti!,
         update_ion_heating_powers!, update_ion_power_jacobian!, ion_rate_jacobian,
         get_H2_ion_RRC, exprb_bern, exprb_cap_exponent, bulk_ion_mass, bulk_ion_charge
 
@@ -22,8 +22,8 @@
         RP.flags.Coulomb_Collision = false
         RP.flags.Ti_evolve = true
         RP.flags.ud_evolve = true
-        # This file measures the full ∂f/∂y; FrozenResponse is a different question.
-        RP.flags.exprb_eigenvalue = LinearResponse
+        # This file measures the full ∂f/∂y; PartialLinearResponse is a different question.
+        RP.flags.exprb_eigenvalue = FullLinearResponse
         initialize!(RP)
         RP.config.min_Te = 1.0e-8
         RP.config.max_Te = 1.0e8

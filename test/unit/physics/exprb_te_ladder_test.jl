@@ -1,5 +1,5 @@
 @testsnippet ExpRBLadderFixtures begin
-    using RAPID2D: ExpRB, ForwardEuler, LinearResponse, update_RRCs!, update_Te!,
+    using RAPID2D: ExpRB, ForwardEuler, FullLinearResponse, update_RRCs!, update_Te!,
         exprb_bern, exprb_cap_exponent
 
     # The real table, at the E/p of the design note's Fig 7 cool-down. E/p is not
@@ -25,9 +25,9 @@
         RP.flags.Include_Te_convec_term = false
         RP.flags.Include_heat_flux_term = false
         # The ladder's claim — ExpRB lands where forward Euler does not — is about
-        # the full ∂f/∂y. FrozenResponse on this branch is barely distinguishable from
-        # forward Euler; see EigenvalueSource for the measurement.
-        RP.flags.exprb_eigenvalue = LinearResponse
+        # the full ∂f/∂y. PartialLinearResponse on this branch is barely distinguishable from
+        # forward Euler; see LinearResponseDepth for the measurement.
+        RP.flags.exprb_eigenvalue = FullLinearResponse
         initialize!(RP)
         RP.plasma.Te_eV .= Te_eV
         RP.plasma.ne .= 1.0e16

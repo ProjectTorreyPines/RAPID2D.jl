@@ -659,7 +659,7 @@ function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # One branch per step, not per cell. Split into two functions because the
         # two policies share no arithmetic — one reads rates, the other
         # differentiates surfaces.
-        if RP.flags.exprb_eigenvalue === FrozenResponse
+        if RP.flags.exprb_eigenvalue === PartialLinearResponse
             return _eig_Te_from_known_rates!(RP)
         end
         return _eig_Te_from_linear_response!(RP)
@@ -680,7 +680,7 @@ from `P_ela`, `P_dilution` and `P_equi` — an exact rearrangement of
 [`update_electron_heating_powers!`](@ref), not a linearisation. `𝔅` sums
 non-negative rates, so `λ = −(2/3e)𝔅 ≤ 0` always: no pole, no growth branch, no
 cap. `P_drag`, `P_exc` and `P_iz` carry no explicit `Tₑ` and stay in the source,
-which is where their `Tₑ` dependence is discarded — see [`EigenvalueSource`](@ref)
+which is where their `Tₑ` dependence is discarded — see [`LinearResponseDepth`](@ref)
 for what that costs.
 """
 function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
@@ -835,7 +835,7 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # The ion split falls out of the product rule: `P_atomic = ν_a·ΔE` gives
         # `−ν_a·(3/2)e` from ΔE's explicit T_i — the stated rate — and `dν_a·ΔE`
         # from the tables. Only the second is a linear response.
-        linear_response = RP.flags.exprb_eigenvalue === LinearResponse
+        linear_response = RP.flags.exprb_eigenvalue === FullLinearResponse
 
         if RP.flags.Atomic_Collision
             K_ela, K_cx = get_H2_ion_RRC(RP, :Elastic), get_H2_ion_RRC(RP, :Charge_Exchange)

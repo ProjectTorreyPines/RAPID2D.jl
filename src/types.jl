@@ -836,35 +836,40 @@ whose coupled mode's eigenvalue is not any diagonal entry).
 @enum TimeScheme ForwardEuler Theta ExpRB
 
 """
-    EigenvalueSource
+    LinearResponseDepth
 
-Where [`ExpRB`](@ref TimeScheme) gets the `λ` it puts in `B(λΔt)`. Orthogonal to
-[`TimeScheme`](@ref): that names the integrator, this names its input.
+How many chain-rule paths go into the `λ` that [`ExpRB`](@ref TimeScheme) puts in
+`B(λΔt)`. Orthogonal to [`TimeScheme`](@ref): that names the integrator, this names
+how completely its input is assembled.
 
-| value | `λ` | what it assumes |
-|---|---|---|
-| `FrozenResponse` | the rate the model already states as `ν·y`, rate coefficients held fixed | nothing — exact algebra |
-| `LinearResponse` | that **plus** `∂ν/∂y` from the tables, i.e. the full `∂f/∂y` | that today's slope holds across the step |
+`λ` is always a linear response — it is `∂f/∂y`, or a truncation of it. `y` reaches
+`f` twice: written down as a factor (`ν·y`), and hidden inside `ν(Ē(y))`.
 
-`LinearResponse` is a superset, not an alternative: it is the whole Jacobian and
-contains every term `FrozenResponse` has.
+| value | paths in `λ` |
+|---|---|
+| `PartialLinearResponse` | the written-down factor only; every `ν` held at its step-entry value |
+| `FullLinearResponse` | that **plus** `∂ν/∂y` from the rate tables — the exact `∂f/∂y` |
 
-Both yield a rate; the axis is the ORDER in the response — `FrozenResponse` keeps
-the `ν` fixed across the step, `LinearResponse` extrapolates it. That is also which
-one can change sign — `FrozenResponse` sums non-negative rates, so its `λ ≤ 0` and no
-growth branch exists for it to have; `LinearResponse` reaches `+1.67e5 1/s` on a
-cold-start avalanche below `Tₑ ≈ 1.2 eV`, which is real physics and also where
-exponentiating a stale slope costs the most.
+A superset, not an alternative: `FullLinearResponse` contains every term
+`PartialLinearResponse` has. "Full" means complete for this variable's own
+equation; the off-diagonal `∂fᵢ/∂yⱼ` is outside both, and outside any diagonal
+scheme.
+
+Truncating is what buys a sign guarantee: `PartialLinearResponse` sums
+non-negative rates, so `λ ≤ 0` structurally and no growth branch exists for it to
+have. `FullLinearResponse` reaches `+1.67e5 1/s` on a cold-start avalanche below
+`Tₑ ≈ 1.2 eV` — real physics, and also where exponentiating a stale slope costs
+the most.
 
 Neither is uniformly better, which is why this is a flag. Measured on a 0-D
-discharge at 2000× the resolved step: cooling from 19 eV, `LinearResponse` is
-1.9 % against `FrozenResponse`'s 6.0 %; heating from 0.03 eV it is 7.3 % against
-1.2 %. `FrozenResponse` is the default because it assumes less.
+discharge at 2000× the resolved step: cooling from 19 eV, `FullLinearResponse` is
+1.9 % against `PartialLinearResponse`'s 6.0 %; heating from 0.03 eV it is 7.3 % against
+1.2 %. `PartialLinearResponse` is the default because it assumes less.
 
 The continuity equation cannot tell them apart: `∂ν_iz/∂n = 0` exactly, so both
 give `λ = ν_iz` — and the switch must be bit-for-bit there.
 """
-@enum EigenvalueSource FrozenResponse LinearResponse
+@enum LinearResponseDepth PartialLinearResponse FullLinearResponse
 
 """
     TimeSchemes(; transport, growth, decay, gas, atomic)
@@ -1072,7 +1077,7 @@ Contains boolean flags that control various aspects of the simulation.
     # `scheme.<family> == Theta`. Defaults reproduce current behaviour — see
     # `TimeSchemes`, and `validate_scheme_flags` for the combinations refused.
     scheme::TimeSchemes = TimeSchemes()
-    exprb_eigenvalue::EigenvalueSource = FrozenResponse  # what feeds B(λΔt); see EigenvalueSource
+    exprb_eigenvalue::LinearResponseDepth = PartialLinearResponse  # how completely λ is assembled
     Adapt_dt::Bool = false                    # Use adaptive time stepping
 
     # Temperature limits
@@ -1128,16 +1133,16 @@ Called from `initialize!`; `TimeSchemes`' own `setproperty!` cannot do this
 because the conflict is between two independent fields.
 """
 function validate_scheme_flags(flags::SimulationFlags)
-    # Only LinearResponse differentiates the tables; FrozenResponse reads a rate the
+    # Only FullLinearResponse differentiates the tables; PartialLinearResponse reads a rate the
     # model already states and so works with every rate path.
-    if flags.scheme.atomic === ExpRB && flags.exprb_eigenvalue === LinearResponse
+    if flags.scheme.atomic === ExpRB && flags.exprb_eigenvalue === FullLinearResponse
         for (name, wanted) in ((:Ionz_method, "Xsec"), (:ud_method, "Xsec"))
             got = getproperty(flags, name)
             got == wanted || throw(
                 ArgumentError(
-                    "exprb_eigenvalue = LinearResponse needs a differentiable rate, and " *
+                    "exprb_eigenvalue = FullLinearResponse needs a differentiable rate, and " *
                         "$name = \"$got\" has none — it is a legacy comparison path. " *
-                        "Set $name = \"$wanted\", or exprb_eigenvalue = FrozenResponse, " *
+                        "Set $name = \"$wanted\", or exprb_eigenvalue = PartialLinearResponse, " *
                         "which takes no derivative."
                 )
             )
@@ -1148,13 +1153,13 @@ function validate_scheme_flags(flags::SimulationFlags)
     # momentum equation uses λ = −ν_sum, and its linear response
     # −(mₑu∥²/e)·∂ν/∂Ē — up to 122 % of that on a measured transient — is not
     # computed anywhere.
-    if flags.scheme.decay === ExpRB && flags.exprb_eigenvalue === LinearResponse
+    if flags.scheme.decay === ExpRB && flags.exprb_eigenvalue === FullLinearResponse
         throw(
             ArgumentError(
-                "exprb_eigenvalue = LinearResponse is not available for scheme.decay: " *
+                "exprb_eigenvalue = FullLinearResponse is not available for scheme.decay: " *
                     "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz + ν_ei_eff), the " *
                     "stated rate, and nothing computes the −(mₑu∥²/e)·∂ν/∂Ē that " *
-                    "completes it. Use exprb_eigenvalue = FrozenResponse, or " *
+                    "completes it. Use exprb_eigenvalue = PartialLinearResponse, or " *
                     "scheme.decay = Theta."
             )
         )
@@ -1485,4 +1490,4 @@ RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(conf
 # Export types
 export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState
 export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags,
-    EigenvalueSource, FrozenResponse, LinearResponse
+    LinearResponseDepth, PartialLinearResponse, FullLinearResponse
