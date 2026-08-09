@@ -119,6 +119,35 @@ end
     @test all(iszero, RP.plasma.dν_dTe.iz[out])
 end
 
+@testitem "update_RRCs!: outside the table in Ē the Jacobian is zero, not a boundary slope" setup = [JacobianFixtures] begin
+    using RAPID2D: update_RRCs!, ExpRB
+
+    # Not a corner case. `apply_electron_density_boundary_conditions!` damps Tₑ
+    # toward zero outside the wall, and with u = 0 there those nodes sit at
+    # Ē = 0 — below the table's 1e-3 — on every real 2D run. The value path clamps
+    # and returns the bottom row, which is harmless because ne = 0 there. The
+    # derivative must be 0, because a frozen value has no Tₑ dependence at all.
+    RP = jac_RAPID(; Te_eV = 8.0)
+    RP.flags.scheme.atomic = ExpRB
+    dead = RP.G.nodes.on_out_wall_nids
+    @test !isempty(dead)
+    RP.plasma.Te_eV[dead] .= 0.0
+    RP.plasma.ue_para[dead] .= 0.0
+
+    update_RRCs!(RP)                       # must not throw
+    for f in (:iz, :mom_tot, :mom_ela, :exc_eff)
+        d = getfield(RP.plasma.dν_dTe, f)
+        @test all(iszero, d[dead])
+        @test !all(iszero, d[RP.G.nodes.in_wall_nids])   # live nodes still carry one
+    end
+
+    # The top of the range behaves the same way.
+    hot = RP.G.nodes.in_wall_nids[1:3]
+    RP.plasma.Te_eV[hot] .= 1.0e6
+    update_RRCs!(RP)
+    @test all(iszero, RP.plasma.dν_dTe.mom_tot[hot])
+end
+
 @testitem "update_RRCs!: real tables, derivative matches a central difference of ν" setup = [JacobianFixtures] begin
     using RAPID2D: update_RRCs!, ExpRB
 

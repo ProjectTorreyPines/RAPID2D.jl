@@ -34,16 +34,21 @@ what makes `∂P/∂Tₑ` available without finite differencing: `Ē = 3/2·Tₑ
 - `E/p` — `ClampExtrap`, matching `itp`. `E/p` carries no `Tₑ` dependence, so it
   never enters `∂/∂Tₑ`; and below the table's minimum `E/p` an ordinary low-field
   cell must clamp rather than raise.
-- `Ē` — `NoExtrap`. Outside the table the value is frozen, so the true
-  `∂K/∂Ē` is zero, but FastInterpolations' `ClampExtrap` clamps the *coordinate*
-  and then returns the boundary cell's one-sided slope. That is an upstream bug
-  (values are unaffected; only derivative views are wrong, and only out of
-  bounds). Until it is fixed, a `DomainError` beats a silent `∂P/∂Tₑ` that claims
-  a dependence the value does not have. Unreachable from below in practice —
-  `min_Te = 0.001` puts `Ē ≥ 1.5e-3` above the table's `1e-3`.
+- `Ē` — `NoExtrap`, and **callers clamp this axis themselves**. Outside the table
+  the value is frozen, so the true `∂K/∂Ē` is zero; but FastInterpolations'
+  `ClampExtrap` clamps the *coordinate* and then returns the boundary cell's
+  one-sided slope, which is not zero. That is an upstream bug — values are
+  unaffected, only derivative views, and only out of bounds. So
+  [`update_rate_jacobian!`](@ref) clamps and masks explicitly, and `NoExtrap`
+  stands behind it as an assertion: if that clamp is ever wrong, this raises
+  instead of quietly reporting a `Tₑ` dependence the value does not have.
 
-When the upstream fix lands, drop the second interpolant and take
-`deriv_view(itp, (0, 1))` directly."""
+  Out of range is ordinary, not exceptional. `apply_electron_density_boundary_conditions!`
+  damps `Tₑ` toward zero outside the wall, so those nodes sit at `Ē = 0` — below
+  the table's `1e-3` — on every real 2D run.
+
+When the upstream fix lands, drop the second interpolant and the explicit clamp
+and take `deriv_view(itp, (0, 1))` directly."""
 struct RRC_EoverP_Erg{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
     # 2 variables for given reaction rate coefficient
     EoverP::Vector{FT}  # Electric field over pressure (E/p) coordinates
@@ -485,6 +490,18 @@ the same surface already pays.
 Queried at the same `(E/p, Ē)` the value path uses, built here rather than
 reused from [`get_electron_RRC`](@ref) only because that function returns values;
 the coordinates are recomputed identically, including its no-gas guard.
+
+**Outside the table in `Ē`, the derivative is zero and is set so explicitly.**
+`ClampExtrap` freezes the value there, so `K` genuinely stops depending on `Tₑ` —
+the honest Jacobian is `0`, not the boundary cell's slope. This is not a corner
+case: `apply_electron_density_boundary_conditions!` damps `Tₑ` toward zero outside
+the wall, and those nodes then sit at `Ē = 0` on every real 2D run.
+
+The clamp is applied here rather than left to the interpolant because
+FastInterpolations' `ClampExtrap` returns the boundary slope for derivative views
+(an upstream bug). `rrc.dK_dĒ` is built with `NoExtrap` on that axis, so it raises
+if this clamp is ever wrong — the masking below is the behaviour, and the
+`DomainError` is the assertion guarding it.
 """
 function update_rate_jacobian!(
         RP::RAPID{FT}, reaction::Symbol, out::AbstractMatrix{FT}
@@ -502,8 +519,17 @@ function update_rate_jacobian!(
         isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT)
     )
 
-    rrc.dK_dĒ(out, (abs_Epara_over_pGas, mean_Ke_eV))
-    @. out *= RP.plasma.n_H2_gas * FT(1.5)
+    # Clamp on the Ē axis only. E/p carries no Tₑ dependence, so the interpolant
+    # clamps it exactly as the value path does and nothing needs masking there.
+    Ē_lo, Ē_hi = first(rrc.Erg_eV), last(rrc.Erg_eV)
+    Ē_query = clamp.(mean_Ke_eV, Ē_lo, Ē_hi)
+
+    rrc.dK_dĒ(out, (abs_Epara_over_pGas, Ē_query))
+    # Exact equality is the in-range test: `clamp` returns its argument untouched
+    # inside the interval and a bound outside it.
+    @. out = ifelse(
+        mean_Ke_eV == Ē_query, out * RP.plasma.n_H2_gas * FT(1.5), zero(FT)
+    )
     return out
 end
 

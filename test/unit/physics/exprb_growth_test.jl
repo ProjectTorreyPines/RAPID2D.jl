@@ -57,8 +57,11 @@ end
     n₀ = 1.0e14
     t_end = 10 / maximum(ν[inw])            # ~10 e-foldings
 
-    for nsteps in (512, 16, 1)              # z up to ~10 at one step
-        RP = growth_RAPID(; n₀ = n₀)
+    # Both solve paths: `Implicit = false` is not a place where the fit stops
+    # applying, only one where there is no matrix — and it is the path the 0D
+    # comparison drivers actually run.
+    for implicit in (true, false), nsteps in (512, 16, 1)   # z up to ~10 at one step
+        RP = growth_RAPID(; n₀ = n₀, implicit = implicit)
         RP.flags.scheme.growth = ExpRB
         march_ne!(RP, t_end / nsteps, nsteps)
         exact = @. n₀ * exp(ν * t_end)

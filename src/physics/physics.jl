@@ -912,6 +912,15 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 factorize!(op.ne_solver, op.A_LHS.matrix)
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
+        elseif RP.flags.src && RP.flags.scheme.growth === ExpRB
+            # Same two coefficients as the assembled path — the explicit branch is
+            # not a place where the fit stops applying, only one where there is no
+            # matrix. `op.RHS` still holds transport, which is not part of λ and so
+            # rides the increment like any other frozen source.
+            z_gr = @. cap_exprb_z(pla.ν_en_iz * dt)
+            _warn_if_z_capped(z_gr)
+            B_gr = bernoulli_B.(z_gr)
+            @. pla.ne = ((B_gr + z_gr) * pla.ne + dt * op.RHS) / B_gr
         else
             if RP.flags.src
                 @. op.RHS += pla.ne * pla.ν_en_iz
