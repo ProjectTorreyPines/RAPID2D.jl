@@ -150,6 +150,55 @@ end
     @test !all(iszero, lr.plasma.dν_dTe.iz)
 end
 
+@testitem "linear-response depth: the ion Jacobian's default branch is the stated rate alone" setup = [ResponseDepthFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse, update_RRCs!,
+        update_ion_power_jacobian!, get_H2_ion_RRC, bulk_ion_charge, bulk_ion_mass
+
+    # `P_atomic = ν_a·ΔE` splits by the product rule into `−ν_a·(3/2)e` (ΔE's own
+    # T_i, written down in the model) and `∂ν_a/∂T_i·ΔE` (the tables). Partial keeps
+    # the first and drops the second — so under Partial the ion eigenvalue must be
+    # the collision frequency and nothing else, exactly.
+    function ion_ready(source; coulomb = false)
+        RP = eig_RAPID(; source = source, coulomb = coulomb)
+        RP.flags.scheme.atomic = ExpRB
+        RP.plasma.ui_para .= -2.0e4
+        RP.plasma.uiR .= RP.plasma.ui_para .* RP.fields.bR
+        RP.plasma.uiϕ .= RP.plasma.ui_para .* RP.fields.bϕ
+        RP.plasma.uiZ .= RP.plasma.ui_para .* RP.fields.bZ
+        coulomb && (RP.plasma.ν_ei .= 1.0e8)
+        update_RRCs!(RP)
+        update_ion_power_jacobian!(RP)
+        return RP
+    end
+
+    for coulomb in (false, true)
+        kr = ion_ready(PartialLinearResponse; coulomb = coulomb)
+        pla, cnst = kr.plasma, kr.config.constants
+        ee, me = cnst.ee, cnst.me
+        mi, Z_i = bulk_ion_mass(kr), bulk_ion_charge(kr)
+        K_ela, K_cx = get_H2_ion_RRC(kr, :Elastic), get_H2_ion_RRC(kr, :Charge_Exchange)
+
+        ν_a = @. pla.n_H2_gas * (0.5 * K_ela + K_cx)
+        @. ν_a += Z_i * pla.ν_en_iz                          # src is on in this fixture
+        expected = @. -ν_a * 1.5 * ee
+        if coulomb
+            @. expected -= (2 * (mi * me / (mi + me)^2)) * 1.5 * ee * pla.ν_ei
+        end
+        @. expected *= 2 / 3 / ee
+
+        inw = kr.G.nodes.in_wall_nids
+        @test pla.exprb.eig_Ti[inw] ≈ expected[inw] rtol = 1.0e-12
+        @test all(<(0), pla.exprb.eig_Ti[inw])            # a rate sum: it can only damp
+    end
+
+    # And the branch is a real fork, not dead code: with ΔE ≠ 0 and the ion tables
+    # sloping, Full lands somewhere else.
+    lr = ion_ready(FullLinearResponse)
+    kr = ion_ready(PartialLinearResponse)
+    inw = lr.G.nodes.in_wall_nids
+    @test !all(≈(0), lr.plasma.exprb.eig_Ti[inw] .- kr.plasma.exprb.eig_Ti[inw])
+end
+
 @testitem "linear-response depth: only FullLinearResponse needs a differentiable rate" setup = [ResponseDepthFixtures] begin
     using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse, SimulationFlags, validate_scheme_flags
 

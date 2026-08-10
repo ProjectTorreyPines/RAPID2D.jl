@@ -1,11 +1,13 @@
 @testsnippet PowerJacobianFixtures begin
-    using RAPID2D: RRC_EoverP_Erg, Electron_RRCs, ExpRB, ForwardEuler, FullLinearResponse,
+    using RAPID2D: RRC_EoverP_Erg, Electron_RRCs, ExpRB, ForwardEuler,
+        PartialLinearResponse, FullLinearResponse,
         update_RRCs!, update_electron_heating_powers!, update_electron_power_jacobian!
     using RAPID2D: h5open        # HDF5 is RAPID2D's dependency, not the test env's
 
     function pj_RAPID(;
             Te_eV = 5.0, u_para = -1.0e5, E_para = -50.0,
-            pressure = 5.0e-3, coulomb = false, heat_flux = false
+            pressure = 5.0e-3, coulomb = false, heat_flux = false,
+            depth = FullLinearResponse
         )
         config = SimulationConfig{Float64}(
             NR = 8, NZ = 8, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
@@ -21,8 +23,9 @@
         RP.flags.Coulomb_Collision = coulomb
         RP.flags.Include_Te_diffu_term = false
         RP.flags.Include_Te_convec_term = false
-        # This file measures the full ∂f/∂y; PartialLinearResponse is a different question.
-        RP.flags.exprb_eigenvalue = FullLinearResponse
+        # This file measures the full ∂f/∂y; PartialLinearResponse gets its own
+        # comparison in linear_response_depth_test.jl, and its own warning case below.
+        RP.flags.exprb_eigenvalue = depth
         RP.flags.Include_heat_flux_term = heat_flux
         initialize!(RP)
         RP.plasma.Te_eV .= Te_eV
@@ -239,7 +242,7 @@ end
 end
 
 @testitem "eig_Te: the heat-flux omission is announced too" setup = [PowerJacobianFixtures] begin
-    using RAPID2D: ExpRB
+    using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse
     const Warn = Base.CoreLogging.Warn
 
     # `ePowers.heat` is the one power with NEITHER an implicit half (nothing adds
@@ -248,13 +251,19 @@ end
     # genuinely pointwise in Tₑ and could join the diagonal; its `−∇⋅(Tₑ𝐮)` half
     # is an operator and could not, and splitting one nonlocal term in half is a
     # measurement this change did not make. Left out — but not left silent.
-    RP = pj_RAPID(; coulomb = false, heat_flux = true)
-    RP.flags.scheme.atomic = ExpRB
-    @test_logs (:warn,) match_mode = :any eig_at(RP)
+    #
+    # It is omitted by BOTH response depths — it is not a derivative anyone declined
+    # to take — so the announcement belongs to the dispatch, not to one branch of it.
+    # The default depth omits strictly more, and used to be the silent one.
+    for depth in (FullLinearResponse, PartialLinearResponse)
+        RP = pj_RAPID(; coulomb = false, heat_flux = true, depth = depth)
+        RP.flags.scheme.atomic = ExpRB
+        @test_logs (:warn,) match_mode = :any eig_at(RP)
 
-    # Off by default, and then there is nothing to announce.
-    quiet = pj_RAPID(; coulomb = false)
-    @test !quiet.flags.Include_heat_flux_term
-    quiet.flags.scheme.atomic = ExpRB
-    @test_logs min_level = Warn eig_at(quiet)
+        # Off by default, and then there is nothing to announce.
+        quiet = pj_RAPID(; coulomb = false, depth = depth)
+        @test !quiet.flags.Include_heat_flux_term
+        quiet.flags.scheme.atomic = ExpRB
+        @test_logs min_level = Warn eig_at(quiet)
+    end
 end

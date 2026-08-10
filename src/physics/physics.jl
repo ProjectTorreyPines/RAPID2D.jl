@@ -98,14 +98,13 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # BE's 1 — a better local approximation there. It does not make the
             # equation second order: ν moves with the solution.
             #
-            # It is NOT uniformly better than BE here, and the measurement says so:
-            # θ_fit(z) < 1 on a decay branch, so ExpRB is LESS implicit than BE and
-            # tracks Crank–Nicolson. With ν lagged at the step-entry state, BE's
-            # extra damping overshoots the saturated drift least once the step
-            # outruns the rate — measured 1.89 (BE) vs 2.14 (ExpRB) peak |u∥|/u_sat
-            # at 315× the reference step. What ExpRB buys on this equation is
-            # order, not monotonicity.
+            # It is NOT uniformly better than BE here: θ_fit(z) < 1 on a decay branch, so
+            # ExpRB is LESS implicit than BE and tracks Crank–Nicolson. With ν lagged at
+            # the step-entry state, BE's extra damping is what overshoots the saturated
+            # drift least once the step outruns the rate. What ExpRB buys on this
+            # equation is a fitted weight, not monotonicity.
             decay_is_exprb = RP.flags.scheme.decay === ExpRB
+            decay_is_exprb && _refuse_full_response_decay(RP.flags)
             decay_exponent = decay_is_exprb ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
             diag_decay = decay_is_exprb ? exprb_bern.(decay_exponent) : nothing
             # A scalar for the θ-scheme, a per-cell field for ExpRB. `θu` weights
@@ -640,10 +639,13 @@ Term for term against [`update_electron_heating_powers!`](@ref) — **edit them
 together**. `test/unit/physics/power_jacobian_test.jl` finite-differences the real
 assembled power, which is what catches a term present there and missing here.
 
-Not in `λ`: `P_diffu` and `P_conv` are nonlocal and keep `θ_imp.transport`; `P_heat`
-is nonlocal with no implicit half at all, so it stays forward Euler; `∂ν_ei/∂Tₑ` is
-omitted and warned about (Spitzer-like, not an RRC surface — it under-damps the
-transient only, since the fixed point does not depend on `λ`).
+Not in `λ` at either depth: `P_diffu` and `P_conv` are nonlocal and keep
+`θ_imp.transport`; `P_heat` is nonlocal with no implicit half at all, so it stays
+forward Euler — warned about here, since it is the dispatch's omission and not one
+branch's. `FullLinearResponse` additionally warns about `∂ν_ei/∂Tₑ`, the one
+derivative it declines to take (Spitzer-like, not an RRC surface — it under-damps the
+transient only, since the fixed point does not depend on `λ`); what
+`PartialLinearResponse` leaves out is the enum's subject, not a warning's.
 
 Two traps. `Ē` is built from `ue_para` while `P_drag` and `P_dilution` use
 `ue_mag_sq`; they differ once `mean_ExB` or diamagnetic drifts are on. And
@@ -653,6 +655,17 @@ Two traps. `Ē` is built from `ue_para` while `P_drag` and `P_dilution` use
 function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_power_jacobian!" begin
         RP.flags.scheme.atomic === ExpRB || return RP
+
+        # Neither depth carries P_heat, so the announcement belongs here rather than
+        # inside one of them — the branch that omits MORE was the silent one.
+        if RP.flags.Include_heat_flux_term
+            @warn "scheme.atomic = ExpRB omits P_heat from exprb.eig_Te: its −∇⋅(Tₑ𝐮) half is an " *
+                "operator, not a diagonal entry, and its pointwise −Tₑ(𝐮⋅∇ln n) half was " *
+                "not measured separately. Nothing weights P_heat implicitly either, so " *
+                "with Include_heat_flux_term on that power alone advances at forward " *
+                "Euler inside a fitted step." maxlog = 1
+        end
+
         # One branch per step, not per cell. Split into two functions because the
         # two policies share no arithmetic — one reads rates, the other
         # differentiates surfaces.
@@ -674,9 +687,12 @@ end
 ```
 
 from `P_ela`, `P_dilution` and `P_equi` — an exact rearrangement of
-[`update_electron_heating_powers!`](@ref), not a linearisation. `𝔅` sums
-non-negative rates, so `λ = −(2/3e)𝔅 ≤ 0` always: no pole, no growth branch, no
-cap. `P_drag`, `P_exc` and `P_iz` carry no explicit `Tₑ` and stay in the source,
+[`update_electron_heating_powers!`](@ref), not a linearisation. `𝔅` sums rates that
+are non-negative in any state the model describes, so `λ = −(2/3e)𝔅 ≤ 0`: no pole
+and no growth branch. Not a licence to drop the exponent cap downstream — `ν_ei` is
+built from `ni`, which the continuity solve can land marginally below zero — only a
+statement that the branch is not where a positive `λ` comes from.
+`P_drag`, `P_exc` and `P_iz` carry no explicit `Tₑ` and stay in the source,
 which is where their `Tₑ` dependence is discarded — see [`LinearResponseDepth`](@ref)
 for what that costs.
 """
@@ -712,10 +728,25 @@ end
 [`_eig_Te_from_known_rates!`](@ref) **plus** the chain rule through
 `Ē = (3/2)Tₑ + ½mₑu∥²/e` into every rate coefficient. A superset, and the only
 part of it that can be positive.
+
+Reads `plasma.dν_dTe`, which only `update_RRCs!` writes and only under this depth —
+so a depth switched on after the last rate step is refused rather than served zeros.
+Refreshing here instead is not an option: it would query the tables at a state the
+frequencies were not evaluated at, which is the invariant
+`internal/docs/src/notes/design/rrc-single-evaluation-point.md` exists to keep.
 """
 function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "_eig_Te_from_linear_response!" begin
         pla = RP.plasma
+        pla.dν_dTe.fresh || throw(
+            ArgumentError(
+                "exprb_eigenvalue = FullLinearResponse needs ∂ν/∂Tₑ from the same rate " *
+                    "evaluation as the frequencies, and the last update_RRCs! ran under a " *
+                    "policy that does not materialize it — so these surfaces are zero or " *
+                    "from an earlier state. Set the depth before initialize!, or run one " *
+                    "update_transport_quantities! after changing it."
+            )
+        )
         @unpack ee, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
         m_H2 = RP.config.constants.mi
         zero_FT = zero(FT)
@@ -762,20 +793,14 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
         end
 
-        if RP.flags.Include_heat_flux_term
-            @warn "scheme.atomic = ExpRB omits P_heat from exprb.eig_Te: its −∇⋅(Tₑ𝐮) half is an " *
-                "operator, not a diagonal entry, and its pointwise −Tₑ(𝐮⋅∇ln n) half was " *
-                "not measured separately. Nothing weights P_heat implicitly either, so " *
-                "with Include_heat_flux_term on that power alone advances at forward " *
-                "Euler inside a fitted step." maxlog = 1
-        end
-
         # Gated on the terms being PRESENT, not on the flag. `ePowers.drag`'s
         # Coulomb half is charged unconditionally inside `Atomic_Collision`, using
         # whatever `sptz_fac·ν_ei` initialization left behind — so it survives
         # `Coulomb_Collision = false`, unlike `ePowers.equi`. A flag-gated warning
         # would stay silent in exactly the case where the omission is unannounced.
-        if any(!iszero, pla.sptz_fac .* pla.ν_ei)
+        # Indexed rather than broadcast: one grid-sized temporary per step is a lot
+        # to allocate for a `maxlog = 1` decision.
+        if any(i -> !iszero(pla.sptz_fac[i] * pla.ν_ei[i]), eachindex(pla.sptz_fac))
             @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from exprb.eig_Te: ν_ei is Spitzer-like, " *
                 "not an RRC surface, so the Tₑ dependence THROUGH ν_ei — in P_equi and in " *
                 "P_drag's Coulomb half — is left out. P_equi's explicit (Tₑ−T_i) factor " *
@@ -1645,19 +1670,44 @@ end
 
 Throw if `scheme.decay = ExpRB` reaches a solver that fixes `θ = 1`.
 
-`validate_scheme_flags` refuses the same pairing at `initialize!`, which is where
-a user meets it. This is the backstop: flags stay mutable afterwards, and both
-callers here are reached through a *runtime* current threshold rather than a
-configuration, so "silently reverts to backward Euler" has to be unreachable and
-not merely unconfigured.
+`validate_scheme_flags` refuses the *routing* conjunction that reaches these solvers
+at `initialize!`, which is where a user meets it. This is the backstop, and it is
+wider than that refusal on purpose: flags stay mutable afterwards, both callers are
+entered through a runtime current threshold rather than a configuration, and either
+can also be called directly. So "silently reverts to backward Euler" has to be
+unreachable and not merely unconfigured.
 """
 function _refuse_exprb_decay(flags::SimulationFlags, fname::AbstractString)
     flags.scheme.decay === ExpRB && throw(
         ArgumentError(
             "$fname fixes θ = 1 for the u∥ friction and cannot honour " *
                 "scheme.decay = ExpRB — only update_ue_para! carries B(z) today. " *
-                "Reaching here means the flag was set after initialize!, which " *
-                "validate_scheme_flags would have refused."
+                "Use scheme.decay = Theta, or keep this solver out of the routing."
+        )
+    )
+    return nothing
+end
+
+"""
+    _refuse_full_response_decay(flags)
+
+Throw if `scheme.decay = ExpRB` is asked for `FullLinearResponse`.
+
+The sibling of [`_refuse_exprb_decay`](@ref), for the other pairing
+`validate_scheme_flags` refuses: nothing here computes the momentum equation's linear
+response, so honouring the flag would mean quietly delivering the partial one.
+`initialize!` is the only place that validation runs, and `exprb_eigenvalue` stays
+mutable afterwards.
+"""
+function _refuse_full_response_decay(flags::SimulationFlags)
+    flags.exprb_eigenvalue === FullLinearResponse && throw(
+        ArgumentError(
+            "scheme.decay = ExpRB cannot honour exprb_eigenvalue = FullLinearResponse: " *
+                "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz + ν_ei_eff), the " *
+                "stated rate, and nothing computes the −(mₑu∥²/e)·∂ν/∂Ē that would " *
+                "complete it. Reaching here means the depth was set after initialize!, " *
+                "which validate_scheme_flags refuses. Use " *
+                "exprb_eigenvalue = PartialLinearResponse, or scheme.decay = Theta."
         )
     )
     return nothing

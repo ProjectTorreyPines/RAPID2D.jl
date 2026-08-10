@@ -35,9 +35,9 @@ end
     @test_throws ArgumentError s.transport = ExpRB
     @test_throws ArgumentError s.gas = ExpRB
 
-    # θ on the linearised atomic power is design note §3.1: same Jacobian, one
-    # expm1 less, and measured at FIRST order against ExpRB's second. θ_imp has no
-    # `atomic` member precisely so this cannot be configured by accident.
+    # θ on the linearised atomic power is design note §3.1: the same Jacobian and one
+    # expm1 less, but a constant weight where ExpRB already fits one per cell. θ_imp
+    # has no `atomic` member precisely so this cannot be configured by accident.
     @test_throws ArgumentError s.atomic = Theta
 
     # `ForwardEuler` on a θ-weighted family would be READ BY NOTHING: those solvers

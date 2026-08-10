@@ -358,6 +358,33 @@ struct H2_Ion_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
 end
 
 """
+    _eRRC_query_point(RP) -> (E/p, Ē)
+
+Where every `RRC_EoverP_Erg` surface is evaluated: `Ē = (3/2)Tₑ + ½mₑu∥²/e` and
+`E/p = |E∥|/(n_gas·T_gas·e)`.
+
+One definition, because [`update_rate_jacobian!`](@ref) is a derivative of
+[`get_electron_RRC`](@ref) only if both ask the table the same question.
+
+Includes the no-gas guard: `n_H2_gas = 0` makes the ratio non-finite (`NaN` when
+`E∥ = 0` as well), and a `NaN` query poisons `ν = n_gas·K` through `0·NaN`, landing a
+singular row in the Ampère matrix. `n_gas` scales the rate to zero regardless, so any
+finite placeholder is safe.
+"""
+function _eRRC_query_point(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    me, ee = RP.config.constants.me, RP.config.constants.ee
+    pla = RP.plasma
+    mean_Ke_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
+    abs_Epara_over_pGas = @. abs(
+        RP.fields.E_para_tot / (pla.n_H2_gas * pla.T_gas_eV * ee)
+    )
+    @. abs_Epara_over_pGas = ifelse(
+        isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT)
+    )
+    return (abs_Epara_over_pGas, mean_Ke_eV)
+end
+
+"""
     get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
 
 Calculate electron reaction rate coefficients for the specified reaction using interpolation.
@@ -373,18 +400,9 @@ Automatically selects appropriate physical parameters from the RAPID model.
 """
 function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Symbol) where {FT <: AbstractFloat}
     return if hasfield(typeof(eRRCs), reaction)
-        mass = RP.config.constants.me
-        ee = RP.config.constants.ee
-
         RRC = getfield(eRRCs, reaction)
         if RRC isa RRC_EoverP_Erg
-            mean_Ke_eV = @. 1.5 * RP.plasma.Te_eV + 0.5 * mass * RP.plasma.ue_para^2 / ee
-            abs_Epara_over_pGas = @. abs(RP.fields.E_para_tot / (RP.plasma.n_H2_gas * RP.plasma.T_gas_eV * ee))
-            # No-gas guard: n_H2_gas=0 makes E/p non-finite (NaN if E_para=0 too), and a NaN
-            # query returns NaN, poisoning ν_en = n_gas·RRC (0·NaN) → singular Ampère matrix.
-            # n_gas scales the rate to 0 anyway, so any finite placeholder is safe.
-            @. abs_Epara_over_pGas = ifelse(isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT))
-            return RRC.itp((abs_Epara_over_pGas, mean_Ke_eV))
+            return RRC.itp(_eRRC_query_point(RP))
         elseif RRC isa RRC_T_ud
             return RRC.itp((RP.plasma.Te_eV, abs.(RP.plasma.ue_para)))
         end
@@ -464,6 +482,9 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # so nothing pays to build them.
     want_jacobian = RP.flags.scheme.atomic === ExpRB &&
         RP.flags.exprb_eigenvalue === FullLinearResponse
+    # Both flags stay mutable after `initialize!`, so record the policy this step ran
+    # under rather than letting the consumer re-read a flag that may have moved since.
+    pla.dν_dTe.fresh = want_jacobian
 
     if RP.flags.Atomic_Collision
         K_mom_tot = get_electron_RRC(RP, :Total_Momentum)
@@ -516,7 +537,8 @@ Write `∂ν/∂Tₑ = n_H2_gas · (3/2) · ∂K/∂Ē` for one `(E/p, Ē)` surf
 
 The `3/2` is `∂Ē/∂Tₑ` for `Ē = 3/2·Tₑ + ½mₑu∥²/e` at fixed `u`. Being constant is what
 makes this one batched derivative evaluation per surface, at roughly the cost of the
-value evaluation already paid. Queried at the same `(E/p, Ē)` as the value path.
+value evaluation already paid. Queried at [`_eRRC_query_point`](@ref) — the same
+function the value path calls, so the two cannot drift apart.
 
 **Outside the table in `Ē` the derivative is zero, and is set so explicitly** —
 `ClampExtrap` freezes the value there, so `K` genuinely stops depending on `Tₑ`. The
@@ -533,14 +555,7 @@ function update_rate_jacobian!(
     rrc isa RRC_EoverP_Erg ||
         throw(ArgumentError("∂/∂Tₑ is defined for (E/p, Ē) surfaces; $reaction is not one"))
 
-    me, ee = RP.config.constants.me, RP.config.constants.ee
-    mean_Ke_eV = @. FT(1.5) * RP.plasma.Te_eV + FT(0.5) * me * RP.plasma.ue_para^2 / ee
-    abs_Epara_over_pGas = @. abs(
-        RP.fields.E_para_tot / (RP.plasma.n_H2_gas * RP.plasma.T_gas_eV * ee)
-    )
-    @. abs_Epara_over_pGas = ifelse(
-        isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT)
-    )
+    abs_Epara_over_pGas, mean_Ke_eV = _eRRC_query_point(RP)
 
     # Clamp on the Ē axis only. E/p carries no Tₑ dependence, so the interpolant
     # clamps it exactly as the value path does and nothing needs masking there.

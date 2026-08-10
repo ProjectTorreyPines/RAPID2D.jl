@@ -172,8 +172,12 @@ end
 `PlasmaState`'s `ν_en_*` set — the table half of `∂P/∂Tₑ`.
 
 Written by [`update_RRCs!`](@ref) alongside the frequencies themselves, at the
-same evaluation point, and only when `flags.scheme.atomic == ExpRB`. Zero
-otherwise; nothing reads them then.
+same evaluation point, and only under `scheme.atomic == ExpRB` **and**
+`exprb_eigenvalue == FullLinearResponse` — the one policy that reads them. `fresh`
+records whether the last rate step was that policy, because both flags stay mutable
+after `initialize!`: switching depth mid-run would otherwise hand
+`_eig_Te_from_linear_response!` surfaces that are zero, or evaluated at a state one
+or more steps old. It refuses instead.
 
 Each is `n_H2_gas · (3/2) · ∂K/∂Ē`. The `3/2` is `∂Ē/∂Tₑ` for
 `Ē = 3/2·Tₑ + ½mₑu∥²/e` at fixed `u` — constant, which is what keeps the chain
@@ -192,6 +196,10 @@ it is a lag, and a term that pretends otherwise will drift.
     mom_tot::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_tot/∂Tₑ
     mom_ela::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_ela/∂Tₑ
     exc_eff::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_exc_eff/∂Tₑ
+
+    # Did the last update_RRCs! materialize the four above? Never true before the
+    # first rate step, which is exactly right: they are zeros then.
+    fresh::Bool = false
 end
 
 function ElectronRateJacobians{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
@@ -917,9 +925,10 @@ function _check_time_scheme(name::Symbol, scheme::TimeScheme)
         throw(
             ArgumentError(
                 "scheme.atomic = Theta is not available: θ on the linearised atomic power " *
-                    "is design note §3.1, measured at FIRST order against ExpRB's second " *
-                    "for the same Jacobian and one expm1 less. Use ExpRB, or ForwardEuler " *
-                    "for the current behaviour. (θ_imp has no `atomic` member by design.)"
+                    "is design note §3.1, and ExpRB gets the fitted weight from the same " *
+                    "Jacobian — a constant θ buys nothing here that B(z) does not. Use " *
+                    "ExpRB, or ForwardEuler for the current behaviour. (θ_imp has no " *
+                    "`atomic` member by design.)"
             )
         )
     elseif scheme === ForwardEuler && name !== :atomic
