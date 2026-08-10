@@ -201,23 +201,20 @@ end
 """
     ExpRBTerms{FT<:AbstractFloat}
 
-What [`exprb_bern`](@ref) is evaluated at, per family. A namespace, because `z` and
-`λ` are the most overloaded letters here — `z` is the vertical coordinate and the
-charge state, `λ` is a mean free path and the Coulomb logarithm — and behind
-`plasma.exprb` neither can be misread.
+What [`exprb_bern`](@ref) is evaluated at, per family. A namespace because `z` and `λ`
+are already taken here — `z` is the vertical coordinate and the charge state, `λ` a
+mean free path and the Coulomb logarithm.
 
 # Fields
 - `eig_Te`, `eig_Ti` — `(2/3e)·∂P/∂T` [1/s], signed. Written by
   `update_electron_power_jacobian!` / `update_ion_power_jacobian!` under
-  `scheme.atomic == ExpRB`. `z = eig·Δt` is formed where it is used.
-- `z_growth` — `cap(ν_iz·Δt)`: the exponent the last continuity solve used, cap
-  included. `reaction_θ` and `update_reaction_counts!` must weight the ledger
-  with this and not `Δt·ν`, which is larger whenever the cap bound.
+  `scheme.atomic == ExpRB`; `z = eig·Δt` is formed where it is used.
+- `z_growth` — `cap(ν_iz·Δt)`, **the exponent the last continuity solve used**, cap
+  included. `reaction_θ` and `update_reaction_counts!` must weight the ledger with
+  this and not `Δt·ν`, which is larger whenever the cap bound.
 
-Stored only where a *second* consumer needs the value a solve committed to —
-`atomic` caps identically and keeps its exponent local. Named for the family, not
-`ν_iz_Δt` (it is not that) nor `z_iz`: a second growth channel sums into the same
-diagonal, so one `z` serves both and the channel enters as a rate ratio.
+Only what a *second* consumer needs is stored; `atomic` keeps its exponent local.
+Named for the family because a second growth channel sums into the same diagonal.
 """
 @kwdef mutable struct ExpRBTerms{FT <: AbstractFloat}
     dims::Tuple{Int, Int}
@@ -822,52 +819,40 @@ much* weight a θ-scheme gets; this says *whether a θ-scheme is what runs*.
 | `ExpRB` | `B(λΔt)` on the diagonal | — (opt-in) |
 
 `ExpRB` is exponential Rosenbrock–Euler, `y ← y + Δt·f(y)/B(λΔt)` with
-`B(z) = z/(eᶻ−1)` ([`exprb_bern`](@ref)). Second order, L-stable when stiff,
-and exact for the frozen-coefficient problem at every `Δt` — including growth,
-where every θ has a pole (BE's at `z = 1`, CN's at `z = 2`). It is not a trade
-against `Theta`: `θ_fit(z) = ½ − z/12 + O(z³)`, so where the step resolves the
-rate `ExpRB` *is* Crank–Nicolson.
+`B(z) = z/(eᶻ−1)` ([`exprb_bern`](@ref)). It solves the local linearisation exactly
+at every `Δt`, so growth costs it nothing — where every θ has a pole (BE at `z = 1`,
+CN at `z = 2`), past which the density comes back negative.
 
-Reserved for later, both foreseen by the design note: `PicardBE` (§6.3,
-self-consistent backward Euler for very large `Δt`) and `BlockExpRB` (§3.8,
-`B(𝐙)` as a matrix function on the spectrum — impurity charge-state chains,
-whose coupled mode's eigenvalue is not any diagonal entry).
+Order is **one**, not two: second order needs `λ = ∂f/∂y` exactly, and `λ` here is
+one diagonal entry. The gain is at `|z| ≫ 1`; as `Δt → 0`,
+`θ_fit(z) = ½ − z/12 + O(z³)` makes it Crank–Nicolson anyway.
 """
 @enum TimeScheme ForwardEuler Theta ExpRB
 
 """
     LinearResponseDepth
 
-How many chain-rule paths go into the `λ` that [`ExpRB`](@ref TimeScheme) puts in
-`B(λΔt)`. Orthogonal to [`TimeScheme`](@ref): that names the integrator, this names
-how completely its input is assembled.
+How much of `∂f/∂y` goes into the `λ` that [`ExpRB`](@ref TimeScheme) puts in
+`B(λΔt)`. Orthogonal to [`TimeScheme`](@ref): that names the integrator, this its
+input.
 
-`λ` is always a linear response — it is `∂f/∂y`, or a truncation of it. `y` reaches
-`f` twice: written down as a factor (`ν·y`), and hidden inside `ν(Ē(y))`.
+`y` reaches `f` twice — written down as a factor (`ν·y`), and hidden inside `ν(Ē(y))`:
 
-| value | paths in `λ` |
+| value | paths differentiated |
 |---|---|
-| `PartialLinearResponse` | the written-down factor only; every `ν` held at its step-entry value |
-| `FullLinearResponse` | that **plus** `∂ν/∂y` from the rate tables — the exact `∂f/∂y` |
+| `PartialLinearResponse` | the written-down factor only; every `ν` held fixed |
+| `FullLinearResponse` | that **plus** `∂ν/∂y` from the rate tables |
 
-A superset, not an alternative: `FullLinearResponse` contains every term
-`PartialLinearResponse` has. "Full" means complete for this variable's own
-equation; the off-diagonal `∂fᵢ/∂yⱼ` is outside both, and outside any diagonal
-scheme.
+A superset, not an alternative. "Full" is complete for one variable's own equation;
+the off-diagonal `∂fᵢ/∂yⱼ` is outside both, and outside any diagonal scheme.
 
-Truncating is what buys a sign guarantee: `PartialLinearResponse` sums
-non-negative rates, so `λ ≤ 0` structurally and no growth branch exists for it to
-have. `FullLinearResponse` reaches `+1.67e5 1/s` on a cold-start avalanche below
-`Tₑ ≈ 1.2 eV` — real physics, and also where exponentiating a stale slope costs
-the most.
+Truncating is what buys a sign guarantee: `PartialLinearResponse` sums non-negative
+rates, so `λ ≤ 0` structurally and it has no growth branch to exponentiate.
+`FullLinearResponse` does — real physics, and also where a stale slope costs the
+most. Neither is uniformly better, so the default is the one that assumes less.
 
-Neither is uniformly better, which is why this is a flag. Measured on a 0-D
-discharge at 2000× the resolved step: cooling from 19 eV, `FullLinearResponse` is
-1.9 % against `PartialLinearResponse`'s 6.0 %; heating from 0.03 eV it is 7.3 % against
-1.2 %. `PartialLinearResponse` is the default because it assumes less.
-
-The continuity equation cannot tell them apart: `∂ν_iz/∂n = 0` exactly, so both
-give `λ = ν_iz` — and the switch must be bit-for-bit there.
+The continuity equation cannot tell them apart: `∂ν_iz/∂n = 0` exactly, so both give
+`λ = ν_iz` — bit for bit.
 """
 @enum LinearResponseDepth PartialLinearResponse FullLinearResponse
 
@@ -879,26 +864,18 @@ and split into the same families — because that split is by the character of t
 operator, which is exactly the line `ExpRB` can and cannot cross.
 
 Defaults reproduce current behaviour term for term, so a fresh object is inert.
-Note `atomic` starts at `ForwardEuler` while everything else starts at `Theta`:
-Tₑ's atomic power is not weakly weighted today, it is *unweighted*, and that
-asymmetry is the whole reason `update_ue_para!` survives a 310× step and
-`update_Te!` does not.
+`atomic` starts at `ForwardEuler` while everything else starts at `Theta`: Tₑ's
+atomic power is not weakly weighted today, it is *unweighted*.
 
-**What cannot be set, and why.** `B(z)` fits the *local* eigenvalue — one
-diagonal entry. A diffusion operator's stiff mode `~4D/h²` is a property of the
-operator and the mesh, not of any one cell, so no per-cell fit can see it:
-`transport` and `gas` are therefore `Theta` permanently, and assigning `ExpRB`
-to them throws. `atomic = Theta` throws too — that is the design note's §3.1,
-measured at first order against `ExpRB`'s second, which is why `θ_imp` has no
-`atomic` member for it to read.
+**What throws.** `transport` and `gas` cannot take `ExpRB`: `B(z)` fits one diagonal
+entry, and a diffusion operator's stiff mode `~4D/h²` belongs to the mesh, not to any
+cell. `atomic = Theta` throws because `θ_imp` has no `atomic` member to read.
+`ForwardEuler` throws on every family but `atomic`, since those solvers branch on
+`ExpRB` and otherwise consult `θ_imp` — the value would be ignored, not obeyed.
+Unweighted stepping is `flags.Implicit = false`, a separate question.
 
-`ForwardEuler` throws on every family but `atomic`, because nothing would read
-it: those four solvers branch on `ExpRB` and otherwise consult `θ_imp`, so the
-value would be ignored rather than obeyed. Unweighted stepping is
-`flags.Implicit = false`, a separate and still separate question.
-
-Validated on assignment, for the reason [`ImplicitWeights`](@ref) is: a
-configuration mistake should fail where it was written.
+Validated on assignment, like [`ImplicitWeights`](@ref): a configuration mistake
+should fail where it was written.
 """
 mutable struct TimeSchemes
     transport::TimeScheme
@@ -1113,24 +1090,18 @@ end
 
 Refuse [`TimeScheme`](@ref) choices that the rest of `flags` cannot support.
 
-`scheme.atomic = ExpRB` needs `∂P/∂Tₑ`, and every term of it must be
-differentiable. The legacy rate paths are not: `Ionz_method = "Townsend_coeff"`
-sets `ν_iz = α|u∥|` with no `Tₑ` dependence at all, and `ud_method` other than
-`"Xsec"` fixes the drift algebraically without a friction rate. Each could be
-carried as a `∂ν/∂Tₑ = 0` branch, but they are comparison paths on their way out
-and should not shape the new code — so the combination is refused instead.
+- **`atomic = ExpRB` + `FullLinearResponse`** needs a differentiable rate. The legacy
+  paths have none — `Ionz_method = "Townsend_coeff"` sets `ν_iz = α|u∥|` with no `Tₑ`
+  dependence, and `ud_method ≠ "Xsec"` fixes the drift algebraically.
+- **`decay = ExpRB` + `FullLinearResponse`**: `update_ue_para!` has no linear-response
+  term to offer (see there).
+- **`decay = ExpRB` + the Ampère routing conjunction**: that solver builds the same
+  `u∥` equation with `θ = 1` fixed and `advance_timestep!` routes to it on a *runtime*
+  condition, so the pairing would silently revert to backward Euler mid-run.
 
-`scheme.decay = ExpRB` is honoured by `update_ue_para!` and by nothing else. The
-combined momentum–Ampère solver builds the same `u∥` equation with `θ = 1` fixed,
-and `advance_timestep!` routes to it on `|I_tor| ≥ Ampere_Itor_threshold` — a
-*runtime* condition, so the pairing would not fail but revert to backward Euler
-part way through a run. Refused until that block carries `B(z)` itself.
-
-Refusal is one-directional: nothing here narrows what already works. With
-`scheme.atomic = ForwardEuler` every legacy combination passes untouched.
-
-Called from `initialize!`; `TimeSchemes`' own `setproperty!` cannot do this
-because the conflict is between two independent fields.
+Refusal is one-directional — nothing here narrows what already works. Called from
+`initialize!`, because the conflicts are between independent fields and
+`TimeSchemes`' own `setproperty!` cannot see them.
 """
 function validate_scheme_flags(flags::SimulationFlags)
     # Only FullLinearResponse differentiates the tables; PartialLinearResponse reads a rate the
@@ -1149,10 +1120,8 @@ function validate_scheme_flags(flags::SimulationFlags)
         end
     end
 
-    # Selecting a policy a family cannot honour must fail, not fall back: the
-    # momentum equation uses λ = −ν_sum, and its linear response
-    # −(mₑu∥²/e)·∂ν/∂Ē — up to 122 % of that on a measured transient — is not
-    # computed anywhere.
+    # Selecting a policy a family cannot honour must fail, not fall back: the momentum
+    # equation uses λ = −ν_sum and nothing computes its −(mₑu∥²/e)·∂ν/∂Ē.
     if flags.scheme.decay === ExpRB && flags.exprb_eigenvalue === FullLinearResponse
         throw(
             ArgumentError(

@@ -95,9 +95,8 @@ end
     # Deliberately NOT asserted: that ExpRB beats the hard-coded backward Euler at
     # a coarse step. It does not, and the reason is structural — θ_fit(z) < 1 on a
     # decay branch, so ExpRB is less implicit than BE and overshoots more once the
-    # step outruns the rate. Measured here and, for the electrons, at 315× the
-    # reference step in claudedocs/exprb_dt_scan.jl. ExpRB's gain on this equation
-    # is second order where the step resolves the friction, not monotonicity.
+    # step outruns the rate. ExpRB's gain on this equation is the fitted weight
+    # where the step resolves the friction, not monotonicity at a coarse one.
     inw = ion_RAPID().G.nodes.in_wall_nids
     τ = 1 / maximum(ion_drag_rate(ion_RAPID())[inw])
     t_end = 8τ

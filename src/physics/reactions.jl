@@ -50,27 +50,15 @@ end
 The θ channel `channel`'s quadrature uses, from `REACTION_STOICHIOMETRY`'s `θ`
 family and [`ImplicitWeights`](@ref). Zero for an explicit run.
 
-θ is a statement about **accuracy, not about time**. What is stored is the
-definite integral over the step,
+θ is a statement about **accuracy, not about time**. What is stored is the definite
+integral `Nₖ = ∫ … dt ≈ Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]`, so the event count is unambiguous
+whatever θ is; θ only says how good the quadrature was. It is exposed because a
+consumer may still care — pairing `E(Tₑⁿ⁺¹)` with a channel evaluated at ½ is
+inconsistent at `O(Δt)` even where the particle count is not.
 
-```
-    Nₖ = ∫ₜⁿ^ₜⁿ⁺¹ … dt ≈ Δt·[(1−θ)·(…)ⁿ + θ·(…)ⁿ⁺¹],
-```
-
-so "how many events happened between `tⁿ` and `tⁿ⁺¹`" is unambiguous whatever θ
-is, and θ only says how good the quadrature was — trapezoid at ½, one-sided
-rectangle at 0 or 1. Storing a *rate* instead would have left a genuine question
-("centred when?") whose answer varied per channel: `:growth` uses ½ while
-`:decay` will use 1.
-
-Exposed because a consumer may still care how the integral was formed — an
-energy term pairing `E(Tₑⁿ⁺¹)` with a channel evaluated at ½ is inconsistent at
-`O(Δt)` even though the particle count is not.
-
-This method answers from the flags alone, which is enough while every family runs
-a θ-scheme. Under `scheme.<family> == ExpRB` the weight is fitted to the family's
-own eigenvalue and differs per cell and per step; use `reaction_θ(RP, channel)`,
-which covers both and reduces to this one.
+Answers from the flags alone, which is enough while every family runs a θ-scheme.
+Under `scheme.<family> == ExpRB` the weight differs per cell and per step; use
+[`reaction_θ(RP, channel)`](@ref), which covers both and reduces to this one.
 """
 function reaction_θ(flags::SimulationFlags{FT}, channel::Symbol) where {FT <: AbstractFloat}
     haskey(REACTION_STOICHIOMETRY, channel) ||
@@ -89,18 +77,15 @@ family's own `z = λΔt` — per cell, per step. Still in `(0, 1)`, so
 `Nₖ = Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]` reads unchanged downstream.
 
 **`ExpRB` is checked before `Implicit`, and the order is load-bearing.** For a
-θ-scheme the two coincide — no matrix means no weight, so an explicit solve
-integrates its source at `θ = 0`. `ExpRB` separates them: its explicit branch
-applies the same `B(z)`, and a ledger formed at `0` there under-reports every
-event (3.6 % at `z = 0.15`, growing with `z`).
+θ-scheme the two coincide — no matrix, no weight. `ExpRB` separates them: its
+explicit branch applies the same `B(z)`, and a ledger formed at `θ = 0` there
+under-reports every event (3.6 % at `z = 0.15`, worse as `z` grows).
 
-`z` is read from `plasma.exprb.z_growth` rather than re-derived, so a capped step
+`z` comes from `plasma.exprb.z_growth` rather than being re-derived, so a capped step
 is weighted at the `z` that ran. This therefore reports **the last solve's**
-quadrature; before the first one `z_growth` is zero and the answer is `½`, with
-no events to weight.
-
-Throws rather than guessing if a family is switched to `ExpRB` without its rate
-being wired here.
+quadrature; before the first one `z_growth` is zero and the answer is `½`, with no
+events to weight. Throws rather than guessing if a family is switched to `ExpRB`
+without its rate wired here.
 """
 function reaction_θ(RP::RAPID{FT}, channel::Symbol) where {FT <: AbstractFloat}
     haskey(REACTION_STOICHIOMETRY, channel) ||

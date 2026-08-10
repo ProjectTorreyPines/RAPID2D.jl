@@ -94,8 +94,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             #
             # With `scheme.decay = ExpRB` the weight stops being a constant and
             # becomes the friction's own fitted one, θ(z) with z = −νΔt, per cell.
-            # It recovers second order where the step resolves the friction, where
-            # BE is only first order.
+            # Where the step resolves the friction that weight is CN's ½ rather than
+            # BE's 1 — a better local approximation there. It does not make the
+            # equation second order: ν moves with the solution.
             #
             # It is NOT uniformly better than BE here, and the measurement says so:
             # θ_fit(z) < 1 on a decay branch, so ExpRB is LESS implicit than BE and
@@ -269,8 +270,8 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             if RP.flags.scheme.decay === ExpRB
                 # Same equation and same family as `update_ue_para!`: a sink written
                 # as ν·u, so B(z) with z = −νΔt replaces the constant weight. Same
-                # caveat too — see there: this is second order where BE is first,
-                # but it is not the least-overshooting choice at a coarse step.
+                # caveat too — see there: it is not the least-overshooting choice at
+                # a coarse step.
                 z = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
                 B = exprb_bern.(z)
                 @. pla.ui_para = (
@@ -632,26 +633,22 @@ end
     update_electron_power_jacobian!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Write `plasma.exprb.eig_Te = (2/3e)·∂P/∂Tₑ` [1/s], the local eigenvalue of the electron
-energy equation — signed, so `z = λΔt` covers relaxation and runaway with one
-formula.
+energy equation — signed, so `z = λΔt` covers relaxation and runaway with one formula.
+How completely it is assembled is [`LinearResponseDepth`](@ref).
 
-**Why it exists.** `update_ue_para!` is stable because its sink is *written* as
-`νu`, so `ν` moves to the denominator. `ePowers.tot` is one number from a table
-lookup and no `θ` can weight an absent operator; linearising supplies the rate.
-
-Term for term against [`update_electron_heating_powers!`](@ref) — edit them
-together. `test/unit/physics/power_jacobian_test.jl` finite-differences the real
+Term for term against [`update_electron_heating_powers!`](@ref) — **edit them
+together**. `test/unit/physics/power_jacobian_test.jl` finite-differences the real
 assembled power, which is what catches a term present there and missing here.
 
-**One trap.** `Ē` is built from `ue_para` while `P_drag` and `P_dilution` use
-`ue_mag_sq`; they differ once `mean_ExB` or diamagnetic drifts are on.
+Not in `λ`: `P_diffu` and `P_conv` are nonlocal and keep `θ_imp.transport`; `P_heat`
+is nonlocal with no implicit half at all, so it stays forward Euler; `∂ν_ei/∂Tₑ` is
+omitted and warned about (Spitzer-like, not an RRC surface — it under-damps the
+transient only, since the fixed point does not depend on `λ`).
 
-**Scope.** `P_diffu` and `P_conv` are nonlocal and keep `θ_imp.transport`;
-`P_heat` is nonlocal too but carries no implicit half at all, so it stays
-forward Euler. `∂ν_ei/∂Tₑ` is omitted and warned about: it is Spitzer-like, not
-an RRC surface. Omitting it under-damps the transient only — the fixed point
-does not depend on `λ`. `P_equi`'s explicit `(Tₑ − T_i)` factor *is*
-differentiated, as its ion counterpart is.
+Two traps. `Ē` is built from `ue_para` while `P_drag` and `P_dilution` use
+`ue_mag_sq`; they differ once `mean_ExB` or diamagnetic drifts are on. And
+`ue_mag_sq` is one step stale here — see
+`internal/docs/src/notes/issues/drag-heating-lags-the-momentum-solve.md`.
 """
 function update_electron_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_power_jacobian!" begin
@@ -817,10 +814,9 @@ energy change it multiplies:
 - `P_equi` gives `−2(m_i m_e/(m_i+m_e)²)(3/2)e·ν_ei`, with `∂ν_ei/∂T_i` omitted for
   the reason its electron counterpart is.
 
-The rate coefficients are re-queried here rather than read from `plasma`: unlike
-the electron frequencies, the ion ones are never materialized — `update_ion_heating_powers!`
-looks them up live, so evaluating at the same `(T_i, |u_i∥|)` is what keeps the
-Jacobian on the power it linearises.
+Rate coefficients are re-queried rather than read from `plasma`: unlike the electron
+frequencies the ion ones are never materialized, so evaluating at the same
+`(T_i, |u_i∥|)` is what keeps the Jacobian on the power it linearises.
 """
 function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_ion_power_jacobian!" begin

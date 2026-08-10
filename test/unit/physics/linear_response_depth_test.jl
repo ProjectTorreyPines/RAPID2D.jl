@@ -91,12 +91,10 @@ end
     using RAPID2D: PartialLinearResponse, FullLinearResponse
 
     # 𝔅 = (2mₑ/m_H₂)ν_ela(3/2)e + (3/2)e·ν_iz + 2μ(3/2)e·ν_ei is a sum of
-    # non-negative rates, so −(2/3e)𝔅 ≤ 0 wherever the rates are. That is the
-    # whole point of the default: no pole, no cap, no positive band, structurally.
-    #
-    # The band is real and FullLinearResponse finds it — measured +1.67e5 1/s at
-    # Tₑ ≈ 0.3 eV with u∥ ≈ −4.5e5 — so this is a genuine difference, not a
-    # tolerance.
+    # non-negative rates, so −(2/3e)𝔅 ≤ 0 wherever the rates are. That is the whole
+    # point of the default: no pole, no cap, no positive band, structurally. The
+    # band FullLinearResponse finds below is real, so this is a genuine difference
+    # and not a tolerance.
     for Te in (0.05, 0.3, 1.0, 5.0), u in (-1.0e5, -4.5e5)
         known = eig_Te_at(eig_RAPID(; Te_eV = Te, u_para = u, source = PartialLinearResponse))
         inw = eig_RAPID().G.nodes.in_wall_nids
@@ -176,11 +174,10 @@ end
 @testitem "linear-response depth: FullLinearResponse is refused where no one implements it" setup = [ResponseDepthFixtures] begin
     using RAPID2D: ExpRB, FullLinearResponse, PartialLinearResponse, SimulationFlags, validate_scheme_flags
 
-    # `update_ue_para!` uses λ = −ν_sum, which is the stated rate. Its linear
-    # response is −(mₑu²/e)·∂ν/∂Ē — measured at up to 122 % of what is used, so
-    # not negligible — and nothing computes it. Selecting FullLinearResponse there
-    # would silently get PartialLinearResponse, which is the defect class this branch spent
-    # its review fixing.
+    # `update_ue_para!` uses λ = −ν_sum, the stated rate. Its linear response
+    # −(mₑu²/e)·∂ν/∂Ē is not computed anywhere, so selecting FullLinearResponse
+    # there would silently deliver PartialLinearResponse — the defect class this
+    # branch spent its review fixing.
     lr = SimulationFlags{Float64}()
     lr.scheme.decay = ExpRB
     lr.exprb_eigenvalue = FullLinearResponse

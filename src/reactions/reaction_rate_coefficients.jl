@@ -514,21 +514,17 @@ end
 
 Write `∂ν/∂Tₑ = n_H2_gas · (3/2) · ∂K/∂Ē` for one `(E/p, Ē)` surface into `out`.
 
-The `3/2` is `∂Ē/∂Tₑ` for `Ē = 3/2·Tₑ + ½mₑu∥²/e` at fixed `u`; being constant is
-what makes this one batched derivative evaluation per surface, at roughly the cost
-of the value evaluation the surface already pays.
+The `3/2` is `∂Ē/∂Tₑ` for `Ē = 3/2·Tₑ + ½mₑu∥²/e` at fixed `u`. Being constant is what
+makes this one batched derivative evaluation per surface, at roughly the cost of the
+value evaluation already paid. Queried at the same `(E/p, Ē)` as the value path.
 
-Queried at the same `(E/p, Ē)` the value path uses — the coordinates are rebuilt
-here, including the no-gas guard, only because [`get_electron_RRC`](@ref) returns
-values.
-
-**Outside the table in `Ē` the derivative is zero, and is set so explicitly.**
-`ClampExtrap` freezes the value there, so `K` genuinely stops depending on `Tₑ`.
-The clamp lives here rather than in the interpolant because FastInterpolations
-returns the boundary slope for clamped derivative views (upstream bug); `NoExtrap`
-on that axis makes a wrong clamp raise instead of reporting a false dependence.
-Not a corner case — `apply_electron_density_boundary_conditions!` puts every node
-outside the wall at `Ē = 0`.
+**Outside the table in `Ē` the derivative is zero, and is set so explicitly** —
+`ClampExtrap` freezes the value there, so `K` genuinely stops depending on `Tₑ`. The
+clamp lives here because FastInterpolations returns the boundary slope for clamped
+derivative views (upstream bug); `NoExtrap` on that axis makes a wrong clamp raise
+instead of reporting a false dependence. Not a corner case:
+`apply_electron_density_boundary_conditions!` puts every node outside the wall at
+`Ē = 0`.
 """
 function update_rate_jacobian!(
         RP::RAPID{FT}, reaction::Symbol, out::AbstractMatrix{FT}
