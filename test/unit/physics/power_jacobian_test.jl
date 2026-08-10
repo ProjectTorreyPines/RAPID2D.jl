@@ -135,7 +135,7 @@ end
     @test eig[inw] ≈ ((2 / 3) .* dP ./ ee)[inw] rtol = 1.0e-12
 
     # A cooling-dominated state has λ < 0, and that sign is the whole point: it is
-    # what B(z) reads to decide between damping and amplifying the FE increment.
+    # what bern(z) reads to decide between damping and amplifying the FE increment.
     @test all(<(0), eig[inw])
 end
 
@@ -174,7 +174,7 @@ end
     @test all(iszero, RP.plasma.ePowers.tot[out])
     @test all(iszero, eig[out])
 
-    # With the scheme off, eig_Te is never written at all — B(0) = 1 then makes the
+    # With the scheme off, eig_Te is never written at all — bern(0) = 1 then makes the
     # whole term vanish from the update rather than contribute a stale value.
     off = pj_RAPID()
     @test off.flags.scheme.atomic === ForwardEuler

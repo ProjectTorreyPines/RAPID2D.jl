@@ -1,9 +1,9 @@
-@testitem "exprb_bern: the identity B(-z)/B(z) = exp(z)" begin
+@testitem "exprb_bern: the identity bern(-z)/bern(z) = exp(z)" begin
     using RAPID2D: exprb_bern
 
-    # B(z) = z/(e^z − 1) is the coefficient that makes the local update exact for
+    # bern(z) = z/(e^z − 1) is the coefficient that makes the local update exact for
     # the frozen-linear problem dy/dt = λy + S. The whole scheme is
-    #     y^{n+1} = yⁿ + Δt·f(yⁿ)/B(λΔt),
+    #     y^{n+1} = yⁿ + Δt·f(yⁿ)/bern(λΔt),
     # i.e. forward Euler with B as a divisor on the increment, so this one
     # identity IS the scheme's correctness statement. Aggregated to one
     # assertion: 4001 separate @tests bury a real failure in scroll.
@@ -18,7 +18,7 @@
     end
     worst, worst_z = worst_identity_error()
     @test worst < 1.0e-14        # measured 3.6e-16, at z ≈ −16.6
-    worst < 1.0e-14 || @info "B(-z)/B(z) worst case" worst worst_z
+    worst < 1.0e-14 || @info "bern(-z)/bern(z) worst case" worst worst_z
 end
 
 @testitem "exprb_bern: z/expm1(z) is accurate at zero — no series branch needed" begin
@@ -38,9 +38,9 @@ end
     end
     worst, worst_z = worst_bigfloat_error()
     @test worst < 1.0e-15        # measured 1.9e-16
-    worst < 1.0e-15 || @info "B(z) vs BigFloat worst case" worst worst_z
+    worst < 1.0e-15 || @info "bern(z) vs BigFloat worst case" worst worst_z
 
-    # B(0) = 1 exactly is what makes ForwardEuler a bit-for-bit fallback rather
+    # bern(0) = 1 exactly is what makes ForwardEuler a bit-for-bit fallback rather
     # than an approximation of one: a term handed z = 0 contributes nothing.
     @test exprb_bern(0.0) === 1.0
     @test exprb_bern(-0.0) === 1.0
@@ -52,7 +52,7 @@ end
 
     # This matters more than conditioning. A θ-scheme's 1 − θz goes negative on a
     # growth cell once θz > 1 and the matrix stops being an M-matrix; no amount of
-    # rescaling repairs that. B(z) > 0 always, at every Δt.
+    # rescaling repairs that. bern(z) > 0 always, at every Δt.
     zs = vcat(range(-300.0, 300.0, 2001), [-1.0e-30, 1.0e-30, 0.0])
     @test all(isfinite, exprb_bern.(zs))
     @test all(>(0), exprb_bern.(zs))
@@ -97,9 +97,40 @@ end
     # The design note warns that building the scheme from θ(z) = 1/z − 1/(eᶻ−1)
     # destroys it: the diagonal 1 − θz is a subtraction that cancels as θz → 1.
     # Recorded as a test so nobody reintroduces the θ route as a "clearer"
-    # refactor — B(z) is not an optimization of it, it is the only stable form.
+    # refactor — bern(z) is not an optimization of it, it is the only stable form.
     θ_route(z) = 1 - (1 / z - 1 / (exp(z) - 1)) * z
     @test θ_route(36.0) / exprb_bern(36.0) - 1 > 0.005    # ~1 % wrong already
     @test !isfinite(θ_route(800.0)) || θ_route(800.0) <= 0 # gone entirely
     @test exprb_bern(800.0) >= 0                          # B just underflows, cleanly
+end
+
+@testitem "exprb: forming bern(−z) as bern(z) + z costs one epsilon, not the memory" begin
+    using RAPID2D: exprb_bern, exprb_cap_exponent, EXPRB_MAX_EXPONENT
+
+    # The solvers form the old-state coefficient as `bern(z) + z` rather than calling
+    # `exprb_bern(-z)`. On a decay branch that subtraction IS cancelling: at z = −30,
+    # `bern(z)` and `−z` agree to ~4 digits, so the difference keeps only the rest.
+    #
+    # The thing being cancelled away is the retained fraction of uⁿ, and it is
+    # exponentially small — bern(30) ≈ 3e-12. What matters is not its own relative
+    # accuracy but what it does to the answer, and the update divides by bern(z):
+    #
+    #     u¹ = [(bern(z) + z)·u⁰ + Δt·a] / bern(z)
+    #
+    # so an absolute error δ in the coefficient moves u¹/u⁰ by δ/bern(z) ≈ δ/|z|,
+    # while the subtraction's own error is ~eps·|z|. The two |z| cancel and the
+    # bound is one epsilon, at every z and in every precision.
+    for T in (Float64, Float32)
+        worst_coeff, worst_update = zero(T), zero(T)
+        for z in T.(-exp10.(range(-3, log10(Float64(EXPRB_MAX_EXPONENT)), 400)))
+            zc = exprb_cap_exponent(z)
+            formed, direct = exprb_bern(zc) + zc, exprb_bern(-zc)
+            direct > 0 && (worst_coeff = max(worst_coeff, abs(formed - direct) / direct))
+            worst_update = max(worst_update, abs(formed - direct) / exprb_bern(zc))
+        end
+        # The coefficient itself does lose most of its digits deep on the branch…
+        @test worst_coeff > 1.0e-5
+        # …and the answer does not notice.
+        @test worst_update <= 2 * eps(T)
+    end
 end

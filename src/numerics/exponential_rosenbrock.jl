@@ -1,13 +1,13 @@
 # Exponential Rosenbrock–Euler coefficients for the local (diagonal) rates.
 #
-#     yⁿ⁺¹ = yⁿ + Δt·f(yⁿ)/B(λΔt),    B(z) = z/(eᶻ − 1)
+#     yⁿ⁺¹ = yⁿ + Δt·f(yⁿ)/bern(λΔt),    bern(z) = z/(eᶻ − 1)
 #
 # — forward Euler with `B` as a divisor on the increment, i.e. `y + hφ₁(hJ)f(y)`
 # with `φ₁ = 1/B` (`exprb2`). Exact for `dy/dt = λy + S` at every `Δt`, growth
 # included. First order, not second: that would need `λ = ∂f/∂y` exactly, and `λ`
 # here is one diagonal entry.
 #
-# The assembled form uses `B(z)` and `B(-z) = B(z) + z` directly and never forms
+# The assembled form uses `bern(z)` and `bern(-z) = bern(z) + z` directly and never forms
 # the equivalent θ; see `exprb_theta` for why.
 #
 # A comment, not a docstring: Julia binds a string to the expression that follows
@@ -26,7 +26,7 @@ Upper cap on the exponent `z = λΔt`, growth side only.
 exactly `0.0` and annihilates the diagonal. The cap sits far below that, where
 conditioning already costs digits — `z₊ ≈ 16` puts `κ` near `5e7`.
 
-Decay is never capped: `B(z) → |z|` as `z → −∞` is bounded, and is exactly the
+Decay is never capped: `bern(z) → |z|` as `z → −∞` is bounded, and is exactly the
 "this cell fully relaxed inside the step" limit the scheme exists to capture.
 """
 const EXPRB_MAX_EXPONENT = 30
@@ -41,11 +41,11 @@ Clamp `z = λΔt` from above at [`EXPRB_MAX_EXPONENT`](@ref), preserving the typ
 """
     exprb_bern(z)
 
-`B(z) = z/(eᶻ − 1)`, with `B(0) = 1`.
+`bern(z) = z/(eᶻ − 1)`, with `bern(0) = 1`.
 
 **Strictly positive and finite for every finite `z`**, which keeps the assembled
 matrix an M-matrix at any `Δt` — a θ-scheme's `1 − θz` changes sign on a growth cell
-once `θz > 1`. `B(0) = 1` exactly, so the forward-Euler fallback is bit-for-bit.
+once `θz > 1`. `bern(0) = 1` exactly, so the forward-Euler fallback is bit-for-bit.
 
 No series near zero: `expm1` keeps `eᶻ − 1` accurate where it cancels (max relative
 error 1.9e-16 over `z ∈ ±[1e-18, 200]` vs `BigFloat`). Expects `z` from
@@ -56,7 +56,7 @@ error 1.9e-16 over `z ∈ ±[1e-18, 200]` vs `BigFloat`). Expects `z` from
 """
     exprb_theta(z)
 
-The θ whose amplification matches `ExpRB`'s: `θ(z) = (1 − B(z))/z`, with `θ(0) = ½`.
+The θ whose amplification matches `ExpRB`'s: `θ(z) = (1 − bern(z))/z`, with `θ(0) = ½`.
 
 **For ledgers only — never build the scheme from this.** `1 − θz` is a subtraction
 that cancels as `θz → 1`: ~1 % wrong by `z = 36`. A consumer recording
@@ -64,7 +64,7 @@ that cancels as `θz → 1`: ~1 % wrong by `z = 36`. A consumer recording
 here θ is an output rather than a divisor.
 
 Monotone in `(0, 1)`: `θ → 1` (BE) as `z → −∞`, `½` (CN) at `0`, `0` (FE) as
-`z → +∞`. Series below `|z| = 1e-4`, where `1 − B(z)` loses digits.
+`z → +∞`. Series below `|z| = 1e-4`, where `1 − bern(z)` loses digits.
 """
 @inline function exprb_theta(z::T) where {T <: AbstractFloat}
     return abs(z) < T(1.0e-4) ?

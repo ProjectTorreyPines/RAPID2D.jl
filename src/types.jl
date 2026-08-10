@@ -220,6 +220,8 @@ mean free path and the Coulomb logarithm.
 - `z_growth` — `cap(ν_iz·Δt)`, **the exponent the last continuity solve used**, cap
   included. `reaction_θ` and `update_reaction_counts!` must weight the ledger with
   this and not `Δt·ν`, which is larger whenever the cap bound.
+- `growth_fitted` — whether that solve was the ExpRB one, so the weight is read off
+  the solve rather than off a flag that may have moved since.
 
 Only what a *second* consumer needs is stored; `atomic` keeps its exponent local.
 Named for the family because a second growth channel sums into the same diagonal.
@@ -230,6 +232,10 @@ Named for the family because a second growth channel sums into the same diagonal
     eig_Te::Matrix{FT} = zeros(FT, dims)
     eig_Ti::Matrix{FT} = zeros(FT, dims)
     z_growth::Matrix{FT} = zeros(FT, dims)
+
+    # Did the solve that wrote `z_growth` run under ExpRB? `reaction_θ` answers for
+    # that solve, and `scheme.growth` can move between the two calls.
+    growth_fitted::Bool = false
 end
 
 function ExpRBTerms{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
@@ -824,10 +830,10 @@ much* weight a θ-scheme gets; this says *whether a θ-scheme is what runs*.
 |---|---|---|
 | `ForwardEuler` | the term enters the RHS unweighted | `atomic` |
 | `Theta` | `θ_imp.<family>` is read | `transport`, `growth`, `decay`, `gas` |
-| `ExpRB` | `B(λΔt)` on the diagonal | — (opt-in) |
+| `ExpRB` | `bern(λΔt)` on the diagonal | — (opt-in) |
 
-`ExpRB` is exponential Rosenbrock–Euler, `y ← y + Δt·f(y)/B(λΔt)` with
-`B(z) = z/(eᶻ−1)` ([`exprb_bern`](@ref)). It solves the local linearisation exactly
+`ExpRB` is exponential Rosenbrock–Euler, `y ← y + Δt·f(y)/bern(λΔt)` with
+`bern(z) = z/(eᶻ−1)` ([`exprb_bern`](@ref)). It solves the local linearisation exactly
 at every `Δt`, so growth costs it nothing — where every θ has a pole (BE at `z = 1`,
 CN at `z = 2`), past which the density comes back negative.
 
@@ -841,7 +847,7 @@ one diagonal entry. The gain is at `|z| ≫ 1`; as `Δt → 0`,
     LinearResponseDepth
 
 How much of `∂f/∂y` goes into the `λ` that [`ExpRB`](@ref TimeScheme) puts in
-`B(λΔt)`. Orthogonal to [`TimeScheme`](@ref): that names the integrator, this its
+`bern(λΔt)`. Orthogonal to [`TimeScheme`](@ref): that names the integrator, this its
 input.
 
 `y` reaches `f` twice — written down as a factor (`ν·y`), and hidden inside `ν(Ē(y))`:
@@ -875,7 +881,7 @@ Defaults reproduce current behaviour term for term, so a fresh object is inert.
 `atomic` starts at `ForwardEuler` while everything else starts at `Theta`: Tₑ's
 atomic power is not weakly weighted today, it is *unweighted*.
 
-**What throws.** `transport` and `gas` cannot take `ExpRB`: `B(z)` fits one diagonal
+**What throws.** `transport` and `gas` cannot take `ExpRB`: `bern(z)` fits one diagonal
 entry, and a diffusion operator's stiff mode `~4D/h²` belongs to the mesh, not to any
 cell. `atomic = Theta` throws because `θ_imp` has no `atomic` member to read.
 `ForwardEuler` throws on every family but `atomic`, since those solvers branch on
@@ -926,7 +932,7 @@ function _check_time_scheme(name::Symbol, scheme::TimeScheme)
             ArgumentError(
                 "scheme.atomic = Theta is not available: θ on the linearised atomic power " *
                     "is design note §3.1, and ExpRB gets the fitted weight from the same " *
-                    "Jacobian — a constant θ buys nothing here that B(z) does not. Use " *
+                    "Jacobian — a constant θ buys nothing here that bern(z) does not. Use " *
                     "ExpRB, or ForwardEuler for the current behaviour. (θ_imp has no " *
                     "`atomic` member by design.)"
             )
@@ -1143,6 +1149,23 @@ function validate_scheme_flags(flags::SimulationFlags)
         )
     end
 
+    # `update_ue_para!` integrates in time only under ud_method = "Xsec". The legacy
+    # branches are algebraic — a fit, and a steady balance — with no Δt in them, so a
+    # time scheme selected there would be read by nothing, exactly as `ForwardEuler` on
+    # a θ-weighted family would be.
+    if flags.scheme.decay === ExpRB && flags.ud_evolve && flags.ud_method != "Xsec"
+        throw(
+            ArgumentError(
+                "scheme.decay = ExpRB is not available with " *
+                    "ud_method = \"$(flags.ud_method)\": update_ue_para! integrates the " *
+                    "u∥ friction only under ud_method = \"Xsec\", and the legacy branches " *
+                    "are algebraic balances with no Δt in them — the scheme would be " *
+                    "ignored rather than obeyed. Use ud_method = \"Xsec\", " *
+                    "scheme.decay = Theta, or ud_evolve = false."
+            )
+        )
+    end
+
     # The exact routing condition in `advance_timestep!`. Written as the same
     # conjunction rather than a looser one, so the refusal costs no configuration
     # that actually reaches `update_ue_para!`.
@@ -1155,7 +1178,7 @@ function validate_scheme_flags(flags::SimulationFlags)
                     "above Ampere_Itor_threshold that combination solves u∥ in the " *
                     "combined momentum–Ampère block, which fixes θ = 1 and would " *
                     "silently revert to backward Euler mid-run. Only update_ue_para! " *
-                    "carries B(z) today. Turn one of those flags off, or use " *
+                    "carries bern(z) today. Turn one of those flags off, or use " *
                     "scheme.decay = Theta."
             )
         )

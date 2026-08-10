@@ -78,13 +78,15 @@ family's own `z = λΔt` — per cell, per step. Still in `(0, 1)`, so
 
 **`ExpRB` is checked before `Implicit`, and the order is load-bearing.** For a
 θ-scheme the two coincide — no matrix, no weight. `ExpRB` separates them: its
-explicit branch applies the same `B(z)`, and a ledger formed at `θ = 0` there
+explicit branch applies the same `bern(z)`, and a ledger formed at `θ = 0` there
 under-reports every event (3.6 % at `z = 0.15`, worse as `z` grows).
 
 `z` comes from `plasma.exprb.z_growth` rather than being re-derived, so a capped step
-is weighted at the `z` that ran. This therefore reports **the last solve's**
-quadrature; before the first one `z_growth` is zero and the answer is `½`, with no
-events to weight. Throws rather than guessing if a family is switched to `ExpRB`
+is weighted at the `z` that ran, and the ExpRB branch is taken on
+`plasma.exprb.growth_fitted` rather than on `scheme.growth` — both are written by the
+solve, so a flag flipped between the solve and this call cannot answer for a step that
+never happened. Before the first solve `growth_fitted` is false and the answer is the
+θ constant, with no events to weight. Throws rather than guessing if a family is switched to `ExpRB`
 without its rate wired here.
 """
 function reaction_θ(RP::RAPID{FT}, channel::Symbol) where {FT <: AbstractFloat}
@@ -92,14 +94,22 @@ function reaction_θ(RP::RAPID{FT}, channel::Symbol) where {FT <: AbstractFloat}
         throw(ArgumentError("no reaction channel called $channel"))
 
     family = REACTION_STOICHIOMETRY[channel].θ
-    if getproperty(RP.flags.scheme, family) === ExpRB
-        family === :growth || throw(
+
+    # A family set to ExpRB with no rate wired here is a CONFIGURATION error, so it
+    # reads the live flag: it is wrong the moment it is written, not one solve later.
+    if getproperty(RP.flags.scheme, family) === ExpRB && family !== :growth
+        throw(
             ArgumentError(
                 "scheme.$family = ExpRB, but the rate behind channel :$channel is not " *
                     "wired into reaction_θ. Wire it, or the event count would be formed " *
                     "at a weight the solve did not use."
             )
         )
+    end
+
+    # The weight is a property of the SOLVE, not of the flag as it stands now — the
+    # ledger it has to match was formed at `z_growth`, by whatever scheme wrote it.
+    if family === :growth && RP.plasma.exprb.growth_fitted
         return exprb_theta.(RP.plasma.exprb.z_growth)
     end
     return RP.flags.Implicit ? reaction_θ(RP.flags, channel) : zero(FT)

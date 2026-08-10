@@ -508,6 +508,19 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Atomic_Collision while its mid-step writer sat under src.
     if RP.flags.Atomic_Collision || RP.flags.src
         if RP.flags.Ionz_method == "Townsend_coeff"
+            # The one branch that writes `ν_en_iz` without a surface behind it. Marking
+            # the cache fresh here would pair a Townsend rate with whatever slope the
+            # Xsec path left in `dν_dTe.iz` — two models, one λ, no announcement.
+            want_jacobian && throw(
+                ArgumentError(
+                    "exprb_eigenvalue = FullLinearResponse needs ∂ν_iz/∂Tₑ, and " *
+                        "Ionz_method = \"Townsend_coeff\" is a fit with no rate surface " *
+                        "to differentiate. validate_scheme_flags refuses this pairing at " *
+                        "initialize!; reaching here means Ionz_method changed afterwards. " *
+                        "Use Ionz_method = \"Xsec\", or " *
+                        "exprb_eigenvalue = PartialLinearResponse."
+                )
+            )
             # Electron avalanche via the Townsend coefficient,
             # α = 3.88 * p * exp(-95 * p / |E_para|)
             α = @. 3.88 * RP.config.prefilled_gas_pressure *

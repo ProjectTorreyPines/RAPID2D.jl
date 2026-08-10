@@ -4,7 +4,7 @@
     s = TimeSchemes()
 
     # The families are `ImplicitWeights`' families — the split is by the character
-    # of the operator, and that is exactly the split B(z) can and cannot cross.
+    # of the operator, and that is exactly the split bern(z) can and cannot cross.
     # Four of them are θ-weighted today.
     @test s.transport === Theta
     @test s.growth === Theta
@@ -29,7 +29,7 @@ end
     # contract the code enforces instead of a paragraph someone has to have read.
     s = TimeSchemes()
 
-    # B(z) fits the LOCAL (diagonal) eigenvalue. A diffusion operator's stiff mode
+    # bern(z) fits the LOCAL (diagonal) eigenvalue. A diffusion operator's stiff mode
     # ~4D/h² belongs to the mesh and the operator, not to any one cell, so no
     # per-cell fit can see it. Transport and neutral-gas diffusion are nonlocal.
     @test_throws ArgumentError s.transport = ExpRB
@@ -176,7 +176,7 @@ end
     # never reads `scheme`. `advance_timestep!` routes to it once |I_tor| crosses
     # `Ampere_Itor_threshold`, so the pairing does not fail: it reverts to backward
     # Euler PART WAY THROUGH a run and books `Rue_ei` at a different quadrature on
-    # either side of the crossing. Refused until the coupled block carries B(z).
+    # either side of the crossing. Refused until the coupled block carries bern(z).
     flags = SimulationFlags{Float64}()
     flags.scheme.decay = ExpRB
     flags.Ampere = true
@@ -200,11 +200,32 @@ end
         setproperty!(ok, off, false)
         @test validate_scheme_flags(ok) === ok
     end
-    legacy = SimulationFlags{Float64}()      # ud_method gates the coupled call too
+    # `ud_method` gates the coupled call too — but an evolving drift on a legacy
+    # method is refused anyway, by the narrower rule: those branches integrate
+    # nothing, so ExpRB is ignored there as surely as it would be in the coupled
+    # solve. The refusal must name THAT reason, not the Ampère route's.
+    legacy = SimulationFlags{Float64}()
     legacy.scheme.decay = ExpRB
     legacy.Ampere = true
     legacy.ud_method = "Lloyd_fit"
-    @test validate_scheme_flags(legacy) === legacy
+    leg_err = try
+        validate_scheme_flags(legacy)
+        nothing
+    catch e
+        sprint(showerror, e)
+    end
+    @test leg_err !== nothing
+    @test occursin("Lloyd_fit", leg_err)
+    @test !occursin("Ampere_Itor_threshold", leg_err)
+
+    # Freeze the drift and there is nothing to integrate, hence nothing to refuse:
+    # neither rule fires, and the legacy method keeps working as it always has.
+    frozen = SimulationFlags{Float64}()
+    frozen.scheme.decay = ExpRB
+    frozen.Ampere = true
+    frozen.ud_method = "Lloyd_fit"
+    frozen.ud_evolve = false
+    @test validate_scheme_flags(frozen) === frozen
 
     # With ExpRB off the coupled path is untouched: validation refuses in one
     # direction only.

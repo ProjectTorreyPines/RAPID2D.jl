@@ -198,7 +198,7 @@ end
 @testitem "ExpRB Tₑ: off is bit-for-bit the current scheme" setup = [ExpRBTeFixtures] begin
     using RAPID2D: ForwardEuler, ExpRB, update_RRCs!
 
-    # B(0) = 1 makes the fallback exact rather than approximate, but the code must
+    # bern(0) = 1 makes the fallback exact rather than approximate, but the code must
     # also not perturb the arithmetic on the way — the manuscript's figures are
     # pinned to current behaviour, so "unchanged" has to mean every bit.
     for implicit in (true, false)
@@ -215,7 +215,7 @@ end
     end
 end
 
-@testitem "ExpRB Tₑ: the diagonal is B(z), and the sparsity pattern is untouched" setup = [ExpRBTeFixtures] begin
+@testitem "ExpRB Tₑ: the diagonal is bern(z), and the sparsity pattern is untouched" setup = [ExpRBTeFixtures] begin
     using RAPID2D: ExpRB, update_RRCs!, update_electron_heating_powers!,
         update_electron_power_jacobian!, exprb_bern, exprb_cap_exponent
 
@@ -244,7 +244,7 @@ end
     @test pattern_on.rowval == pattern_off.rowval
     @test pattern_on != pattern_off                    # but different values
 
-    # And the diagonal difference is exactly B(z) − 1.
+    # And the diagonal difference is exactly bern(z) − 1.
     update_electron_heating_powers!(RP)
     update_electron_power_jacobian!(RP)
     B = exprb_bern.(exprb_cap_exponent.(RP.plasma.exprb.eig_Te .* RP.dt))

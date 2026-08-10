@@ -179,7 +179,7 @@ end
 
     # `reaction_θ` answered `Implicit || return 0` before consulting `scheme`, which
     # was right while "explicit" and "unweighted" meant the same thing. ExpRB
-    # separates them: the explicit branch of the continuity solve applies B(z) and
+    # separates them: the explicit branch of the continuity solve applies bern(z) and
     # therefore integrated the source with θ_fit(z), not with 0. A ledger formed at
     # 0 under-reports every ionization — measurably, not marginally.
     #

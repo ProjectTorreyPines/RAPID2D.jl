@@ -47,10 +47,18 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # Update method depends on flag
         if RP.flags.ud_method == "Lloyd_fit"
+            _refuse_exprb_decay(
+                RP.flags, "ud_method = \"Lloyd_fit\"",
+                "is an algebraic fit with no Δt in it, so no time scheme reaches it"
+            )
             # Simple fit for drift velocity
             @. RP.plasma.ue_para = 5719.0 * (-RP.fields.E_para_tot / RP.config.prefilled_gas_pressure)
 
         elseif RP.flags.ud_method == "Xsec_fit"
+            _refuse_exprb_decay(
+                RP.flags, "ud_method = \"Xsec_fit\"",
+                "solves the steady balance qE = mνu directly, with no Δt in it"
+            )
             # Cross section fit with simplified collisions
             qe = -RP.config.ee
 
@@ -106,7 +114,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             decay_is_exprb = RP.flags.scheme.decay === ExpRB
             decay_is_exprb && _refuse_full_response_decay(RP.flags)
             decay_exponent = decay_is_exprb ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
-            diag_decay = decay_is_exprb ? exprb_bern.(decay_exponent) : nothing
+            bern_decay = decay_is_exprb ? exprb_bern.(decay_exponent) : nothing
             # A scalar for the θ-scheme, a per-cell field for ExpRB. `θu` weights
             # the FRICTION and the ledger that records it; `θ_op` weights this
             # equation's nonlocal operators (convection, ExB diffusion), which the
@@ -150,9 +158,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
                 # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom + ν_ei_eff)*ue_para]
                 if decay_is_exprb
-                    # The uⁿ coefficient is B(−z), applied to the RHS below rather
+                    # The uⁿ coefficient is bern(−z), applied to the RHS below rather
                     # than accumulated here — see the note there.
-                    OP.A_LHS += @views spdiagm((diag_decay .- one_FT)[:])
+                    OP.A_LHS += @views spdiagm((bern_decay .- one_FT)[:])
                 else
                     @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
 
@@ -169,11 +177,11 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                     @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
                 end
 
-                # Under ExpRB the uⁿ coefficient is B(−z), formed as B(z) + z rather
+                # Under ExpRB the uⁿ coefficient is bern(−z), formed as bern(z) + z rather
                 # than the algebraically equal 1 − (1−θ)νΔt — that subtraction cancels
                 # to nothing exactly where the true value is small but meaningful.
                 if decay_is_exprb
-                    @. OP.RHS = (diag_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
+                    @. OP.RHS = (bern_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
                 else
                     @. OP.RHS = pla.ue_para + dt * accel_para_tilde
                 end
@@ -184,13 +192,13 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 end
             else
 
-                # Same two coefficients as the assembled path: 1/B(z) divides the
-                # increment, and B(−z) = B(z) + z scales uⁿ.
+                # Same two coefficients as the assembled path: 1/bern(z) divides the
+                # increment, and bern(−z) = bern(z) + z scales uⁿ.
                 inv_factor = decay_is_exprb ?
-                    (@. one_FT / diag_decay) :
+                    (@. one_FT / bern_decay) :
                     (@. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt))
                 u_coeff = decay_is_exprb ?
-                    (@. diag_decay + decay_exponent) :
+                    (@. bern_decay + decay_exponent) :
                     (@. one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
                 @. pla.ue_para = inv_factor * (
                     pla.ue_para * u_coeff
@@ -268,14 +276,24 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             one_FT = one(FT)
             if RP.flags.scheme.decay === ExpRB
                 # Same equation and same family as `update_ue_para!`: a sink written
-                # as ν·u, so B(z) with z = −νΔt replaces the constant weight. Same
+                # as ν·u, so bern(z) with z = −νΔt replaces the constant weight. Same
                 # caveat too — see there: it is not the least-overshooting choice at
                 # a coarse step.
-                z = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
-                B = exprb_bern.(z)
+                #
+                # The exponent carries the ATOMIC rate only. Coulomb friction is added
+                # after this update, explicitly, at (mₑ/m_i)·ν_ei — see below. So this
+                # is exact for the atomic friction alone, not for the whole local sink,
+                # and a Coulomb-stiff cell is stepped at forward Euler whatever this
+                # says. That asymmetry is older than this branch and identical in the θ
+                # branch, so it is not fixed here: doing so moves the default. The
+                # electron equation does NOT have it — `ν_ei_eff` sits inside
+                # `ν_sum_mom_iz_ei` there, under both schemes.
+                decay_exponent = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
+                bern_decay = exprb_bern.(decay_exponent)
                 @. pla.ui_para = (
-                    (B + z) * pla.ui_para + RP.dt * qi * RP.fields.E_para_tot / m_i
-                ) / B
+                    (bern_decay + decay_exponent) * pla.ui_para +
+                        RP.dt * qi * RP.fields.E_para_tot / m_i
+                ) / bern_decay
             else
                 # θ = 1 outright rather than `θ_imp.decay`: this equation has never
                 # read the weight store, and wiring it up here would be a silent
@@ -335,14 +353,14 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         two_thirds_FT = FT(2.0) / FT(3.0)
 
-        # `B(z)` with `z = exprb.eig_Te·Δt`. Branched rather than relying on B(0) = 1, so
+        # `bern(z)` with `z = exprb.eig_Te·Δt`. Branched rather than relying on bern(0) = 1, so
         # the off path does no arithmetic at all and "unchanged" holds structurally.
         atomic_is_exprb = RP.flags.scheme.atomic === ExpRB
-        diag_atomic = if atomic_is_exprb
+        bern_atomic = if atomic_is_exprb
             update_electron_power_jacobian!(RP)
-            z = @. exprb_cap_exponent(pla.exprb.eig_Te * dt)
-            _warn_if_exprb_capped(z)
-            exprb_bern.(z)
+            atomic_exponent = @. exprb_cap_exponent(pla.exprb.eig_Te * dt)
+            _warn_if_exprb_capped(atomic_exponent)
+            exprb_bern.(atomic_exponent)
         else
             nothing
         end
@@ -377,11 +395,11 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
                 # LHS written as a deviation from the identity, so the sparsity
                 # pattern — and the cached symbolic factorization — is untouched.
-                # The source needs no B: with S = (2/3e)P⁰ − λTₑⁿ, B(−z) = B(z) + z
-                # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by B.
+                # The source needs no bern: with S = (2/3e)P⁰ − λTₑⁿ, bern(−z) = bern(z) + z
+                # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by bern.
                 if atomic_is_exprb
-                    OP.A_LHS += @views spdiagm((diag_atomic .- one(FT))[:])
-                    OP.RHS .= diag_atomic .* pla.Te_eV +
+                    OP.A_LHS += @views spdiagm((bern_atomic .- one(FT))[:])
+                    OP.RHS .= bern_atomic .* pla.Te_eV +
                         two_thirds_FT * (dt * ePowers_tilde / ee)
                 else
                     OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
@@ -394,8 +412,8 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 end
             end
         elseif atomic_is_exprb
-            # Forward Euler with B as a divisor on the increment.
-            @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee / diag_atomic
+            # Forward Euler with bern as a divisor on the increment.
+            @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee / bern_atomic
         else
             # Explicit method (forward Euler)
             @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee
@@ -440,14 +458,15 @@ function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         dt = RP.dt
         pla = RP.plasma
 
-        # Forward Euler with B as a divisor on the increment, the same treatment
+        # Forward Euler with bern as a divisor on the increment, the same treatment
         # `update_Te!` gives the electron power and for the same reason: `iPowers.tot`
         # is a number from a table lookup with no operator for a θ to weigh.
         if RP.flags.scheme.atomic === ExpRB
             update_ion_power_jacobian!(RP)
-            z = @. exprb_cap_exponent(pla.exprb.eig_Ti * dt)
-            _warn_if_exprb_capped(z)
-            @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / ee / exprb_bern(z)
+            atomic_exponent = @. exprb_cap_exponent(pla.exprb.eig_Ti * dt)
+            _warn_if_exprb_capped(atomic_exponent)
+            @. pla.Ti_eV +=
+                (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / ee / exprb_bern(atomic_exponent)
         else
             @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / (ee)
         end
@@ -1038,11 +1057,14 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # Unlike decay this z is POSITIVE and can reach the cap: a cell asking to
         # multiply its density by more than e³⁰ in one step is a step nothing
         # resolves, and it should say so.
+        # Recorded, not re-read: `reaction_θ` must answer for the solve that formed the
+        # ledger, and `scheme.growth` can move between the two calls.
         growth_is_exprb = RP.flags.scheme.growth === ExpRB
+        pla.exprb.growth_fitted = growth_is_exprb
         growth_is_exprb && @. pla.exprb.z_growth = exprb_cap_exponent(pla.ν_en_iz * dt)
 
         fit_growth = RP.flags.src && growth_is_exprb
-        diag_growth = if fit_growth
+        bern_growth = if fit_growth
             _warn_if_exprb_capped(pla.exprb.z_growth)
             exprb_bern.(pla.exprb.z_growth)
         else
@@ -1060,10 +1082,10 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # θ = 0 reproduces it bit for bit rather than merely algebraically.
             @. op.RHS *= (one(FT) - θ_tr)
             if fit_growth
-                # nⁿ coefficient is B(−z) = B(z) + z. Unlike the decay branch, the
+                # nⁿ coefficient is bern(−z) = bern(z) + z. Unlike the decay branch, the
                 # subtraction that cancels here is on the LHS, not this one — see
                 # the assembly below.
-                @. op.RHS = (diag_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS
+                @. op.RHS = (bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS
             else
                 if RP.flags.src
                     @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
@@ -1088,11 +1110,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
             @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
             if fit_growth
-                # B(z) on the diagonal, as a deviation from the identity so the
+                # bern(z) on the diagonal, as a deviation from the identity so the
                 # pattern is untouched. This is the side that cancels on a growth
                 # branch — the θ form's 1 − θνΔt passes through zero at the poles —
-                # and B(z) > 0 at every z keeps the matrix an M-matrix.
-                op.A_LHS += @views spdiagm((diag_growth .- one(FT))[:])
+                # and bern(z) > 0 at every z keeps the matrix an M-matrix.
+                op.A_LHS += @views spdiagm((bern_growth .- one(FT))[:])
             end
 
             # Solve the linear system (cached factorization; pattern is step-stable)
@@ -1104,7 +1126,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # Same two coefficients as the assembled path: no matrix is not the same
             # as no fit. `op.RHS` still holds transport, which is not part of λ and
             # rides the increment like any other frozen source.
-            @. pla.ne = ((diag_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / diag_growth
+            @. pla.ne = ((bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / bern_growth
         else
             if RP.flags.src
                 @. op.RHS += pla.ne * pla.ν_en_iz
@@ -1666,23 +1688,24 @@ function solve_Ampere_equation(RP::RAPID{FT}; plasma::Bool = true, coils::Bool =
 end
 
 """
-    _refuse_exprb_decay(flags, fname)
+    _refuse_exprb_decay(flags, who, why)
 
-Throw if `scheme.decay = ExpRB` reaches a solver that fixes `θ = 1`.
+Throw if `scheme.decay = ExpRB` reaches code that cannot honour it.
 
-`validate_scheme_flags` refuses the *routing* conjunction that reaches these solvers
-at `initialize!`, which is where a user meets it. This is the backstop, and it is
-wider than that refusal on purpose: flags stay mutable afterwards, both callers are
-entered through a runtime current threshold rather than a configuration, and either
-can also be called directly. So "silently reverts to backward Euler" has to be
-unreachable and not merely unconfigured.
+`validate_scheme_flags` refuses each such pairing at `initialize!`, which is where a
+user meets it. This is the backstop, and it is wider than those refusals on purpose:
+flags stay mutable afterwards, and every caller here is entered through a runtime
+condition or a direct call rather than through the configuration that was validated.
+So "silently does something else" has to be unreachable, not merely unconfigured.
+
+`why` completes the sentence "…cannot honour scheme.decay = ExpRB because it `why`".
 """
-function _refuse_exprb_decay(flags::SimulationFlags, fname::AbstractString)
+function _refuse_exprb_decay(flags::SimulationFlags, who::AbstractString, why::AbstractString)
     flags.scheme.decay === ExpRB && throw(
         ArgumentError(
-            "$fname fixes θ = 1 for the u∥ friction and cannot honour " *
-                "scheme.decay = ExpRB — only update_ue_para! carries B(z) today. " *
-                "Use scheme.decay = Theta, or keep this solver out of the routing."
+            "$who cannot honour scheme.decay = ExpRB because it $why — only " *
+                "update_ue_para! with ud_method = \"Xsec\" carries bern(z) today. " *
+                "Use scheme.decay = Theta."
         )
     )
     return nothing
@@ -1745,7 +1768,9 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
         max_iter::Int = 10,
         relaxation_w::FT = 0.5
     ) where {FT <: AbstractFloat}
-    _refuse_exprb_decay(RP.flags, "solve_coupled_momentum_Ampere_equations_with_coils!")
+    _refuse_exprb_decay(
+        RP.flags, "solve_coupled_momentum_Ampere_equations_with_coils!", "fixes θ = 1 for the u∥ friction"
+    )
 
     # Aliases for readability
     pla = RP.plasma
@@ -2091,7 +2116,9 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         max_iter::Int = 10,
         relaxation_w::FT = 0.5
     ) where {FT <: AbstractFloat}
-    _refuse_exprb_decay(RP.flags, "solve_combined_momentum_Ampere_equations_with_coils!")
+    _refuse_exprb_decay(
+        RP.flags, "solve_combined_momentum_Ampere_equations_with_coils!", "fixes θ = 1 for the u∥ friction"
+    )
     @timeit RAPID_TIMER "solve_combined_momentum_Ampere_equations_with_coils!" begin
         # Aliases for readability
         pla = RP.plasma

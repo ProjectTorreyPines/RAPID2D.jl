@@ -1,7 +1,7 @@
 @testitem "exprb_theta: the weight a ledger should record, valid at every z" begin
     using RAPID2D: exprb_theta, exprb_bern
 
-    # θ(z) = (1 − B(z))/z is what `ExpRB` amounts to when read as a θ-scheme. It
+    # θ(z) = (1 − bern(z))/z is what `ExpRB` amounts to when read as a θ-scheme. It
     # is never used to BUILD the scheme — 1 − θz cancels — but a consumer that
     # stores ∫…dt ≈ Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹] has to know which quadrature ran.
     @test exprb_theta(0.0) == 0.5
@@ -94,7 +94,7 @@ end
     τ = 1 / minimum(abs, p.eig[inw])
     t_end = 10τ
 
-    # Both solve paths: with no matrix, B divides the increment and B(−z) scales
+    # Both solve paths: with no matrix, bern divides the increment and bern(−z) scales
     # uⁿ — the same two coefficients the assembled form puts on either side. The
     # closed form cannot tell them apart, so neither may the answer.
     for (label, u₀) in (("from rest", 0.0), ("from above u_sat", 3 * p.u_sat[first(inw)])),
