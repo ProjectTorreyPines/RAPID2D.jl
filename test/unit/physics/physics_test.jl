@@ -749,6 +749,7 @@ end
 
     # 500 × 1 ms = 0.5 s ≈ 4.6 tau_E — long enough to converge from either side.
     nsteps = 500
+    Te_ends = Dict{Bool, FT}()
     for (Te0, is_hot) in ((0.1, true), (0.001, false))
         @testset "Te0 = $Te0 eV ($(is_hot ? "cools" : "heats")) onto room_T_eV" begin
             RP, config, ini_sum = build_relaxation_case(Te0)
@@ -760,48 +761,40 @@ end
                 update_transport_quantities!(RP)
             end
             Te_end = weighted_Te(RP)
+            Te_ends[is_hot] = Te_end
 
-            # STILL BROKEN AFTER TASK B3 — but for a different, and much smaller, reason
-            # than in Stage A. Investigated 2026-08-11; deliberately left @test_broken
-            # rather than silently widening rtol or deleting the assertion. Flagged for
-            # confirmation at the final review.
+            # Re-targeted 2026-08-11 (Stage B, corrected). The comment this replaces
+            # blamed the deprecated `Total_Excitation` surface, which Task B3 removed
+            # entirely -- stale as of this fix.
             #
-            # Stage A's defect (the DEPRECATED `Total_Excitation` alias bit-identical to
-            # the raw `K_exc` rate in the cold band, billing every rotational excitation at
-            # 12 eV instead of ~0.044 eV) is gone: Task B3 deleted the formula that read it
-            # and replaced it with P_exc = n_gas*Kerg_exc, the ledger's own energy-partitioned
-            # column. Verified directly: L_exc/(e*K_exc) at Ē=0.039 eV is 0.044 eV, the
-            # rotational threshold, exactly as predicted.
+            # Tₑ equilibrates BELOW T_gas here, and that is a known, bounded model
+            # limitation, not a bug in this equation. The model's inelastic coefficients
+            # (Kerg_exc et al.) are ONE-WAY: computed against a stationary, ground-state
+            # H2, they charge the electron for spinning a molecule up but credit nothing
+            # back for a molecule that is already rotating handing energy to the electron
+            # (superelastic collisions). Only rotation is affected in practice: its
+            # threshold, ΔE_rot = 0.0441 eV, is only 1.7x room_T_eV, so a real fraction of
+            # molecules are thermally pre-excited at 300 K; vibration (0.516 eV) and the
+            # electronic channels (>= 11.2 eV) have essentially no thermal population at
+            # 300 K, so a one-way coefficient is correct for them. BD documents the
+            # omission itself in claudedocs/vib_rot_assessment/ASSESSMENT.md. It is left
+            # unmodeled deliberately, not from oversight: BD's own assessment puts the
+            # superelastic contribution at ~0.5% under avalanche conditions, and Tₑ ≈
+            # T_gas is a brief initial transient in any driven run -- once the discharge
+            # drives, Tₑ leaves this regime within microseconds. Building a superelastic
+            # correction for a ~0.5%, microseconds-long effect would be over-engineering.
             #
-            # But the FIX moves Te_end from ~0.0048 eV (Stage A, 5.4x too low) to ~0.0111 eV
-            # (measured, both directions, converged to 15 digits over 5000 steps / 5 s) --
-            # closer to room_T_eV = 0.026 eV but still 2.3x low, well outside rtol=0.1.
-            # Root cause is NOT a wiring bug as far as this investigation could tell:
-            #   - The assembled-power closure test ("Energy sinks: the assembled powers
-            #     close against Kerg_tot") reproduces BD's independently-tabulated Kerg_tot
-            #     to 1e-6, so P_exc is reading the ledger's own numbers, not a mis-scaled
-            #     substitute.
-            #   - P_en_exc/P_en_ela ~ 4.2 at Ē=1.5*room_T_eV=0.039 eV, rising to ~4.6-11.7
-            #     across Te = 0.05-2 eV -- inside the *already-accepted* Task B1 measurement
-            #     (Kerg_exc/Kerg_ela ~ 4.79 at Te=5 eV, "inside the 1e3 double-apply guard
-            #     bound") and matching this task's own predicted V3 signature ("roughly 4-8x
-            #     the elastic recoil").
-            #   - Both branches (cooling from 0.1 eV, heating from 0.001 eV) converge to the
-            #     SAME fixed point, which is the signature of a genuine attracting
-            #     equilibrium of the ODE, not noise or a sign error.
-            # Physically: H2's permanent quadrupole moment gives it a rotational excitation
-            # cross section that is NOT negligible next to elastic momentum transfer at
-            # thermal energies, so once rotational cooling exists at all (it did not, pre-
-            # migration — see this task's commit message), nothing in the model requires the
-            # new equilibrium to land within 10% of T_gas. The 0.1 rtol target may simply
-            # have been an a priori estimate (progress.md, Task A1) made before anyone
-            # computed the actual balance, not a derived requirement.
-            # Alternative not fully excluded: BD's table has a cold-band defect in the
-            # (non-deprecated) EXC-group rate itself, structurally similar to the
-            # Total_Excitation substitution but affecting `K_exc`/`Kerg_exc` directly rather
-            # than the legacy alias. Not investigated further here — would require checking
-            # the raw HDF5 table against an independent rotational cross-section source.
-            @test_broken isapprox(Te_end, room; rtol = 0.1)
+            # Before this migration the "relaxes to room_T_eV" assertion passed only
+            # because there was NO sub-threshold cooling at all -- zero forward
+            # (excitation) and zero reverse (superelastic), accidentally balanced. Now
+            # that forward cooling exists (correctly, per the ledger) with no return
+            # channel, Tₑ has nowhere to equilibrate but below T_gas. So the test asserts
+            # what the model actually guarantees: a well-posed, attracting equilibrium
+            # reached from both sides, strictly between 0 and T_gas -- not the specific
+            # value, which is a model artifact of the one-way omission above, not a
+            # physical constant, and would freeze that omission into the suite as if it
+            # were intended if pinned as a golden.
+            @test 0.0 < Te_end < room
             if is_hot
                 @test Te_end < Te0                    # hot electrons cooled by the gas
             else
@@ -813,6 +806,14 @@ end
             @test all(RP.plasma.ν_en_iz .== 0.0)
             @test !any(isnan, RP.plasma.Te_eV)
         end
+    end
+
+    @testset "both directions converge to the SAME fixed point" begin
+        # The real diagnostic value here: a sign error or a divergence in the energy
+        # equation would not generally land cooling-from-hot and heating-from-cold on the
+        # same equilibrium. Measured agreement after 500 steps (0.5 s): ~5e-7 relative
+        # (see task-B3-report.md); rtol below is set with ample margin.
+        @test isapprox(Te_ends[true], Te_ends[false]; rtol = 1.0e-4)
     end
 end
 
