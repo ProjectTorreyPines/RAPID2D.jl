@@ -106,8 +106,8 @@ end
     RP = RAPID{Float64}(config)
     initialize!(RP)
 
-    RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-    RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
+    RRC_iz = get_electron_RRC(RP, RP.eRRCs, :K_iz)
+    RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :K_mom)
     @test size(RRC_iz) == (RP.G.NR, RP.G.NZ)
     @test size(RRC_mom_tot) == (RP.G.NR, RP.G.NZ)
     @test all(RRC_iz .>= 0.0)
@@ -647,7 +647,7 @@ end
     ini_sum = sum(RP.plasma.ne)
 
     @testset "(a) table clamps to the low-field boundary, threshold still applies" begin
-        rrc_iz = RP.eRRCs.Ionization
+        rrc_iz = RP.eRRCs.K_iz
         @test rrc_iz.itp(0.0, 15.0) == rrc_iz.itp(rrc_iz.EoverP[1], 15.0)  # clamped
         @test rrc_iz.itp(0.0, 15.0) > 0.0                                  # ...and nonzero
         @test rrc_iz.itp(0.0, 1.5) == 0.0    # 15.46 eV energy threshold still enforced
@@ -834,8 +834,8 @@ end
     update_RRCs!(RP)
     RAPID2D.update_electron_heating_powers!(RP)
 
-    K_tot = get_electron_RRC(RP, :Total_Momentum)
-    K_ela = get_electron_RRC(RP, :Momentum_by_ela)
+    K_tot = get_electron_RRC(RP, :K_mom)
+    K_ela = get_electron_RRC(RP, :K_mom_by_ela)
     inw = RP.G.nodes.in_wall_nids
 
     # The chosen state must actually separate the two moments, or this test proves nothing.
@@ -897,7 +897,7 @@ end
             @test all(f[inw] .> 0.0)
         end
         @test pla.ν_en_mom_tot[inw] ≈
-            (pla.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum))[inw]
+            (pla.n_H2_gas .* get_electron_RRC(RP, :K_mom))[inw]
         # At E/p ~ 100 elastic is only ~70% of the drift friction, so the two momentum
         # surfaces must not coincide -- otherwise the rest of this item proves nothing.
         @test all(pla.ν_en_mom_ela[inw] .< pla.ν_en_mom_tot[inw])
@@ -920,7 +920,7 @@ end
         # advance_timestep! advances u_para (update_ue_para!) before the energy equation
         # runs, so mid-step the lookup coordinate has moved. Imitate that move directly.
         pla.ue_para .*= 5.0
-        ν_mid = pla.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum)
+        ν_mid = pla.n_H2_gas .* get_electron_RRC(RP, :K_mom)
         @test !isapprox(ν_mid[inw], ν_entry[inw]; rtol = 1.0e-3)   # the state really moved
         @test pla.ν_en_mom_tot == ν_entry                          # ...the field did not
 

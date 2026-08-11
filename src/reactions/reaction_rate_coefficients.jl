@@ -218,30 +218,67 @@ Container for electron-related reaction rate coefficient models.
 Stores various reaction models for electron-neutral and electron-ion interactions.
 
 # Fields
-- `Ionization`: Rate coefficient for electron impact ionization
-- `Total_Momentum`: Drift-friction rate coefficient — the SUM over all electron-neutral
-  channels (elastic + excitation + ionization) — the v_z-weighted moment
-  ⟨σ_mom·|v|·v_z⟩/⟨v_z⟩, NOT the density-weighted collision frequency ⟨σ_mom·|v|⟩
-- `Momentum_by_ela`: the ELASTIC share of `Total_Momentum`. Elastic energy transfer to the
-  neutrals is ~2mₑ/M per *elastic* momentum-transfer collision only; the inelastic
-  share of `Total_Momentum` carries its momentum into excitation/ionization, which are
-  accounted separately. Using `Total_Momentum` for that term therefore over-counts it
-  (~1.4× at E/p ≈ 100, ~4.4× at E/p ≈ 1000). Required — tables predating the
-  per-channel split are not supported; regenerate with BreakdownDynamics'
-  `postprocessing/make_envelope_h5.jl`.
-- `Total_Excitation`: Energy-normalized excitation rate coefficient
-  K_exc·ε_exc,eff/ε_ch, consumed as P_exc = ν_exc·ε_ch (see `characteristic_exc_erg_eV`)
+
+Three ledgers, three weightings of the same `⟨σv⟩` average. See
+`internal/docs/src/notes/design/bd-2026-08-governing-equations.md` §2 — read it before
+substituting one for another; none of them are interchangeable.
+
+## Particle ledger [m³/s] — each collision counts 1
+- `K_iz`: `e + H₂ → 2e + H₂⁺`
+- `K_diss_iz`: `e + H₂ → 2e + H⁺ + H⁰`, zero below 35 eV impact
+- `K_exc`: EXC-group event rate (singlets + vib + rot). **Not** `Total_Excitation`
+- `K_diss_exc`: `e + H₂ → 2H⁰ + e`, triplets plus the B/C singlet branching yields
+
+## Momentum ledger [m³/s] — each collision counts `w_mom`, `v_z`-weighted moment
+- `K_mom`: drift friction `ν_mom/n_gas` = `⟨σ_mom|v|v_z⟩/⟨v_z⟩`. The ONLY momentum input
+  to the solver. Not the density-weighted collision frequency
+- `K_mom_by_*`: per-group shares, `K_mom = Σ K_mom_by_*` exactly. **Diagnostics only** —
+  they are the sole auditor of `K_mom`, which has no other check
+
+## Energy ledger [W·m³] — each collision counts `Δε`
+- `Kerg_ela`: elastic recoil. **`2mₑ/M` and `e` are already inside.** Cold-target: it does
+  not vanish at `Tₑ = T_gas`, hence the `(1 − 3T_gas/2Ē)` factor at the use site
+- `Kerg_exc`: EXC group. Carries the vib/rot cooling nothing else has
+- `Kerg_diss_exc`: DISS group, triplet energy only
+- `Kerg_tot`: `Kerg_ela + Kerg_exc + Kerg_diss_exc + e(15.426·K_iz + 35.0·K_diss_iz)`,
+  assembled by BD from the exported parts, so it closes by construction
+
+Never form `Kerg_x/K_x` at runtime: the DISS pair is deliberately asymmetric and both are
+0/0 over most of the grid.
+
+## Deprecated
+- `Total_Excitation`, `characteristic_exc_erg_eV`: the pre-2026-08 `K_exc⟨E_exc⟩/12`
+  encoding over electronic channels only. Superseded by `Kerg_exc`; removed once nothing
+  reads them
+
+# Other fields
 - `Dissoc_Ionz`: Rate coefficient for dissociative ionization
 - `Halpha`: Rate coefficient for Halpha emission
 - `Recomb_H2Ion`: Rate coefficient for H2+ recombination
 - `Recomb_H3Ion`: Rate coefficient for H3+ recombination
-- `characteristic_exc_erg_eV`: the excitation normalization the loaded table was built
-  with (`nothing` if the table omits it); validated in `initialize_RRCs!`.
 """
 struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
-    Ionization::RRC_EoverP_Erg{FT}
-    Total_Momentum::RRC_EoverP_Erg{FT}
-    Momentum_by_ela::RRC_EoverP_Erg{FT}
+    # ── particle ledger [m³/s] — count EVENTS
+    K_iz::RRC_EoverP_Erg{FT}
+    K_diss_iz::RRC_EoverP_Erg{FT}
+    K_exc::RRC_EoverP_Erg{FT}
+    K_diss_exc::RRC_EoverP_Erg{FT}
+
+    # ── momentum ledger [m³/s] — v_z-weighted drift friction, K_mom = Σ K_mom_by_*
+    K_mom::RRC_EoverP_Erg{FT}
+    K_mom_by_ela::RRC_EoverP_Erg{FT}
+    K_mom_by_exc::RRC_EoverP_Erg{FT}
+    K_mom_by_diss_exc::RRC_EoverP_Erg{FT}
+    K_mom_by_iz::RRC_EoverP_Erg{FT}
+    K_mom_by_diss_iz::RRC_EoverP_Erg{FT}
+
+    # ── energy ledger [W·m³] — carry ENERGY; BD spells these `L_*`
+    Kerg_ela::RRC_EoverP_Erg{FT}
+    Kerg_exc::RRC_EoverP_Erg{FT}
+    Kerg_diss_exc::RRC_EoverP_Erg{FT}
+    Kerg_tot::RRC_EoverP_Erg{FT}
+
+    # ── deprecated, removed in Task B6 once nothing reads it
     Total_Excitation::RRC_EoverP_Erg{FT}
 
     Dissoc_Ionz::RRC_T_ud{FT}
@@ -249,7 +286,7 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
     Recomb_H2Ion::RRC_T_ud{FT}
     Recomb_H3Ion::RRC_T_ud{FT}
 
-    characteristic_exc_erg_eV::Union{FT, Nothing}  # table's exc normalization; checked in initialize_RRCs!
+    characteristic_exc_erg_eV::Union{FT, Nothing}  # deprecated with Total_Excitation
 
     function Electron_RRCs(eRRC_EoverP_Erg_fileName::String, eRRC_T_ud_fileName::String)
         @assert isfile(eRRC_EoverP_Erg_fileName) "File not found: $eRRC_EoverP_Erg_fileName"
@@ -259,13 +296,42 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
         h5fid = h5open(eRRC_EoverP_Erg_fileName, "r")
         EoverP = read(h5fid, "EoverP")
         Erg_eV = read(h5fid, "Erg_eV")
-        Ionization = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Ionization"))
-        Total_Momentum = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Total_Momentum"))
-        Momentum_by_ela = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Momentum_by_ela"))
-        Total_Excitation = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, "Total_Excitation"))
-        # Excitation normalization the table was built with — kept as a field and
-        # validated later in initialize_RRCs! (where RP.config is available) against
-        # config.constants.char_exc_erg_eV. `nothing` if the table omits it.
+
+        # THE BD ↔ RAPID2D NAME MAPPING LIVES HERE AND NOWHERE ELSE.
+        # BD's `L_*` are renamed `Kerg_*` because `L_` is already length throughout this
+        # codebase (Lc, Lc_tot, L_mixing, L_char, Lpol). Anyone cross-reading BD's docs
+        # needs this table; keep it next to the reads.
+        #
+        #   BD dataset          RAPID2D field        units      manuscript
+        #   K_iz                K_iz                 m³/s       K_iz
+        #   K_diss_iz           K_diss_iz            m³/s       K_DI
+        #   K_exc               K_exc                m³/s       K_exc
+        #   K_diss_exc          K_diss_exc           m³/s       K_diss
+        #   K_mom, K_mom_by_*   same                 m³/s       K_mom, K_mom,α
+        #   L_ela               Kerg_ela             W·m³       K^ε_ela
+        #   L_exc               Kerg_exc             W·m³       K^ε_exc
+        #   L_diss_exc          Kerg_diss_exc        W·m³       K^ε_diss
+        #   L_tot               Kerg_tot             W·m³       K^ε_tot
+        srf_eop(name) = RRC_EoverP_Erg(EoverP, Erg_eV, read(h5fid, name))
+
+        K_iz = srf_eop("K_iz")
+        K_diss_iz = srf_eop("K_diss_iz")
+        K_exc = srf_eop("K_exc")
+        K_diss_exc = srf_eop("K_diss_exc")
+
+        K_mom = srf_eop("K_mom")
+        K_mom_by_ela = srf_eop("K_mom_by_ela")
+        K_mom_by_exc = srf_eop("K_mom_by_exc")
+        K_mom_by_diss_exc = srf_eop("K_mom_by_diss_exc")
+        K_mom_by_iz = srf_eop("K_mom_by_iz")
+        K_mom_by_diss_iz = srf_eop("K_mom_by_diss_iz")
+
+        Kerg_ela = srf_eop("L_ela")
+        Kerg_exc = srf_eop("L_exc")
+        Kerg_diss_exc = srf_eop("L_diss_exc")
+        Kerg_tot = srf_eop("L_tot")
+
+        Total_Excitation = srf_eop("Total_Excitation")   # deprecated; removed in B6
         char_exc = haskey(h5fid, "characteristic_exc_erg_eV") ?
             Float64(read(h5fid, "characteristic_exc_erg_eV")) : nothing
         close(h5fid)
@@ -286,7 +352,11 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
         FT = eltype(EoverP)  # Determine the floating-point type from the data
 
         return new{FT}(
-            Ionization, Total_Momentum, Momentum_by_ela, Total_Excitation,
+            K_iz, K_diss_iz, K_exc, K_diss_exc,
+            K_mom, K_mom_by_ela, K_mom_by_exc, K_mom_by_diss_exc,
+            K_mom_by_iz, K_mom_by_diss_iz,
+            Kerg_ela, Kerg_exc, Kerg_diss_exc, Kerg_tot,
+            Total_Excitation,
             Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion,
             char_exc === nothing ? nothing : FT(char_exc)
         )
@@ -393,7 +463,7 @@ Automatically selects appropriate physical parameters from the RAPID model.
 # Arguments
 - `RP::RAPID{FT}`: RAPID plasma model containing physical state variables
 - `eRRCs::Electron_RRCs{FT}`: Container of electron reaction rate coefficient models
-- `reaction::Symbol`: Symbol specifying which reaction to compute (e.g., :Ionization)
+- `reaction::Symbol`: Symbol specifying which reaction to compute (e.g., :K_iz)
 
 # Returns
 - RRC (reaction rate coefficient) values at each spatial point
@@ -485,16 +555,16 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla.dν_dTe.fresh = want_jacobian
 
     if RP.flags.Atomic_Collision
-        K_mom_tot = get_electron_RRC(RP, :Total_Momentum)
-        K_mom_ela = get_electron_RRC(RP, :Momentum_by_ela)
+        K_mom_tot = get_electron_RRC(RP, :K_mom)
+        K_mom_ela = get_electron_RRC(RP, :K_mom_by_ela)
         K_exc_eff = get_electron_RRC(RP, :Total_Excitation)
         @. pla.ν_en_mom_tot = pla.n_H2_gas * K_mom_tot
         @. pla.ν_en_mom_ela = pla.n_H2_gas * K_mom_ela
         @. pla.ν_en_exc_eff = pla.n_H2_gas * K_exc_eff
 
         if want_jacobian
-            update_rate_jacobian!(RP, :Total_Momentum, pla.dν_dTe.mom_tot)
-            update_rate_jacobian!(RP, :Momentum_by_ela, pla.dν_dTe.mom_ela)
+            update_rate_jacobian!(RP, :K_mom, pla.dν_dTe.mom_tot)
+            update_rate_jacobian!(RP, :K_mom_by_ela, pla.dν_dTe.mom_ela)
             update_rate_jacobian!(RP, :Total_Excitation, pla.dν_dTe.exc_eff)
         end
     end
@@ -503,9 +573,9 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Atomic_Collision) and the continuity source (gated on src). With only `src` set,
     # this field used to hold a stale mid-step value from the previous iteration.
     if RP.flags.Atomic_Collision || RP.flags.src
-        K_iz = get_electron_RRC(RP, :Ionization)
+        K_iz = get_electron_RRC(RP, :K_iz)
         @. pla.ν_en_iz = pla.n_H2_gas * K_iz
-        want_jacobian && update_rate_jacobian!(RP, :Ionization, pla.dν_dTe.iz)
+        want_jacobian && update_rate_jacobian!(RP, :K_iz, pla.dν_dTe.iz)
 
         # No ionization outside the wall — and therefore no dependence of it on Tₑ
         # there either, or the diagonal would carry a rate the physics does not.

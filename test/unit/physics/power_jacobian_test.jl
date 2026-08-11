@@ -58,7 +58,16 @@
         h5open(path, "w") do fid
             fid["EoverP"] = EoverP
             fid["Erg_eV"] = Erg_eV
-            for name in ("Ionization", "Total_Momentum", "Momentum_by_ela", "Total_Excitation")
+            # Electron_RRCs now reads the full 2026-08 group ledger (Task B1); every
+            # (E/p, Ē) surface it reads must exist in the file, even the ones this
+            # test does not exercise, or the constructor throws on a missing dataset.
+            for name in (
+                    "K_iz", "K_diss_iz", "K_exc", "K_diss_exc",
+                    "K_mom", "K_mom_by_ela", "K_mom_by_exc", "K_mom_by_diss_exc",
+                    "K_mom_by_iz", "K_mom_by_diss_iz",
+                    "L_ela", "L_exc", "L_diss_exc", "L_tot",
+                    "Total_Excitation",
+                )
                 fid[name] = copy(data)
             end
             fid["characteristic_exc_erg_eV"] = RP.config.constants.char_exc_erg_eV

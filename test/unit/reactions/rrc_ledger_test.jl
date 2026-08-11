@@ -8,13 +8,29 @@
 
     # The particle, momentum and energy ledgers, by BD's dataset names. RAPID2D renames
     # `L_*` to `Kerg_*` on read (Task B1); the FILE still spells them `L_*`.
-    for k in (
-            "K_iz", "K_diss_iz", "K_exc", "K_diss_exc", "K_ela",
-            "K_mom", "K_mom_by_ela", "K_mom_by_exc", "K_mom_by_diss_exc",
-            "K_mom_by_iz", "K_mom_by_diss_iz",
-            "L_ela", "L_exc", "L_diss_exc", "L_tot",
-        )
+    surfaces = (
+        "K_iz", "K_diss_iz", "K_exc", "K_diss_exc", "K_ela",
+        "K_mom", "K_mom_by_ela", "K_mom_by_exc", "K_mom_by_diss_exc",
+        "K_mom_by_iz", "K_mom_by_diss_iz",
+        "L_ela", "L_exc", "L_diss_exc", "L_tot",
+    )
+    for k in surfaces
         @test k in names
+    end
+
+    # Presence alone does not catch an inverted axis order: BD's (T, u_d) ion tables
+    # were once stored transposed, and "nothing detects the mismatch: it silently
+    # returns the right number at the wrong point" — see
+    # internal/docs/src/notes/issues/ion-rrc-table-transposed.md (fixed in d3a5343).
+    # Every (E/p, Ē) surface here must be `(length(EoverP), length(Erg_eV))`.
+    EoverP, Erg_eV = h5open(path) do f
+        read(f, "EoverP"), read(f, "Erg_eV")
+    end
+    expected_size = (length(EoverP), length(Erg_eV))
+    h5open(path) do f
+        for k in surfaces
+            @test size(read(f, k)) == expected_size
+        end
     end
 end
 
@@ -93,4 +109,53 @@ end
     @test any(!iszero, te[:, cold])          # nonzero where electronic excitation cannot be
     @test te[:, cold] == ke[:, cold]         # and it is bit-identical to the EXC group rate
     @test te[:, warm] != ke[:, warm]         # above the cold band the alias is its own thing
+end
+
+@testsnippet LedgerRAPID begin
+    using RAPID2D
+    function ledger_RAPID()
+        config = SimulationConfig{Float64}(
+            NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        # cleanup = false: the ADIOS2 snapshot writer outlives an auto-cleaned dir
+        # (same pitfall documented at random_step_ceiling_test.jl:214) — an atexit-
+        # scheduled rm on the default mktempdir() races the writer's own close and
+        # aborts the process.
+        config.Output_path = mktempdir(; cleanup = false)
+        RP = RAPID{Float64}(config)
+        initialize!(RP)
+        return RP
+    end
+end
+
+@testitem "RRC loader: every 2026-08 surface is reachable by name" setup = [LedgerRAPID] begin
+    using RAPID2D: get_electron_RRC
+    RP = ledger_RAPID()
+    for s in (
+            :K_iz, :K_diss_iz, :K_exc, :K_diss_exc,
+            :K_mom, :K_mom_by_ela, :K_mom_by_exc, :K_mom_by_diss_exc,
+            :K_mom_by_iz, :K_mom_by_diss_iz,
+            :Kerg_ela, :Kerg_exc, :Kerg_diss_exc, :Kerg_tot,
+        )
+        v = get_electron_RRC(RP, s)
+        @test size(v) == size(RP.plasma.Te_eV)
+        @test all(isfinite, v)
+        @test all(>=(0.0), v)          # every ledger member is non-negative
+    end
+end
+
+@testitem "RRC loader: Kerg_ela already carries 2me/M, so it is tiny next to Kerg_exc" setup = [LedgerRAPID] begin
+    using RAPID2D: get_electron_RRC
+    # A guard against the easiest error in this migration: re-applying 2me/M (5.4e-4)
+    # to a coefficient that already contains it. If someone did, Kerg_ela would drop
+    # three orders of magnitude below any plausible energy sink.
+    RP = ledger_RAPID()
+    RP.plasma.Te_eV .= 5.0
+    RP.fields.E_para_tot .= 30.0
+    ela = get_electron_RRC(RP, :Kerg_ela)
+    exc = get_electron_RRC(RP, :Kerg_exc)
+    @test all(>(0.0), ela)
+    # At Te = 5 eV the EXC group dominates but not by more than ~3 decades.
+    @test maximum(exc) / maximum(ela) < 1.0e3
 end
