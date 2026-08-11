@@ -523,7 +523,8 @@ Evaluate the electron reaction rate coefficients on the `(E/p, Ē)` surfaces and
 corresponding collision frequencies `ν = n_H2_gas · K` on `RP.plasma`.
 
 **This is the only place those tables are queried during a simulation step.** Consumers
-read `plasma.ν_en_iz`, `ν_en_mom_tot`, `ν_en_mom_ela`, `ν_en_exc_eff`; they must not call
+read `plasma.ν_en_iz`, `ν_en_diss_iz`, `ν_en_mom_tot`, `P_en_ela`, `P_en_exc`,
+`P_en_diss_exc`; they must not call
 [`get_electron_RRC`](@ref) themselves. A step that re-queries ends up with the same
 physical coefficient evaluated at two different plasma states — the momentum equation
 removing drag at one `ν_mom` while the energy equation credits frictional heating at
@@ -567,6 +568,22 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             update_rate_jacobian!(RP, :K_mom_by_ela, pla.dν_dTe.mom_ela)
             update_rate_jacobian!(RP, :Total_Excitation, pla.dν_dTe.exc_eff)
         end
+
+        # Energy ledger. `update_rate_jacobian!` already multiplies by n_H2_gas·(3/2),
+        # which is ∂/∂Tₑ through Ē for any surface on this grid — so it serves the
+        # Kerg_* surfaces unchanged.
+        Kerg_ela = get_electron_RRC(RP, :Kerg_ela)
+        Kerg_exc = get_electron_RRC(RP, :Kerg_exc)
+        Kerg_diss_exc = get_electron_RRC(RP, :Kerg_diss_exc)
+        @. pla.P_en_ela = pla.n_H2_gas * Kerg_ela
+        @. pla.P_en_exc = pla.n_H2_gas * Kerg_exc
+        @. pla.P_en_diss_exc = pla.n_H2_gas * Kerg_diss_exc
+
+        if want_jacobian
+            update_rate_jacobian!(RP, :Kerg_ela, pla.dν_dTe.ela_erg)
+            update_rate_jacobian!(RP, :Kerg_exc, pla.dν_dTe.exc_erg)
+            update_rate_jacobian!(RP, :Kerg_diss_exc, pla.dν_dTe.diss_exc_erg)
+        end
     end
 
     # The UNION, not either flag alone: ν_en_iz feeds both the momentum drag (gated on
@@ -577,10 +594,19 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         @. pla.ν_en_iz = pla.n_H2_gas * K_iz
         want_jacobian && update_rate_jacobian!(RP, :K_iz, pla.dν_dTe.iz)
 
+        K_diss_iz = get_electron_RRC(RP, :K_diss_iz)
+        @. pla.ν_en_diss_iz = pla.n_H2_gas * K_diss_iz
+        want_jacobian && update_rate_jacobian!(RP, :K_diss_iz, pla.dν_dTe.diss_iz)
+
         # No ionization outside the wall — and therefore no dependence of it on Tₑ
         # there either, or the diagonal would carry a rate the physics does not.
+        # BOTH channels: H⁺ production must die at the same boundary H₂⁺ production does.
         pla.ν_en_iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
-        want_jacobian && (pla.dν_dTe.iz[RP.G.nodes.on_out_wall_nids] .= zero(FT))
+        pla.ν_en_diss_iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+        if want_jacobian
+            pla.dν_dTe.iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+            pla.dν_dTe.diss_iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+        end
     end
 
     return RP

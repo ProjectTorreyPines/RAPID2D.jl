@@ -196,6 +196,10 @@ it is a lag, and a term that pretends otherwise will drift.
     mom_tot::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_tot/∂Tₑ
     mom_ela::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_ela/∂Tₑ
     exc_eff::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_exc_eff/∂Tₑ
+    diss_iz::Matrix{FT} = zeros(FT, dims)       # ∂ν_en_diss_iz/∂Tₑ
+    ela_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_ela/∂Tₑ at frozen cold-target factor
+    exc_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_exc/∂Tₑ
+    diss_exc_erg::Matrix{FT} = zeros(FT, dims)  # ∂P_en_diss_exc/∂Tₑ
 
     # Did the last update_RRCs! materialize the four above? Never true before the
     # first rate step, which is exactly right: they are zeros then.
@@ -342,6 +346,15 @@ Contains the plasma state variables including density, temperature, and velocity
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
     ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction; drives P_ela [1/s]
     ν_en_exc_eff::Matrix{FT} = zeros(FT, dims) # Excitation rate normalized to char_exc_erg_eV [1/s]
+    ν_en_diss_iz::Matrix{FT} = zeros(FT, dims) # Dissociative-ionization rate [1/s]
+    # Energy-ledger sinks, P = n_H2_gas · Kerg [W per electron]. Written by the same
+    # `update_RRCs!` at the same evaluation point as the frequencies above.
+    # `P_en_ela` is the RAW cold-target coefficient: it does NOT vanish at Tₑ = T_gas.
+    # The `(1 − 3T_gas/2Ē)` factor is applied at the use site, not here, so this array
+    # stays a pure function of the table.
+    P_en_ela::Matrix{FT} = zeros(FT, dims)      # elastic recoil [W]
+    P_en_exc::Matrix{FT} = zeros(FT, dims)      # EXC group: singlets + vib + rot [W]
+    P_en_diss_exc::Matrix{FT} = zeros(FT, dims) # DISS group: triplets [W]
     # ∂ν/∂Tₑ for the four frequencies above, written by the same `update_RRCs!` at
     # the same evaluation point — and only when `flags.scheme.atomic == ExpRB`.
     dν_dTe::ElectronRateJacobians{FT} = ElectronRateJacobians{FT}(dims)

@@ -159,3 +159,45 @@ end
     # At Te = 5 eV the EXC group dominates but not by more than ~3 decades.
     @test maximum(exc) / maximum(ela) < 1.0e3
 end
+
+@testitem "update_RRCs!: the energy ledger is materialized, and it closes" setup = [LedgerRAPID] begin
+    using RAPID2D: update_RRCs!, get_electron_RRC
+    RP = ledger_RAPID()
+    RP.plasma.Te_eV .= 5.0
+    RP.fields.E_para_tot .= 30.0
+    RP.flags.Atomic_Collision = true
+    RP.flags.src = true
+    update_RRCs!(RP)
+
+    pla = RP.plasma
+    ng = pla.n_H2_gas
+    ee = RP.config.constants.ee
+
+    @test all(>(0.0), pla.P_en_exc)
+    @test all(>(0.0), pla.P_en_ela)
+    @test all(>=(0.0), pla.ν_en_diss_iz)
+
+    # The same closure as the on-disk test, now through the interpolants and the
+    # materialization. Interpolation makes it approximate rather than exact.
+    # (Not `@. ng * get_electron_RRC(RP, :Kerg_tot)`: `@.` would also dot the RP
+    # argument of the function call, and RP has no `Broadcast.broadcastable` of its
+    # own, so it falls through to the generic-iterable fallback and fails on
+    # `length(RP)`. Call once, then broadcast the multiply.)
+    tot = ng .* get_electron_RRC(RP, :Kerg_tot)
+    parts = @. pla.P_en_ela + pla.P_en_exc + pla.P_en_diss_exc +
+        ee * (15.426 * pla.ν_en_iz + 35.0 * pla.ν_en_diss_iz)
+    @test maximum(abs.(parts .- tot) ./ tot) < 1.0e-6
+end
+
+@testitem "update_RRCs!: the energy ledger is only materialized under Atomic_Collision" setup = [LedgerRAPID] begin
+    using RAPID2D: update_RRCs!
+    # Same gating as the momentum frequencies: a run with atomic collisions off must not
+    # pay four interpolations per step, and must not leave a stale sink for the energy
+    # equation to charge.
+    RP = ledger_RAPID()
+    RP.flags.Atomic_Collision = false
+    RP.flags.src = false
+    RP.plasma.P_en_exc .= 1.0e99          # poison
+    update_RRCs!(RP)
+    @test all(==(1.0e99), RP.plasma.P_en_exc)   # untouched, not silently refreshed
+end
