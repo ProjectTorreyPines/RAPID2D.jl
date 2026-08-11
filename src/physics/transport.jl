@@ -259,10 +259,12 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # Refused rather than skipped: nothing else writes the components, so falling
         # through would leave ueR/ueϕ/ueZ and uiR/uiϕ/uiZ at their previous-step values
         # — which `update_diffusion_tensor!` then consumes two lines below, silently.
-        error(
-            "upara_or_uRphiZ = \"$(RP.flags.upara_or_uRphiZ)\" is not implemented: " *
-                "no solver evolves the (R, ϕ, Z) velocity components directly, and " *
-                "this is the only place they are written. Use \"upara\"."
+        throw(
+            ArgumentError(
+                "upara_or_uRphiZ = \"$(RP.flags.upara_or_uRphiZ)\" is not implemented: " *
+                    "no solver evolves the (R, ϕ, Z) velocity components directly, and " *
+                    "this is the only place they are written. Use \"upara\"."
+            )
         )
     end
 

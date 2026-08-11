@@ -1118,8 +1118,11 @@ function validate_scheme_flags(flags::SimulationFlags)
         )
     end
 
-    # Mirrors the routing condition in `advance_timestep!` exactly, not a looser one,
-    # so no configuration that does reach `update_ue_para!` pays for this refusal.
+    # The FLAG half of the coupled route in `advance_timestep!`, mirrored term for term
+    # rather than loosened, so no configuration that keeps reaching `update_ue_para!`
+    # pays for this refusal. Its remaining gate — |I_tor| ≥ Ampere_Itor_threshold — is
+    # runtime state and cannot be checked here, which is exactly why the pairing has to
+    # be refused up front: the route opens partway through a run.
     if flags.scheme.decay === ExpRB && flags.Ampere && flags.E_para_self_EM &&
             flags.ud_evolve
         throw(

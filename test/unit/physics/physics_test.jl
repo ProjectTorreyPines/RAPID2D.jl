@@ -82,11 +82,12 @@ end
         update_transport_quantities!(RP)
         nothing
     catch e
-        sprint(showerror, e)
+        e
     end
-    @test err !== nothing
-    @test occursin("uRphiZ", err)               # names the value that was refused
-    @test occursin("not implemented", err)
+    @test err isa ArgumentError                 # the type this package's flag checks use
+    msg = sprint(showerror, err)
+    @test occursin("uRphiZ", msg)               # names the value that was refused
+    @test occursin("not implemented", msg)
 
     # One-directional: the implemented representation is untouched.
     RP.flags.upara_or_uRphiZ = "upara"
