@@ -116,6 +116,11 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Validate configuration parameters first
     validate_config!(RP.config)
 
+    # Refuse time-scheme choices the rest of the flags cannot support, before any
+    # state is built — a scheme that needs a differentiable rate paired with a
+    # legacy rate path should fail here, not as a wrong Jacobian mid-run.
+    validate_scheme_flags(RP.flags)
+
     # Initialize time tracking
     RP.tElap = Dict{Symbol, Float64}(
         :Main => 0.0,

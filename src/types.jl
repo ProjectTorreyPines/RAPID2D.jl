@@ -166,6 +166,83 @@ function ElectronHeatingPowers{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
 end
 
 """
+    ElectronRateJacobians{FT}
+
+`∂ν/∂Tₑ` [1/(s·eV)] for the electron-neutral frequencies, one field per member of
+`PlasmaState`'s `ν_en_*` set — the table half of `∂P/∂Tₑ`.
+
+Written by [`update_RRCs!`](@ref) alongside the frequencies themselves, at the
+same evaluation point, and only under `scheme.atomic == ExpRB` **and**
+`exprb_eigenvalue == FullLinearResponse` — the one policy that reads them. `fresh`
+records whether the last rate step was that policy, because both flags stay mutable
+after `initialize!`: switching depth mid-run would otherwise hand
+`_eig_Te_from_linear_response!` surfaces that are zero, or evaluated at a state one
+or more steps old. It refuses instead.
+
+Each is `n_H2_gas · (3/2) · ∂K/∂Ē`. The `3/2` is `∂Ē/∂Tₑ` for
+`Ē = 3/2·Tₑ + ½mₑu∥²/e` at fixed `u` — constant, which is what keeps the chain
+rule to one scalar multiply and lets `RRC_EoverP_Erg.dK_dĒ` stand in directly.
+
+Evaluated at the step-entry state `(Tₑⁿ, uⁿ)`, like the frequencies: both come
+from the `update_RRCs!` at the end of the previous iteration. Not at `u^{n+1}`,
+despite the sequential split putting `update_ue_para!` first. Harmless — the
+fixed point of the energy equation does not depend on the Jacobian at all — but
+it is a lag, and a term that pretends otherwise will drift.
+"""
+@kwdef mutable struct ElectronRateJacobians{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+
+    iz::Matrix{FT} = zeros(FT, dims)        # ∂ν_en_iz/∂Tₑ
+    mom_tot::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_tot/∂Tₑ
+    mom_ela::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_ela/∂Tₑ
+    exc_eff::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_exc_eff/∂Tₑ
+
+    # Did the last update_RRCs! materialize the four above? Never true before the
+    # first rate step, which is exactly right: they are zeros then.
+    fresh::Bool = false
+end
+
+function ElectronRateJacobians{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return ElectronRateJacobians{FT}(dims = dimensions)
+end
+
+"""
+    ExpRBTerms{FT<:AbstractFloat}
+
+What [`exprb_bern`](@ref) is evaluated at, per family. A namespace because `z` and `λ`
+are already taken here — `z` is the vertical coordinate and the charge state, `λ` a
+mean free path and the Coulomb logarithm.
+
+# Fields
+- `eig_Te`, `eig_Ti` — `(2/3e)·∂P/∂T` [1/s], signed. Written by
+  `update_electron_power_jacobian!` / `update_ion_power_jacobian!` under
+  `scheme.atomic == ExpRB`; `z = eig·Δt` is formed where it is used.
+- `z_growth` — `cap(ν_iz·Δt)`, **the exponent the last continuity solve used**, cap
+  included. `reaction_θ` and `update_reaction_counts!` must weight the ledger with
+  this and not `Δt·ν`, which is larger whenever the cap bound.
+- `growth_fitted` — whether that solve was the ExpRB one, so the weight is read off
+  the solve rather than off a flag that may have moved since.
+
+Only what a *second* consumer needs is stored; `atomic` keeps its exponent local.
+Named for the family because a second growth channel sums into the same diagonal.
+"""
+@kwdef mutable struct ExpRBTerms{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+
+    eig_Te::Matrix{FT} = zeros(FT, dims)
+    eig_Ti::Matrix{FT} = zeros(FT, dims)
+    z_growth::Matrix{FT} = zeros(FT, dims)
+
+    # Did the solve that wrote `z_growth` run under ExpRB? `reaction_θ` answers for
+    # that solve, and `scheme.growth` can move between the two calls.
+    growth_fitted::Bool = false
+end
+
+function ExpRBTerms{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat}
+    return ExpRBTerms{FT}(dims = dimensions)
+end
+
+"""
     IonHeatingPowers{FT<:AbstractFloat}
 
 Contains the power terms for ion energy equation.
@@ -265,6 +342,12 @@ Contains the plasma state variables including density, temperature, and velocity
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
     ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction; drives P_ela [1/s]
     ν_en_exc_eff::Matrix{FT} = zeros(FT, dims) # Excitation rate normalized to char_exc_erg_eV [1/s]
+    # ∂ν/∂Tₑ for the four frequencies above, written by the same `update_RRCs!` at
+    # the same evaluation point — and only when `flags.scheme.atomic == ExpRB`.
+    dν_dTe::ElectronRateJacobians{FT} = ElectronRateJacobians{FT}(dims)
+    # What `B` is evaluated at, per family. Written only where the matching
+    # `flags.scheme.<family>` is `ExpRB`; see [`ExpRBTerms`](@ref).
+    exprb::ExpRBTerms{FT} = ExpRBTerms{FT}(dims)
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
@@ -738,6 +821,141 @@ function Base.setproperty!(w::ImplicitWeights{FT}, name::Symbol, θ) where {FT <
 end
 
 """
+    TimeScheme
+
+Which algorithm advances a family of terms. [`ImplicitWeights`](@ref) says *how
+much* weight a θ-scheme gets; this says *whether a θ-scheme is what runs*.
+
+| value | update | families today |
+|---|---|---|
+| `ForwardEuler` | the term enters the RHS unweighted | `atomic` |
+| `Theta` | `θ_imp.<family>` is read | `transport`, `growth`, `decay`, `gas` |
+| `ExpRB` | `bern(λΔt)` on the diagonal | — (opt-in) |
+
+`ExpRB` is exponential Rosenbrock–Euler, `y ← y + Δt·f(y)/bern(λΔt)` with
+`bern(z) = z/(eᶻ−1)` ([`exprb_bern`](@ref)). It solves the local linearisation exactly
+at every `Δt`, so growth costs it nothing — where every θ has a pole (BE at `z = 1`,
+CN at `z = 2`), past which the density comes back negative.
+
+Order is **one**, not two: second order needs `λ = ∂f/∂y` exactly, and `λ` here is
+one diagonal entry. The gain is at `|z| ≫ 1`; as `Δt → 0`,
+`θ_fit(z) = ½ − z/12 + O(z³)` makes it Crank–Nicolson anyway.
+"""
+@enum TimeScheme ForwardEuler Theta ExpRB
+
+"""
+    LinearResponseDepth
+
+How much of `∂f/∂y` goes into the `λ` that [`ExpRB`](@ref TimeScheme) puts in
+`bern(λΔt)`. Orthogonal to [`TimeScheme`](@ref): that names the integrator, this its
+input.
+
+`y` reaches `f` twice — written down as a factor (`ν·y`), and hidden inside `ν(Ē(y))`:
+
+| value | paths differentiated |
+|---|---|
+| `PartialLinearResponse` | the written-down factor only; every `ν` held fixed |
+| `FullLinearResponse` | that **plus** `∂ν/∂y` from the rate tables |
+
+A superset, not an alternative. "Full" is complete for one variable's own equation;
+the off-diagonal `∂fᵢ/∂yⱼ` is outside both, and outside any diagonal scheme.
+
+Truncating is what buys a sign guarantee: `PartialLinearResponse` sums non-negative
+rates, so `λ ≤ 0` structurally and it has no growth branch to exponentiate.
+`FullLinearResponse` does — real physics, and also where a stale slope costs the
+most. Neither is uniformly better, so the default is the one that assumes less.
+
+The continuity equation cannot tell them apart: `∂ν_iz/∂n = 0` exactly, so both give
+`λ = ν_iz` — bit for bit.
+"""
+@enum LinearResponseDepth PartialLinearResponse FullLinearResponse
+
+"""
+    TimeSchemes(; transport, growth, decay, gas, atomic)
+
+The [`TimeScheme`](@ref) each family runs, sibling of [`ImplicitWeights`](@ref)
+and split into the same families — because that split is by the character of the
+operator, which is exactly the line `ExpRB` can and cannot cross.
+
+Defaults reproduce current behaviour term for term, so a fresh object is inert.
+`atomic` starts at `ForwardEuler` while everything else starts at `Theta`: Tₑ's
+atomic power is not weakly weighted today, it is *unweighted*.
+
+**What throws.** `transport` and `gas` cannot take `ExpRB`: `bern(z)` fits one diagonal
+entry, and a diffusion operator's stiff mode `~4D/h²` belongs to the mesh, not to any
+cell. `atomic = Theta` throws because `θ_imp` has no `atomic` member to read.
+`ForwardEuler` throws on every family but `atomic`, since those solvers branch on
+`ExpRB` and otherwise consult `θ_imp` — the value would be ignored, not obeyed.
+Unweighted stepping is `flags.Implicit = false`, a separate question.
+
+Validated on assignment, like [`ImplicitWeights`](@ref): a configuration mistake
+should fail where it was written.
+"""
+mutable struct TimeSchemes
+    transport::TimeScheme
+    growth::TimeScheme
+    decay::TimeScheme
+    gas::TimeScheme
+    atomic::TimeScheme
+
+    function TimeSchemes(transport, growth, decay, gas, atomic)
+        s = (
+            transport = transport, growth = growth, decay = decay,
+            gas = gas, atomic = atomic,
+        )
+        for (name, scheme) in pairs(s)
+            _check_time_scheme(name, scheme)
+        end
+        return new(s...)
+    end
+end
+
+function TimeSchemes(;
+        transport = Theta, growth = Theta, decay = Theta,
+        gas = Theta, atomic = ForwardEuler
+    )
+    return TimeSchemes(transport, growth, decay, gas, atomic)
+end
+
+function _check_time_scheme(name::Symbol, scheme::TimeScheme)
+    if scheme === ExpRB && (name === :transport || name === :gas)
+        throw(
+            ArgumentError(
+                "scheme.$name = ExpRB is not available: ExpRB fits the LOCAL (diagonal) " *
+                    "eigenvalue, and $name is a nonlocal operator whose stiff mode ~4D/h² " *
+                    "belongs to the mesh, not to any one cell — no per-cell fit can see it. " *
+                    "Use Theta (θ_imp.$name)."
+            )
+        )
+    elseif scheme === Theta && name === :atomic
+        throw(
+            ArgumentError(
+                "scheme.atomic = Theta is not available: θ on the linearised atomic power " *
+                    "is design note §3.1, and ExpRB gets the fitted weight from the same " *
+                    "Jacobian — a constant θ buys nothing here that bern(z) does not. Use " *
+                    "ExpRB, or ForwardEuler for the current behaviour. (θ_imp has no " *
+                    "`atomic` member by design.)"
+            )
+        )
+    elseif scheme === ForwardEuler && name !== :atomic
+        throw(
+            ArgumentError(
+                "scheme.$name = ForwardEuler is not available: the $name solvers branch on " *
+                    "ExpRB and otherwise read θ_imp.$name, so this value would be ignored " *
+                    "rather than obeyed — growth would still run at θ_imp.growth and decay " *
+                    "at backward Euler. Unweighted stepping is `flags.Implicit = false`, " *
+                    "which is a different question. Use Theta or ExpRB."
+            )
+        )
+    end
+    return scheme
+end
+
+function Base.setproperty!(s::TimeSchemes, name::Symbol, scheme::TimeScheme)
+    return setfield!(s, name, _check_time_scheme(name, scheme))
+end
+
+"""
     SimulationFlags
 
 Contains boolean flags that control various aspects of the simulation.
@@ -846,6 +1064,12 @@ Contains boolean flags that control various aspects of the simulation.
     # that transport, atomic rates and the ledger all used to share, the separate
     # `θ_gas` that had already broken out of it, and an inline `θu = 1`.
     θ_imp::ImplicitWeights{FT} = ImplicitWeights{FT}()
+    # WHICH algorithm each family runs, where `θ_imp` says how much weight a
+    # θ-scheme gets. Orthogonal: `θ_imp.<family>` is read only where
+    # `scheme.<family> == Theta`. Defaults reproduce current behaviour — see
+    # `TimeSchemes`, and `validate_scheme_flags` for the combinations refused.
+    scheme::TimeSchemes = TimeSchemes()
+    exprb_eigenvalue::LinearResponseDepth = PartialLinearResponse  # how completely λ is assembled
     Adapt_dt::Bool = false                    # Use adaptive time stepping
 
     # Temperature limits
@@ -874,6 +1098,92 @@ Contains boolean flags that control various aspects of the simulation.
     # Initial parameters
     ini_gFac::FT = FT(1.0)                   # Initial g factor value
     gamma_2nd_electron::FT = FT(0.1)         # Secondary electron emission coefficient
+end
+
+"""
+    validate_scheme_flags(flags) -> flags
+
+Refuse [`TimeScheme`](@ref) choices that the rest of `flags` cannot support.
+
+- **`atomic = ExpRB` + `FullLinearResponse`** needs a differentiable rate. The legacy
+  paths have none — `Ionz_method = "Townsend_coeff"` sets `ν_iz = α|u∥|` with no `Tₑ`
+  dependence, and `ud_method ≠ "Xsec"` fixes the drift algebraically.
+- **`decay = ExpRB` + `FullLinearResponse`**: `update_ue_para!` has no linear-response
+  term to offer (see there).
+- **`decay = ExpRB` + the Ampère routing conjunction**: that solver builds the same
+  `u∥` equation with `θ = 1` fixed and `advance_timestep!` routes to it on a *runtime*
+  condition, so the pairing would silently revert to backward Euler mid-run.
+
+Refusal is one-directional — nothing here narrows what already works. Called from
+`initialize!`, because the conflicts are between independent fields and
+`TimeSchemes`' own `setproperty!` cannot see them.
+"""
+function validate_scheme_flags(flags::SimulationFlags)
+    # Only FullLinearResponse differentiates the tables; PartialLinearResponse reads a rate the
+    # model already states and so works with every rate path.
+    if flags.scheme.atomic === ExpRB && flags.exprb_eigenvalue === FullLinearResponse
+        for (name, wanted) in ((:Ionz_method, "Xsec"), (:ud_method, "Xsec"))
+            got = getproperty(flags, name)
+            got == wanted || throw(
+                ArgumentError(
+                    "exprb_eigenvalue = FullLinearResponse needs a differentiable rate, and " *
+                        "$name = \"$got\" has none — it is a legacy comparison path. " *
+                        "Set $name = \"$wanted\", or exprb_eigenvalue = PartialLinearResponse, " *
+                        "which takes no derivative."
+                )
+            )
+        end
+    end
+
+    # Selecting a policy a family cannot honour must fail, not fall back: the momentum
+    # equation uses λ = −ν_sum and nothing computes its −(mₑu∥²/e)·∂ν/∂Ē.
+    if flags.scheme.decay === ExpRB && flags.exprb_eigenvalue === FullLinearResponse
+        throw(
+            ArgumentError(
+                "exprb_eigenvalue = FullLinearResponse is not available for scheme.decay: " *
+                    "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz + ν_ei_eff), the " *
+                    "stated rate, and nothing computes the −(mₑu∥²/e)·∂ν/∂Ē that " *
+                    "completes it. Use exprb_eigenvalue = PartialLinearResponse, or " *
+                    "scheme.decay = Theta."
+            )
+        )
+    end
+
+    # `update_ue_para!` integrates in time only under ud_method = "Xsec". The legacy
+    # branches are algebraic — a fit, and a steady balance — with no Δt in them, so a
+    # time scheme selected there would be read by nothing, exactly as `ForwardEuler` on
+    # a θ-weighted family would be.
+    if flags.scheme.decay === ExpRB && flags.ud_evolve && flags.ud_method != "Xsec"
+        throw(
+            ArgumentError(
+                "scheme.decay = ExpRB is not available with " *
+                    "ud_method = \"$(flags.ud_method)\": update_ue_para! integrates the " *
+                    "u∥ friction only under ud_method = \"Xsec\", and the legacy branches " *
+                    "are algebraic balances with no Δt in them — the scheme would be " *
+                    "ignored rather than obeyed. Use ud_method = \"Xsec\", " *
+                    "scheme.decay = Theta, or ud_evolve = false."
+            )
+        )
+    end
+
+    # The exact routing condition in `advance_timestep!`. Written as the same
+    # conjunction rather than a looser one, so the refusal costs no configuration
+    # that actually reaches `update_ue_para!`.
+    if flags.scheme.decay === ExpRB && flags.Ampere && flags.E_para_self_EM &&
+            flags.ud_evolve && flags.ud_method == "Xsec"
+        throw(
+            ArgumentError(
+                "scheme.decay = ExpRB is not available with Ampere = true, " *
+                    "E_para_self_EM = true, ud_evolve = true and ud_method = \"Xsec\": " *
+                    "above Ampere_Itor_threshold that combination solves u∥ in the " *
+                    "combined momentum–Ampère block, which fixes θ = 1 and would " *
+                    "silently revert to backward Euler mid-run. Only update_ue_para! " *
+                    "carries bern(z) today. Turn one of those flags off, or use " *
+                    "scheme.decay = Theta."
+            )
+        )
+    end
+    return flags
 end
 
 """
@@ -1180,3 +1490,5 @@ RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(conf
 
 # Export types
 export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState
+export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags,
+    LinearResponseDepth, PartialLinearResponse, FullLinearResponse

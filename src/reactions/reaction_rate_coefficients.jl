@@ -19,7 +19,26 @@ Stores both raw data and an interpolation object for efficient calculation of ra
 - `EoverP::Vector{FT}`: Electric field over pressure (E/p) coordinates
 - `Erg_eV::Vector{FT}`: Particle energy in eV
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp`: Interpolant; clamps to the table boundary outside its bounds"""
+- `itp`: Interpolant; clamps to the table boundary outside its bounds
+- `dK_dĒ`: `∂K/∂Ē` at the same point — see below
+
+# The derivative surface
+
+`dK_dĒ` is the analytic `∂K/∂Ē` of the same bilinear interpolant, with the same
+query shapes as `itp`. `∂Ē/∂Tₑ = 3/2` is constant, so the chain rule to `∂P/∂Tₑ`
+is one scalar multiply and no finite differencing.
+
+**Its extrapolation differs from `itp`'s per axis, and the asymmetry is
+load-bearing.** `E/p` clamps as `itp` does — it carries no `Tₑ` dependence. `Ē`
+uses `NoExtrap` and **callers clamp it themselves**: out of range the value is
+frozen so the true derivative is `0`, but FastInterpolations' `ClampExtrap`
+returns the boundary cell's slope (upstream bug, derivative views only).
+[`update_rate_jacobian!`](@ref) clamps and masks; `NoExtrap` stands behind it as
+an assertion. Out of range is ordinary — `apply_electron_density_boundary_conditions!`
+damps `Tₑ` toward zero outside the wall, putting those nodes at `Ē = 0`.
+
+When the upstream fix lands, drop the second interpolant and take
+`deriv_view(itp, (0, 1))` directly."""
 struct RRC_EoverP_Erg{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
     # 2 variables for given reaction rate coefficient
     EoverP::Vector{FT}  # Electric field over pressure (E/p) coordinates
@@ -27,12 +46,17 @@ struct RRC_EoverP_Erg{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT
 
     raw_data::AbstractArray{FT}
     itp  # Interpolant; clamps to the table boundary outside its bounds
+    dK_dĒ  # ∂K/∂Ē of the same interpolant; clamps on E/p, raises on Ē (see above)
 
     function RRC_EoverP_Erg(EoverP::Vector{FT}, Erg_eV::Vector{FT}, raw_data::AbstractArray{FT}) where {FT <: AbstractFloat}
         # ClampExtrap: below the table's minimum E/p the rate relaxes to the room-T
         # Maxwellian (bottom row), not 0 — E/p=0 means no field, not no collisions.
         itp = linear_interp((EoverP, Erg_eV), raw_data; extrap = ClampExtrap())
-        return new{FT}(EoverP, Erg_eV, raw_data, itp)
+        itp_d = linear_interp(
+            (EoverP, Erg_eV), raw_data;
+            extrap = (ClampExtrap(), NoExtrap())
+        )
+        return new{FT}(EoverP, Erg_eV, raw_data, itp, deriv_view(itp_d, (0, 1)))
     end
 end
 
@@ -47,6 +71,17 @@ Used for reactions where the rate depends on temperature and drift velocity.
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
 - `itp`: Interpolant; clamps to the table boundary outside its bounds
+- `dK_dT`: `∂K/∂T` at the same point
+
+# The derivative surface
+
+Mirror of [`RRC_EoverP_Erg`](@ref)'s, and simpler: temperature is this table's
+own first axis, so there is no chain rule at all — `∂ν/∂T = n_gas·∂K/∂T`.
+
+Same per-axis asymmetry, for the same reason. `u_d` clamps as `itp` does; `T`
+uses `NoExtrap` and callers clamp it themselves, because out of range the value
+is frozen and the honest derivative is `0`, not the boundary cell's slope
+(FastInterpolations returns the latter — upstream bug, derivative views only).
 """
 struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
     # 2 variables for given reaction rate coefficient
@@ -55,6 +90,7 @@ struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
 
     raw_data::AbstractArray{FT}
     itp  # Interpolant; clamps to the table boundary outside its bounds
+    dK_dT  # ∂K/∂T of the same interpolant; raises on T, clamps on u_d (see above)
 
     function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractArray{FT}) where {FT <: AbstractFloat}
         size(raw_data) == (length(T_eV), length(ud_para)) || throw(
@@ -66,7 +102,11 @@ struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
         )
         # ClampExtrap: out-of-domain (T, u_d) queries clamp to the nearest boundary rate.
         itp = linear_interp((T_eV, ud_para), raw_data; extrap = ClampExtrap())
-        return new{FT}(T_eV, ud_para, raw_data, itp)
+        itp_d = linear_interp(
+            (T_eV, ud_para), raw_data;
+            extrap = (NoExtrap(), ClampExtrap())
+        )
+        return new{FT}(T_eV, ud_para, raw_data, itp, deriv_view(itp_d, (1, 0)))
     end
 end
 
@@ -116,6 +156,30 @@ end
 function read_T_ud_surface(h5fid, name::AbstractString, order::Symbol)
     A = read(h5fid, name)
     return order === :as_stored ? A : permutedims(A)
+end
+
+"""
+    ion_rate_jacobian(RP, reaction) -> Matrix
+
+`∂K/∂T_i` for one `(T, u_d)` ion surface, at the same `(T_i, |u_i∥|)` the value
+path uses, with the out-of-range mask [`update_rate_jacobian!`](@ref) applies for
+the electron surfaces and for the same reason.
+
+Returns `∂K/∂T`, not `∂ν/∂T`: the caller owns the `n_gas` and the per-channel
+weights (`½` on elastic), exactly as it owns them for the value.
+"""
+function ion_rate_jacobian(RP::RAPID{FT}, reaction::Symbol) where {FT <: AbstractFloat}
+    rrc = getfield(RP.iRRCs, reaction)
+    rrc isa RRC_T_ud ||
+        throw(ArgumentError("∂/∂T_i is defined for (T, u_d) surfaces; $reaction is not one"))
+
+    T_lo, T_hi = first(rrc.T_eV), last(rrc.T_eV)
+    T_query = clamp.(RP.plasma.Ti_eV, T_lo, T_hi)
+    out = rrc.dK_dT((T_query, abs.(RP.plasma.ui_para)))
+    # Exact equality is the in-range test — `clamp` returns its argument untouched
+    # inside the interval and a bound outside it.
+    @. out = ifelse(RP.plasma.Ti_eV == T_query, out, zero(FT))
+    return out
 end
 
 """
@@ -294,6 +358,33 @@ struct H2_Ion_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
 end
 
 """
+    _eRRC_query_point(RP) -> (E/p, Ē)
+
+Where every `RRC_EoverP_Erg` surface is evaluated: `Ē = (3/2)Tₑ + ½mₑu∥²/e` and
+`E/p = |E∥|/(n_gas·T_gas·e)`.
+
+One definition, because [`update_rate_jacobian!`](@ref) is a derivative of
+[`get_electron_RRC`](@ref) only if both ask the table the same question.
+
+Includes the no-gas guard: `n_H2_gas = 0` makes the ratio non-finite (`NaN` when
+`E∥ = 0` as well), and a `NaN` query poisons `ν = n_gas·K` through `0·NaN`, landing a
+singular row in the Ampère matrix. `n_gas` scales the rate to zero regardless, so any
+finite placeholder is safe.
+"""
+function _eRRC_query_point(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    me, ee = RP.config.constants.me, RP.config.constants.ee
+    pla = RP.plasma
+    mean_Ke_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
+    abs_Epara_over_pGas = @. abs(
+        RP.fields.E_para_tot / (pla.n_H2_gas * pla.T_gas_eV * ee)
+    )
+    @. abs_Epara_over_pGas = ifelse(
+        isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT)
+    )
+    return (abs_Epara_over_pGas, mean_Ke_eV)
+end
+
+"""
     get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
 
 Calculate electron reaction rate coefficients for the specified reaction using interpolation.
@@ -309,18 +400,9 @@ Automatically selects appropriate physical parameters from the RAPID model.
 """
 function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Symbol) where {FT <: AbstractFloat}
     return if hasfield(typeof(eRRCs), reaction)
-        mass = RP.config.constants.me
-        ee = RP.config.constants.ee
-
         RRC = getfield(eRRCs, reaction)
         if RRC isa RRC_EoverP_Erg
-            mean_Ke_eV = @. 1.5 * RP.plasma.Te_eV + 0.5 * mass * RP.plasma.ue_para^2 / ee
-            abs_Epara_over_pGas = @. abs(RP.fields.E_para_tot / (RP.plasma.n_H2_gas * RP.plasma.T_gas_eV * ee))
-            # No-gas guard: n_H2_gas=0 makes E/p non-finite (NaN if E_para=0 too), and a NaN
-            # query returns NaN, poisoning ν_en = n_gas·RRC (0·NaN) → singular Ampère matrix.
-            # n_gas scales the rate to 0 anyway, so any finite placeholder is safe.
-            @. abs_Epara_over_pGas = ifelse(isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT))
-            return RRC.itp((abs_Epara_over_pGas, mean_Ke_eV))
+            return RRC.itp(_eRRC_query_point(RP))
         elseif RRC isa RRC_T_ud
             return RRC.itp((RP.plasma.Te_eV, abs.(RP.plasma.ue_para)))
         end
@@ -392,6 +474,17 @@ diagnostic-only and are still fetched live at snapshot cadence.
 """
 function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
+    # ∂P/∂Tₑ is assembled from ∂ν/∂Tₑ, and those must be differentiated at the
+    # state the frequencies were evaluated at — so they are materialized here and
+    # nowhere else, for the same reason the frequencies are. Skipped entirely when
+    # no consumer wants them, so the default configuration pays nothing.
+    # Only FullLinearResponse reads these surfaces; under PartialLinearResponse nothing does,
+    # so nothing pays to build them.
+    want_jacobian = RP.flags.scheme.atomic === ExpRB &&
+        RP.flags.exprb_eigenvalue === FullLinearResponse
+    # Both flags stay mutable after `initialize!`, so record the policy this step ran
+    # under rather than letting the consumer re-read a flag that may have moved since.
+    pla.dν_dTe.fresh = want_jacobian
 
     if RP.flags.Atomic_Collision
         K_mom_tot = get_electron_RRC(RP, :Total_Momentum)
@@ -400,6 +493,12 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         @. pla.ν_en_mom_tot = pla.n_H2_gas * K_mom_tot
         @. pla.ν_en_mom_ela = pla.n_H2_gas * K_mom_ela
         @. pla.ν_en_exc_eff = pla.n_H2_gas * K_exc_eff
+
+        if want_jacobian
+            update_rate_jacobian!(RP, :Total_Momentum, pla.dν_dTe.mom_tot)
+            update_rate_jacobian!(RP, :Momentum_by_ela, pla.dν_dTe.mom_ela)
+            update_rate_jacobian!(RP, :Total_Excitation, pla.dν_dTe.exc_eff)
+        end
     end
 
     # ν_en_iz is consumed by the parallel momentum drag (gated on Atomic_Collision) *and*
@@ -409,6 +508,19 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Atomic_Collision while its mid-step writer sat under src.
     if RP.flags.Atomic_Collision || RP.flags.src
         if RP.flags.Ionz_method == "Townsend_coeff"
+            # The one branch that writes `ν_en_iz` without a surface behind it. Marking
+            # the cache fresh here would pair a Townsend rate with whatever slope the
+            # Xsec path left in `dν_dTe.iz` — two models, one λ, no announcement.
+            want_jacobian && throw(
+                ArgumentError(
+                    "exprb_eigenvalue = FullLinearResponse needs ∂ν_iz/∂Tₑ, and " *
+                        "Ionz_method = \"Townsend_coeff\" is a fit with no rate surface " *
+                        "to differentiate. validate_scheme_flags refuses this pairing at " *
+                        "initialize!; reaching here means Ionz_method changed afterwards. " *
+                        "Use Ionz_method = \"Xsec\", or " *
+                        "exprb_eigenvalue = PartialLinearResponse."
+                )
+            )
             # Electron avalanche via the Townsend coefficient,
             # α = 3.88 * p * exp(-95 * p / |E_para|)
             α = @. 3.88 * RP.config.prefilled_gas_pressure *
@@ -417,19 +529,63 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         elseif RP.flags.Ionz_method == "Xsec"
             K_iz = get_electron_RRC(RP, :Ionization)
             @. pla.ν_en_iz = pla.n_H2_gas * K_iz
+            want_jacobian && update_rate_jacobian!(RP, :Ionization, pla.dν_dTe.iz)
         else
             error("Unknown ionization method: $(RP.flags.Ionz_method)")
         end
 
-        # No ionization outside the wall
+        # No ionization outside the wall — and therefore no dependence of it on Tₑ
+        # there either, or the diagonal would carry a rate the physics does not.
         pla.ν_en_iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+        want_jacobian && (pla.dν_dTe.iz[RP.G.nodes.on_out_wall_nids] .= zero(FT))
     end
 
     return RP
 end
 
+"""
+    update_rate_jacobian!(RP, reaction, out) -> out
+
+Write `∂ν/∂Tₑ = n_H2_gas · (3/2) · ∂K/∂Ē` for one `(E/p, Ē)` surface into `out`.
+
+The `3/2` is `∂Ē/∂Tₑ` for `Ē = 3/2·Tₑ + ½mₑu∥²/e` at fixed `u`. Being constant is what
+makes this one batched derivative evaluation per surface, at roughly the cost of the
+value evaluation already paid. Queried at [`_eRRC_query_point`](@ref) — the same
+function the value path calls, so the two cannot drift apart.
+
+**Outside the table in `Ē` the derivative is zero, and is set so explicitly** —
+`ClampExtrap` freezes the value there, so `K` genuinely stops depending on `Tₑ`. The
+clamp lives here because FastInterpolations returns the boundary slope for clamped
+derivative views (upstream bug); `NoExtrap` on that axis makes a wrong clamp raise
+instead of reporting a false dependence. Not a corner case:
+`apply_electron_density_boundary_conditions!` puts every node outside the wall at
+`Ē = 0`.
+"""
+function update_rate_jacobian!(
+        RP::RAPID{FT}, reaction::Symbol, out::AbstractMatrix{FT}
+    ) where {FT <: AbstractFloat}
+    rrc = getfield(RP.eRRCs, reaction)
+    rrc isa RRC_EoverP_Erg ||
+        throw(ArgumentError("∂/∂Tₑ is defined for (E/p, Ē) surfaces; $reaction is not one"))
+
+    abs_Epara_over_pGas, mean_Ke_eV = _eRRC_query_point(RP)
+
+    # Clamp on the Ē axis only. E/p carries no Tₑ dependence, so the interpolant
+    # clamps it exactly as the value path does and nothing needs masking there.
+    Ē_lo, Ē_hi = first(rrc.Erg_eV), last(rrc.Erg_eV)
+    Ē_query = clamp.(mean_Ke_eV, Ē_lo, Ē_hi)
+
+    rrc.dK_dĒ(out, (abs_Epara_over_pGas, Ē_query))
+    # Exact equality is the in-range test: `clamp` returns its argument untouched
+    # inside the interval and a bound outside it.
+    @. out = ifelse(
+        mean_Ke_eV == Ē_query, out * RP.plasma.n_H2_gas * FT(1.5), zero(FT)
+    )
+    return out
+end
+
 # Export types and functions for reaction rate coefficients
-export update_RRCs!
+export update_RRCs!, update_rate_jacobian!, ion_rate_jacobian
 export AbstractReactionRateCoefficient
 export RRC_EoverP_Erg, RRC_T_ud, RRC_T_ud_gFac
 export Electron_RRCs, H2_Ion_RRCs

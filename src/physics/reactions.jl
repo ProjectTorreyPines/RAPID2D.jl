@@ -50,28 +50,69 @@ end
 The θ channel `channel`'s quadrature uses, from `REACTION_STOICHIOMETRY`'s `θ`
 family and [`ImplicitWeights`](@ref). Zero for an explicit run.
 
-θ is a statement about **accuracy, not about time**. What is stored is the
-definite integral over the step,
+θ is a statement about **accuracy, not about time**. What is stored is the definite
+integral `Nₖ = ∫ … dt ≈ Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]`, so the event count is unambiguous
+whatever θ is; θ only says how good the quadrature was. It is exposed because a
+consumer may still care — pairing `E(Tₑⁿ⁺¹)` with a channel evaluated at ½ is
+inconsistent at `O(Δt)` even where the particle count is not.
 
-```
-    Nₖ = ∫ₜⁿ^ₜⁿ⁺¹ … dt ≈ Δt·[(1−θ)·(…)ⁿ + θ·(…)ⁿ⁺¹],
-```
-
-so "how many events happened between `tⁿ` and `tⁿ⁺¹`" is unambiguous whatever θ
-is, and θ only says how good the quadrature was — trapezoid at ½, one-sided
-rectangle at 0 or 1. Storing a *rate* instead would have left a genuine question
-("centred when?") whose answer varied per channel: `:growth` uses ½ while
-`:decay` will use 1.
-
-Exposed because a consumer may still care how the integral was formed — an
-energy term pairing `E(Tₑⁿ⁺¹)` with a channel evaluated at ½ is inconsistent at
-`O(Δt)` even though the particle count is not.
+Answers from the flags alone, which is enough while every family runs a θ-scheme.
+Under `scheme.<family> == ExpRB` the weight differs per cell and per step; use
+[`reaction_θ(RP, channel)`](@ref), which covers both and reduces to this one.
 """
 function reaction_θ(flags::SimulationFlags{FT}, channel::Symbol) where {FT <: AbstractFloat}
     haskey(REACTION_STOICHIOMETRY, channel) ||
         throw(ArgumentError("no reaction channel called $channel"))
     flags.Implicit || return zero(FT)
     return getproperty(flags.θ_imp, REACTION_STOICHIOMETRY[channel].θ)
+end
+
+"""
+    reaction_θ(RP, channel) -> FT | Matrix{FT}
+
+The same weight, able to answer when it is no longer a constant.
+
+Under `scheme.<family> == ExpRB` the quadrature is [`exprb_theta`](@ref) at the
+family's own `z = λΔt` — per cell, per step. Still in `(0, 1)`, so
+`Nₖ = Δt[(1−θ)(…)ⁿ + θ(…)ⁿ⁺¹]` reads unchanged downstream.
+
+**`ExpRB` is checked before `Implicit`, and the order is load-bearing.** For a
+θ-scheme the two coincide — no matrix, no weight. `ExpRB` separates them: its
+explicit branch applies the same `bern(z)`, and a ledger formed at `θ = 0` there
+under-reports every event (3.6 % at `z = 0.15`, worse as `z` grows).
+
+`z` comes from `plasma.exprb.z_growth` rather than being re-derived, so a capped step
+is weighted at the `z` that ran, and the ExpRB branch is taken on
+`plasma.exprb.growth_fitted` rather than on `scheme.growth` — both are written by the
+solve, so a flag flipped between the solve and this call cannot answer for a step that
+never happened. Before the first solve `growth_fitted` is false and the answer is the
+θ constant, with no events to weight. Throws rather than guessing if a family is switched to `ExpRB`
+without its rate wired here.
+"""
+function reaction_θ(RP::RAPID{FT}, channel::Symbol) where {FT <: AbstractFloat}
+    haskey(REACTION_STOICHIOMETRY, channel) ||
+        throw(ArgumentError("no reaction channel called $channel"))
+
+    family = REACTION_STOICHIOMETRY[channel].θ
+
+    # A family set to ExpRB with no rate wired here is a CONFIGURATION error, so it
+    # reads the live flag: it is wrong the moment it is written, not one solve later.
+    if getproperty(RP.flags.scheme, family) === ExpRB && family !== :growth
+        throw(
+            ArgumentError(
+                "scheme.$family = ExpRB, but the rate behind channel :$channel is not " *
+                    "wired into reaction_θ. Wire it, or the event count would be formed " *
+                    "at a weight the solve did not use."
+            )
+        )
+    end
+
+    # The weight is a property of the SOLVE, not of the flag as it stands now — the
+    # ledger it has to match was formed at `z_growth`, by whatever scheme wrote it.
+    if family === :growth && RP.plasma.exprb.growth_fitted
+        return exprb_theta.(RP.plasma.exprb.z_growth)
+    end
+    return RP.flags.Implicit ? reaction_θ(RP.flags, channel) : zero(FT)
 end
 
 """
@@ -101,9 +142,19 @@ function update_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     if RP.flags.src
         # θ comes from the table, not from this line: a `:decay` channel added
         # later then picks up backward Euler by existing.
-        θ = reaction_θ(RP.flags, :iz)
-        dt = RP.dt
-        @. N.iz = dt * ((one(FT) - θ) * RP.prev_n + θ * pla.ne) * pla.ν_en_iz
+        # From RP, not from flags alone: under ExpRB the weight is the fitted θ(z)
+        # of the step just taken, per cell. Broadcasting below covers both forms.
+        θ = reaction_θ(RP, :iz)
+        if RP.flags.scheme.growth === ExpRB
+            # `exprb.z_growth`, not `Δt·ν_en_iz`: the two differ exactly when the solve
+            # capped, and then `Δt·ν` books (z/z_cap)× the electrons that were born
+            # — 4/3 at z = 40 — so the ion source and the gas sink would outrun the
+            # continuity equation they are supposed to mirror.
+            @. N.iz = pla.exprb.z_growth * ((one(FT) - θ) * RP.prev_n + θ * pla.ne)
+        else
+            dt = RP.dt
+            @. N.iz = dt * ((one(FT) - θ) * RP.prev_n + θ * pla.ne) * pla.ν_en_iz
+        end
     else
         fill!(N.iz, zero(FT))
     end

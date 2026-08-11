@@ -30,6 +30,7 @@ const RAPID_TIMER = TimerOutput()
 
 # Include type definitions
 include("constants.jl")
+include("numerics/exponential_rosenbrock.jl")   # bern(z) coefficients for the local rates
 include("numerics/discretized_operator.jl")
 include("numerics/linear_solvers.jl")
 include("physics/ion_species.jl")   # IonSpecies and the transport policies; types.jl needs both
