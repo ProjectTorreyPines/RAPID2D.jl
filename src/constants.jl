@@ -73,7 +73,9 @@ Fields:
     # equal the table's `characteristic_exc_erg_eV` attribute (validated in Electron_RRCs:
     # absent → warn + assume this value; present but different → error).
     char_exc_erg_eV::FT = FT(12.0)       # characteristic excitation energy [eV]
-    iz_erg_eV::FT = FT(15.46)       # H2 ionization energy (H2 -> H2+ + e-) [eV]
+    # Yoon 2008 §9, and BD's `E_IONIZATION_EV`. The L_tot ledger is assembled with this
+    # value, so it is a consistency requirement, not an accuracy improvement (0.2 %).
+    iz_erg_eV::FT = FT(15.426)      # H2 ionization energy (H2 -> H2+ + e-) [eV]
 end
 
 # Export structures and functions

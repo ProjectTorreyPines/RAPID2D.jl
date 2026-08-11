@@ -201,3 +201,11 @@ end
     update_RRCs!(RP)
     @test all(==(1.0e99), RP.plasma.P_en_exc)   # untouched, not silently refreshed
 end
+
+@testitem "RRC ledger: iz_erg_eV matches the cross-section source BD sampled" begin
+    # Yoon 2008 section 9: "The best value of the ionization potential of H2 is 15.426 eV".
+    # BD's E_IONIZATION_EV carries that value, and the L_tot assembly above is built with
+    # it, so a different constant here would break the energy ledger by 0.2 %.
+    c = RAPID2D.PlasmaConstants{Float64}()
+    @test c.iz_erg_eV == 15.426
+end
