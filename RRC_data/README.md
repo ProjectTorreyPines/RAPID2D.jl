@@ -5,7 +5,7 @@ grids in HDF5.
 
 | file | axes | contents |
 |---|---|---|
-| `eRRCs_EoverP_Erg.h5` | `EoverP` × `Erg_eV`, 201 × 300 | electron `Ionization`, `Total_Momentum`, `Momentum_by_ela`, `Total_Excitation` |
+| `eRRCs_EoverP_Erg.h5` | `EoverP` × `Erg_eV`, 201 × 300 | electron ledgers, 2026-08 group schema: particles `K_iz`, `K_diss_iz`, `K_exc`, `K_diss_exc`, `K_ela`; momentum `K_mom` + `K_mom_by_*`; energy `L_ela`, `L_exc`, `L_diss_exc`, `L_tot` [W·m³]. Legacy aliases (`Ionization`, `Total_Momentum`, `Elastic`, `Momentum_by_*`, `Total_Excitation`) retained for the migration and removed once nothing reads them |
 | `eRRCs_T_ud.h5` | `T_eV` × `ud_para`, 200 × 200 | electron `Halpha`, `Ionization`, `Momentum`, `Total_Excitation`, `Dissoc_Ionz`, `Recomb_H2Ion`, `Recomb_H3Ion` |
 | `iRRCs_T_ud.h5` | `T_eV` × `ud_para`, 100 × 100 | H₂⁺ `Elastic`, `Charge_Exchange`, `Particle_Exchange`, `Target_Ionization`, `Projectile_Dissociation` |
 
@@ -41,6 +41,23 @@ suppresses real reactions rather than absent ones:
 
 `Charge_Exchange` is the one that reaches transport. Treat both as unreliable below a few
 eV pending a cross-section revision.
+
+## Reading the 2026-08 electron table
+
+Three ledgers, three weightings of the same `⟨σv⟩` average — see
+`internal/docs/src/notes/design/bd-2026-08-governing-equations.md` §2. In short:
+
+- `K_*` [m³/s] count events. Consume as `ν = n_gas·K`.
+- `L_*` [W·m³] carry energy. Consume as `P = n_gas·L` [W per electron]. RAPID2D renames
+  these to `Kerg_*` on read, because `L_` is already *length* in this codebase.
+- `K_mom*` [m³/s] is a `v_z`-weighted drift-friction moment, NOT the density-weighted
+  collision frequency. `K_ela` is neither — it is the total elastic collision frequency,
+  for dt sizing, and RAPID2D does not read it.
+
+`L_ela` already contains `2mₑ/M_H2` and the `e`. Do not apply them again.
+
+Never form `L_x/K_x` at runtime. The pair is deliberately asymmetric for the DISS group and
+is 0/0 on most of the grid; both ledgers must be read directly.
 
 ## Checking a table
 
