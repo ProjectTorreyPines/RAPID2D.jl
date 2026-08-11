@@ -62,6 +62,37 @@ end
     @test all(RP.plasma.ui_para .== 0.0)
 end
 
+@testitem "Physics: an unimplemented velocity representation fails at the use site" setup = [PhysicsFixtures] begin
+    using RAPID2D: update_transport_quantities!
+
+    # `update_transport_quantities!` is the ONLY writer of ueR/ueϕ/ueZ and uiR/uiϕ/uiZ,
+    # and it writes them under `upara_or_uRphiZ == "upara"`. Any other value used to
+    # skip the block, leaving stale components for `update_diffusion_tensor!` to consume
+    # on the next line — wrong transport, no message. It must throw instead.
+    config = SimulationConfig{Float64}(
+        NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    config.Output_path = scratch_output_dir()
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+
+    RP.flags.upara_or_uRphiZ = "uRphiZ"
+    err = try
+        update_transport_quantities!(RP)
+        nothing
+    catch e
+        sprint(showerror, e)
+    end
+    @test err !== nothing
+    @test occursin("uRphiZ", err)               # names the value that was refused
+    @test occursin("not implemented", err)
+
+    # One-directional: the implemented representation is untouched.
+    RP.flags.upara_or_uRphiZ = "upara"
+    @test update_transport_quantities!(RP) === RP
+end
+
 @testitem "Physics: reaction rate coefficient lookups" begin
     # Smallest possible grid: this only checks that the RRC interpolators return
     # correctly shaped, non-negative arrays for both electrons and H2 ions.
