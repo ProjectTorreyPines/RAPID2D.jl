@@ -138,6 +138,8 @@ Contains the power terms for electron energy equation.
 - `heat`: Power from heating sources (e.g., ohmic) [W/m³]
 - `iz`: Power from ionization [W/m³]
 - `exc`: Power from excitation [W/m³]
+- `diss_exc`: Power lost to dissociative excitation (DISS group) [W/m³]
+- `diss_iz`: Power lost to dissociative ionization (35 eV/event) [W/m³]
 - `dilution`: Power from density dilution [W/m³]
 - `equi`: Power from temperature equilibration [W/m³]
 """
@@ -153,6 +155,8 @@ Contains the power terms for electron energy equation.
     heat::Matrix{FT} = zeros(FT, dims)       # Power from heating (q)
     iz::Matrix{FT} = zeros(FT, dims)         # Power from ionization
     exc::Matrix{FT} = zeros(FT, dims)        # Power from excitation
+    diss_exc::Matrix{FT} = zeros(FT, dims)   # Power lost to dissociative excitation (DISS group)
+    diss_iz::Matrix{FT} = zeros(FT, dims)    # Power lost to dissociative ionization (35 eV/event)
     dilution::Matrix{FT} = zeros(FT, dims)   # Power from density dilution
     equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
 end

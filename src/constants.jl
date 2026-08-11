@@ -46,6 +46,7 @@ Fields:
 - `proton_mass_eV`: Proton mass [eV/c²]
 - `char_exc_erg_eV`: characteristic excitation energy [eV] (Total_Excitation normalization)
 - `iz_erg_eV`: H2 ionization energy [eV]
+- `diss_iz_erg_eV`: H2 dissociative ionization energy [eV]
 """
 @kwdef struct PlasmaConstants{FT <: AbstractFloat}
     # Basic physical constants
@@ -76,6 +77,10 @@ Fields:
     # Yoon 2008 §9, and BD's `E_IONIZATION_EV`. The L_tot ledger is assembled with this
     # value, so it is a consistency requirement, not an accuracy improvement (0.2 %).
     iz_erg_eV::FT = FT(15.426)      # H2 ionization energy (H2 -> H2+ + e-) [eV]
+    # BD's `E_DI_EV` = 18.1 (appearance potential) + ~17 (fragment kinetic energy).
+    # e + H₂ → 2e + H⁺ + H⁰. A factor 2.3 above iz_erg_eV, which is why the two are
+    # separate channels rather than one with a mixture-dependent effective threshold.
+    diss_iz_erg_eV::FT = FT(35.0)   # H2 dissociative ionization energy [eV]
 end
 
 # Export structures and functions

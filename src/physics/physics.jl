@@ -415,14 +415,10 @@ Update electron heating power components for electron energy equation.
 function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_heating_powers!" begin
         # Extract physical constants + reaction energies (all in RP.config.constants).
-        # char_exc_erg_eV normalizes the Total_Excitation surface and is validated at load
-        # against the table's characteristic_exc_erg_eV (Electron_RRCs), so P_exc
-        # reproduces the kinetic loss exactly.
-        @unpack ee, qe, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
-        # Two different masses. `m_H2` is the NEUTRAL molecule an electron recoils
-        # off; `m_i` is the ion it equilibrates with. Equal for H₂/H₂⁺, which is why
-        # one symbol served both, and unequal for any other declared ion.
-        m_H2 = RP.config.constants.mi
+        @unpack ee, qe, me, iz_erg_eV, diss_iz_erg_eV = RP.config.constants
+        # `m_i` is the ion mass electrons equilibrate with in the equi term below.
+        # The elastic recoil no longer needs a separate neutral mass here: `P_en_ela`
+        # already carries 2mₑ/M internally (see the ela block).
         m_i = bulk_ion_mass(RP)
         OP = RP.operators
 
@@ -440,6 +436,8 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.ela .= zero_FT
         ePowers.iz .= zero_FT
         ePowers.exc .= zero_FT
+        ePowers.diss_exc .= zero_FT
+        ePowers.diss_iz .= zero_FT
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
 
@@ -494,33 +492,49 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
                     + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
             )
 
-            # Elastic energy loss to neutrals: each ELASTIC momentum-transfer
-            # collision hands a fraction ~2me/M of the electron energy to the gas
-            # molecule. This is the dominant electron cooling channel below the ~9 eV
-            # excitation threshold; without it Te saturates ~20% above the kinetic
-            # (BD) value at low E/p and cool-downs stall above the true saturation
-            # point.
+            # Elastic recoil. `P_en_ela = n_gas·Kerg_ela` already contains 2mₑ/M and the
+            # e — do NOT reapply them. It is a COLD-TARGET coefficient (molecule at rest),
+            # so unlike a (Tₑ − T_gas) form it does not vanish at thermal equilibrium; the
+            # factor below is what restores that, and it is not optional. Substituting
+            # Ē_ela ≃ Ē shows the factor IS (Tₑ − T_gas), recovered:
             #
-            # The rate here must be the ELASTIC share of the drift friction, not the
-            # total: the inelastic share of `Total_Momentum` carries its momentum into
-            # excitation/ionization, which are charged separately just below, and
-            # those channels do not also transfer 2me/M to the molecule. Using total
-            # `Total_Momentum` over-counts this term by +42% at E/p ≈ 100 and +345% at
-            # E/p ≈ 1000, where elastic is only 71% and 22% of the drift friction.
-            @. ePowers.ela = (FT(2.0) * me / m_H2) * pla.ν_en_mom_ela *
-                FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
+            #   n_g·Kerg_ela·(1 − (3/2)T_gas/Ē)
+            #     ≃ (2mₑ/M)·ν_mom_ela·[ (3/2)(Tₑ − T_gas)e + ½mₑu∥² ]
+            #
+            # — including the ½mₑu∥² the old form lost by approximating Ē as (3/2)Tₑ.
+            # Below T_gas the factor is negative and the gas HEATS the electrons, which
+            # the relaxation testitem's cold branch exercises.
+            #
+            # Ē is the table's own query coordinate, rebuilt here rather than read: it is
+            # the same expression `_eRRC_query_point` uses.
+            Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee
+            # Ē → 0 makes the factor diverge. Kerg_ela → 0 faster, so the product is
+            # physical, but it is a 0×∞ in floating point at the bottom row of the grid.
+            @. ePowers.ela = pla.P_en_ela * (
+                one(FT) - FT(1.5) * pla.T_gas_eV / max(Ē_eV, eps(FT))
+            )
 
-            # Excitation power (energy lost to excite particles). ν_en_exc_eff is
-            # normalized to char_exc_erg_eV, so the product is the true kinetic loss.
-            @. ePowers.exc = ee * char_exc_erg_eV * pla.ν_en_exc_eff
+            # Excitation, tabulated. No constant survives here: the EXC group spans
+            # 0.0441 eV (rot) to 14.9 eV, a factor 338 in per-event cost, so its mean cost
+            # is a function of where the distribution sits and ran 0.059-9.72 eV across
+            # the operating range against the 12.0 eV this used to hard-code.
+            @. ePowers.exc = pla.P_en_exc
+
+            # Dissociative excitation, charged separately because its energy split from
+            # EXC is not recoverable afterwards: a B-excited molecule costs its full
+            # 11.184 eV whether or not it later dissociates, so that energy stays in exc.
+            @. ePowers.diss_exc = pla.P_en_diss_exc
 
             # For ionization
             if RP.flags.src
-                # Ionization power (energy lost to ionize particles)
+                # Two channels, per-event costs a factor 2.3 apart. Each is a SINGLE
+                # channel with a SINGLE threshold, which is the one case where
+                # e·ε·ν reconstructs the loss exactly.
                 @. ePowers.iz = pla.ν_en_iz * iz_erg_eV * ee
+                @. ePowers.diss_iz = pla.ν_en_diss_iz * diss_iz_erg_eV * ee
 
-                # Dilution power (energy change due to density increase)
-                @. ePowers.dilution = pla.ν_en_iz * (
+                # Dilution: BOTH channels create exactly one electron per event.
+                @. ePowers.dilution = (pla.ν_en_iz + pla.ν_en_diss_iz) * (
                     FT(1.5) * pla.Te_eV * ee
                         - FT(0.5) * me * ue_mag_sq
                 )
@@ -537,7 +551,8 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # Calculate total power (sum of all components)
         @. ePowers.tot = (
             ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu
-                - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.exc - ePowers.equi
+                - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.diss_iz
+                - ePowers.exc - ePowers.diss_exc - ePowers.equi
         )
 
         # # Zero out power values outside the wall
@@ -550,7 +565,9 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             @views ePowers.ela[on_out_wall_nids] .= zero_FT
             @views ePowers.dilution[on_out_wall_nids] .= zero_FT
             @views ePowers.iz[on_out_wall_nids] .= zero_FT
+            @views ePowers.diss_iz[on_out_wall_nids] .= zero_FT
             @views ePowers.exc[on_out_wall_nids] .= zero_FT
+            @views ePowers.diss_exc[on_out_wall_nids] .= zero_FT
             @views ePowers.equi[on_out_wall_nids] .= zero_FT
             @views ePowers.heat[on_out_wall_nids] .= zero_FT
         end
