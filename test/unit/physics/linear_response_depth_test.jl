@@ -199,27 +199,6 @@ end
     @test !all(≈(0), lr.plasma.exprb.eig_Ti[inw] .- kr.plasma.exprb.eig_Ti[inw])
 end
 
-@testitem "linear-response depth: only FullLinearResponse needs a differentiable rate" setup = [ResponseDepthFixtures] begin
-    using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse, SimulationFlags, validate_scheme_flags
-
-    # The legacy rate paths are refused for FullLinearResponse because there is no
-    # dK/dĒ to take. PartialLinearResponse takes no derivative at all, so the same pairing is
-    # fine — refusing it would narrow what works for no reason.
-    for (field, bad) in ((:Ionz_method, "Townsend_coeff"), (:ud_method, "Lloyd_fit"))
-        lr = SimulationFlags{Float64}()
-        lr.scheme.atomic = ExpRB
-        lr.exprb_eigenvalue = FullLinearResponse
-        setproperty!(lr, field, bad)
-        @test_throws ArgumentError validate_scheme_flags(lr)
-
-        kr = SimulationFlags{Float64}()
-        kr.scheme.atomic = ExpRB
-        kr.exprb_eigenvalue = PartialLinearResponse
-        setproperty!(kr, field, bad)
-        @test validate_scheme_flags(kr) === kr
-    end
-end
-
 @testitem "linear-response depth: FullLinearResponse is refused where no one implements it" setup = [ResponseDepthFixtures] begin
     using RAPID2D: ExpRB, FullLinearResponse, PartialLinearResponse, SimulationFlags, validate_scheme_flags
 

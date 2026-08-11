@@ -108,40 +108,6 @@ end
     @test w.decay == 1.0
 end
 
-@testitem "scheme: ExpRB on the atomic power needs a differentiable rate" begin
-    using RAPID2D: SimulationFlags, ExpRB, FullLinearResponse, validate_scheme_flags
-
-    # Legacy comparison paths have no rate to differentiate. Rather than carry a
-    # dν/dTe = 0 branch for each of them forever, the combination is refused —
-    # these paths are on their way out and should not shape the new code.
-    for (field, bad) in ((:Ionz_method, "Townsend_coeff"), (:ud_method, "Lloyd_fit"))
-        flags = SimulationFlags{Float64}()
-        flags.scheme.atomic = ExpRB
-        flags.exprb_eigenvalue = FullLinearResponse      # PartialLinearResponse takes no derivative
-        setproperty!(flags, field, bad)
-        err = try
-            validate_scheme_flags(flags)
-            nothing
-        catch e
-            sprint(showerror, e)
-        end
-        @test err !== nothing
-        @test occursin("Xsec", err)
-        @test occursin(bad, err)
-    end
-
-    # The supported combination passes, and so does every combination with
-    # ExpRB off — validation must not narrow what already works.
-    ok = SimulationFlags{Float64}()
-    ok.scheme.atomic = ExpRB
-    ok.exprb_eigenvalue = FullLinearResponse
-    @test validate_scheme_flags(ok) === ok
-
-    legacy = SimulationFlags{Float64}()
-    legacy.Ionz_method = "Townsend_coeff"
-    @test validate_scheme_flags(legacy) === legacy
-end
-
 @testitem "scheme: initialize! is where the refusal actually lands" begin
     using RAPID2D: ExpRB, FullLinearResponse
 
@@ -156,11 +122,11 @@ end
 
     # A validator nothing calls is not a validator. The check runs before any
     # state is built, so a bad pairing fails at setup rather than as a silently
-    # wrong Jacobian several thousand steps in.
+    # wrong weight several thousand steps in.
     RP = small_RAPID()
-    RP.flags.scheme.atomic = ExpRB
+    RP.flags.scheme.decay = ExpRB
     RP.flags.exprb_eigenvalue = FullLinearResponse
-    RP.flags.Ionz_method = "Townsend_coeff"
+    RP.flags.Ampere = false             # keep the coupled-solver refusal out of it
     @test_throws ArgumentError initialize!(RP)
 
     # And the default configuration still initializes — validation refuses in one
@@ -200,33 +166,6 @@ end
         setproperty!(ok, off, false)
         @test validate_scheme_flags(ok) === ok
     end
-    # `ud_method` gates the coupled call too — but an evolving drift on a legacy
-    # method is refused anyway, by the narrower rule: those branches integrate
-    # nothing, so ExpRB is ignored there as surely as it would be in the coupled
-    # solve. The refusal must name THAT reason, not the Ampère route's.
-    legacy = SimulationFlags{Float64}()
-    legacy.scheme.decay = ExpRB
-    legacy.Ampere = true
-    legacy.ud_method = "Lloyd_fit"
-    leg_err = try
-        validate_scheme_flags(legacy)
-        nothing
-    catch e
-        sprint(showerror, e)
-    end
-    @test leg_err !== nothing
-    @test occursin("Lloyd_fit", leg_err)
-    @test !occursin("Ampere_Itor_threshold", leg_err)
-
-    # Freeze the drift and there is nothing to integrate, hence nothing to refuse:
-    # neither rule fires, and the legacy method keeps working as it always has.
-    frozen = SimulationFlags{Float64}()
-    frozen.scheme.decay = ExpRB
-    frozen.Ampere = true
-    frozen.ud_method = "Lloyd_fit"
-    frozen.ud_evolve = false
-    @test validate_scheme_flags(frozen) === frozen
-
     # With ExpRB off the coupled path is untouched: validation refuses in one
     # direction only.
     base = SimulationFlags{Float64}()

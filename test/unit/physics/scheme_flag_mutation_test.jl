@@ -24,8 +24,6 @@
         RP.flags.src = true
         RP.flags.Coulomb_Collision = false
         RP.flags.ud_evolve = true
-        RP.flags.ud_method = "Xsec"
-        RP.flags.Ionz_method = "Xsec"
         RP.flags.Ampere = false            # keep the coupled-solver refusal out of it
         RP.flags.scheme.decay = decay
         RP.flags.scheme.atomic = atomic
@@ -106,73 +104,6 @@ end
     RP.flags.exprb_eigenvalue = PartialLinearResponse
     update_transport_quantities!(RP)
     @test update_electron_power_jacobian!(RP) === RP
-end
-
-@testitem "flag mutation: a drift method that cannot read scheme.decay refuses it" setup = [FlagMutationFixtures] begin
-    using RAPID2D: ExpRB, Theta, SimulationFlags, validate_scheme_flags, update_ue_para!
-
-    # `update_ue_para!` only integrates in time under `ud_method = "Xsec"`. The two
-    # legacy branches are algebraic balances — `u = 5719(−E/p)` and `u = qE/(mν)` —
-    # with no Δt in them at all, so they cannot honour ANY time scheme. Selecting
-    # ExpRB there is the `ForwardEuler`-on-a-θ-family case again: a value read by
-    # nothing.
-    for bad in ("Lloyd_fit", "Xsec_fit")
-        flags = SimulationFlags{Float64}()
-        flags.scheme.decay = ExpRB
-        flags.Ampere = false                    # keep the coupled-solver refusal out of it
-        flags.ud_evolve = true
-        flags.ud_method = bad
-        err = try
-            validate_scheme_flags(flags)
-            nothing
-        catch e
-            sprint(showerror, e)
-        end
-        @test err !== nothing
-        @test occursin(bad, err)
-
-        # Refusal is one-directional: the same legacy method under θ is untouched.
-        ok = SimulationFlags{Float64}()
-        ok.ud_method = bad
-        @test validate_scheme_flags(ok) === ok
-    end
-
-    # And the use-site guard, because the flags stay mutable afterwards.
-    RP = mutable_RAPID(; decay = ExpRB)
-    RP.flags.ud_method = "Lloyd_fit"
-    @test_throws ArgumentError update_ue_para!(RP)
-end
-
-@testitem "flag mutation: a rate path with no derivative refuses to be marked fresh" setup = [FlagMutationFixtures] begin
-    using RAPID2D: ExpRB, FullLinearResponse, update_transport_quantities!
-
-    # `update_RRCs!` stamps `dν_dTe.fresh` from the depth policy, but only the Xsec
-    # ionization branch actually writes `dν_dTe.iz`. Switching `Ionz_method` to
-    # `Townsend_coeff` afterwards leaves the stamp true while `ν_en_iz` becomes a
-    # Townsend rate and its slope stays the Xsec one — two coefficients from two
-    # different models, silently.
-    RP = mutable_RAPID(; atomic = ExpRB)
-    RP.flags.exprb_eigenvalue = FullLinearResponse
-    update_transport_quantities!(RP)
-    @test RP.plasma.dν_dTe.fresh
-    @test !all(iszero, RP.plasma.dν_dTe.iz[RP.G.nodes.in_wall_nids])
-
-    RP.flags.Ionz_method = "Townsend_coeff"
-    err = try
-        update_transport_quantities!(RP)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin("Townsend_coeff", sprint(showerror, err))
-
-    # Under the default depth nothing reads a slope, so the same pairing is fine —
-    # this must not narrow the legacy path for runs that never differentiate.
-    kr = mutable_RAPID(; atomic = ExpRB)
-    kr.flags.Ionz_method = "Townsend_coeff"
-    @test update_transport_quantities!(kr) === kr
-    @test !kr.plasma.dν_dTe.fresh
 end
 
 @testitem "flag mutation: the ledger weight follows the solve, not the flag" setup = [FlagMutationFixtures] begin

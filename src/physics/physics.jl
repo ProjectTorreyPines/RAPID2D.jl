@@ -41,188 +41,118 @@ Update the parallel electron velocity.
 """
 function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_ue_para!" begin
-        # Define constants at function start for type stability
-        one_FT = one(FT)
-        zero_FT = zero(FT)
+        one_FT = one(FT)   # hoisted for type stability
+        @unpack qe, me = RP.config.constants
+        dt = RP.dt
+        pla = RP.plasma
+        F = RP.fields
 
-        # Update method depends on flag
-        if RP.flags.ud_method == "Lloyd_fit"
-            _refuse_exprb_decay(
-                RP.flags, "ud_method = \"Lloyd_fit\"",
-                "is an algebraic fit with no Δt in it, so no time scheme reaches it"
-            )
-            # Simple fit for drift velocity
-            @. RP.plasma.ue_para = 5719.0 * (-RP.fields.E_para_tot / RP.config.prefilled_gas_pressure)
+        # Total decay rate of the drift. ν_iz belongs here because newborn electrons
+        # enter at rest — dilution, not momentum transfer to the gas. ν_ei_eff
+        # (= ξ_sptz·ν_ei) is the Coulomb half of the same friction; its u_i∥ half is
+        # added as a source below. The combined momentum-Ampère solvers build the
+        # identical sum.
+        ν_sum_mom_iz_ei = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
 
-        elseif RP.flags.ud_method == "Xsec_fit"
-            _refuse_exprb_decay(
-                RP.flags, "ud_method = \"Xsec_fit\"",
-                "solves the steady balance qE = mνu directly, with no Δt in it"
-            )
-            # Cross section fit with simplified collisions
-            qe = -RP.config.ee
+        # Backward Euler by default (θ_imp.decay = 1): friction-dominated, so at large
+        # Δt BE lands on u∞ = S/ν while CN rings about it. ExpRB replaces the constant
+        # with the friction's own fitted θ(z), z = −νΔt, per cell — a better local
+        # weight where the step resolves ν, but still first order and LESS implicit
+        # than BE (θ_fit < 1 on a decay branch). See exprb-implementation.md §5 phase 2.
+        decay_is_exprb = RP.flags.scheme.decay === ExpRB
+        decay_is_exprb && _refuse_full_response_decay(RP.flags)
+        decay_exponent = decay_is_exprb ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
+        bern_decay = decay_is_exprb ? exprb_bern.(decay_exponent) : nothing
+        # `θu` weights the FRICTION and the ledger that records it (per-cell under
+        # ExpRB); `θ_op` weights the nonlocal operators, which the fit does not reach
+        # and which keep today's constant either way. Splitting them keeps
+        # `scheme.decay` from silently changing the transport treatment.
+        θ_op = RP.flags.θ_imp.decay
+        θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
 
-            # Drift friction at the step-entry state (update_RRCs!). Note this now
-            # respects flags.Atomic_Collision, which the previous live query did not:
-            # with neutral collisions disabled the denominator is left to Coulomb alone.
-            tot_coll_freq = copy(RP.plasma.ν_en_mom_tot)
+        # Rue_ei, part 1 (uⁿ). A LEDGER of the exchange over the step, so it must use
+        # the quadrature the update actually performed — θ(z) under ExpRB.
+        if RP.flags.Coulomb_Collision
+            @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one_FT - θu) * pla.ue_para)
+        end
 
-            # Add Coulomb collisions if enabled
-            if RP.flags.Coulomb_Collision
-                if RP.flags.Spitzer_Resistivity
-                    @. tot_coll_freq += RP.plasma.sptz_fac * RP.plasma.ν_ei
-                else
-                    @. tot_coll_freq += RP.plasma.ν_ei
-                end
+        if RP.flags.Implicit
+            OP = RP.operators
+            @. OP.A_LHS = OP.II
+
+            # #1: Electric acceleration term [qe*E_para_tot/me]
+            accel_para_tilde = qe * F.E_para_tot / me
+
+            # #2: Advection term (1-θ_op)*[-(𝐮⋅∇)*ue_para]. θ_op, not θu: the fitted
+            # weight belongs to the friction's eigenvalue, not to a nonlocal operator.
+            if RP.flags.Include_ud_convec_term
+                accel_para_tilde .+= (one_FT - θ_op) * (-OP.𝐮∇ * pla.ue_para)
+                @. OP.A_LHS += θ_op * dt * OP.𝐮∇
             end
 
-            # Calculate drift velocity from balance of electric field and collisions
-            @. RP.plasma.ue_para = qe * RP.fields.E_para_tot / (RP.config.me * tot_coll_freq)
-
-        elseif RP.flags.ud_method == "Xsec"
-            # Full cross section model with collisions
-            @unpack qe, me = RP.config.constants
-            dt = RP.dt
-
-            pla = RP.plasma
-            F = RP.fields
-
-            # Rate at which the parallel drift decays. Ionization belongs here alongside
-            # the drift friction because each newborn electron enters at rest, diluting
-            # the mean drift at ν_iz without any momentum being transferred to the gas.
-            # ν_ei_eff (= ξ_sptz·ν_ei) is the Coulomb half of the SAME friction: the
-            # momentum equation carries -ξ_sptz·ν_ei·(u_e∥ - u_i∥), whose u_i∥ half is
-            # added as a source below. It is zero unless Coulomb_Collision is enabled,
-            # and the combined momentum-Ampère solvers build the identical sum.
-            ν_sum_mom_iz_ei = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
-
-            # Backward Euler by default (θ_imp.decay = 1): this equation is
-            # friction-dominated, and at large Δt BE lands on u∞ = S/ν while CN
-            # rings about it forever. The formula stays written for a general θ.
-            #
-            # With `scheme.decay = ExpRB` the weight stops being a constant and
-            # becomes the friction's own fitted one, θ(z) with z = −νΔt, per cell.
-            # Where the step resolves the friction that weight is CN's ½ rather than
-            # BE's 1 — a better local approximation there. It does not make the
-            # equation second order: ν moves with the solution.
-            #
-            # It is NOT uniformly better than BE here: θ_fit(z) < 1 on a decay branch, so
-            # ExpRB is LESS implicit than BE and tracks Crank–Nicolson. With ν lagged at
-            # the step-entry state, BE's extra damping is what overshoots the saturated
-            # drift least once the step outruns the rate. What ExpRB buys on this
-            # equation is a fitted weight, not monotonicity.
-            decay_is_exprb = RP.flags.scheme.decay === ExpRB
-            decay_is_exprb && _refuse_full_response_decay(RP.flags)
-            decay_exponent = decay_is_exprb ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
-            bern_decay = decay_is_exprb ? exprb_bern.(decay_exponent) : nothing
-            # A scalar for the θ-scheme, a per-cell field for ExpRB. `θu` weights
-            # the FRICTION and the ledger that records it; `θ_op` weights this
-            # equation's nonlocal operators (convection, ExB diffusion), which the
-            # fit does not reach and which therefore keep today's constant either
-            # way. Splitting them is what keeps `scheme.decay` from silently
-            # changing the transport treatment too.
-            θ_op = RP.flags.θ_imp.decay
-            θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
-
-            # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
-            # This is a LEDGER of the exchange integrated over the step, so it must
-            # use the quadrature the update actually performed — θ(z) under ExpRB,
-            # not the constant that is no longer being applied.
-            if RP.flags.Coulomb_Collision
-                @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one_FT - θu) * pla.ue_para)
+            # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
+            if RP.flags.Include_ud_pressure_term
+                accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
             end
 
-            # Advance ue_para using implicit or explicit method
-            if RP.flags.Implicit
-                # Implicit scheme implementation
-                OP = RP.operators
-                @. OP.A_LHS = OP.II
-
-                # #1: Electric acceleartion term [qe*E_para_tot/me]
-                accel_para_tilde = qe * F.E_para_tot / me
-
-                # #2: Advection term (1-θ)*[-(𝐮⋅∇)*ue_para]
-                # θ_op, not θu: these are NONLOCAL operators, and the fitted weight
-                # belongs to the friction's eigenvalue, not to theirs. They keep the
-                # constant they use today whatever `scheme.decay` says.
-                if RP.flags.Include_ud_convec_term
-                    accel_para_tilde .+= (one_FT - θ_op) * (-OP.𝐮∇ * pla.ue_para)
-                    @. OP.A_LHS += θ_op * dt * OP.𝐮∇
-                end
-
-                # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
-                if RP.flags.Include_ud_pressure_term
-                    accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
-                end
-
-
-                # #4: collision drag force  (1-θ)*[-(ν_iz + ν_mom + ν_ei_eff)*ue_para]
-                if decay_is_exprb
-                    # The uⁿ coefficient is bern(−z), applied to the RHS below rather
-                    # than accumulated here — see the note there.
-                    OP.A_LHS += @views spdiagm((bern_decay .- one_FT)[:])
-                else
-                    @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
-
-                    # Add collision frequency to diagonal elements using spdiagm
-                    OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz_ei[:])
-                end
-
-                # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
-                @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
-
-                # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
-                if RP.flags.Include_ud_diffu_term
-                    accel_para_tilde .+= (one_FT - θ_op) * (OP.∇𝐃∇ * pla.ue_para)
-                    @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
-                end
-
-                # Under ExpRB the uⁿ coefficient is bern(−z), formed as bern(z) + z rather
-                # than the algebraically equal 1 − (1−θ)νΔt — that subtraction cancels
-                # to nothing exactly where the true value is small but meaningful.
-                if decay_is_exprb
-                    @. OP.RHS = (bern_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
-                else
-                    @. OP.RHS = pla.ue_para + dt * accel_para_tilde
-                end
-
-                # Solve the momentum equation
-                @timeit RAPID_TIMER "ue_para LinearSolve" begin
-                    pla.ue_para .= OP.A_LHS \ OP.RHS
-                end
+            # #4: collision drag force  (1-θu)*[-(ν_iz + ν_mom + ν_ei_eff)*ue_para]
+            if decay_is_exprb
+                # uⁿ carries bern(−z), applied to the RHS below rather than here.
+                OP.A_LHS += @views spdiagm((bern_decay .- one_FT)[:])
             else
-
-                # Same two coefficients as the assembled path: 1/bern(z) divides the
-                # increment, and bern(−z) = bern(z) + z scales uⁿ.
-                inv_factor = decay_is_exprb ?
-                    (@. one_FT / bern_decay) :
-                    (@. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt))
-                u_coeff = decay_is_exprb ?
-                    (@. bern_decay + decay_exponent) :
-                    (@. one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
-                @. pla.ue_para = inv_factor * (
-                    pla.ue_para * u_coeff
-                        + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
-                )
-
-                # Add pressure and convection terms in the same way as MATLAB
-                if RP.flags.Include_ud_pressure_term
-                    accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
-                    @. pla.ue_para += inv_factor * dt * (accel_by_pressure)
-                end
-
-                if RP.flags.Include_ud_convec_term
-                    accel_by_grad_ud = calculate_electron_acceleration_by_convection(RP)
-                    @. pla.ue_para += inv_factor * dt * (accel_by_grad_ud)
-                end
+                @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
+                OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz_ei[:])
             end
 
-            # Complete the Rue_ei calculation with second part (n+1 step contribution)
-            if RP.flags.Coulomb_Collision
-                @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
+            # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
+            @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
+
+            # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
+            if RP.flags.Include_ud_diffu_term
+                accel_para_tilde .+= (one_FT - θ_op) * (OP.∇𝐃∇ * pla.ue_para)
+                @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
+            end
+
+            # bern(−z) formed as bern(z) + z, not the algebraically equal
+            # 1 − (1−θ)νΔt: that subtraction cancels to nothing exactly where the
+            # true value is small but meaningful.
+            if decay_is_exprb
+                @. OP.RHS = (bern_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
+            else
+                @. OP.RHS = pla.ue_para + dt * accel_para_tilde
+            end
+
+            @timeit RAPID_TIMER "ue_para LinearSolve" begin
+                pla.ue_para .= OP.A_LHS \ OP.RHS
             end
         else
-            error("Unknown electron drift velocity method: $(RP.flags.ud_method)")
+            # Same two coefficients as the assembled path: 1/bern(z) divides the
+            # increment, and bern(−z) = bern(z) + z scales uⁿ.
+            inv_factor = decay_is_exprb ?
+                (@. one_FT / bern_decay) :
+                (@. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt))
+            u_coeff = decay_is_exprb ?
+                (@. bern_decay + decay_exponent) :
+                (@. one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
+            @. pla.ue_para = inv_factor * (
+                pla.ue_para * u_coeff
+                    + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
+            )
+
+            if RP.flags.Include_ud_pressure_term
+                accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
+                @. pla.ue_para += inv_factor * dt * (accel_by_pressure)
+            end
+
+            if RP.flags.Include_ud_convec_term
+                accel_by_grad_ud = calculate_electron_acceleration_by_convection(RP)
+                @. pla.ue_para += inv_factor * dt * (accel_by_grad_ud)
+            end
+        end
+
+        # Rue_ei, part 2 (uⁿ⁺¹)
+        if RP.flags.Coulomb_Collision
+            @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
 
         return RP
@@ -237,86 +167,68 @@ Update the parallel ion velocity.
 """
 function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return @timeit RAPID_TIMER "update_ui_para!" begin
-        if RP.flags.ud_method == "Xsec"
-            # Use cross sections for ion velocity update
-            # Alias
-            cnst = RP.config.constants
-            pla = RP.plasma
-            m_i = bulk_ion_mass(RP)   # the ion this equation moves, not the default
+        # Alias
+        cnst = RP.config.constants
+        pla = RP.plasma
+        m_i = bulk_ion_mass(RP)   # the ion this equation moves, not the default
 
-            eff_atomic_coll_freq = zeros(FT, size(pla.ui_para))
-            if RP.flags.Atomic_Collision
-                # Get ion reaction rate coefficients
-                iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
-                iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
+        eff_atomic_coll_freq = zeros(FT, size(pla.ui_para))
+        if RP.flags.Atomic_Collision
+            iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
+            iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
 
-                # Calculate effective atomic collision frequency
-                # Note: 0.5 factor for elastic collisions because they only lose half of momentum
-                eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
+            # ½ on elastic: those collisions shed only half the momentum.
+            eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
 
-                # Add the ionization contribution if source terms are enabled, from the
-                # step-entry ν_en_iz that continuity and the energy equation also use.
-                # Ions are born at rest, so this is a dilution rate: events per second
-                # divided by the ions already present, n_e·ν_iz/(n_e/Z) = Z·ν_iz.
-                if RP.flags.src
-                    Z_i = FT(bulk_ion_charge(RP))
-                    @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
-                end
-
-                # NOTE: convection and pressure contribution are ignored for ions
-                # TODO: Add pressure and convection terms for ions if needed, check Zeff effects
-
-                # Fix any NaN values
-                replace!(eff_atomic_coll_freq, NaN => 0.0)
+            # Ions are born at rest, so ionization is a dilution rate: events per
+            # second over the ions already present, n_e·ν_iz/(n_e/Z) = Z·ν_iz. Uses
+            # the step-entry ν_en_iz that continuity and the energy equation share.
+            if RP.flags.src
+                Z_i = FT(bulk_ion_charge(RP))
+                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
             end
 
-            # Calculate acceleration from electric field
-            qi = cnst.ee
+            # TODO: convection/pressure are ignored for ions; adding them needs a
+            # Zeff review.
+            replace!(eff_atomic_coll_freq, NaN => 0.0)
+        end
 
-            one_FT = one(FT)
-            if RP.flags.scheme.decay === ExpRB
-                # Same equation and same family as `update_ue_para!`: a sink written
-                # as ν·u, so bern(z) with z = −νΔt replaces the constant weight. Same
-                # caveat too — see there: it is not the least-overshooting choice at
-                # a coarse step.
-                #
-                # The exponent carries the ATOMIC rate only. Coulomb friction is added
-                # after this update, explicitly, at (mₑ/m_i)·ν_ei — see below. So this
-                # is exact for the atomic friction alone, not for the whole local sink,
-                # and a Coulomb-stiff cell is stepped at forward Euler whatever this
-                # says. That asymmetry is older than this branch and identical in the θ
-                # branch, so it is not fixed here: doing so moves the default. The
-                # electron equation does NOT have it — `ν_ei_eff` sits inside
-                # `ν_sum_mom_iz_ei` there, under both schemes.
-                decay_exponent = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
-                bern_decay = exprb_bern.(decay_exponent)
-                @. pla.ui_para = (
-                    (bern_decay + decay_exponent) * pla.ui_para +
-                        RP.dt * qi * RP.fields.E_para_tot / m_i
-                ) / bern_decay
-            else
-                # θ = 1 outright rather than `θ_imp.decay`: this equation has never
-                # read the weight store, and wiring it up here would be a silent
-                # behaviour change for anyone who has set it.
-                θ = one_FT  # Backward Euler
-                @. pla.ui_para = (
-                    pla.ui_para * (one_FT - (one_FT - θ) * RP.dt * eff_atomic_coll_freq) +
-                        RP.dt * qi * RP.fields.E_para_tot / m_i
-                ) /
-                    (one_FT + θ * RP.dt * eff_atomic_coll_freq)
-            end
+        qi = cnst.ee
 
-            # Add electron-ion momentum transfer effect
-            if RP.flags.Coulomb_Collision
-                if RP.flags.Spitzer_Resistivity
-                    Rui_ei = @. pla.sptz_fac * (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
-                else
-                    Rui_ei = @. (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
-                end
-                pla.ui_para .+= RP.dt * Rui_ei
-            end
+        one_FT = one(FT)
+        if RP.flags.scheme.decay === ExpRB
+            # Same sink form as `update_ue_para!`, same caveat — see there.
+            #
+            # The exponent carries the ATOMIC rate ONLY: Coulomb friction is added
+            # explicitly after this update, so a Coulomb-stiff cell is stepped at
+            # forward Euler whatever this says. The asymmetry predates this branch and
+            # is identical under θ, so fixing it here would move the default. The
+            # electron equation has no such gap — ν_ei_eff sits inside its exponent.
+            decay_exponent = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
+            bern_decay = exprb_bern.(decay_exponent)
+            @. pla.ui_para = (
+                (bern_decay + decay_exponent) * pla.ui_para +
+                    RP.dt * qi * RP.fields.E_para_tot / m_i
+            ) / bern_decay
         else
-            error("Ion velocity update only implemented for ud_method = Xsec")
+            # θ = 1 outright, not `θ_imp.decay`: this equation has never read the
+            # weight store, so wiring it up would silently move anyone who set it.
+            θ = one_FT  # Backward Euler
+            @. pla.ui_para = (
+                pla.ui_para * (one_FT - (one_FT - θ) * RP.dt * eff_atomic_coll_freq) +
+                    RP.dt * qi * RP.fields.E_para_tot / m_i
+            ) /
+                (one_FT + θ * RP.dt * eff_atomic_coll_freq)
+        end
+
+        # Add electron-ion momentum transfer effect
+        if RP.flags.Coulomb_Collision
+            if RP.flags.Spitzer_Resistivity
+                Rui_ei = @. pla.sptz_fac * (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
+            else
+                Rui_ei = @. (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
+            end
+            pla.ui_para .+= RP.dt * Rui_ei
         end
     end
 end
@@ -1692,20 +1604,17 @@ end
 
 Throw if `scheme.decay = ExpRB` reaches code that cannot honour it.
 
-`validate_scheme_flags` refuses each such pairing at `initialize!`, which is where a
-user meets it. This is the backstop, and it is wider than those refusals on purpose:
-flags stay mutable afterwards, and every caller here is entered through a runtime
-condition or a direct call rather than through the configuration that was validated.
-So "silently does something else" has to be unreachable, not merely unconfigured.
+The use-site backstop for what `validate_scheme_flags` refuses at `initialize!`.
+Deliberately wider: flags stay mutable afterwards, and these callers are reached by
+runtime condition or direct call, not by the configuration that was validated.
 
-`why` completes the sentence "…cannot honour scheme.decay = ExpRB because it `why`".
+`why` completes "…cannot honour scheme.decay = ExpRB because it `why`".
 """
 function _refuse_exprb_decay(flags::SimulationFlags, who::AbstractString, why::AbstractString)
     flags.scheme.decay === ExpRB && throw(
         ArgumentError(
             "$who cannot honour scheme.decay = ExpRB because it $why — only " *
-                "update_ue_para! with ud_method = \"Xsec\" carries bern(z) today. " *
-                "Use scheme.decay = Theta."
+                "update_ue_para! carries bern(z) today. Use scheme.decay = Theta."
         )
     )
     return nothing
@@ -1716,11 +1625,8 @@ end
 
 Throw if `scheme.decay = ExpRB` is asked for `FullLinearResponse`.
 
-The sibling of [`_refuse_exprb_decay`](@ref), for the other pairing
-`validate_scheme_flags` refuses: nothing here computes the momentum equation's linear
-response, so honouring the flag would mean quietly delivering the partial one.
-`initialize!` is the only place that validation runs, and `exprb_eigenvalue` stays
-mutable afterwards.
+The sibling of [`_refuse_exprb_decay`](@ref): nothing computes the momentum equation's
+linear response, so honouring the flag would quietly deliver the partial one instead.
 """
 function _refuse_full_response_decay(flags::SimulationFlags)
     flags.exprb_eigenvalue === FullLinearResponse && throw(

@@ -47,7 +47,6 @@ end
         RP.flags.src = true
         RP.flags.Coulomb_Collision = coulomb
         RP.flags.ud_evolve = true
-        RP.flags.ud_method = "Xsec"
         RP.flags.Te_evolve = false
         RP.flags.Implicit = implicit
         RP.flags.Include_ud_convec_term = false

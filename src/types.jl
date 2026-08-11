@@ -964,8 +964,6 @@ Contains boolean flags that control various aspects of the simulation.
     # Method selection flags
     eRRC_method::String = "EoverP_Erg"        # Electron reaction rate coefficient method
     iRRC_method::String = "ud_T"              # Ion reaction rate coefficient method
-    ud_method::String = "Xsec"                # Drift velocity method
-    Ionz_method::String = "Xsec"              # Ionization method
     upara_or_uRphiZ::String = "upara"         # Velocity representation
 
     # Visualization flags
@@ -989,7 +987,6 @@ Contains boolean flags that control various aspects of the simulation.
     Atomic_Collision::Bool = true             # Include Atomic collisions
     Coulomb_Collision::Bool = true            # Include Coulomb collisions
     Spitzer_Resistivity::Bool = true          # Include Spitzer resistivity
-    Update_gFac::Bool = true                  # Update g factor for generalized EDF
 
     # Ion dynamics
     update_ni_independently::Bool = true      # Update ion density independently
@@ -1090,14 +1087,6 @@ Contains boolean flags that control various aspects of the simulation.
 
     # Current threshold for Ampere's equation
     Ampere_Itor_threshold::FT = FT(1.0)      # Current threshold for Ampere equation (Default: 1.0 A)
-
-    # Debug flags
-    tmp_test::Bool = false                    # Enable temporary tests
-    tmp_fig::Int = 100                        # Figure number for temporary tests
-
-    # Initial parameters
-    ini_gFac::FT = FT(1.0)                   # Initial g factor value
-    gamma_2nd_electron::FT = FT(0.1)         # Secondary electron emission coefficient
 end
 
 """
@@ -1105,9 +1094,6 @@ end
 
 Refuse [`TimeScheme`](@ref) choices that the rest of `flags` cannot support.
 
-- **`atomic = ExpRB` + `FullLinearResponse`** needs a differentiable rate. The legacy
-  paths have none — `Ionz_method = "Townsend_coeff"` sets `ν_iz = α|u∥|` with no `Tₑ`
-  dependence, and `ud_method ≠ "Xsec"` fixes the drift algebraically.
 - **`decay = ExpRB` + `FullLinearResponse`**: `update_ue_para!` has no linear-response
   term to offer (see there).
 - **`decay = ExpRB` + the Ampère routing conjunction**: that solver builds the same
@@ -1119,24 +1105,7 @@ Refusal is one-directional — nothing here narrows what already works. Called f
 `TimeSchemes`' own `setproperty!` cannot see them.
 """
 function validate_scheme_flags(flags::SimulationFlags)
-    # Only FullLinearResponse differentiates the tables; PartialLinearResponse reads a rate the
-    # model already states and so works with every rate path.
-    if flags.scheme.atomic === ExpRB && flags.exprb_eigenvalue === FullLinearResponse
-        for (name, wanted) in ((:Ionz_method, "Xsec"), (:ud_method, "Xsec"))
-            got = getproperty(flags, name)
-            got == wanted || throw(
-                ArgumentError(
-                    "exprb_eigenvalue = FullLinearResponse needs a differentiable rate, and " *
-                        "$name = \"$got\" has none — it is a legacy comparison path. " *
-                        "Set $name = \"$wanted\", or exprb_eigenvalue = PartialLinearResponse, " *
-                        "which takes no derivative."
-                )
-            )
-        end
-    end
-
-    # Selecting a policy a family cannot honour must fail, not fall back: the momentum
-    # equation uses λ = −ν_sum and nothing computes its −(mₑu∥²/e)·∂ν/∂Ē.
+    # A policy a family cannot honour must fail, not fall back to the weaker one.
     if flags.scheme.decay === ExpRB && flags.exprb_eigenvalue === FullLinearResponse
         throw(
             ArgumentError(
@@ -1149,32 +1118,17 @@ function validate_scheme_flags(flags::SimulationFlags)
         )
     end
 
-    # `update_ue_para!` integrates in time only under ud_method = "Xsec". The legacy
-    # branches are algebraic — a fit, and a steady balance — with no Δt in them, so a
-    # time scheme selected there would be read by nothing, exactly as `ForwardEuler` on
-    # a θ-weighted family would be.
-    if flags.scheme.decay === ExpRB && flags.ud_evolve && flags.ud_method != "Xsec"
-        throw(
-            ArgumentError(
-                "scheme.decay = ExpRB is not available with " *
-                    "ud_method = \"$(flags.ud_method)\": update_ue_para! integrates the " *
-                    "u∥ friction only under ud_method = \"Xsec\", and the legacy branches " *
-                    "are algebraic balances with no Δt in them — the scheme would be " *
-                    "ignored rather than obeyed. Use ud_method = \"Xsec\", " *
-                    "scheme.decay = Theta, or ud_evolve = false."
-            )
-        )
-    end
-
-    # The exact routing condition in `advance_timestep!`. Written as the same
-    # conjunction rather than a looser one, so the refusal costs no configuration
-    # that actually reaches `update_ue_para!`.
+    # The FLAG half of the coupled route in `advance_timestep!`, mirrored term for term
+    # rather than loosened, so no configuration that keeps reaching `update_ue_para!`
+    # pays for this refusal. Its remaining gate — |I_tor| ≥ Ampere_Itor_threshold — is
+    # runtime state and cannot be checked here, which is exactly why the pairing has to
+    # be refused up front: the route opens partway through a run.
     if flags.scheme.decay === ExpRB && flags.Ampere && flags.E_para_self_EM &&
-            flags.ud_evolve && flags.ud_method == "Xsec"
+            flags.ud_evolve
         throw(
             ArgumentError(
                 "scheme.decay = ExpRB is not available with Ampere = true, " *
-                    "E_para_self_EM = true, ud_evolve = true and ud_method = \"Xsec\": " *
+                    "E_para_self_EM = true and ud_evolve = true: " *
                     "above Ampere_Itor_threshold that combination solves u∥ in the " *
                     "combined momentum–Ampère block, which fixes θ = 1 and would " *
                     "silently revert to backward Euler mid-run. Only update_ue_para! " *
