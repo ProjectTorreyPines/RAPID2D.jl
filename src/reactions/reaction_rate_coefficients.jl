@@ -474,16 +474,14 @@ diagnostic-only and are still fetched live at snapshot cadence.
 """
 function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
-    # ∂P/∂Tₑ is assembled from ∂ν/∂Tₑ, and those must be differentiated at the
-    # state the frequencies were evaluated at — so they are materialized here and
-    # nowhere else, for the same reason the frequencies are. Skipped entirely when
-    # no consumer wants them, so the default configuration pays nothing.
-    # Only FullLinearResponse reads these surfaces; under PartialLinearResponse nothing does,
-    # so nothing pays to build them.
+    # ∂P/∂Tₑ is assembled from ∂ν/∂Tₑ, which must be differentiated at the state the
+    # frequencies were evaluated at — so it is materialized here and nowhere else, for
+    # the same reason they are. Only FullLinearResponse reads it, so the default pays
+    # nothing.
     want_jacobian = RP.flags.scheme.atomic === ExpRB &&
         RP.flags.exprb_eigenvalue === FullLinearResponse
-    # Both flags stay mutable after `initialize!`, so record the policy this step ran
-    # under rather than letting the consumer re-read a flag that may have moved since.
+    # Stamp the policy this step ran under: both flags stay mutable after `initialize!`,
+    # so a consumer re-reading them could get one that has moved since.
     pla.dν_dTe.fresh = want_jacobian
 
     if RP.flags.Atomic_Collision
@@ -501,38 +499,13 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         end
     end
 
-    # ν_en_iz is consumed by the parallel momentum drag (gated on Atomic_Collision) *and*
-    # by the continuity source (gated on src), which are independent flags — so cover the
-    # union. With only `src` set, this field previously held a mid-step value left over
-    # from the previous iteration, because its unconditional writer sat under
-    # Atomic_Collision while its mid-step writer sat under src.
+    # The UNION, not either flag alone: ν_en_iz feeds both the momentum drag (gated on
+    # Atomic_Collision) and the continuity source (gated on src). With only `src` set,
+    # this field used to hold a stale mid-step value from the previous iteration.
     if RP.flags.Atomic_Collision || RP.flags.src
-        if RP.flags.Ionz_method == "Townsend_coeff"
-            # The one branch that writes `ν_en_iz` without a surface behind it. Marking
-            # the cache fresh here would pair a Townsend rate with whatever slope the
-            # Xsec path left in `dν_dTe.iz` — two models, one λ, no announcement.
-            want_jacobian && throw(
-                ArgumentError(
-                    "exprb_eigenvalue = FullLinearResponse needs ∂ν_iz/∂Tₑ, and " *
-                        "Ionz_method = \"Townsend_coeff\" is a fit with no rate surface " *
-                        "to differentiate. validate_scheme_flags refuses this pairing at " *
-                        "initialize!; reaching here means Ionz_method changed afterwards. " *
-                        "Use Ionz_method = \"Xsec\", or " *
-                        "exprb_eigenvalue = PartialLinearResponse."
-                )
-            )
-            # Electron avalanche via the Townsend coefficient,
-            # α = 3.88 * p * exp(-95 * p / |E_para|)
-            α = @. 3.88 * RP.config.prefilled_gas_pressure *
-                exp(-95 * RP.config.prefilled_gas_pressure / abs(RP.fields.E_para_tot))
-            @. pla.ν_en_iz = α * abs(pla.ue_para)
-        elseif RP.flags.Ionz_method == "Xsec"
-            K_iz = get_electron_RRC(RP, :Ionization)
-            @. pla.ν_en_iz = pla.n_H2_gas * K_iz
-            want_jacobian && update_rate_jacobian!(RP, :Ionization, pla.dν_dTe.iz)
-        else
-            error("Unknown ionization method: $(RP.flags.Ionz_method)")
-        end
+        K_iz = get_electron_RRC(RP, :Ionization)
+        @. pla.ν_en_iz = pla.n_H2_gas * K_iz
+        want_jacobian && update_rate_jacobian!(RP, :Ionization, pla.dν_dTe.iz)
 
         # No ionization outside the wall — and therefore no dependence of it on Tₑ
         # there either, or the diagonal would carry a rate the physics does not.

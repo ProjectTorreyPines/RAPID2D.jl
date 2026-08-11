@@ -113,7 +113,6 @@ end
     RP.flags.src = true
     RP.flags.Include_ud_convec_term = false
     RP.flags.Include_ud_pressure_term = false
-    RP.flags.Ionz_method = "Xsec"
     initialize!(RP)
 
     # Drive the parallel velocity to its steady state before measuring it
@@ -191,7 +190,6 @@ end
         src = false,
         diffu = false,
         ud_evolve = false,                # ue_para must stay at its initial value
-        ud_method = "Xsec",
         Te_evolve = false,
         Ti_evolve = false,
         Ampere = false,
@@ -315,7 +313,6 @@ end
         src = false,
         convec = false,
         ud_evolve = false,
-        ud_method = "Xsec",
         Te_evolve = false,
         Ti_evolve = false,
         Ampere = false,
@@ -429,7 +426,6 @@ end
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
         ud_evolve = true,                 # ← the momentum equation is under test
-        ud_method = "Xsec",
         # no drag, no transport, no heating: acceleration must be purely ballistic
         Te_evolve = false, Ti_evolve = false,
         src = false, diffu = false, convec = false, Ampere = false,
@@ -504,7 +500,7 @@ end
     RP.flags = SimulationFlags{FT}(
         src = true,                       # ← the ionization source is under test
         # no transport and no temperature evolution: Te is pinned by hand below
-        ud_evolve = false, ud_method = "Xsec",
+        ud_evolve = false,
         Te_evolve = false, Ti_evolve = false,
         diffu = false, convec = false, Ampere = false,
         E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
@@ -513,7 +509,6 @@ end
     )
     RP.flags.Atomic_Collision = true
     RP.flags.Include_ud_diffu_term = false
-    RP.flags.Ionz_method = "Xsec"
 
     R0 = (config.R_min + config.R_max) / 2
     Z0 = (config.Z_min + config.Z_max) / 2
@@ -588,7 +583,7 @@ end
     RP.flags = SimulationFlags{FT}(
         src = true,                       # ← thermal ionization under test
         Te_evolve = true,                 # ← the cooling it causes is the other half
-        ud_evolve = false, ud_method = "Xsec",
+        ud_evolve = false,
         Ti_evolve = false,
         diffu = false, convec = false, Ampere = false,
         E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
@@ -596,7 +591,6 @@ end
         Coulomb_Collision = false, negative_n_correction = false,
     )
     RP.flags.Atomic_Collision = true
-    RP.flags.Ionz_method = "Xsec"
     RP.flags.Implicit = true
     RP.flags.θ_imp.transport = 1.0
 
@@ -678,7 +672,7 @@ end
         RP = RAPID{FT}(config)
         RP.flags = SimulationFlags{FT}(
             Te_evolve = true,             # ← electron energy equation under test
-            src = true, ud_evolve = false, ud_method = "Xsec",
+            src = true, ud_evolve = false,
             Ti_evolve = false,
             diffu = false, convec = false, Ampere = false,
             E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
@@ -686,7 +680,6 @@ end
             Coulomb_Collision = false, negative_n_correction = false,
         )
         RP.flags.Atomic_Collision = true   # ← elastic e-n transfer is the mechanism
-        RP.flags.Ionz_method = "Xsec"
         RP.flags.Implicit = true
         RP.flags.θ_imp.transport = 1.0
 
@@ -767,7 +760,7 @@ end
 
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
-        Te_evolve = false, src = false, ud_evolve = false, ud_method = "Xsec",
+        Te_evolve = false, src = false, ud_evolve = false,
         Ti_evolve = false, diffu = false, convec = false, Ampere = false,
         E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
@@ -800,68 +793,6 @@ end
     @test !isapprox(pla.ePowers.ela[inw], (recoil .* K_tot)[inw]; rtol = 0.05)
 end
 
-@testitem "ud_method = Xsec_fit solves the instantaneous Drude balance" setup = [PhysicsFixtures] begin
-    # The alternative drift method. Unlike "Xsec" it does not advance u_para; it solves
-    # qE = m ν u algebraically, and it omits the ν_iz dilution term — which is exactly
-    # what makes it useful for isolating that term. It had no test, so the whole branch
-    # was dark. Closed form, so the assertions are exact rather than tolerance-based.
-    FT = Float64
-    config = SimulationConfig{FT}(
-        NR = 20, NZ = 30, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
-        dt = 1.0e-6, t_end_s = 1.0e-6, R0B0 = 1.0, Dpara0 = 0.0, Dperp0 = 0.0,
-        prefilled_gas_pressure = 5.0e-3,
-        wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
-    )
-    config.Output_path = scratch_output_dir()
-
-    RP = RAPID{FT}(config)
-    RP.flags = SimulationFlags{FT}(
-        ud_method = "Xsec_fit", ud_evolve = true,
-        Te_evolve = false, Ti_evolve = false, src = false,
-        diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
-        update_ni_independently = false, Include_ud_convec_term = false,
-        Coulomb_Collision = false, negative_n_correction = false,
-    )
-    RP.flags.Atomic_Collision = true
-    initialize!(RP)
-    RP.plasma.Te_eV .= 9.3
-    RP.fields.E_para_tot .= 0.5
-
-    inw = RP.G.nodes.in_wall_nids
-    drude(ν) = @. -RP.config.ee * RP.fields.E_para_tot / (RP.config.me * ν)
-
-    # update_ue_para! reads the MATERIALIZED ν_en_mom_tot, so update_RRCs! is what moves
-    # the lookup — a step is [update_RRCs! ... update_ue_para!], and inside that step the
-    # frequency is frozen. Calling update_ue_para! twice without an update_RRCs! between
-    # them would solve the same Drude balance twice, which is the point of freezing it.
-    ν_en_mom() = copy(RP.plasma.ν_en_mom_tot)
-
-    update_RRCs!(RP)
-    ν1 = ν_en_mom()                       # queried at ue_para = 0
-    RAPID2D.update_ue_para!(RP)
-    @test RP.plasma.ue_para[inw] ≈ drude(ν1)[inw]
-    u_neutral_only = copy(RP.plasma.ue_para)
-
-    # Coulomb collisions add to the same denominator, Spitzer-weighted.
-    RP.flags.Coulomb_Collision = true
-    RP.flags.Spitzer_Resistivity = true
-    RP.plasma.ν_ei .= 1.0e5
-    RP.plasma.sptz_fac .= 0.5
-    update_RRCs!(RP)                      # next step: Erg now carries the drift energy
-    ν2 = ν_en_mom() .+ 0.5 .* 1.0e5
-    RAPID2D.update_ue_para!(RP)
-    @test RP.plasma.ue_para[inw] ≈ drude(ν2)[inw]
-    @test all(abs.(RP.plasma.ue_para[inw]) .< abs.(u_neutral_only[inw]))   # more drag, less drift
-
-    # Within a step the frequency does not respond to the drift it just produced: solving
-    # again without a new update_RRCs! reproduces the same u exactly. This is the
-    # single-evaluation-point invariant, stated where it is easiest to see.
-    u_frozen = copy(RP.plasma.ue_para)
-    RAPID2D.update_ue_para!(RP)
-    @test RP.plasma.ue_para[inw] == u_frozen[inw]
-end
-
 # ── RRC evaluation point ─────────────────────────────────────────────────────────────
 
 @testitem "update_RRCs! is the single RRC evaluation point of a step" setup = [PhysicsFixtures] begin
@@ -881,14 +812,13 @@ end
 
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
-        Te_evolve = true, src = true, ud_evolve = true, ud_method = "Xsec",
+        Te_evolve = true, src = true, ud_evolve = true,
         Ti_evolve = false, diffu = false, convec = false, Ampere = false,
         E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
         Coulomb_Collision = false, negative_n_correction = false,
     )
     RP.flags.Atomic_Collision = true
-    RP.flags.Ionz_method = "Xsec"
     initialize!(RP)
 
     # Erg ~ 14 eV, E/p = 0.5 / 5e-3 = 100: high enough that inelastic channels are open,
@@ -988,14 +918,13 @@ end
 
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
-        Te_evolve = false, src = true, ud_evolve = false, ud_method = "Xsec",
+        Te_evolve = false, src = true, ud_evolve = false,
         Ti_evolve = false, diffu = false, convec = false, Ampere = false,
         E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
         Coulomb_Collision = false, negative_n_correction = false,
     )
     RP.flags.Atomic_Collision = false     # ← ionization on, neutral collisions off
-    RP.flags.Ionz_method = "Xsec"
     initialize!(RP)
     @test !RP.flags.Atomic_Collision      # gas is present, so initialize! left it off
 
@@ -1215,23 +1144,19 @@ end
     @test isapprox(RP.plasma.Te_eV[in_wall_nids], RP.plasma.Ti_eV[in_wall_nids], rtol = 1.0e-3)
 end
 
-# ── Parallel momentum: Coulomb drag in the time-evolving ("Xsec") method ─────────────
+# ── Parallel momentum: Coulomb drag in the time-evolving drift ───────────────────────
 #
-# `ud_method` picks HOW the parallel drift is obtained, not WHICH physics acts on it:
-#   "Lloyd_fit" — empirical  u∥ = 5719·(−E∥/p)
-#   "Xsec_fit"  — instantaneous force balance  u∥ = qe·E∥/(me·ν_tot)   (algebraic)
-#   "Xsec"      — the momentum ODE integrated in time                  (default)
-# The three must therefore agree on the STEADY STATE. The items below pin that
-# equivalence for "Xsec", which is the only method whose drag enters as a coefficient
-# rather than a denominator — and therefore the only one where a missing collision
-# channel fails silently instead of changing an obvious division.
+# `update_ue_para!` integrates the momentum ODE in time, so every friction channel
+# enters as a COEFFICIENT of u∥ rather than as a denominator. A missing channel
+# therefore fails silently — it shifts where the drift settles instead of changing an
+# obvious division. The items below pin that settling point against the closed-form
+# steady state, which is where a dropped channel becomes visible.
 
 @testitem "Xsec momentum relaxes to the parallel force balance (Coulomb ON)" setup = [PhysicsFixtures] begin
     # Governing equation (Yoo, IFPC 2024):
     #   du∥/dt = qe·E∥/me − (ν_mom + ν_iz)·u∥ − ξ_sptz·ν_ei·(u∥ − u_i∥)
     # Steady state with the ions held at rest is therefore exactly
     #   u∥ = qe·E∥ / [ me·(ν_mom + ν_iz + ν_ei_eff) ]        , ν_ei_eff ≡ ξ_sptz·ν_ei
-    # i.e. the same balance "Xsec_fit" solves algebraically.
     #
     # The collision frequencies are frozen (update_transport_quantities! is called ONCE,
     # never inside the loop), the ions are pinned at rest and every spatial term is off,
@@ -1246,7 +1171,7 @@ end
     )
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
-        ud_evolve = true, ud_method = "Xsec", Implicit = true,
+        ud_evolve = true, Implicit = true,
         Atomic_Collision = true,          # ← ν_en_mom_tot: the neutral drag
         Coulomb_Collision = true,         # ← ν_ei: the channel under test
         Spitzer_Resistivity = true,       # ← ξ_sptz weighting
@@ -1304,7 +1229,7 @@ end
     )
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
-        ud_evolve = true, ud_method = "Xsec", Implicit = true,
+        ud_evolve = true, Implicit = true,
         Atomic_Collision = true,
         Coulomb_Collision = false,        # ← the only difference
         src = false,
@@ -1361,7 +1286,7 @@ end
     )
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
-        ud_evolve = true, ud_method = "Xsec", Implicit = true,
+        ud_evolve = true, Implicit = true,
         Atomic_Collision = true,
         Coulomb_Collision = true, Spitzer_Resistivity = true,
         src = false,
@@ -1435,7 +1360,7 @@ end
     )
     RP = RAPID{FT}(config)
     RP.flags = SimulationFlags{FT}(
-        ud_evolve = true, ud_method = "Xsec", Implicit = true,
+        ud_evolve = true, Implicit = true,
         Atomic_Collision = false,         # ← no neutral drag: Coulomb is the ONLY channel
         Coulomb_Collision = true, Spitzer_Resistivity = true,
         src = false,
@@ -1527,7 +1452,7 @@ end
         config.Output_path = scratch_output_dir()
         RP = RAPID{FT}(config)
         RP.flags = SimulationFlags{FT}(
-            ud_evolve = true, ud_method = "Xsec", Implicit = true,
+            ud_evolve = true, Implicit = true,
             Atomic_Collision = true,
             Coulomb_Collision = coulomb, Spitzer_Resistivity = true,
             src = false,

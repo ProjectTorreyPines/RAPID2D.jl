@@ -117,8 +117,8 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     validate_config!(RP.config)
 
     # Refuse time-scheme choices the rest of the flags cannot support, before any
-    # state is built — a scheme that needs a differentiable rate paired with a
-    # legacy rate path should fail here, not as a wrong Jacobian mid-run.
+    # state is built — a scheme whose weight the chosen solver route would ignore
+    # should fail here, not silently revert mid-run.
     validate_scheme_flags(RP.flags)
 
     # Initialize time tracking
