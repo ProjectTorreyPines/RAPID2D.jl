@@ -763,26 +763,31 @@ end
             Te_end = weighted_Te(RP)
             Te_ends[is_hot] = Te_end
 
-            # Re-targeted 2026-08-11 (Stage B, corrected). The comment this replaces
-            # blamed the deprecated `Total_Excitation` surface, which Task B3 removed
-            # entirely -- stale as of this fix.
+            # Stage A note (kept separate from Stage B below on purpose -- the two
+            # effects are unrelated, and this migration was staged precisely so they
+            # would not get conflated). Before Task B3, this same assertion pinned
+            # Te_end ~ 0.0048 eV, caused by the deprecated `Total_Excitation` alias
+            # carrying the raw EXC-group rate in the cold band -- a 272x over-charge on
+            # rotational excitation. Task B3 deleted the formula that read that alias.
             #
-            # Tₑ equilibrates BELOW T_gas here, and that is a known, bounded model
-            # limitation, not a bug in this equation. The model's inelastic coefficients
-            # (Kerg_exc et al.) are ONE-WAY: computed against a stationary, ground-state
-            # H2, they charge the electron for spinning a molecule up but credit nothing
-            # back for a molecule that is already rotating handing energy to the electron
+            # Re-targeted 2026-08-11 (Stage B, corrected). Tₑ equilibrates BELOW T_gas
+            # here, and that is a known, bounded model limitation, not a bug in this
+            # equation. The model's inelastic coefficients (Kerg_exc et al.) are
+            # ONE-WAY: computed against a stationary, ground-state H2, they charge the
+            # electron for spinning a molecule up but credit nothing back for a
+            # molecule that is already rotating handing energy to the electron
             # (superelastic collisions). Only rotation is affected in practice: its
-            # threshold, ΔE_rot = 0.0441 eV, is only 1.7x room_T_eV, so a real fraction of
-            # molecules are thermally pre-excited at 300 K; vibration (0.516 eV) and the
-            # electronic channels (>= 11.2 eV) have essentially no thermal population at
-            # 300 K, so a one-way coefficient is correct for them. BD documents the
-            # omission itself in claudedocs/vib_rot_assessment/ASSESSMENT.md. It is left
-            # unmodeled deliberately, not from oversight: BD's own assessment puts the
-            # superelastic contribution at ~0.5% under avalanche conditions, and Tₑ ≈
-            # T_gas is a brief initial transient in any driven run -- once the discharge
-            # drives, Tₑ leaves this regime within microseconds. Building a superelastic
-            # correction for a ~0.5%, microseconds-long effect would be over-engineering.
+            # threshold, ΔE_rot = 0.0441 eV, is only 1.7x room_T_eV, so a real fraction
+            # of molecules are thermally pre-excited at 300 K; vibration (0.516 eV) and
+            # the electronic channels (>= 11.2 eV) have essentially no thermal
+            # population at 300 K, so a one-way coefficient is correct for them. It is
+            # left unmodeled deliberately, not from oversight: BD's own assessment
+            # (BreakdownDynamics.jl, claudedocs/vib_rot_assessment/ASSESSMENT.md --
+            # that repo, not this one) puts the superelastic omission at ~0.5% under
+            # avalanche conditions, and Tₑ ≈ T_gas is a brief initial transient in any
+            # driven run -- once the discharge drives, Tₑ leaves this regime within
+            # microseconds. Building a superelastic correction for a ~0.5%,
+            # microseconds-long effect would be over-engineering.
             #
             # Before this migration the "relaxes to room_T_eV" assertion passed only
             # because there was NO sub-threshold cooling at all -- zero forward
@@ -813,11 +818,20 @@ end
         # equation would not generally land cooling-from-hot and heating-from-cold on the
         # same equilibrium. Measured agreement after 500 steps (0.5 s): ~5e-7 relative
         # (see task-B3-report.md); rtol below is set with ample margin.
-        @test isapprox(Te_ends[true], Te_ends[false]; rtol = 1.0e-4)
+        #
+        # Guarded rather than indexed directly: if a branch above errors before reaching
+        # `Te_ends[is_hot] = Te_end`, indexing a missing key raises KeyError, which reports
+        # as an Error rather than a clean Fail. haskey turns that into an ordinary failed
+        # assertion instead.
+        both_ran = haskey(Te_ends, true) && haskey(Te_ends, false)
+        @test both_ran
+        if both_ran
+            @test isapprox(Te_ends[true], Te_ends[false]; rtol = 1.0e-4)
+        end
     end
 end
 
-@testitem "P_ela is charged with the ELASTIC share of the drift friction" setup = [PhysicsFixtures] begin
+@testitem "P_ela reads Kerg_ela with the cold-target factor, not a re-applied 2me/mi" setup = [PhysicsFixtures] begin
     # Re-baselined 2026-08-11 for the tabulated energy ledger (Stage B). P_ela no longer
     # derives from ν_en_mom_ela / K_mom_by_ela (an elastic SHARE of a momentum-transfer
     # rate, scaled by an approximate (Te - T_gas) factorization) -- it reads

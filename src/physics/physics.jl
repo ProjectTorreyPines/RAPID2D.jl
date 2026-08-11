@@ -408,7 +408,8 @@ Update electron heating power components for electron energy equation.
   - Collision drag power
   - Elastic energy loss to neutrals (2me/M per momentum-transfer collision)
   - Heat generation from density gradients
-  - Ionization, excitation, and dilution powers
+  - Ionization, dissociative ionization, excitation, dissociative excitation,
+    and dilution powers
   - Temperature equilibration power with ions
 - All powers stored in the RP.plasma.ePowers struct
 """
@@ -508,10 +509,19 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # Ē is the table's own query coordinate, rebuilt here rather than read: it is
             # the same expression `_eRRC_query_point` uses.
             Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee
-            # Ē → 0 makes the factor diverge. Kerg_ela → 0 faster, so the product is
-            # physical, but it is a 0×∞ in floating point at the bottom row of the grid.
+            # The 1/Ē divergence is self-limiting only INSIDE the table: there,
+            # Kerg_ela ∝ Ē (the Ē_ela ≃ Ē identity in the comment above), so the product
+            # stays finite as Ē → 0. Below the table's bottom row, `RRC_EoverP_Erg.itp`
+            # is ClampExtrap and freezes `Kerg_ela` at a finite boundary value, so the
+            # cancellation fails and the factor diverges -- `max(Ē_eV, eps(FT))` would
+            # turn that into a `-1.8e14`-scale factor instead of the intended guard.
+            # Floor at the table's own bottom Ē row instead: the honest clamp, since
+            # that is the point below which the interpolant stops meaning anything
+            # (bounds the factor to ~-38 rather than ~-1.8e14). Ē_eV = 1e-3 eV is
+            # Tₑ ≈ 7.7 K, so this floor guards a diverging solve, not a physical regime.
+            Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
             @. ePowers.ela = pla.P_en_ela * (
-                one(FT) - FT(1.5) * pla.T_gas_eV / max(Ē_eV, eps(FT))
+                one(FT) - FT(1.5) * pla.T_gas_eV / max(Ē_eV, Ē_floor)
             )
 
             # Excitation, tabulated. No constant survives here: the EXC group spans
