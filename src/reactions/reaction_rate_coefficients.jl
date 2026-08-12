@@ -492,7 +492,7 @@ Evaluate the electron reaction rate coefficients on the `(E/p, Ē)` surfaces and
 corresponding collision frequencies `ν = n_H2_gas · K` on `RP.plasma`.
 
 **This is the only place those tables are queried during a simulation step.** Consumers
-read `plasma.ν_en_iz`, `ν_en_diss_iz`, `ν_en_mom_tot`, `ν_en_mom_ela`, `P_en_ela`,
+read `plasma.ν_en_iz`, `ν_en_diss_iz`, `ν_en_iz_tot`, `ν_en_mom_tot`, `ν_en_mom_ela`, `P_en_ela`,
 `P_en_exc`, `P_en_diss_exc`; they must not call
 [`get_electron_RRC`](@ref) themselves. A step that re-queries ends up with the same
 physical coefficient evaluated at two different plasma states — the momentum equation
@@ -573,6 +573,11 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             pla.dν_dTe.iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
             pla.dν_dTe.diss_iz[RP.G.nodes.on_out_wall_nids] .= zero(FT)
         end
+
+        # ELECTRON production total: both channels make exactly one electron per event.
+        # Continuity, dilution and the growth exponent take this; the H₂⁺ ion sources
+        # keep ν_en_iz alone (see the field's docstring in types.jl).
+        @. pla.ν_en_iz_tot = pla.ν_en_iz + pla.ν_en_diss_iz
     end
 
     return RP

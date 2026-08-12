@@ -63,10 +63,12 @@ end
     end
 
     # du/dt = qE/m − ν u with ν frozen: linear, so ExpRB is exact at any step.
+    # ν_en_iz_tot, not ν_en_iz alone: both ionization channels dilute the drift,
+    # matching update_ue_para!.
     function drift_problem(RP)
         c = RP.config.constants
         pla = RP.plasma
-        ν = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
+        ν = @. pla.ν_en_iz_tot + pla.ν_en_mom_tot + pla.ν_ei_eff
         u_sat = @. c.qe * RP.fields.E_para_tot / (c.me * ν)
         return (u_sat = u_sat, eig = -ν)
     end
@@ -163,7 +165,7 @@ end
     RP.flags.scheme.decay = ExpRB
     RP.dt = 5.0e-7
     u_prev = copy(RP.plasma.ue_para)
-    ν_sum = @. RP.plasma.ν_en_iz + RP.plasma.ν_en_mom_tot + RP.plasma.ν_ei_eff
+    ν_sum = @. RP.plasma.ν_en_iz_tot + RP.plasma.ν_en_mom_tot + RP.plasma.ν_ei_eff
     update_ue_para!(RP)
 
     θ = exprb_theta.(-ν_sum .* RP.dt)

@@ -306,6 +306,9 @@ end
     RP.plasma.ne .= 1.0e18
     RAPID2D.update_transport_quantities!(RP)
     RP.plasma.ν_en_iz .= 5.0e5
+    # solve_electron_continuity_equation! and the gas diffusivity read ν_en_iz_tot
+    # (task C1); kept in sync since this poke bypasses update_RRCs!.
+    RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
 
     # Run the producer, then the sink — the order `advance_timestep!` uses. The
     # sink must destroy exactly what the electron equation created, so `expected`
@@ -339,6 +342,7 @@ end
     RP.plasma.ne .= 1.0e19
     RAPID2D.update_transport_quantities!(RP)
     RP.plasma.ν_en_iz .= 1.0e6
+    RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
 
     RAPID2D.update_reaction_counts!(RP)
     update_neutral_H2_gas_density!(RP)

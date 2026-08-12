@@ -55,7 +55,9 @@ end
     # NEGATIVE densities, which is a different kind of failure from a large error.
     RP0 = growth_RAPID()
     inw = RP0.G.nodes.in_wall_nids
-    ν = copy(RP0.plasma.ν_en_iz)
+    # ν_en_iz_tot, not ν_en_iz alone: z_growth (what the solve actually fits) is built
+    # from the total of both ionization channels since task C1.
+    ν = copy(RP0.plasma.ν_en_iz_tot)
     n₀ = 1.0e14
     t_end = 10 / maximum(ν[inw])            # ~10 e-foldings
 
@@ -127,7 +129,8 @@ end
     RP.flags.scheme.growth = ExpRB
     RP.dt = 2.0e-5
     prev = copy(RP.plasma.ne)
-    ν = copy(RP.plasma.ν_en_iz)
+    # z_growth is built from ν_en_iz_tot (both channels) since task C1.
+    ν = copy(RP.plasma.ν_en_iz_tot)
     solve_electron_continuity_equation!(RP)
 
     # That θ IS the fitted weight is asserted in "the ledger reads the fitted
@@ -192,7 +195,8 @@ end
         RP.flags.scheme.growth = ExpRB
         RP.dt = 2.0e-5
         inw = RP.G.nodes.in_wall_nids
-        expected = exprb_theta.(exprb_cap_exponent.(RP.plasma.ν_en_iz .* RP.dt))
+        # ν_en_iz_tot: z_growth is built from both channels since task C1.
+        expected = exprb_theta.(exprb_cap_exponent.(RP.plasma.ν_en_iz_tot .* RP.dt))
         solve_electron_continuity_equation!(RP)
 
         θ = reaction_θ(RP, :iz)
@@ -220,7 +224,7 @@ end
     # the gas sink read `N.iz` instead of re-deriving the growth.
     #
     # Above the cap the solve advances with `z_cap` while the ledger multiplied by
-    # the uncapped `ν_en_iz`, and the count came out `(z/z_cap)×` too large — 4/3
+    # the uncapped `ν_en_iz_tot`, and the count came out `(z/z_cap)×` too large — 4/3
     # at `z = 40`. Ion production and neutral depletion then exceed the electrons
     # actually born, on a branch that only warns.
     function counted_vs_born(RP, dt)
@@ -231,7 +235,7 @@ end
         return check_reaction_counts(RP).iz[inw], (RP.plasma.ne .- n_before)[inw]
     end
 
-    ν_probe = maximum(growth_RAPID().plasma.ν_en_iz[growth_RAPID().G.nodes.in_wall_nids])
+    ν_probe = maximum(growth_RAPID().plasma.ν_en_iz_tot[growth_RAPID().G.nodes.in_wall_nids])
 
     for implicit in (true, false)
         # z ≈ 40: past EXPRB_MAX_EXPONENT, so the solve caps and the ledger must follow.
@@ -252,7 +256,16 @@ end
     # The identity is a property of the quadrature, not of ExpRB: Crank–Nicolson
     # satisfies it too, below its pole. Asserting it here says the ledger contract
     # is what the cap broke, not the ledger.
+    #
+    # DI silenced here on purpose: the Theta/CN branch of `update_reaction_counts!`
+    # deliberately counts `N.iz` from `ν_en_iz` ALONE (the H₂⁺ channel), not
+    # `ν_en_iz_tot` — task C1 leaves species-level stoichiometry (an `N.diz` ledger
+    # for dissociative ionization) to the next task. With DI present `counted` and
+    # `born` differ by exactly that channel's share, which is not what this item
+    # is about — it is about the cap, not the channel split.
     cn = growth_RAPID()
+    cn.plasma.ν_en_diss_iz .= 0.0
+    cn.plasma.ν_en_iz_tot .= cn.plasma.ν_en_iz
     @test cn.flags.scheme.growth === Theta
     counted, born = counted_vs_born(cn, 1 / ν_probe)
     @test counted ≈ born rtol = 1.0e-12

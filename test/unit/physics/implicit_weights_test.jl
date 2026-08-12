@@ -124,6 +124,10 @@ end
     RP.plasma.Te_eV .= 5.0
     RP.plasma.Ti_eV .= 1.0
     RP.plasma.ν_en_iz .= 5.0e4          # Δt·ν = 0.5
+    # solve_electron_continuity_equation! reads ν_en_iz_tot (task C1); this test
+    # pokes rates directly rather than through update_RRCs!, so it must keep the
+    # total in sync itself. DI is not part of what this item checks.
+    RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
 
     ne_before = copy(RP.plasma.ne)
     RAPID2D.solve_electron_continuity_equation!(RP)
@@ -179,6 +183,7 @@ end
     RP.plasma.ne .= 1.0e14
     RP.plasma.ni .= 1.0e14
     RP.plasma.ν_en_iz .= 5.0e4
+    RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz    # kept in sync; see the item above
 
     @test isempty(RP.reactions.published)         # nothing published yet
     @test_throws ArgumentError RAPID2D.solve_ion_continuity_equation!(RP)
@@ -235,11 +240,16 @@ end
         # Δt·ν ≈ 0.5 — the regime the mismatch actually lives in. A rate small
         # enough to be safe is also small enough to hide the defect.
         RP.plasma.ν_en_iz .= 5.0e4
+        # Kept in sync with ν_en_iz: this item checks the electron/ion θ-weighting
+        # for the ONE channel both sides track (see ion_continuity_test.jl for why
+        # a channel mismatch is not what this item is testing).
+        RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
 
         for _ in 1:5
             RAPID2D.solve_electron_continuity_equation!(RP)
             RAPID2D.solve_ion_continuity_equation!(RP)
             RP.plasma.ν_en_iz .= 5.0e4     # hold the rate; only the scheme is under test
+            RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
         end
 
         @test RP.plasma.ne ≈ RP.plasma.ni rtol = 1.0e-12

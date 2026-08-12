@@ -47,12 +47,12 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         pla = RP.plasma
         F = RP.fields
 
-        # Total decay rate of the drift. ν_iz belongs here because newborn electrons
-        # enter at rest — dilution, not momentum transfer to the gas. ν_ei_eff
-        # (= ξ_sptz·ν_ei) is the Coulomb half of the same friction; its u_i∥ half is
-        # added as a source below. The combined momentum-Ampère solvers build the
-        # identical sum.
-        ν_sum_mom_iz_ei = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
+        # Total decay rate of the drift. ν_iz_tot belongs here because newborn electrons
+        # (from EITHER ionization channel) enter at rest — dilution, not momentum
+        # transfer to the gas. ν_ei_eff (= ξ_sptz·ν_ei) is the Coulomb half of the same
+        # friction; its u_i∥ half is added as a source below. The combined
+        # momentum-Ampère solvers build the identical sum.
+        ν_sum_mom_iz_ei = @. pla.ν_en_iz_tot + pla.ν_en_mom_tot + pla.ν_ei_eff
 
         # Backward Euler by default (θ_imp.decay = 1): friction-dominated, so at large
         # Δt BE lands on u∞ = S/ν while CN rings about it. ExpRB replaces the constant
@@ -185,6 +185,9 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # the step-entry ν_en_iz that continuity and the energy equation share.
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
+                # ν_en_iz ALONE, not ν_en_iz_tot: H₂⁺ is produced only by the H₂⁺ channel.
+                # Dissociative ionization makes H⁺, which is a separate species with its
+                # own source. See REACTION_STOICHIOMETRY.
                 @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
             end
 
@@ -897,6 +900,9 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             ν_a = @. pla.n_H2_gas * (FT(0.5) * K_ela + K_cx)
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
+                # ν_en_iz ALONE, not ν_en_iz_tot: H₂⁺ is produced only by the H₂⁺ channel.
+                # Dissociative ionization makes H⁺, which is a separate species with its
+                # own source. See REACTION_STOICHIOMETRY.
                 @. ν_a += Z_i * pla.ν_en_iz          # electron rate: no T_i dependence
             end
             @. pla.exprb.eig_Ti -= ν_a * FT(1.5) * ee
@@ -995,6 +1001,9 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # per ion, and one ion carries Z of them (see `update_ui_para!`).
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
+                # ν_en_iz ALONE, not ν_en_iz_tot: H₂⁺ is produced only by the H₂⁺ channel.
+                # Dissociative ionization makes H⁺, which is a separate species with its
+                # own source. See REACTION_STOICHIOMETRY.
                 @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
             end
 
@@ -1044,11 +1053,12 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # θ (`θ_imp.transport` vs `θ_imp.growth`) and so cannot share a sum.
         fill!(op.RHS, zero(FT))
         if RP.flags.src && RP.flags.Implicit
-            # The implicit half of the ionization source needs ν_en_iz as a diagonal
-            # operator. Assembled here rather than in update_RRCs! so that a run
-            # with `src` off never builds one. ν_en_iz itself was materialized by
-            # update_RRCs! at the step-entry state — do not re-query the table here.
-            op.ν_en_iz .= @views spdiagm(pla.ν_en_iz[:])
+            # The implicit half of the ionization source needs ν_en_iz_tot (BOTH
+            # electron-producing channels) as a diagonal operator. Assembled here
+            # rather than in update_RRCs! so that a run with `src` off never builds
+            # one. ν_en_iz_tot itself was materialized by update_RRCs! at the
+            # step-entry state — do not re-query the table here.
+            op.ν_en_iz .= @views spdiagm(pla.ν_en_iz_tot[:])
         end
 
         if RP.flags.diffu
@@ -1060,10 +1070,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
         end
 
-        # A GROWTH eigenvalue, z = +ν_iz·Δt, and the EXACT local Jacobian since
-        # ν_iz does not depend on n — so ExpRB reproduces e^(νΔt) at any step,
-        # while every θ has a pole here (BE at z = 1, CN at z = 2) past which it
-        # returns a negative density.
+        # A GROWTH eigenvalue, z = +ν_iz_tot·Δt (BOTH electron-producing channels —
+        # newborn electrons dilute the drift the same way regardless of which channel
+        # made them), and the EXACT local Jacobian since ν_iz_tot does not depend on n
+        # — so ExpRB reproduces e^(νΔt) at any step, while every θ has a pole here (BE
+        # at z = 1, CN at z = 2) past which it returns a negative density.
         #
         # Derived ONCE and stored, because `update_reaction_counts!` must weight
         # its ledger with the same z — cap included. Written whether or not `src`
@@ -1076,7 +1087,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # ledger, and `scheme.growth` can move between the two calls.
         growth_is_exprb = RP.flags.scheme.growth === ExpRB
         pla.exprb.growth_fitted = growth_is_exprb
-        growth_is_exprb && @. pla.exprb.z_growth = exprb_cap_exponent(pla.ν_en_iz * dt)
+        growth_is_exprb && @. pla.exprb.z_growth = exprb_cap_exponent(pla.ν_en_iz_tot * dt)
 
         fit_growth = RP.flags.src && growth_is_exprb
         bern_growth = if fit_growth
@@ -1103,7 +1114,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 @. op.RHS = (bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS
             else
                 if RP.flags.src
-                    @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
+                    @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz_tot
                 end
                 @. op.RHS = pla.ne + dt * op.RHS
             end
@@ -1112,7 +1123,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # its explicit half above: all three used to be added unconditionally,
             # so `flags.diffu = false` removed only the explicit half and left θ·Δt
             # of the diffusion still acting implicitly, and a run that turned `src`
-            # off mid-way kept ionizing through a stale ν_en_iz. The ion path
+            # off mid-way kept ionizing through a stale ν_en_iz_tot. The ion path
             # honours the flags in full, which is how the mismatch showed up.
             #
             # Gated by ZEROING the weight rather than by branching, so this stays
@@ -1144,7 +1155,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             @. pla.ne = ((bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / bern_growth
         else
             if RP.flags.src
-                @. op.RHS += pla.ne * pla.ν_en_iz
+                @. op.RHS += pla.ne * pla.ν_en_iz_tot
             end
             @. RP.plasma.ne += dt * op.RHS
         end
@@ -1735,7 +1746,7 @@ function _refuse_full_response_decay(flags::SimulationFlags)
     flags.exprb_eigenvalue === FullLinearResponse && throw(
         ArgumentError(
             "scheme.decay = ExpRB cannot honour exprb_eigenvalue = FullLinearResponse: " *
-                "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz + ν_ei_eff), the " *
+                "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz_tot + ν_ei_eff), the " *
                 "stated rate, and nothing computes the −(mₑu∥²/e)·∂ν/∂Ē that would " *
                 "complete it. Reaching here means the depth was set after initialize!, " *
                 "which validate_scheme_flags refuses. Use " *
@@ -1821,7 +1832,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     end
 
     # Effective electron collision frequency
-    ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
+    ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz_tot + pla.ν_ei_eff
 
     @. accel_para_tilde += (
         facEM / dt * F.ψ_self
@@ -2172,7 +2183,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
 
         # Effective electron collision frequency
-        ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
+        ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz_tot + pla.ν_ei_eff
 
         @. accel_para_tilde += (
             facEM / dt * F.ψ_self

@@ -88,6 +88,16 @@ end
     RP.flags.src = true
     update_transport_quantities!(RP)
 
+    # DI silenced on purpose: this item is about θ-weighting order, for the ONE
+    # channel (H₂⁺) that both sides currently agree makes an ion. Since task C1,
+    # electron continuity grows by ν_en_iz_tot (both channels) while the ion source
+    # stays ν_en_iz alone — H₂⁺ comes only from the H₂⁺ channel, dissociative
+    # ionization makes H⁺, a species this equation does not touch. That split is
+    # real physics, not a bug, but it is orthogonal to what this item checks, so
+    # DI is zeroed here rather than left to break the Δne ≈ Δni identity below.
+    RP.plasma.ν_en_diss_iz .= 0.0
+    RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
+
     ne_before = copy(RP.plasma.ne)
     ni_before = copy(RP.plasma.ni)
     solve_electron_continuity_equation!(RP)

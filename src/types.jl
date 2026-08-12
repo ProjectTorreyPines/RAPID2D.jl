@@ -351,6 +351,10 @@ Contains the plasma state variables including density, temperature, and velocity
     # NOT a solver input: the elastic energy sink is P_en_ela, not this frequency.
     ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction [1/s]
     ν_en_diss_iz::Matrix{FT} = zeros(FT, dims) # Dissociative-ionization rate [1/s]
+    # ELECTRON production: both channels make exactly one electron per event, so this is
+    # what continuity, dilution and the growth exponent take. It is NOT what an ION
+    # source takes — H₂⁺ comes only from `ν_en_iz` and H⁺ only from `ν_en_diss_iz`.
+    ν_en_iz_tot::Matrix{FT} = zeros(FT, dims) # ν_en_iz + ν_en_diss_iz [1/s]
     # Energy-ledger sinks, P = n_H2_gas · Kerg [W per electron]. Written by the same
     # `update_RRCs!` at the same evaluation point as the frequencies above.
     # `P_en_ela` is the RAW cold-target coefficient: it does NOT vanish at Tₑ = T_gas.
@@ -1127,7 +1131,7 @@ function validate_scheme_flags(flags::SimulationFlags)
         throw(
             ArgumentError(
                 "exprb_eigenvalue = FullLinearResponse is not available for scheme.decay: " *
-                    "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz + ν_ei_eff), the " *
+                    "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz_tot + ν_ei_eff), the " *
                     "stated rate, and nothing computes the −(mₑu∥²/e)·∂ν/∂Ē that " *
                     "completes it. Use exprb_eigenvalue = PartialLinearResponse, or " *
                     "scheme.decay = Theta."

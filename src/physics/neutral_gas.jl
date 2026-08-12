@@ -256,13 +256,20 @@ reflective diffusion.
 
 The two halves are operator-split, sink first, matching the MATLAB original.
 
-**The sink is the electron source, not a copy of it.** It reads the very same
-`plasma.ν_en_iz` that `solve_electron_continuity_equation!` uses, because one
-electron is born for each molecule destroyed. Recomputing the rate here — or
+**The sink is the electron source, not a copy of it.** It reads
+`net_H2_gas_count`, the same published ledger the H₂⁺ ion source reads, because
+one electron is born for each molecule destroyed. Recomputing the rate here — or
 letting a driver script subtract its own estimate — breaks nuclei conservation:
 the scenario scripts that did exactly that overshot the electron supply limit by
 7% at dt = 1e-5, an error that only vanishes as dt → 0 because the script's sink
 was explicit while the electron equation's source was implicit.
+
+Today that ledger is the H₂⁺ channel alone (`N.iz`): dissociative ionization also
+destroys one H₂ molecule per event, but its contribution to this sink is not yet
+wired — that lands with the reaction count in the migration's next step. Until
+then this function under-consumes the gas by exactly `ν_en_diss_iz`'s share,
+while `pla.ne` itself already grows by the full `ν_en_iz_tot` (see
+`solve_electron_continuity_equation!`).
 
 Applied on in-wall nodes only, so gas outside the vessel is never consumed.
 
@@ -278,8 +285,10 @@ forward Euler and skips the solve, but is bound by the explicit CFL limit
 `min(dR,dZ)²/(4D)`.
 
 The diffusivity is evaluated per cell against the *molecular* destruction rate
-`n_e·K_iz = n_e·ν_en_iz/n_H2`, not the electron's `ν_en_iz`. Those differ by
-`n_e/n_H2` and it is the molecule's fate that sets its free path.
+`n_e·K_iz_tot = n_e·ν_en_iz_tot/n_H2`, not the electron's `ν_en_iz_tot`. Those
+differ by `n_e/n_H2` and it is the molecule's fate that sets its free path. This
+uses the TOTAL (both channels), unlike the burn-out sink above — the diffusivity
+is a live rate, not a ledger the stoichiometry migration has staged in phases.
 """
 function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_neutral_H2_gas_density!" begin
@@ -310,8 +319,9 @@ function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloa
         D = similar(pla.n_H2_gas)
         @inbounds for k in eachindex(D)
             n = pla.n_H2_gas[k]
-            # ν seen by a MOLECULE, not by an electron
-            ν_iz_gas = n > zero_FT ? pla.ne[k] * pla.ν_en_iz[k] / n : zero_FT
+            # ν seen by a MOLECULE, not by an electron. BOTH ionization channels
+            # destroy one H₂ molecule per event, so this takes the total.
+            ν_iz_gas = n > zero_FT ? pla.ne[k] * pla.ν_en_iz_tot[k] / n : zero_FT
             D[k] = neutral_gas_diffusivity(n, pla.T_gas_eV, ν_iz_gas, L_char)
         end
 

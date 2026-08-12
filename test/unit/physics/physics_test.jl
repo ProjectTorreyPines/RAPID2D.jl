@@ -160,7 +160,11 @@ end
     # magnitude tracks K_mom rising 10-18% at this operating point (more momentum-transfer
     # friction on the electrons at fixed E). Cross sections only — the energy closures
     # are unchanged at this stage.
-    @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -431608.00946692703
+    # Re-baselined 2026-08-12 for Stage C (task C1): update_ue_para! now dilutes the
+    # drift with ν_en_iz_tot (both ionization channels) instead of ν_en_iz alone, and
+    # dissociative ionization is non-zero at this operating point — a small extra
+    # momentum-randomizing channel pulls the drift down slightly further.
+    @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -430695.500813412
 
     op = RP.operators
     update_RRCs!(RP)
@@ -1270,10 +1274,12 @@ end
 # steady state, which is where a dropped channel becomes visible.
 
 @testitem "Xsec momentum relaxes to the parallel force balance (Coulomb ON)" setup = [PhysicsFixtures] begin
-    # Governing equation (Yoo, IFPC 2024):
-    #   du∥/dt = qe·E∥/me − (ν_mom + ν_iz)·u∥ − ξ_sptz·ν_ei·(u∥ − u_i∥)
+    # Governing equation (Yoo, IFPC 2024), extended for Stage C (task C1):
+    #   du∥/dt = qe·E∥/me − (ν_mom + ν_iz_tot)·u∥ − ξ_sptz·ν_ei·(u∥ − u_i∥)
     # Steady state with the ions held at rest is therefore exactly
-    #   u∥ = qe·E∥ / [ me·(ν_mom + ν_iz + ν_ei_eff) ]        , ν_ei_eff ≡ ξ_sptz·ν_ei
+    #   u∥ = qe·E∥ / [ me·(ν_mom + ν_iz_tot + ν_ei_eff) ]    , ν_ei_eff ≡ ξ_sptz·ν_ei
+    # ν_iz_tot, not ν_iz alone: BOTH ionization channels dilute the drift (newborn
+    # electrons from either enter at rest), matching update_ue_para!.
     #
     # The collision frequencies are frozen (update_transport_quantities! is called ONCE,
     # never inside the loop), the ions are pinned at rest and every spatial term is off,
@@ -1311,7 +1317,7 @@ end
 
     RAPID2D.update_transport_quantities!(RP)     # populate the ν's once, then freeze
     ν_mom = copy(RP.plasma.ν_en_mom_tot)
-    ν_iz = copy(RP.plasma.ν_en_iz)
+    ν_iz = copy(RP.plasma.ν_en_iz_tot)
     ν_ei_eff = copy(RP.plasma.ν_ei_eff)
 
     inw = RP.G.nodes.in_wall_nids
@@ -1368,7 +1374,7 @@ end
 
     RAPID2D.update_transport_quantities!(RP)
     ν_mom = copy(RP.plasma.ν_en_mom_tot)
-    ν_iz = copy(RP.plasma.ν_en_iz)
+    ν_iz = copy(RP.plasma.ν_en_iz_tot)   # BOTH channels — see the Coulomb ON item above
 
     RP.plasma.ue_para .= 0.0
     RP.plasma.ui_para .= 0.0
@@ -1426,7 +1432,10 @@ end
     RP.fields.E_para_tot .= 0.0          # ...then switch the drive OFF: pure decay
 
     inw = RP.G.nodes.in_wall_nids
-    ν_tot = @. RP.plasma.ν_en_mom_tot + RP.plasma.ν_en_iz + RP.plasma.ν_ei_eff
+    # ν_en_iz_tot: both channels dilute the drift, matching update_ue_para!. Using the
+    # iz channel alone here would under-state the drag and this item exists precisely
+    # to catch a missing collision channel.
+    ν_tot = @. RP.plasma.ν_en_mom_tot + RP.plasma.ν_en_iz_tot + RP.plasma.ν_ei_eff
     τ = 1 / (sum(ν_tot[inw]) / length(inw))
     @test minimum(RP.plasma.ν_ei_eff[inw]) > maximum(RP.plasma.ν_en_mom_tot[inw])
     @test 1.0e-9 < τ < 1.0e-3            # sanity band for this regime
@@ -1617,7 +1626,8 @@ end
             @test abs(I_tor) < 1.0e-2                 # self-field really is negligible
 
             # each Coulomb setting lands on ITS OWN analytic balance
-            ν_drag = @. ref.plasma.ν_en_mom_tot + ref.plasma.ν_en_iz + ref.plasma.ν_ei_eff
+            # ν_en_iz_tot: both channels dilute the drift (see update_ue_para!).
+            ν_drag = @. ref.plasma.ν_en_mom_tot + ref.plasma.ν_en_iz_tot + ref.plasma.ν_ei_eff
             expected = @. qe * ref.fields.E_para_tot / (me * ν_drag)
             @test isapprox(ref.plasma.ue_para[inw], expected[inw]; rtol = 1.0e-3)
 
@@ -1705,4 +1715,29 @@ end
     @test scale > 0.0                                          # or the checks below are vacuous
     @test maximum(abs.(RP.plasma.ePowers.ela[inw])) < 0.02 * scale
     @test maximum(abs.(RP.plasma.ePowers.exc[inw])) < 0.02 * scale
+end
+
+@testitem "Ionization channels: electron production totals both, H2+ production does not" setup = [PhysicsFixtures] begin
+    using RAPID2D: update_RRCs!
+    config = SimulationConfig{Float64}(
+        NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    config.Output_path = scratch_output_dir()
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.Atomic_Collision = true
+    RP.flags.src = true
+    # High E/p, where DI reaches ~7 % of iz by rate — low enough to miss, high enough
+    # that a site using the wrong one is detectable.
+    RP.plasma.Te_eV .= 60.0
+    RP.fields.E_para_tot .= 300.0
+    update_RRCs!(RP)
+
+    pla = RP.plasma
+    @test all(>(0.0), pla.ν_en_diss_iz[RP.G.nodes.in_wall_nids])
+    @test pla.ν_en_iz_tot ≈ pla.ν_en_iz .+ pla.ν_en_diss_iz
+    # The channel is a real fraction here, so a site that swapped the two would move.
+    frac = sum(pla.ν_en_diss_iz) / sum(pla.ν_en_iz)
+    @test 0.01 < frac < 0.2
 end
