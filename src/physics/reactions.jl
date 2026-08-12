@@ -146,10 +146,12 @@ function update_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     # ── e + H₂ → 2e + H₂⁺ / e + H₂ → 2e + H⁺ + H⁰ ──────────────────────────
     if RP.flags.src
-        # θ comes from the table, not from this line: a `:decay` channel added
-        # later then picks up backward Euler by existing. `:diz` is in the same
-        # `:growth` family as `:iz` (REACTION_STOICHIOMETRY), so the same θ applies
-        # to both.
+        # The θ FAMILY comes from the table, not from this line: a `:decay` channel
+        # added later then picks up backward Euler by existing. The CHANNEL asked
+        # for here is `:iz`, not `:diz`, but that is not a second lookup skipped —
+        # `:diz` is in the same `:growth` family as `:iz` (REACTION_STOICHIOMETRY),
+        # so `reaction_θ(RP, :iz)` and `reaction_θ(RP, :diz)` would answer identically;
+        # asking once and reusing it below is just not paying for that twice.
         # From RP, not from flags alone: under ExpRB the weight is the fitted θ(z)
         # of the step just taken, per cell. Broadcasting below covers both forms.
         θ = reaction_θ(RP, :iz)
@@ -212,8 +214,8 @@ end
 `Σₖ νₖ,ₑ Nₖ` — electrons created per unit volume during this step, `[m⁻³]`.
 
 Both channels make exactly one electron per event (`REACTION_STOICHIOMETRY`), so
-this is `N.iz .+ N.diz`; it allocates, unlike the single-channel accessors below
-that could still alias.
+this is `N.iz .+ N.diz`. Allocates: with two channels contributing there is no
+single array left to alias.
 """
 net_electron_count(N::ReactionCounts) = N.iz .+ N.diz
 # − N.rec_H2 − N.rec_H3
@@ -249,6 +251,8 @@ now — not a conservation check, just the consequence of the interim.
 """
 function net_ion_count(N::ReactionCounts, name::Symbol)
     name === :H2⁺ && return N.iz .+ N.diz
+    # :H⁺  → N.diz alone, once REACTION_STOICHIOMETRY.diz.ions changes to :H⁺ => 1
+    #        and H⁺ is a declared, transportable species — see the docstring above.
     # :H3⁺ → −N.rec_H3
     return nothing
 end

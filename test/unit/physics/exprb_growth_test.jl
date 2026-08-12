@@ -269,3 +269,41 @@ end
     counted, born = counted_vs_born(cn, 1 / ν_probe)
     @test counted ≈ born rtol = 1.0e-12
 end
+
+@testitem "ExpRB growth: the channel split matches the instantaneous rate share" setup = [ExpRBGrowthFixtures] begin
+    using RAPID2D: ExpRB, check_reaction_counts
+
+    # Every other ExpRB item in this suite compares the SUM `net_electron_count(N)
+    # = N.iz .+ N.diz`, which is invariant under how that sum is split between the
+    # two channels — the ExpRB branch of `update_reaction_counts!` does not
+    # recompute N.iz and N.diz from Δt·ν (that would undo the solve's cap); it
+    # takes the one capped `born` and splits it by `frac_iz = ν_en_iz/ν_en_iz_tot`.
+    # Swapping `frac_iz` and `(one(FT) - frac_iz)`, or making the `ifelse` guard
+    # answer `zero(FT)` instead of `one(FT)` on the 0/0 cells, would still leave
+    # every SUM-based assertion in the suite green. This item looks at the split
+    # itself, not just its sum.
+    RP = growth_RAPID()          # Te_eV = 8, EoverP = 100: DI is genuinely nonzero here
+    RP.flags.scheme.growth = ExpRB
+    RP.dt = 2.0e-5
+    solve_electron_continuity_equation!(RP)
+
+    counts = check_reaction_counts(RP)
+    inw = RP.G.nodes.in_wall_nids
+    ν_iz, ν_tot = RP.plasma.ν_en_iz, RP.plasma.ν_en_iz_tot
+
+    # The split matches the instantaneous rate share exactly. A swapped
+    # frac_iz/(1 - frac_iz) fails this immediately (it inverts the ratio).
+    @test counts.iz[inw] ./ (counts.iz[inw] .+ counts.diz[inw]) ≈ ν_iz[inw] ./ ν_tot[inw] rtol = 1.0e-12
+
+    # Not vacuous: DI actually contributes at this fixture's E/p, so the ratio
+    # above is not trivially 1/1.
+    @test !all(iszero, counts.diz[inw])
+
+    # Finite EVERYWHERE, including the out-of-wall cells where ν_en_iz_tot == 0 —
+    # exactly the 0/0 cells the `ifelse(ν_en_iz_tot > 0, ..., one(FT))` guard
+    # exists for. A guard that answered `zero(FT)` there divides 0/0 into NaN,
+    # which then propagates through `net_electron_count`.
+    @test any(iszero, ν_tot)                # else the check below is vacuous
+    @test all(isfinite, counts.iz)
+    @test all(isfinite, counts.diz)
+end

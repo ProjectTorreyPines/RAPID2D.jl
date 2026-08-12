@@ -264,13 +264,6 @@ the scenario scripts that did exactly that overshot the electron supply limit by
 7% at dt = 1e-5, an error that only vanishes as dt → 0 because the script's sink
 was explicit while the electron equation's source was implicit.
 
-Today that ledger is the H₂⁺ channel alone (`N.iz`): dissociative ionization also
-destroys one H₂ molecule per event, but its contribution to this sink is not yet
-wired — that lands with the reaction count in the migration's next step. Until
-then this function under-consumes the gas by exactly `ν_en_diss_iz`'s share,
-while `pla.ne` itself already grows by the full `ν_en_iz_tot` (see
-`solve_electron_continuity_equation!`).
-
 Applied on in-wall nodes only, so gas outside the vessel is never consumed.
 
 **Time scheme: `flags.θ_imp.gas`, default 1 (backward Euler).** Deliberately its
@@ -286,9 +279,10 @@ forward Euler and skips the solve, but is bound by the explicit CFL limit
 
 The diffusivity is evaluated per cell against the *molecular* destruction rate
 `n_e·K_iz_tot = n_e·ν_en_iz_tot/n_H2`, not the electron's `ν_en_iz_tot`. Those
-differ by `n_e/n_H2` and it is the molecule's fate that sets its free path. This
-uses the TOTAL (both channels), unlike the burn-out sink above — the diffusivity
-is a live rate, not a ledger the stoichiometry migration has staged in phases.
+differ by `n_e/n_H2` and it is the molecule's fate that sets its free path. Both
+this diffusivity and the burn-out sink above now total both channels — the
+diffusivity because it is a live rate read straight from `ν_en_iz_tot`, the sink
+because `net_H2_gas_count` sums `N.iz` and `N.diz` (`REACTION_STOICHIOMETRY.diz`).
 """
 function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_neutral_H2_gas_density!" begin

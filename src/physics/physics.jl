@@ -182,7 +182,7 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # Ions are born at rest, so ionization is a dilution rate: events per
             # second over the ions already present, n_e·ν_iz/(n_e/Z) = Z·ν_iz. Uses
-            # the step-entry ν_en_iz that continuity and the energy equation share.
+            # the step-entry ν_en_iz_tot that continuity and the energy equation share.
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
                 # ν_en_iz_tot, not ν_en_iz alone: under the INTERIM every ion is booked
@@ -999,10 +999,10 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Note: 0.5 factor for elastic collisions (momentum transfer efficiency)
             eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
 
-            # Ionization contribution, from the step-entry ν_en_iz (update_RRCs!) that the
-            # electron continuity and energy equations use — the electron rate governs it.
-            # Z·ν_iz, not ν_iz: the events are counted per electron and this equation is
-            # per ion, and one ion carries Z of them (see `update_ui_para!`).
+            # Ionization contribution, from the step-entry ν_en_iz_tot (update_RRCs!) that
+            # the electron continuity and energy equations use — the electron rate governs
+            # it. Z·ν_iz, not ν_iz: the events are counted per electron and this equation
+            # is per ion, and one ion carries Z of them (see `update_ui_para!`).
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
                 # ν_en_iz_tot, not ν_en_iz alone: under the INTERIM every ion is booked

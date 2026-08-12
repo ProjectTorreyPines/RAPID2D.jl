@@ -33,7 +33,11 @@ end
 
     @test net_ion_count(N, :H2⁺) ≈ N.iz .+ N.diz
     @test net_ion_count(N, :H⁺) === nothing          # not a declared species yet
-    # Quasi-neutrality: one ion per electron, whatever the channel.
+    # NOT a conservation check. Under this interim `net_ion_count(N, :H2⁺)` and
+    # `net_electron_count(N)` are literally the same expression, `N.iz .+ N.diz`
+    # — they are equal here because they are the same code, not because anything
+    # was proven about charge balance. This pins that fact so it is not read as
+    # a proof once it stops being an identity (when DI's ion moves to `:H⁺`).
     @test net_ion_count(N, :H2⁺) ≈ net_electron_count(N)
     @test REACTION_STOICHIOMETRY.diz.ions == (:H2⁺ => 1,)
 end
