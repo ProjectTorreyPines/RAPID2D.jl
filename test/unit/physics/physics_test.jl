@@ -793,13 +793,34 @@ end
             # because there was NO sub-threshold cooling at all -- zero forward
             # (excitation) and zero reverse (superelastic), accidentally balanced. Now
             # that forward cooling exists (correctly, per the ledger) with no return
-            # channel, Tₑ has nowhere to equilibrate but below T_gas. So the test asserts
-            # what the model actually guarantees: a well-posed, attracting equilibrium
-            # reached from both sides, strictly between 0 and T_gas -- not the specific
-            # value, which is a model artifact of the one-way omission above, not a
-            # physical constant, and would freeze that omission into the suite as if it
-            # were intended if pinned as a golden.
-            @test 0.0 < Te_end < room
+            # channel, Tₑ has nowhere to equilibrate but below T_gas.
+            #
+            # Two assertions below, and the pair is the point -- not the specific value,
+            # which is a model artifact of the one-way omission above, not a physical
+            # constant, and would freeze that omission into the suite as if it were
+            # intended if pinned as a golden. (Measured: ~0.0111 eV, i.e. ~0.427*room --
+            # not hardcoded here for that reason.)
+            #
+            # The bracket is what guards the equation: it catches a sign flip (either
+            # branch leaves the bracket), a divergence, and an excitation sink wrong by a
+            # large factor -- which a bare `0 < Te_end < room` did not, since
+            # Te_end -> 1e-6 satisfied it too. Loose at the top on purpose, so it still
+            # holds once the limitation below is repaired and Te_end rises to room_T_eV;
+            # loose at the bottom with roughly a factor two of headroom under the
+            # measured value, not hugging it.
+            @test 0.2 * room < Te_end < 1.1 * room
+
+            # A TRIPWIRE, not a suppression -- and the opposite direction from the
+            # @test_broken Task B3 retired earlier in this same testitem's history: that
+            # one blamed the deprecated `Total_Excitation` surface, a cause this task's
+            # change eliminated, so it was stale and got removed. This one names a live,
+            # documented limitation (the one-way inelastic coefficients above) and exists
+            # to detect its repair. Tₑ SHOULD be room_T_eV and is not, for that reason.
+            # Julia reports an unexpected PASS of a `@test_broken` as a failure, so on the
+            # day BD exports the rotational channel separately and a detailed-balance
+            # factor is applied to it, this line announces that the limitation is closed
+            # -- even if nobody remembers this test exists.
+            @test_broken isapprox(Te_end, room; rtol = 0.1)
             if is_hot
                 @test Te_end < Te0                    # hot electrons cooled by the gas
             else
