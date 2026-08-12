@@ -112,20 +112,35 @@ end
 @testitem "linear-response depth: PartialLinearResponse is the 𝔅 of the terms carrying an explicit Tₑ" setup = [ResponseDepthFixtures] begin
     using RAPID2D: PartialLinearResponse
 
-    # Written out here from `update_electron_heating_powers!` rather than from the
-    # implementation, so this catches a term that moves between the two.
+    # Since Task B4 this 𝔅 is a literal transcription of
+    # `_eig_Te_from_known_rates!` (same docstring, same Ē_floor hoist), not an
+    # independent re-derivation from `update_electron_heating_powers!` — that
+    # independence is gone because P_ela's and P_exc's explicit Tₑ is now only
+    # the cold-target factor they share (`1 − 1.5·T_gas/Ē`), the same factor
+    # `_eig_Te_from_known_rates!` itself differentiates, so writing this 𝔅 from
+    # the power function's formula instead would just copy the implementation
+    # under a different name. What this test still catches: a term present in
+    # one of the two `_eig_Te_from_known_rates!` copies (here vs. physics.jl)
+    # and missing from the other, a wrong `Ē_safe`/`Ē_floor`, or dilution
+    # dropping a channel here that physics.jl kept (or vice versa). What it no
+    # longer catches on its own: a term the two copies AGREE on dropping —
+    # that gap is `power_jacobian_test.jl`'s central-difference oracle's job,
+    # which differentiates the real assembled `ePowers.tot` rather than
+    # transcribing any Jacobian formula.
     RP = eig_RAPID(; Te_eV = 3.0, coulomb = true, source = PartialLinearResponse)
     RP.plasma.ν_ei .= 1.0e8
     c = RP.config.constants
     eig = eig_Te_at(RP)
 
     pla = RP.plasma
-    m_H2 = c.mi
     m_i = RAPID2D.bulk_ion_mass(RP)
     μ = m_i * c.me / (m_i + c.me)^2
-    𝔅 = @. (2 * c.me / m_H2) * pla.ν_en_mom_ela * 1.5 * c.ee +   # P_ela
-        1.5 * c.ee * pla.ν_en_iz +                                # P_dilution
-        2 * μ * 1.5 * c.ee * pla.ν_ei                             # P_equi
+    Ē_eV = @. 1.5 * pla.Te_eV + 0.5 * c.me * pla.ue_para^2 / c.ee
+    Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
+    Ē_safe = @. max(Ē_eV, Ē_floor)
+    𝔅 = @. (pla.P_en_ela + pla.P_en_exc) * 2.25 * pla.T_gas_eV / Ē_safe^2 +  # P_ela, P_exc
+        1.5 * c.ee * (pla.ν_en_iz + pla.ν_en_diss_iz) +                       # P_dilution
+        2 * μ * 1.5 * c.ee * pla.ν_ei                                         # P_equi
     expected = @. -(2 / 3) * 𝔅 / c.ee
 
     inw = RP.G.nodes.in_wall_nids

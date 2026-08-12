@@ -61,11 +61,35 @@
         return RP
     end
 
-    # Every (E/p, Ē) surface a constant ⟹ ∂K/∂Ē = 0 ⟹ the only Tₑ dependence
-    # left in the power is algebraic, and P(Tₑ) = A − 𝔅·Tₑ exactly.
-    function with_constant_surfaces!(RP; K)
+    # Every RATE surface (K_iz, K_diss_iz, K_mom, ...) a constant ⟹ the ν's built
+    # from them are Tₑ-independent, so P_drag, P_dilution, P_iz and P_diss_iz stay
+    # exactly linear (or constant) in Tₑ with no help needed.
+    #
+    # L_ela/L_exc are the one place a FLAT surface would NOT do that anymore.
+    # Since Task B3, P_ela and P_exc carry a cold-target factor
+    # `1 − 1.5·T_gas/Ē` applied to `Kerg_ela(Ē)`/`Kerg_exc(Ē)`, so a flat Kerg
+    # would leave P_ela/P_exc only WEAKLY Tₑ-dependent (through that tiny
+    # correction alone) and, worse, genuinely NONLINEAR (Ē sits in a
+    # denominator). A table that is instead EXACTLY `b·Ē` cancels the
+    # denominator exactly:
+    #   n_gas·b·Ē·(1 − 1.5T_gas/Ē) = n_gas·b·(Ē − 1.5T_gas)
+    #                              = n_gas·b·1.5·(Tₑ − T_gas) + n_gas·b·½mₑu∥²/e,
+    # which — because Ē = 1.5Tₑ + ½mₑu∥²/e is itself linear in Tₑ — is EXACTLY
+    # linear, not the "Ē_ela ≃ Ē" approximation update_electron_heating_powers!
+    # documents for the real table. `b_erg` is shared by L_ela and L_exc: it
+    # only needs to make the two energy sinks dominate P_drag by enough that a
+    # positive Tₑ_sat exists (drag ∝ u∥², and so does the cold-target's ½mₑu∥²/e
+    # floor loss, so the ratio between them does not depend on which u∥ is
+    # picked, only on b_erg vs K). L_diss_exc stays FLAT — production applies no
+    # cold-target factor to it — but at the SAME small scale as b_erg, not at
+    # the rate-coefficient scale K, or its raw constant loss alone would swamp
+    # everything else the way L_ela/L_exc used to before this fix.
+    function with_constant_surfaces!(RP; K, b_erg)
         EoverP = collect(range(1.0, 1000.0, 8))
         Erg_eV = collect(10 .^ range(-3, 3, 16))
+        flat = fill(K, length(EoverP), length(Erg_eV))
+        flat_small = fill(b_erg, length(EoverP), length(Erg_eV))
+        prop_to_Ē = [b_erg * E for _ in EoverP, E in Erg_eV]
         path = joinpath(mktempdir(; cleanup = false), "eRRCs_EoverP_Erg.h5")
         h5open(path, "w") do fid
             fid["EoverP"] = EoverP
@@ -77,11 +101,13 @@
                     "K_iz", "K_diss_iz", "K_exc", "K_diss_exc",
                     "K_mom", "K_mom_by_ela", "K_mom_by_exc", "K_mom_by_diss_exc",
                     "K_mom_by_iz", "K_mom_by_diss_iz",
-                    "L_ela", "L_exc", "L_diss_exc", "L_tot",
-                    "Total_Excitation",
+                    "L_tot", "Total_Excitation",
                 )
-                fid[name] = fill(K, length(EoverP), length(Erg_eV))
+                fid[name] = copy(flat)
             end
+            fid["L_ela"] = copy(prop_to_Ē)
+            fid["L_exc"] = copy(prop_to_Ē)
+            fid["L_diss_exc"] = copy(flat_small)
             fid["characteristic_exc_erg_eV"] = RP.config.constants.char_exc_erg_eV
         end
         RP.eRRCs = Electron_RRCs(
@@ -90,9 +116,14 @@
         return RP
     end
 
-    # The closed form of that linear problem, from the same constants the code
-    # uses. Derived here rather than hard-coded, so it tracks the physics rather
-    # than pinning a number nobody can re-derive.
+    # The closed form of that linear problem. P(Tₑ) is engineered to be EXACTLY
+    # affine by `with_constant_surfaces!` above, so two probe evaluations
+    # through the PRODUCTION power path pin A and 𝔅 exactly — no term-by-term
+    # re-derivation to drift out of sync with update_electron_heating_powers!
+    # itself (which is what happened here across the Task B1-B3 ledger
+    # migration: this test's old hand-derived 𝔅 quietly stopped matching what
+    # the code computes, and nothing caught it until Task B4's Jacobian fix
+    # made the mismatch visible).
     #
     # Returned PER NODE. n_H2_gas varies across the grid, so ν and therefore λ do
     # too — every node relaxes on its own clock. Te_sat does not vary (A and 𝔅 are
@@ -100,32 +131,46 @@
     # residual transient across a spread of λ and lose the exactness this test is
     # for. Compare node by node.
     function linear_te_problem(RP)
-        c = RP.config.constants
-        ee, me, m_H2 = c.ee, c.me, c.mi
         pla = RP.plasma
-        # All four surfaces hold the same constant K, so one ν stands for all.
-        ν = pla.ν_en_mom_tot
-        ν_iz = pla.ν_en_iz
-        ue_sq = @. pla.ueR^2 + pla.ueϕ^2 + pla.ueZ^2
-        T_gas = pla.T_gas_eV                       # scalar, not a field
+        ee = RP.config.constants.ee
+        Te_ref = copy(pla.Te_eV)
 
-        𝔅 = @. (2me / m_H2) * ν * 1.5 * ee + 1.5 * ee * ν_iz
-        A = @. (
-            me * ue_sq * ν
-                + (2me / m_H2) * ν * 1.5 * T_gas * ee
-                + 0.5 * me * ue_sq * ν_iz
-                - ee * c.char_exc_erg_eV * ν
-                - ee * c.iz_erg_eV * ν_iz
-        )
+        pla.Te_eV .= Te_ref .+ 1.0
+        update_RRCs!(RP); update_electron_heating_powers!(RP)
+        P_hi = copy(pla.ePowers.tot)
+
+        pla.Te_eV .= Te_ref .- 1.0
+        update_RRCs!(RP); update_electron_heating_powers!(RP)
+        P_lo = copy(pla.ePowers.tot)
+
+        pla.Te_eV .= Te_ref                      # restore state AND powers/rates
+        update_RRCs!(RP); update_electron_heating_powers!(RP)
+
+        𝔅 = @. (P_lo - P_hi) / 2.0                # P(Tₑ) = A − 𝔅·Tₑ, slope = −𝔅
+        A = @. (P_hi + P_lo) / 2.0 + 𝔅 * Te_ref
         return (Te_sat = A ./ 𝔅, eig = @.(-(2 / 3) * 𝔅 / ee))
     end
 
     # The exact trajectory of dTe/dt = λ(Te − Te_sat), node by node.
     exact_Te(p, Te₀, t) = @. p.Te_sat + (Te₀ - p.Te_sat) * exp(p.eig * t)
 
-    function march!(RP, dt, nsteps)
+    # `refresh_rates`: production calls `update_RRCs!` once per OUTER time step,
+    # immediately before the physics that consumes it (see
+    # `internal/docs/src/notes/design/rrc-single-evaluation-point.md`), so a
+    # multi-step march that actually represents that sequence must do the same.
+    # Defaulted off to leave the OTHER testitems in this file — which march the
+    # REAL production table, not a synthetic one, and were passing before this
+    # fix — bit-for-bit unchanged; only the linear-problem test below opts in.
+    # Whether it matters depends on the table: under the OLD Kerg_ela-free
+    # model, and under any FLAT synthetic surface, ν is Tₑ-independent so
+    # leaving it stale is harmless; under `with_constant_surfaces!`'s L_ela/L_exc
+    # (linear in Ē, hence in Tₑ) it is not — P_en_ela staying pinned at
+    # Ē(Te-at-last-refresh) while only the cold-target factor tracks the LIVE Tₑ
+    # is exactly what breaks the exact-linearity this file is built on.
+    function march!(RP, dt, nsteps; refresh_rates = false)
         for _ in 1:nsteps
             RP.dt = dt
+            refresh_rates && update_RRCs!(RP)
             update_Te!(RP)
         end
         return RP
@@ -133,7 +178,7 @@
 end
 
 @testitem "ExpRB Tₑ: exact on the linear problem, at every Δt, both directions" setup = [ExpRBTeFixtures] begin
-    using RAPID2D: ExpRB, update_RRCs!
+    using RAPID2D: ExpRB, FullLinearResponse, update_RRCs!
 
     # With constant rate coefficients and a frozen drift the energy equation is
     # dTe/dt = λ(Te − Te_sat) with λ constant, and ExpRB is EXACT for that at any
@@ -150,8 +195,19 @@ end
     # unexercised by physics here. One formula spans both signs with no branch to
     # take, and the kernel tests cover z > 0 directly — but that is the argument,
     # not a measurement.
-    probe = with_constant_surfaces!(te_RAPID(; Te_eV = 5.0); K = 2.0e-15)
+    #
+    # `exprb_eigenvalue = FullLinearResponse`, not the default `PartialLinearResponse`.
+    # Since Task B3 moved most of P_ela's and P_exc's Tₑ dependence INSIDE
+    # Kerg_ela(Ē)/Kerg_exc(Ē), `PartialLinearResponse` discards exactly the part of
+    # ∂P/∂Tₑ that `with_constant_surfaces!` engineers to dominate here (see its
+    # comment) — an intentional, documented omission (physics.jl's
+    # `_eig_Te_from_known_rates!`), not a bug, but it means the fitted z no longer
+    # matches this problem's TRUE 𝔅 under that depth, and exactness is specifically
+    # what `FullLinearResponse` exists to recover.
+    K, b_erg = 2.0e-15, 5.0e-35
+    probe = with_constant_surfaces!(te_RAPID(; Te_eV = 5.0); K, b_erg)
     probe.flags.scheme.atomic = ExpRB
+    probe.flags.exprb_eigenvalue = FullLinearResponse
     update_RRCs!(probe)
     p = linear_te_problem(probe)
     inw = probe.G.nodes.in_wall_nids
@@ -171,11 +227,12 @@ end
         for nsteps in (2048, 64, 4, 1)                 # down to ONE step for the whole run
             dt = t_end / nsteps
             RP = with_constant_surfaces!(
-                te_RAPID(; Te_eV = Te₀, implicit = implicit); K = 2.0e-15
+                te_RAPID(; Te_eV = Te₀, implicit = implicit); K, b_erg
             )
             RP.flags.scheme.atomic = ExpRB
+            RP.flags.exprb_eigenvalue = FullLinearResponse
             update_RRCs!(RP)
-            march!(RP, dt, nsteps)
+            march!(RP, dt, nsteps; refresh_rates = true)
 
             exact = exact_Te(linear_te_problem(RP), Te₀, t_end)
             @test RP.plasma.Te_eV[inw] ≈ exact[inw] rtol = 1.0e-12
@@ -193,9 +250,9 @@ end
             # would pass everything above. Forward Euler on the same problem at
             # this step does not.
             if nsteps == 4
-                fe = with_constant_surfaces!(te_RAPID(; Te_eV = Te₀); K = 2.0e-15)
+                fe = with_constant_surfaces!(te_RAPID(; Te_eV = Te₀); K, b_erg)
                 update_RRCs!(fe)
-                march!(fe, dt, nsteps)
+                march!(fe, dt, nsteps; refresh_rates = true)
                 @test maximum(abs, fe.plasma.Te_eV[inw] .- exact[inw]) /
                     maximum(exact[inw]) > 0.5
             end

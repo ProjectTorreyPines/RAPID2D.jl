@@ -679,30 +679,54 @@ end
 
 ```
 (3/2)e·dTₑ/dt = A − 𝔅·Tₑ,
-𝔅 = (2mₑ/m_H₂)·ν_ela·(3/2)e  +  (3/2)e·ν_iz  +  2μ·(3/2)e·ν_ei
+𝔅 = (P_en_ela + P_en_exc)·(9/4)T_gas/Ē²  +  (3/2)e·(ν_iz + ν_diss_iz)  +  2μ·(3/2)e·ν_ei
 ```
 
-from `P_ela`, `P_dilution` and `P_equi` — an exact rearrangement of
+from `P_ela`, `P_exc`, `P_dilution` and `P_equi` — an exact rearrangement of
 [`update_electron_heating_powers!`](@ref), not a linearisation. `𝔅` sums rates that
 are non-negative in any state the model describes, so `λ = −(2/3e)𝔅 ≤ 0`: no pole
 and no growth branch. Not a licence to drop the exponent cap downstream — `ν_ei` is
 built from `ni`, which the continuity solve can land marginally below zero — only a
 statement that the branch is not where a positive `λ` comes from.
-`P_drag`, `P_exc` and `P_iz` carry no explicit `Tₑ` and stay in the source,
-which is where their `Tₑ` dependence is discarded — see [`LinearResponseDepth`](@ref)
-for what that costs.
+`P_drag`, `P_diss_exc`, `P_iz` and `P_diss_iz` carry no explicit `Tₑ` — and since
+2026-08 neither do most of `P_ela` and `P_exc`, whose responses now live inside
+`Kerg_ela(Ē)` and `Kerg_exc(Ē)`; only the cold-target factor they share is written
+down here — see [`LinearResponseDepth`](@ref) for what the rest costs.
 """
 function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     @unpack ee, me = RP.config.constants
-    m_H2 = RP.config.constants.mi
     zero_FT = zero(FT)
 
     fill!(pla.exprb.eig_Te, zero_FT)
 
     if RP.flags.Atomic_Collision
-        @. pla.exprb.eig_Te -= (FT(2.0) * me / m_H2) * pla.ν_en_mom_ela * FT(1.5) * ee
-        RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee * pla.ν_en_iz
+        # P_ela's explicit Tₑ is now ONLY the cold-target factor: the rest lives inside
+        # Kerg_ela(Ē), which this depth discards by construction. Differentiating
+        #     P_ela = P_en_ela·(1 − (3/2)T_gas/Ē),  Ē = (3/2)Tₑ + ½mₑu∥²/e
+        # at frozen P_en_ela gives +(9/4)·T_gas/Ē², and ePowers.tot SUBTRACTS P_ela, so
+        # it enters negative — damping, no growth branch, same guarantee as before.
+        #
+        # It is much weaker than the pre-2026-08 −(2mₑ/M)·ν_ela·(3/2)e this replaced,
+        # because that term's Tₑ was explicit and this one's mostly is not. That is the
+        # depth's definition applied honestly, not an omission: `FullLinearResponse` is
+        # where the rest of the response lives.
+        # Since Task B3 round 4 P_exc carries the SAME factor, so it has an explicit
+        # Tₑ too and this depth must pick it up — the sinks share one `cold_factor`
+        # in update_electron_heating_powers!, and the Jacobian mirrors that sharing.
+        # P_diss_exc stays raw and contributes nothing here.
+        Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee
+        # first(...) MUST be evaluated outside @. -- Number is iterable, so `@.`
+        # would otherwise dot it into `first.(Erg_eV)`, which is the identity on a
+        # vector, not a scalar floor (the same trap update_electron_heating_powers!
+        # avoids by hoisting Ē_floor the same way).
+        Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
+        Ē_safe = @. max(Ē_eV, Ē_floor)
+        @. pla.exprb.eig_Te -= (pla.P_en_ela + pla.P_en_exc) *
+            FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0)
+        # Dilution, both electron-producing channels.
+        RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee *
+            (pla.ν_en_iz + pla.ν_en_diss_iz)
     end
     if RP.flags.Coulomb_Collision
         m_i = bulk_ion_mass(RP)
@@ -743,8 +767,7 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
                     "update_transport_quantities! after changing it."
             )
         )
-        @unpack ee, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
-        m_H2 = RP.config.constants.mi
+        @unpack ee, me, iz_erg_eV, diss_iz_erg_eV = RP.config.constants
         zero_FT = zero(FT)
         dν = pla.dν_dTe
 
@@ -755,20 +778,35 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             # drag and the dilution with — NOT ue_para, which is what Ē is built
             # from. The two differ as soon as a perpendicular drift is on.
             ue_mag_sq = @. pla.ueR^FT(2.0) + pla.ueϕ^FT(2.0) + pla.ueZ^FT(2.0)
+            Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee
+            # first(...) MUST be evaluated outside @. -- Number is iterable, so `@.`
+            # would otherwise dot it into `first.(Erg_eV)`, which is the identity on a
+            # vector, not a scalar floor (the same trap update_electron_heating_powers!
+            # avoids by hoisting Ē_floor the same way).
+            Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
+            Ē_safe = @. max(Ē_eV, Ē_floor)
+            cold = @. one(FT) - FT(1.5) * pla.T_gas_eV / Ē_safe
 
             @. pla.exprb.eig_Te += (
                 me * ue_mag_sq * dν.mom_tot                                   # P_drag
-                    - (FT(2.0) * me / m_H2) * FT(1.5) * ee * (
-                    pla.ν_en_mom_ela + (pla.Te_eV - pla.T_gas_eV) * dν.mom_ela  # P_ela
-                )
-                    - ee * char_exc_erg_eV * dν.exc_eff                           # P_exc
+                    # P_ela: product rule across the coefficient AND the cold-target factor.
+                    - (dν.ela_erg * cold + pla.P_en_ela * FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0))
+                    # P_exc carries the SAME cold-target factor as P_ela since Task B3
+                    # round 4, so its derivative is a product rule too -- exactly the
+                    # form used for P_ela one line above. Task B3 shares one
+                    # `cold_factor` between the two sinks; the Jacobian must mirror that
+                    # or the two drift apart.
+                    - (dν.exc_erg * cold + pla.P_en_exc * FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0))
+                    - dν.diss_exc_erg                                         # P_diss_exc (raw, no factor)
             )
 
             if RP.flags.src
+                ν_new = @. pla.ν_en_iz + pla.ν_en_diss_iz
+                dν_new = @. dν.iz + dν.diss_iz
                 @. pla.exprb.eig_Te += -(
-                    ee * iz_erg_eV * dν.iz                                    # P_iz
-                        + dν.iz * (FT(1.5) * pla.Te_eV * ee - FT(0.5) * me * ue_mag_sq)
-                        + FT(1.5) * ee * pla.ν_en_iz                              # P_dilution
+                    ee * (iz_erg_eV * dν.iz + diss_iz_erg_eV * dν.diss_iz)    # P_iz, P_DI
+                        + dν_new * (FT(1.5) * pla.Te_eV * ee - FT(0.5) * me * ue_mag_sq)
+                        + FT(1.5) * ee * ν_new                                # P_dilution
                 )
             end
         end
@@ -780,10 +818,10 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             # rather than a trade. `update_ion_power_jacobian!` carries the same
             # term; the two must agree about one piece of physics.
             #
-            # bulk_ion_mass, not the m_H2 unpacked above: one is the ion Tₑ
-            # equilibrates with, the other the neutral it recoils off. Equal for
-            # H₂/H₂⁺ and unequal for any other declared ion. Hoisted, because `@.`
-            # would call it once per cell.
+            # bulk_ion_mass, not a neutral mass: one is the ion Tₑ equilibrates
+            # with, the other the neutral it recoils off. Equal for H₂/H₂⁺ and
+            # unequal for any other declared ion. Hoisted, because `@.` would
+            # call it once per cell.
             m_i = bulk_ion_mass(RP)
             μ_reduced = m_i * me / (m_i + me)^2
             @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei

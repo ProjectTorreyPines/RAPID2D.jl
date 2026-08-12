@@ -123,23 +123,36 @@ end
     eig = eig_at(RP)
 
     cnst = RP.config.constants
-    ee, me, char_exc_erg_eV, iz_erg_eV = cnst.ee, cnst.me, cnst.char_exc_erg_eV, cnst.iz_erg_eV
-    m_H2 = cnst.mi
+    ee, me, iz_erg_eV, diss_iz_erg_eV = cnst.ee, cnst.me, cnst.iz_erg_eV, cnst.diss_iz_erg_eV
     pla = RP.plasma
     inw = RP.G.nodes.in_wall_nids
 
     ue_sq = @. pla.ueR^2 + pla.ueϕ^2 + pla.ueZ^2
     ν, dν = pla.ν_en_mom_tot, pla.dν_dTe.mom_tot          # all four surfaces are equal here
-    ν_ela, dν_ela = pla.ν_en_mom_ela, pla.dν_dTe.mom_ela
-    ν_exc, dν_exc = pla.ν_en_exc_eff, pla.dν_dTe.exc_eff
     ν_iz, dν_iz = pla.ν_en_iz, pla.dν_dTe.iz
+    ν_diss_iz, dν_diss_iz = pla.ν_en_diss_iz, pla.dν_dTe.diss_iz
+    P_ela, dP_ela = pla.P_en_ela, pla.dν_dTe.ela_erg
+    P_exc, dP_exc = pla.P_en_exc, pla.dν_dTe.exc_erg
+    dP_diss_exc = pla.dν_dTe.diss_exc_erg
+
+    # Same cold-target factor update_electron_heating_powers! shares between P_ela
+    # and P_exc, and the same product rule _eig_Te_from_linear_response! applies to
+    # both.
+    Ē_eV = @. 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
+    Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
+    Ē_safe = @. max(Ē_eV, Ē_floor)
+    cold = @. 1 - 1.5 * pla.T_gas_eV / Ē_safe
 
     dP = @. (
         me * ue_sq * dν                                               # ∂P_drag/∂Tₑ
-            - (2 * me / m_H2) * 1.5 * ee * (ν_ela + (pla.Te_eV - pla.T_gas_eV) * dν_ela)
-            - ee * char_exc_erg_eV * dν_exc
-            - ee * iz_erg_eV * dν_iz
-            - (dν_iz * (1.5 * pla.Te_eV * ee - 0.5 * me * ue_sq) + 1.5 * ee * ν_iz)
+            - (dP_ela * cold + P_ela * 2.25 * pla.T_gas_eV / Ē_safe^2)     # P_ela
+            - (dP_exc * cold + P_exc * 2.25 * pla.T_gas_eV / Ē_safe^2)     # P_exc
+            - dP_diss_exc                                                  # P_diss_exc
+            - ee * (iz_erg_eV * dν_iz + diss_iz_erg_eV * dν_diss_iz)       # P_iz, P_DI
+            - (
+            (dν_iz + dν_diss_iz) * (1.5 * pla.Te_eV * ee - 0.5 * me * ue_sq)
+                + 1.5 * ee * (ν_iz + ν_diss_iz)
+        )
     )
     @test eig[inw] ≈ ((2 / 3) .* dP ./ ee)[inw] rtol = 1.0e-12
 
@@ -248,6 +261,73 @@ end
     cold.plasma.ν_ei .= 0.0
     inw = hot.G.nodes.in_wall_nids
     @test all(eig_at(hot)[inw] .< eig_at(cold)[inw])
+end
+
+@testitem "Power Jacobian: FullLinearResponse matches a finite difference of the new sinks" begin
+    using RAPID2D
+    using RAPID2D: update_RRCs!, update_electron_heating_powers!,
+        update_electron_power_jacobian!, FullLinearResponse, ExpRB
+
+    function powered(Te0)
+        config = SimulationConfig{Float64}(
+            NR = 6, NZ = 6, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        RP = RAPID{Float64}(config)
+        RP.flags.scheme.atomic = ExpRB
+        RP.flags.exprb_eigenvalue = FullLinearResponse
+        initialize!(RP)
+        RP.flags.Atomic_Collision = true
+        RP.flags.src = true
+        RP.plasma.Te_eV .= Te0
+        RP.fields.E_para_tot .= 30.0
+        update_RRCs!(RP)
+        update_electron_heating_powers!(RP)
+        return RP
+    end
+
+    Te0 = 5.0
+    h = 1.0e-4 * Te0
+    RP = powered(Te0)
+    update_electron_power_jacobian!(RP)
+    ee = RP.config.constants.ee
+    # eig_Te = (2/3e)·∂P/∂Tₑ, so undo the prefactor to compare against ΔP/ΔTₑ.
+    analytic = @. RP.plasma.exprb.eig_Te * 1.5 * ee
+
+    Pp = powered(Te0 + h).plasma.ePowers.tot
+    Pm = powered(Te0 - h).plasma.ePowers.tot
+    numeric = @. (Pp - Pm) / (2h)
+
+    inw = RP.G.nodes.in_wall_nids
+    scale = maximum(abs.(numeric[inw]))
+    @test maximum(abs.(analytic[inw] .- numeric[inw])) < 1.0e-3 * scale
+end
+
+@testitem "Power Jacobian: PartialLinearResponse still cannot produce a growth branch" begin
+    using RAPID2D
+    using RAPID2D: update_RRCs!, update_electron_power_jacobian!,
+        PartialLinearResponse, ExpRB
+    # The depth's guarantee: it sums rates that are non-negative in any state the model
+    # describes, so λ ≤ 0 and there is no pole. The cold-target factor is the one new
+    # term that could break it — it flips sign below T_gas — so check both sides.
+    for Te0 in (0.001, 5.0)
+        config = SimulationConfig{Float64}(
+            NR = 6, NZ = 6, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        RP = RAPID{Float64}(config)
+        RP.flags.scheme.atomic = ExpRB
+        RP.flags.exprb_eigenvalue = PartialLinearResponse
+        initialize!(RP)
+        RP.flags.Atomic_Collision = true
+        RP.flags.src = true
+        RP.plasma.Te_eV .= Te0
+        update_RRCs!(RP)
+        update_electron_power_jacobian!(RP)
+        @test all(<=(0.0), RP.plasma.exprb.eig_Te)
+    end
 end
 
 @testitem "eig_Te: the heat-flux omission is announced too" setup = [PowerJacobianFixtures] begin
