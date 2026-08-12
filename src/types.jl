@@ -352,8 +352,11 @@ Contains the plasma state variables including density, temperature, and velocity
     ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction [1/s]
     ν_en_diss_iz::Matrix{FT} = zeros(FT, dims) # Dissociative-ionization rate [1/s]
     # ELECTRON production: both channels make exactly one electron per event, so this is
-    # what continuity, dilution and the growth exponent take. It is NOT what an ION
-    # source takes — H₂⁺ comes only from `ν_en_iz` and H⁺ only from `ν_en_diss_iz`.
+    # what continuity, dilution and the growth exponent take. Under the INTERIM
+    # (`REACTION_STOICHIOMETRY.diz`, until H⁺ is a transportable species) it is also what
+    # every ION-side rate takes: DI's ion is booked to H₂⁺ too, so H₂⁺ now comes from both
+    # channels, not from `ν_en_iz` alone. That will change back to `ν_en_iz` (with H⁺
+    # gaining its own rate) when multi-species ion transport lands.
     ν_en_iz_tot::Matrix{FT} = zeros(FT, dims) # ν_en_iz + ν_en_diss_iz [1/s]
     # Energy-ledger sinks, P = n_H2_gas · Kerg [W per electron]. Written by the same
     # `update_RRCs!` at the same evaluation point as the frequencies above.
@@ -555,7 +558,10 @@ Fields include various matrices for solving different parts of the model.
 
     # Operators for solving continuity equations
     ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
-    ν_en_iz::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization [1/s]
+    # Named `_tot`, not `ν_en_iz`, because it is built from `pla.ν_en_iz_tot`: under the
+    # interim (`REACTION_STOICHIOMETRY.diz`) every ion is booked as H₂⁺, so the continuity
+    # assembly needs both ionization channels, not the H₂⁺-only rate.
+    ν_en_iz_tot::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization (both channels) [1/s]
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
@@ -630,8 +636,10 @@ See [`ReactionState`](@ref) for why these are stored rather than recomputed, and
     dims::Tuple{Int, Int}
     "e + H₂ → 2e + H₂⁺"
     iz::Matrix{FT} = zeros(FT, dims)
-    # Dissoc_Ionz, Recomb_H2Ion, Recomb_H3Ion append here — see Electron_RRCs,
-    # which already loads all three tables.
+    "e + H₂ → 2e + H⁺ + H⁰"
+    diz::Matrix{FT} = zeros(FT, dims)
+    # Recomb_H2Ion, Recomb_H3Ion append here — see Electron_RRCs, which already
+    # loads both tables.
 end
 
 """
@@ -721,12 +729,17 @@ step by hand, and see the note there before adding a channel.
 | channel | e | H₂⁺ | H₃⁺ | H⁺ | H₂ | H⁰ | `θ` family |
 |---|---|---|---|---|---|---|---|
 | `iz` — e + H₂ → 2e + H₂⁺ | +1 | +1 | | | −1 | | `:growth` |
-| *`diz` — e + H₂ → 2e + H⁺ + H⁰* | +1 | | | +1 | −1 | +1 | `:growth` |
+| `diz` — e + H₂ → 2e + H⁺ + H⁰ | +1 | (+1)¹ | | +1 | −1 | +1 | `:growth` |
 | *`rec_H2` — e + H₂⁺ → 2H⁰* | −1 | −1 | | | | +2 | `:decay` |
 | *`rec_H3` — e + H₃⁺ → H₂ + H⁰* | −1 | | −1 | | +1 | +1 | `:decay` |
 
 (italic rows are not implemented; the table records the intent so the
 stoichiometry is settled before the rates arrive.)
+
+¹ `diz`'s true ion is H⁺, in its own column. The `ions` field below books it to
+H₂⁺ instead — an INTERIM, not a correction to this row — because
+`set_ion_species!` refuses a second species. See the comment on
+`REACTION_STOICHIOMETRY.diz`.
 
 `θ` names the [`ImplicitWeights`](@ref) member the channel's quadrature uses —
 see [`reaction_θ`](@ref). It is data rather than a line in the producer so that a
@@ -735,6 +748,16 @@ cares how the integral was evaluated can ask instead of assume.
 """
 const REACTION_STOICHIOMETRY = (
     iz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
+    # Dissociative ionization: e + H₂ → 2e + H⁺ + H⁰. One electron like `iz`, one H₂
+    # destroyed, and one H⁰ that nothing tracks yet (which is why there is no H⁰ column).
+    #
+    # ⚠ The ion is H⁺, and this row says H₂⁺ ON PURPOSE. `set_ion_species!` refuses a
+    # second species — `ion_transport.jl:727` names six blockers — so a `:H⁺` here would
+    # create electrons with no ion and break quasi-neutrality. Carrying the charge on the
+    # H₂⁺ column keeps the electron count, the charge and nuclei conservation all exact
+    # and gets only the ion MASS wrong, for ≤8 % of ions at high E/p and exactly none
+    # below 35 eV impact. Change to `:H⁺ => 1` when multi-species ion transport lands.
+    diz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
 )
 
 """

@@ -72,13 +72,13 @@ end
     @test RAPID2D.bulk_ion_charge(RP) == 1
 end
 
-@testitem "Ionization enters the ion equation at the electron rate" setup = [IonRun] begin
-    # Ni_iz = Ne_iz: each ionization makes one ion AND one electron. The rate is
-    # set by the ELECTRON density, so for ions it is a pure explicit source — but
-    # "the electron density" means the one the electron equation itself ionized
-    # at, `(1−θ)nⁿ + θnⁿ⁺¹`, NOT whatever `pla.ne` holds once that solve returns.
-    # This asserted the latter, and so pinned the defect: at θ = ½ the ion gained
-    # θ(Δtν)²n more than the electron every step.
+@testitem "Ionization enters the ion equation at the TOTAL electron rate (interim: DI rides H2+)" setup = [IonRun] begin
+    # Ni_growth = Ne_growth: each ionization event, of EITHER channel, makes one ion
+    # AND one electron. The rate is set by the ELECTRON density, so for ions it is a
+    # pure explicit source — but "the electron density" means the one the electron
+    # equation itself ionized at, `(1−θ)nⁿ + θnⁿ⁺¹`, NOT whatever `pla.ne` holds once
+    # that solve returns. This asserted the latter, and so pinned the defect: at
+    # θ = ½ the ion gained θ(Δtν)²n more than the electron every step.
     #
     # Run in the workflow's order, because that is the order the identity holds
     # in — `solve_electron_continuity_equation!` is what fills `prev_n`.
@@ -88,13 +88,20 @@ end
     RP.flags.src = true
     update_transport_quantities!(RP)
 
-    # DI silenced on purpose: this item is about θ-weighting order, for the ONE
-    # channel (H₂⁺) that both sides currently agree makes an ion. Since task C1,
-    # electron continuity grows by ν_en_iz_tot (both channels) while the ion source
-    # stays ν_en_iz alone — H₂⁺ comes only from the H₂⁺ channel, dissociative
-    # ionization makes H⁺, a species this equation does not touch. That split is
-    # real physics, not a bug, but it is orthogonal to what this item checks, so
-    # DI is zeroed here rather than left to break the Δne ≈ Δni identity below.
+    # This item is about θ-weighting ORDER, not about the channel split, so DI is
+    # zeroed here to keep the arithmetic below in terms of one rate. That is a
+    # simplification of the test, not of the physics: with DI nonzero the identity
+    # below would hold just the same, because BOTH sides read the total.
+    #
+    # The title is true again, but for a DIFFERENT reason than when it was written.
+    # It used to hold because DI did not exist. Since Task C1, electron continuity
+    # grows by `ν_en_iz_tot` (both channels). Since Task C2, the ion source is
+    # `net_ion_count(counts, :H2⁺) = N.iz .+ N.diz` — the SAME total — because the
+    # interim books DI's ion (really H⁺) onto the H₂⁺ column, `set_ion_species!`
+    # having no second species to give it yet (see `REACTION_STOICHIOMETRY.diz`).
+    # So this is not a conservation proof: `net_ion_count(N, :H2⁺)` and
+    # `net_electron_count(N)` are the same expression by construction, and the
+    # interim is exactly what makes them coincide.
     RP.plasma.ν_en_diss_iz .= 0.0
     RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
 
@@ -104,7 +111,7 @@ end
     solve_ion_continuity_equation!(RP)
 
     inw = RP.G.nodes.in_wall_nids
-    @test any(>(0), RP.plasma.ν_en_iz[inw])      # the source is not silently zero
+    @test any(>(0), RP.plasma.ν_en_iz_tot[inw])  # the source is not silently zero
 
     # One event, one of each. Loose by the standards of this file because the two
     # sides are not computed the same way: the electron gain comes back through a
@@ -113,10 +120,10 @@ end
     # round-trip.
     @test (RP.plasma.ne - ne_before)[inw] ≈ (RP.plasma.ni - ni_before)[inw] rtol = 1.0e-10
 
-    # and it is the θ-weighted rate, written out so the scheme itself is pinned
+    # and it is the θ-weighted TOTAL rate, written out so the scheme itself is pinned
     θ = RP.flags.θ_imp.growth
     n_star = @. (1 - θ) * ne_before + θ * RP.plasma.ne
-    expected = @. ni_before + RP.dt * n_star * RP.plasma.ν_en_iz
+    expected = @. ni_before + RP.dt * n_star * RP.plasma.ν_en_iz_tot
     @test RP.plasma.ni[inw] ≈ expected[inw] rtol = 1.0e-12
 end
 

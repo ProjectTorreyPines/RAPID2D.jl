@@ -185,10 +185,12 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # the step-entry ν_en_iz that continuity and the energy equation share.
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                # ν_en_iz ALONE, not ν_en_iz_tot: H₂⁺ is produced only by the H₂⁺ channel.
-                # Dissociative ionization makes H⁺, which is a separate species with its
-                # own source. See REACTION_STOICHIOMETRY.
-                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
+                # ν_en_iz_tot, not ν_en_iz alone: under the INTERIM every ion is booked
+                # as H₂⁺ (`REACTION_STOICHIOMETRY.diz`), so dissociative ionization also
+                # dilutes this population — this is NOT the final physics. When H⁺
+                # becomes a transportable species this reverts to `ν_en_iz` alone, and
+                # H⁺ gains its own dilution rate.
+                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz_tot
             end
 
             # TODO: convection/pressure are ignored for ions; adding them needs a
@@ -900,10 +902,12 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             ν_a = @. pla.n_H2_gas * (FT(0.5) * K_ela + K_cx)
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                # ν_en_iz ALONE, not ν_en_iz_tot: H₂⁺ is produced only by the H₂⁺ channel.
-                # Dissociative ionization makes H⁺, which is a separate species with its
-                # own source. See REACTION_STOICHIOMETRY.
-                @. ν_a += Z_i * pla.ν_en_iz          # electron rate: no T_i dependence
+                # ν_en_iz_tot, not ν_en_iz alone: under the INTERIM every ion is booked
+                # as H₂⁺ (`REACTION_STOICHIOMETRY.diz`), so dissociative ionization also
+                # dilutes this population — this is NOT the final physics. When H⁺
+                # becomes a transportable species this reverts to `ν_en_iz` alone, and
+                # H⁺ gains its own dilution rate.
+                @. ν_a += Z_i * pla.ν_en_iz_tot      # electron rate: no T_i dependence
             end
             @. pla.exprb.eig_Ti -= ν_a * FT(1.5) * ee
 
@@ -1001,10 +1005,12 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # per ion, and one ion carries Z of them (see `update_ui_para!`).
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                # ν_en_iz ALONE, not ν_en_iz_tot: H₂⁺ is produced only by the H₂⁺ channel.
-                # Dissociative ionization makes H⁺, which is a separate species with its
-                # own source. See REACTION_STOICHIOMETRY.
-                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
+                # ν_en_iz_tot, not ν_en_iz alone: under the INTERIM every ion is booked
+                # as H₂⁺ (`REACTION_STOICHIOMETRY.diz`), so dissociative ionization also
+                # dilutes this population — this is NOT the final physics. When H⁺
+                # becomes a transportable species this reverts to `ν_en_iz` alone, and
+                # H⁺ gains its own dilution rate.
+                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz_tot
             end
 
             # Calculate atomic power: collision frequency times energy change
@@ -1058,7 +1064,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # rather than in update_RRCs! so that a run with `src` off never builds
             # one. ν_en_iz_tot itself was materialized by update_RRCs! at the
             # step-entry state — do not re-query the table here.
-            op.ν_en_iz .= @views spdiagm(pla.ν_en_iz_tot[:])
+            op.ν_en_iz_tot .= @views spdiagm(pla.ν_en_iz_tot[:])
         end
 
         if RP.flags.diffu
@@ -1134,7 +1140,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             θ_d = RP.flags.diffu ? θ_tr : zero(FT)
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
             θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
-            @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
+            @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz_tot)
             if fit_growth
                 # bern(z) on the diagonal, as a deviation from the identity so the
                 # pattern is untouched. This is the side that cancels on a growth

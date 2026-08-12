@@ -135,11 +135,15 @@ end
 
     # That θ IS the fitted weight is asserted in "the ledger reads the fitted
     # weight on BOTH solve paths"; what is checked here is the count built from it.
+    #
+    # `net_electron_count`, not `counts.iz` alone: since task C2, `born` is split
+    # between `N.iz` and `N.diz` by channel share (REACTION_STOICHIOMETRY.diz), so
+    # only the SUM reproduces the total this fixture's E/p actually grows at.
     θ = reaction_θ(RP, :iz)
     inw = RP.G.nodes.in_wall_nids
     counts = check_reaction_counts(RP)
     expected = @. RP.dt * ((1 - θ) * prev + θ * RP.plasma.ne) * ν
-    @test counts.iz[inw] ≈ expected[inw] rtol = 1.0e-12
+    @test net_electron_count(counts)[inw] ≈ expected[inw] rtol = 1.0e-12
 
     # Growth is where θ_fit falls BELOW ½ — the fitted weight leans explicit as
     # the step outruns the rate, which is the opposite of what stiffness intuition
@@ -216,12 +220,14 @@ end
 end
 
 @testitem "ExpRB growth: the ledger counts the growth the cap allowed, not the one it refused" setup = [ExpRBGrowthFixtures] begin
-    using RAPID2D: ExpRB, Theta, EXPRB_MAX_EXPONENT
+    using RAPID2D: ExpRB, Theta, EXPRB_MAX_EXPONENT, net_electron_count
 
-    # One ionization makes one electron, so with no transport the published count
-    # IS the density increase — an identity the quadrature satisfies by
-    # construction, at any θ and at any step. It is what lets the ion source and
-    # the gas sink read `N.iz` instead of re-deriving the growth.
+    # One ionization, of EITHER channel, makes one electron, so with no transport
+    # the published TOTAL count IS the density increase — an identity the
+    # quadrature satisfies by construction, at any θ and at any step. Since task
+    # C2 that total is `net_electron_count(N) = N.iz .+ N.diz`, not `N.iz` alone:
+    # the ExpRB branch below splits one capped `born` between the two channels by
+    # their instantaneous rate share, so only the sum reproduces it.
     #
     # Above the cap the solve advances with `z_cap` while the ledger multiplied by
     # the uncapped `ν_en_iz_tot`, and the count came out `(z/z_cap)×` too large — 4/3
@@ -232,7 +238,7 @@ end
         n_before = copy(RP.plasma.ne)
         solve_electron_continuity_equation!(RP)
         inw = RP.G.nodes.in_wall_nids
-        return check_reaction_counts(RP).iz[inw], (RP.plasma.ne .- n_before)[inw]
+        return net_electron_count(check_reaction_counts(RP))[inw], (RP.plasma.ne .- n_before)[inw]
     end
 
     ν_probe = maximum(growth_RAPID().plasma.ν_en_iz_tot[growth_RAPID().G.nodes.in_wall_nids])
@@ -255,17 +261,10 @@ end
 
     # The identity is a property of the quadrature, not of ExpRB: Crank–Nicolson
     # satisfies it too, below its pole. Asserting it here says the ledger contract
-    # is what the cap broke, not the ledger.
-    #
-    # DI silenced here on purpose: the Theta/CN branch of `update_reaction_counts!`
-    # deliberately counts `N.iz` from `ν_en_iz` ALONE (the H₂⁺ channel), not
-    # `ν_en_iz_tot` — task C1 leaves species-level stoichiometry (an `N.diz` ledger
-    # for dissociative ionization) to the next task. With DI present `counted` and
-    # `born` differ by exactly that channel's share, which is not what this item
-    # is about — it is about the cap, not the channel split.
+    # is what the cap broke, not the ledger. Also covers the Theta/CN branch with DI
+    # left at its natural (nonzero, at this fixture's E/p) value — `net_electron_count`
+    # sums both channels there too, so nothing needs to be silenced.
     cn = growth_RAPID()
-    cn.plasma.ν_en_diss_iz .= 0.0
-    cn.plasma.ν_en_iz_tot .= cn.plasma.ν_en_iz
     @test cn.flags.scheme.growth === Theta
     counted, born = counted_vs_born(cn, 1 / ν_probe)
     @test counted ≈ born rtol = 1.0e-12

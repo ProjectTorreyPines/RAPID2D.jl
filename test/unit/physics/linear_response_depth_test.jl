@@ -194,7 +194,9 @@ end
         K_ela, K_cx = get_H2_ion_RRC(kr, :Elastic), get_H2_ion_RRC(kr, :Charge_Exchange)
 
         ν_a = @. pla.n_H2_gas * (0.5 * K_ela + K_cx)
-        @. ν_a += Z_i * pla.ν_en_iz                          # src is on in this fixture
+        # ν_en_iz_tot, not ν_en_iz alone: under the interim (REACTION_STOICHIOMETRY.diz)
+        # DI's ion is booked to H₂⁺ too, matching update_ion_power_jacobian!.
+        @. ν_a += Z_i * pla.ν_en_iz_tot                      # src is on in this fixture
         expected = @. -ν_a * 1.5 * ee
         if coulomb
             @. expected -= (2 * (mi * me / (mi + me)^2)) * 1.5 * ee * pla.ν_ei
