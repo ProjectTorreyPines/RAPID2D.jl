@@ -251,7 +251,9 @@ Never form `Kerg_x/K_x` at runtime: the DISS pair is deliberately asymmetric and
 0/0 over most of the grid.
 
 # Other fields
-- `Dissoc_Ionz`: Rate coefficient for dissociative ionization
+- `Dissoc_Ionz_legacy`: (T,ud) dissociative-ionization surface from eRRCs_T_ud.h5.
+  NOT the same quantity as `K_diss_iz`: different coordinates, different data
+  generation, no consumer
 - `Halpha`: Rate coefficient for Halpha emission
 - `Recomb_H2Ion`: Rate coefficient for H2+ recombination
 - `Recomb_H3Ion`: Rate coefficient for H3+ recombination
@@ -277,7 +279,10 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
     Kerg_diss_exc::RRC_EoverP_Erg{FT}
     Kerg_tot::RRC_EoverP_Erg{FT}
 
-    Dissoc_Ionz::RRC_T_ud{FT}
+    # From eRRCs_T_ud.h5, and NOT the same quantity as `K_diss_iz`: different
+    # coordinates, different data generation, no consumer. Named `_legacy` so the
+    # collision with the live channel cannot be made by accident.
+    Dissoc_Ionz_legacy::RRC_T_ud{FT}
     Halpha::RRC_T_ud{FT}
     Recomb_H2Ion::RRC_T_ud{FT}
     Recomb_H3Ion::RRC_T_ud{FT}
@@ -332,7 +337,7 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
         T_eV = read(h5fid, "T_eV")
         ud_para = read(h5fid, "ud_para")
         srf(name) = read_T_ud_surface(h5fid, name, order)
-        Dissoc_Ionz = RRC_T_ud(T_eV, ud_para, srf("Dissoc_Ionz"))
+        Dissoc_Ionz_legacy = RRC_T_ud(T_eV, ud_para, srf("Dissoc_Ionz"))
         Halpha = RRC_T_ud(T_eV, ud_para, srf("Halpha"))
         Recomb_H2Ion = RRC_T_ud(T_eV, ud_para, srf("Recomb_H2Ion"))
         Recomb_H3Ion = RRC_T_ud(T_eV, ud_para, srf("Recomb_H3Ion"))
@@ -346,7 +351,7 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
             K_mom, K_mom_by_ela, K_mom_by_exc, K_mom_by_diss_exc,
             K_mom_by_iz, K_mom_by_diss_iz,
             Kerg_ela, Kerg_exc, Kerg_diss_exc, Kerg_tot,
-            Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion,
+            Dissoc_Ionz_legacy, Halpha, Recomb_H2Ion, Recomb_H3Ion,
         )
     end
 end

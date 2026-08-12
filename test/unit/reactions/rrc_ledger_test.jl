@@ -219,3 +219,12 @@ end
     c = RAPID2D.PlasmaConstants{Float64}()
     @test c.iz_erg_eV == 15.426
 end
+
+@testitem "RRC loader: the (T,ud) dissociative-ionization surface is marked legacy" setup = [LedgerRAPID] begin
+    # `Dissoc_Ionz` comes from eRRCs_T_ud.h5: a different quantity from K_diss_iz, on
+    # different coordinates, from a different data generation, and consumed by nothing.
+    # Sharing a plain name with the live channel is a trap, not an alias.
+    RP = ledger_RAPID()
+    @test !hasfield(typeof(RP.eRRCs), :Dissoc_Ionz)
+    @test hasfield(typeof(RP.eRRCs), :Dissoc_Ionz_legacy)
+end

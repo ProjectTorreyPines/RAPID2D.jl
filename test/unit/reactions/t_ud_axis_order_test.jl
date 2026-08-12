@@ -8,7 +8,7 @@
     # Read the other way round the same surface reports 3.6e-14 m³/s at 19 meV,
     # which would need exp(−15.4/0.019).
     eRRCs = load_electron_RRCs()
-    iz = eRRCs.Dissoc_Ionz            # the (T, u_d) ionization surface in that file
+    iz = eRRCs.Dissoc_Ionz_legacy     # the (T, u_d) ionization surface in that file
     T, u = iz.T_eV, iz.ud_para
     @test size(iz.raw_data) == (length(T), length(u))
 
