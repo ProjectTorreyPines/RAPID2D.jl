@@ -802,8 +802,18 @@ end
             # equilibrium, so a small future retuning of the phenomenological factor does
             # not need to keep re-tightening it. The second assertion below USED to be a
             # `@test_broken` tripwire watching for this exact repair; converted to a
-            # plain `@test` now that the repair has landed (Te_end -> room_T_eV to ~1e-9,
-            # both directions, measured -- see task-B3-report.md).
+            # plain `@test` now that the repair has landed (Te_end -> room_T_eV to ~2e-11
+            # relative, both directions, measured -- see task-B3-report.md).
+            #
+            # What that second assertion does NOT do: validate the phenomenological
+            # form's magnitude or shape. T_gas is now an exact fixed point BY
+            # CONSTRUCTION -- both P_ela's and P_exc's cold-target factors are defined to
+            # vanish at Ē = 1.5*T_gas, so `isapprox(Te_end, room)` mechanically follows
+            # from that shared zero-crossing, which this task imposed, not from anything
+            # empirically validated about the linear form away from T_gas. Do not read
+            # the tight agreement above as evidence the phenomenological approximation is
+            # accurate in general -- that argument (and its actual accuracy bounds) lives
+            # at the `cold_factor`/`P_en_exc` comment in `update_electron_heating_powers!`.
             @test 0.2 * room < Te_end < 1.1 * room
             @test isapprox(Te_end, room; rtol = 0.1)
             if is_hot
@@ -822,7 +832,7 @@ end
     @testset "both directions converge to the SAME fixed point" begin
         # The real diagnostic value here: a sign error or a divergence in the energy
         # equation would not generally land cooling-from-hot and heating-from-cold on the
-        # same equilibrium. Measured agreement after 500 steps (0.5 s): ~5e-7 relative
+        # same equilibrium. Measured agreement after 500 steps (0.5 s): ~1.5e-11 relative
         # (see task-B3-report.md); rtol below is set with ample margin.
         #
         # Guarded rather than indexed directly: if a branch above errors before reaching

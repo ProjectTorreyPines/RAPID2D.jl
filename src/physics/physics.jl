@@ -554,8 +554,11 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # That would cut electronic excitation by a permanent 18.4%. The linear
             # cold-target form shares both correct limits (0 at Tₑ = T_gas, -> 1 at high
             # Tₑ) and costs only 0.28% at Tₑ = 9.2 eV instead of 18.4%; in the band where
-            # rotation IS the whole group (Tₑ ~ 0.03-0.15 eV) the linear and exact forms
-            # agree within ~15%, so this is not over-correcting where it matters.
+            # rotation IS the whole group (Tₑ ~ 0.05-0.15 eV) the linear and exact forms
+            # agree within ~15% (14% at 0.05 eV, 10% at 0.15 eV), so this is not
+            # over-correcting where it matters. That agreement narrows fast below 0.05 eV
+            # -- 34% low at Tₑ = 0.03 eV -- which is why the band above starts there and
+            # not lower.
             #
             # Retire this the day BD exports `L_exc_rot` separately: the exact factor
             # can then be applied to the rotational part alone, leaving the rest of EXC

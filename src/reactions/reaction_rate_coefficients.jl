@@ -238,7 +238,11 @@ substituting one for another; none of them are interchangeable.
 ## Energy ledger [W·m³] — each collision counts `Δε`
 - `Kerg_ela`: elastic recoil. **`2mₑ/M` and `e` are already inside.** Cold-target: it does
   not vanish at `Tₑ = T_gas`, hence the `(1 − 3T_gas/2Ē)` factor at the use site
-- `Kerg_exc`: EXC group. Carries the vib/rot cooling nothing else has
+- `Kerg_exc`: EXC group. Carries the vib/rot cooling nothing else has. Also consumed
+  with the `(1 − 3T_gas/2Ē)` factor at the use site — a deliberate deviation from this
+  dataset's own `consume_as` (which specifies no factor), because it too is a one-way,
+  ground-state coefficient with no superelastic return. See the code site
+  (`update_electron_heating_powers!`) and `RRC_data/README.md` for the full reasoning
 - `Kerg_diss_exc`: DISS group, triplet energy only
 - `Kerg_tot`: `Kerg_ela + Kerg_exc + Kerg_diss_exc + e(15.426·K_iz + 35.0·K_diss_iz)`,
   assembled by BD from the exported parts, so it closes by construction
