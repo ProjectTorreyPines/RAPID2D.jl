@@ -763,64 +763,49 @@ end
             Te_end = weighted_Te(RP)
             Te_ends[is_hot] = Te_end
 
-            # Stage A note (kept separate from Stage B below on purpose -- the two
-            # effects are unrelated, and this migration was staged precisely so they
-            # would not get conflated). Before Task B3, this same assertion pinned
-            # Te_end ~ 0.0048 eV, caused by the deprecated `Total_Excitation` alias
-            # carrying the raw EXC-group rate in the cold band -- a 272x over-charge on
-            # rotational excitation. Task B3 deleted the formula that read that alias.
+            # Stage A note (kept separate from the Stage B / cold-target-on-exc notes
+            # below on purpose -- the effects are unrelated, and this migration was
+            # staged precisely so they would not get conflated). Before Task B3, this
+            # same assertion pinned Te_end ~ 0.0048 eV, caused by the deprecated
+            # `Total_Excitation` alias carrying the raw EXC-group rate in the cold band
+            # -- a 272x over-charge on rotational excitation. Task B3 deleted the formula
+            # that read that alias.
             #
-            # Re-targeted 2026-08-11 (Stage B, corrected). Tₑ equilibrates BELOW T_gas
-            # here, and that is a known, bounded model limitation, not a bug in this
-            # equation. The model's inelastic coefficients (Kerg_exc et al.) are
-            # ONE-WAY: computed against a stationary, ground-state H2, they charge the
-            # electron for spinning a molecule up but credit nothing back for a
-            # molecule that is already rotating handing energy to the electron
-            # (superelastic collisions). Only rotation is affected in practice: its
-            # threshold, ΔE_rot = 0.0441 eV, is only 1.7x room_T_eV, so a real fraction
-            # of molecules are thermally pre-excited at 300 K; vibration (0.516 eV) and
-            # the electronic channels (>= 11.2 eV) have essentially no thermal
-            # population at 300 K, so a one-way coefficient is correct for them. It is
-            # left unmodeled deliberately, not from oversight: BD's own assessment
-            # (BreakdownDynamics.jl, claudedocs/vib_rot_assessment/ASSESSMENT.md --
-            # that repo, not this one) puts the superelastic omission at ~0.5% under
-            # avalanche conditions, and Tₑ ≈ T_gas is a brief initial transient in any
-            # driven run -- once the discharge drives, Tₑ leaves this regime within
-            # microseconds. Building a superelastic correction for a ~0.5%,
-            # microseconds-long effect would be over-engineering.
+            # Stage B, first pass (2026-08-11): retargeting the assertion at what the
+            # model then guaranteed. With P_exc = n_gas*Kerg_exc uncorrected, Tₑ
+            # equilibrated BELOW T_gas -- a known, bounded model limitation, not a bug:
+            # `Kerg_exc`, like `Kerg_ela`, is a ONE-WAY coefficient (stationary,
+            # ground-state H2), so it kept draining energy at Tₑ = T_gas with no
+            # superelastic return. Only rotation mattered in practice: its threshold,
+            # ΔE_rot = 0.0441 eV, is only 1.7x room_T_eV, so a real fraction of molecules
+            # are thermally pre-excited at 300 K; vibration (0.516 eV) and the electronic
+            # channels (>= 11.2 eV) have essentially no thermal population there. Left
+            # unmodeled at the time, deliberately: BD's own assessment
+            # (BreakdownDynamics.jl, claudedocs/vib_rot_assessment/ASSESSMENT.md -- that
+            # repo, not this one) puts the superelastic omission at ~0.5% under avalanche
+            # conditions, and Tₑ ≈ T_gas is a brief initial transient in any driven run.
             #
-            # Before this migration the "relaxes to room_T_eV" assertion passed only
-            # because there was NO sub-threshold cooling at all -- zero forward
-            # (excitation) and zero reverse (superelastic), accidentally balanced. Now
-            # that forward cooling exists (correctly, per the ledger) with no return
-            # channel, Tₑ has nowhere to equilibrate but below T_gas.
+            # Stage B, second pass (2026-08-11, same day): the human partner directed
+            # adding the correction anyway, as physics rather than a bug fix -- the same
+            # cold-target factor already applied to P_ela now also applies to P_exc (see
+            # `update_electron_heating_powers!`, which documents why the form is
+            # phenomenological rather than exact detailed balance). Tₑ now DOES relax to
+            # room_T_eV, confirmed below. But this is not the exact physics: the
+            # correction is a linear approximation applied to the WHOLE EXC group
+            # because rotation is not exported separately, not the true detailed-balance
+            # factor applied to rotation alone. BD exporting `L_exc_rot` would still be
+            # an improvement, letting the exact factor replace this one.
             #
-            # Two assertions below, and the pair is the point -- not the specific value,
-            # which is a model artifact of the one-way omission above, not a physical
-            # constant, and would freeze that omission into the suite as if it were
-            # intended if pinned as a golden. (Measured: ~0.0111 eV, i.e. ~0.427*room --
-            # not hardcoded here for that reason.)
-            #
-            # The bracket is what guards the equation: it catches a sign flip (either
-            # branch leaves the bracket), a divergence, and an excitation sink wrong by a
-            # large factor -- which a bare `0 < Te_end < room` did not, since
-            # Te_end -> 1e-6 satisfied it too. Loose at the top on purpose, so it still
-            # holds once the limitation below is repaired and Te_end rises to room_T_eV;
-            # loose at the bottom with roughly a factor two of headroom under the
-            # measured value, not hugging it.
+            # Two assertions below, and the pair is still the point. The bracket guards
+            # the equation against a sign flip, a divergence, or an excitation sink wrong
+            # by a large factor -- deliberately loose, not hugging the now-correct
+            # equilibrium, so a small future retuning of the phenomenological factor does
+            # not need to keep re-tightening it. The second assertion below USED to be a
+            # `@test_broken` tripwire watching for this exact repair; converted to a
+            # plain `@test` now that the repair has landed (Te_end -> room_T_eV to ~1e-9,
+            # both directions, measured -- see task-B3-report.md).
             @test 0.2 * room < Te_end < 1.1 * room
-
-            # A TRIPWIRE, not a suppression -- and the opposite direction from the
-            # @test_broken Task B3 retired earlier in this same testitem's history: that
-            # one blamed the deprecated `Total_Excitation` surface, a cause this task's
-            # change eliminated, so it was stale and got removed. This one names a live,
-            # documented limitation (the one-way inelastic coefficients above) and exists
-            # to detect its repair. Tₑ SHOULD be room_T_eV and is not, for that reason.
-            # Julia reports an unexpected PASS of a `@test_broken` as a failure, so on the
-            # day BD exports the rotational channel separately and a detailed-balance
-            # factor is applied to it, this line announces that the limitation is closed
-            # -- even if nobody remembers this test exists.
-            @test_broken isapprox(Te_end, room; rtol = 0.1)
+            @test isapprox(Te_end, room; rtol = 0.1)
             if is_hot
                 @test Te_end < Te0                    # hot electrons cooled by the gas
             else
@@ -1000,7 +985,14 @@ end
         # no longer nu_en_exc_eff normalized by the constant char_exc_erg_eV -- it is read
         # straight off the ledger as P_en_exc = n_gas*Kerg_exc, which already carries its
         # own (Ē-dependent) per-event cost.
-        @test pla.ePowers.exc[inw] ≈ pla.P_en_exc[inw]
+        #
+        # Re-baselined again 2026-08-11 (deliberate physics addition, not a fix): P_exc
+        # now carries the same cold-target factor as P_ela, added to correct for the
+        # one-way (no-superelastic-return) rotational excitation coefficient -- see
+        # update_electron_heating_powers! for the full justification.
+        Ē = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
+        cold = @. 1.0 - 1.5 * pla.T_gas_eV / Ē
+        @test pla.ePowers.exc[inw] ≈ (pla.P_en_exc .* cold)[inw]
         @test pla.ePowers.iz[inw] ≈ (ee * iz_erg_eV .* pla.ν_en_iz)[inw]
     end
 
@@ -1632,7 +1624,9 @@ end
     using RAPID2D: update_RRCs!, update_electron_heating_powers!, get_electron_RRC
     # The strongest single test in this migration. BD assembles Kerg_tot from the exported
     # parts AFTER hard-zeroing, so the five sinks must reproduce it — up to the cold-target
-    # factor on P_ela, which is why it is added back here rather than compared raw.
+    # factor RAPID2D applies to P_ela AND (deliberate deviation from the ledger's own
+    # consume_as contract, see update_electron_heating_powers!) to P_exc, which is why
+    # both are divided back out here rather than compared raw.
     config = SimulationConfig{Float64}(
         NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
         dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
@@ -1656,9 +1650,10 @@ end
     # RAPID{FT} has no Broadcast.broadcastable, so it falls to Base's iterable
     # fallback and dies on length(RP). Call once, then broadcast the multiply.
     tot = ng .* get_electron_RRC(RP, :Kerg_tot)
-    # P_ela was charged with the cold-target factor; divide it back out to compare against
-    # the raw ledger.
-    parts = @. eP.ela / cold + eP.exc + eP.diss_exc + eP.iz + eP.diss_iz
+    # P_ela and P_exc were both charged with the cold-target factor; divide it back out of
+    # both to compare against the raw ledger. P_diss_exc stays raw (no superelastic return
+    # to correct for at the DISS-group thresholds), matching how it is charged above.
+    parts = @. eP.ela / cold + eP.exc / cold + eP.diss_exc + eP.iz + eP.diss_iz
     inw = RP.G.nodes.in_wall_nids
     @test maximum(abs.(parts[inw] .- tot[inw]) ./ tot[inw]) < 1.0e-6
 end
@@ -1688,11 +1683,17 @@ end
     update_RRCs!(RP); update_electron_heating_powers!(RP)
     @test all(>(0.0), RP.plasma.ePowers.ela[inw])
 
-    # At T_gas with no drift: it must vanish, to the 0.6 % offset between RAPID2D's
-    # room_T_eV = 0.026 and BD's cold-band anchor 1.5 x 0.02585.
+    # At T_gas with no drift: BOTH P_ela AND P_exc must vanish, to the 0.6 % offset
+    # between RAPID2D's room_T_eV = 0.026 and BD's cold-band anchor 1.5 x 0.02585 --
+    # they now share the identical cold-target factor (deliberate physics addition:
+    # P_exc is one-way, like P_ela, and gets the same correction). ePowers.exc can no
+    # longer serve as its own nonzero reference scale here, so scale against the RAW
+    # ledger P_en_exc (pre-factor) instead.
     RP.plasma.Te_eV .= RP.plasma.T_gas_eV
     RP.plasma.ue_para .= 0.0
     update_RRCs!(RP); update_electron_heating_powers!(RP)
-    scale = maximum(abs.(RP.plasma.ePowers.exc[inw]))
+    scale = maximum(abs.(RP.plasma.P_en_exc[inw]))
+    @test scale > 0.0                                          # or the checks below are vacuous
     @test maximum(abs.(RP.plasma.ePowers.ela[inw])) < 0.02 * scale
+    @test maximum(abs.(RP.plasma.ePowers.exc[inw])) < 0.02 * scale
 end

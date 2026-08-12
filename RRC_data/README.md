@@ -59,6 +59,34 @@ Three ledgers, three weightings of the same `⟨σv⟩` average — see
 Never form `L_x/K_x` at runtime. The pair is deliberately asymmetric for the DISS group and
 is 0/0 on most of the grid; both ledgers must be read directly.
 
+### ⚠️ RAPID2D deviates from `L_exc`'s `consume_as` contract
+
+`L_exc`'s `consume_as` attribute says `P = n_e * n_gas * L_exc`, no correction factor —
+and every other ledger column here is consumed exactly as its attribute says. `L_exc` is
+the one exception: RAPID2D multiplies it by the same cold-target factor applied to
+`L_ela`, `(1 - (3/2)·T_gas/Ē)` (see `update_electron_heating_powers!` in
+`src/physics/physics.jl`).
+
+Reason: `K_exc`/`L_exc`, like the elastic surfaces, are one-way coefficients — computed
+against a stationary, ground-state H2 — with no superelastic return channel. That is
+correct for vibration (0.516 eV) and the electronic channels (>= 11.2 eV), which have no
+thermal population at 300 K, but not for rotation: `ΔE_rot = 0.0441 eV` is only 1.7x room
+temperature, so a real fraction of molecules are already rotationally excited and handing
+energy back. Left uncorrected, `L_exc` keeps draining electron energy even at `Tₑ =
+T_gas`, which is a real, measured effect in this codebase (electrons settle at ~0.0111 eV
+instead of relaxing to T_gas in `Atomic_Collision`-only relaxation).
+
+The correction is phenomenological, not exact detailed balance, because rotation is not
+exported as its own dataset — it is folded into the whole EXC group. The exact rotational
+factor, `1 - exp(ΔE/Tₑ - ΔE/T_gas)`, does not return to 1 at high `Tₑ`; applied to the
+whole group it would suppress electronic excitation by a permanent 18.4%. The linear
+cold-target form shares the exact factor's two limits (0 at `Tₑ = T_gas`, → 1 at high
+`Tₑ`) without that permanent cost.
+
+Retire this override the day an `L_exc_rot` dataset lets the exact factor be applied to
+the rotational part alone, leaving the rest of `EXC` on the literal `consume_as`
+contract.
+
 ## Checking a table
 
 `scripts/check_ion_rrc_tables.jl` recomputes `⟨σv⟩(T, u_d)` for the H₂⁺ channels by

@@ -519,20 +519,55 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # that is the point below which the interpolant stops meaning anything
             # (bounds the factor to ~-38 rather than ~-1.8e14). Ē_eV = 1e-3 eV is
             # Tₑ ≈ 7.7 K, so this floor guards a diverging solve, not a physical regime.
+            #
+            # Shared with the excitation term below -- same factor, same floor, computed
+            # once -- so elastic and excitation cannot drift apart.
             Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
-            @. ePowers.ela = pla.P_en_ela * (
-                one(FT) - FT(1.5) * pla.T_gas_eV / max(Ē_eV, Ē_floor)
-            )
+            cold_factor = @. one(FT) - FT(1.5) * pla.T_gas_eV / max(Ē_eV, Ē_floor)
+            @. ePowers.ela = pla.P_en_ela * cold_factor
 
             # Excitation, tabulated. No constant survives here: the EXC group spans
             # 0.0441 eV (rot) to 14.9 eV, a factor 338 in per-event cost, so its mean cost
             # is a function of where the distribution sits and ran 0.059-9.72 eV across
             # the operating range against the 12.0 eV this used to hard-code.
-            @. ePowers.exc = pla.P_en_exc
+            #
+            # DEVIATION FROM THE LEDGER'S WRITTEN CONTRACT -- deliberate, and loud on
+            # purpose. `L_exc`'s `consume_as` attribute in the HDF5 file says
+            # `P = n_e * n_gas * L_exc`, no factor. Every other term in this function
+            # consumes its ledger column literally; this is the one place that does not,
+            # so it must announce itself or a reader cross-checking BD's own docs will
+            # read the mismatch as a bug.
+            #
+            # Why: `Kerg_exc`, like `Kerg_ela`, is a ONE-WAY coefficient -- computed
+            # against a stationary, ground-state H2 -- so with no correction it keeps
+            # draining energy at Tₑ = T_gas, which is why (pre-fix) this equation settled
+            # Tₑ at ~0.0111 eV instead of relaxing to T_gas. Only rotation matters here:
+            # ΔE_rot = 0.0441 eV is 1.7x room_T_eV, so a real thermal population is
+            # already pre-excited at 300 K; vibration (0.516 eV) and the electronic
+            # channels (>= 11.2 eV) have no such population and need no correction.
+            #
+            # The form below is PHENOMENOLOGICAL, not exact detailed balance. The exact
+            # rotational factor is `1 - exp(ΔE/Tₑ - ΔE/T_gas)`, but applied to the WHOLE
+            # EXC group (rotation is not exported separately) it does not return to 1 at
+            # high Tₑ -- it plateaus at 0.816, since superelastic never stops and its
+            # rate relative to excitation is fixed by the gas Boltzmann ratio, not by Tₑ.
+            # That would cut electronic excitation by a permanent 18.4%. The linear
+            # cold-target form shares both correct limits (0 at Tₑ = T_gas, -> 1 at high
+            # Tₑ) and costs only 0.28% at Tₑ = 9.2 eV instead of 18.4%; in the band where
+            # rotation IS the whole group (Tₑ ~ 0.03-0.15 eV) the linear and exact forms
+            # agree within ~15%, so this is not over-correcting where it matters.
+            #
+            # Retire this the day BD exports `L_exc_rot` separately: the exact factor
+            # can then be applied to the rotational part alone, leaving the rest of EXC
+            # (vibration, electronic) on the literal `consume_as` contract.
+            @. ePowers.exc = pla.P_en_exc * cold_factor
 
             # Dissociative excitation, charged separately because its energy split from
             # EXC is not recoverable afterwards: a B-excited molecule costs its full
             # 11.184 eV whether or not it later dissociates, so that energy stays in exc.
+            # Stays RAW, no cold-target factor: the DISS group is the triplets,
+            # thresholds 8.9-11.8 eV, with no thermal population at 300 K to return
+            # energy from -- there is no superelastic channel here to correct for.
             @. ePowers.diss_exc = pla.P_en_diss_exc
 
             # For ionization
