@@ -94,21 +94,27 @@ end
     @test maximum(rel) < 2.0e-2
 end
 
-@testitem "RRC ledger: the deprecated Total_Excitation alias is corrupt in the cold band" begin
+@testitem "RRC ledger: the installed table carries no legacy surface" begin
     using RAPID2D.HDF5
-    # BD's cold-band fill wrote the raw EXC-group rate K_exc into the legacy alias below
-    # 0.0388 eV, where the electronic channels it is supposed to encode (thresholds >=
-    # 8.9 eV) are identically zero. Pinned so the defect is visible at the data level and
-    # so deleting Total_Excitation in Task B5 is provably a removal of something broken.
+    # The compile-time proof that nothing reads a pre-2026-08 name. A grep cannot see a
+    # name built at runtime; a missing dataset can only fail loudly.
+    #
+    # This replaces the testitem that pinned the cold-band defect in `Total_Excitation`
+    # (the alias carried the raw EXC-group rate below 0.0388 eV, billing rotational
+    # excitation at 12 eV instead of 0.0441 eV). That surface no longer ships, so the
+    # defect is retired rather than merely unread.
     path = joinpath(pkgdir(RAPID2D), "RRC_data", "eRRCs_EoverP_Erg.h5")
-    E, te, ke = h5open(path) do f
-        read(f, "Erg_eV"), read(f, "Total_Excitation"), read(f, "K_exc")
+    names = h5open(keys, path)
+    for k in (
+            "Total_Excitation", "Total_Momentum", "Ionization", "Elastic",
+            "Momentum_by_ela", "Momentum_by_exc", "Momentum_by_iz",
+        )
+        @test !(k in names)
     end
-    cold = findall(<(0.0388), E)
-    warm = findall(>(0.05), E)
-    @test any(!iszero, te[:, cold])          # nonzero where electronic excitation cannot be
-    @test te[:, cold] == ke[:, cold]         # and it is bit-identical to the EXC group rate
-    @test te[:, warm] != ke[:, warm]         # above the cold band the alias is its own thing
+    # And the modern set is all still there — a truncated file would also pass the above.
+    for k in ("K_iz", "K_diss_iz", "K_exc", "K_mom", "L_ela", "L_exc", "L_tot")
+        @test k in names
+    end
 end
 
 @testsnippet LedgerRAPID begin

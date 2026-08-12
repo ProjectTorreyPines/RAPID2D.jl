@@ -5,7 +5,7 @@ grids in HDF5.
 
 | file | axes | contents |
 |---|---|---|
-| `eRRCs_EoverP_Erg.h5` | `EoverP` × `Erg_eV`, 201 × 300 | electron ledgers, 2026-08 group schema: particles `K_iz`, `K_diss_iz`, `K_exc`, `K_diss_exc`, `K_ela`; momentum `K_mom` + `K_mom_by_*`; energy `L_ela`, `L_exc`, `L_diss_exc`, `L_tot` [W·m³]. Legacy aliases (`Ionization`, `Total_Momentum`, `Elastic`, `Momentum_by_*`, `Total_Excitation`) retained for the migration and removed once nothing reads them |
+| `eRRCs_EoverP_Erg.h5` | `EoverP` × `Erg_eV`, 201 × 300 | electron ledgers, 2026-08 group schema, 19 datasets and no legacy surface: axes `EoverP`, `Erg_eV`; particles `K_iz`, `K_diss_iz`, `K_exc`, `K_diss_exc`, `K_ela`; momentum `K_mom`, `K_mom_by_ela`, `K_mom_by_exc`, `K_mom_by_diss_exc`, `K_mom_by_iz`, `K_mom_by_diss_iz`; energy `L_ela`, `L_exc`, `L_diss_exc`, `L_tot` [W·m³]; plus `characteristic_exc_erg_eV`, `saturation`. The pre-2026-08 aliases (`Ionization`, `Total_Momentum`, `Elastic`, `Momentum_by_*`, `Total_Excitation`) no longer ship: `Total_Excitation` was corrupt in the cold band (see `internal/docs/src/notes/design/bd-reaction-schema-migration.md` §7.1b), and the legacy build is retired rather than kept around unread |
 | `eRRCs_T_ud.h5` | `T_eV` × `ud_para`, 200 × 200 | electron `Halpha`, `Ionization`, `Momentum`, `Total_Excitation`, `Dissoc_Ionz`, `Recomb_H2Ion`, `Recomb_H3Ion` |
 | `iRRCs_T_ud.h5` | `T_eV` × `ud_para`, 100 × 100 | H₂⁺ `Elastic`, `Charge_Exchange`, `Particle_Exchange`, `Target_Ionization`, `Projectile_Dissociation` |
 

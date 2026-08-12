@@ -40,11 +40,14 @@ end
     end
 
     @testset "RRC_EoverP_Erg" begin
-        # Load test data directly
+        # Load test data directly. K_iz is just a convenient 2-D sample surface for
+        # exercising the generic RRC_EoverP_Erg struct/interpolation -- any surface on
+        # this file's grid would do (the deprecated "Ionization" alias this used to read
+        # no longer ships, see Task B7).
         h5open(EoverP_Erg_file, "r") do file
             EoverP = read(file, "EoverP")
             Erg_eV = read(file, "Erg_eV")
-            ionization_data = read(file, "Ionization")
+            ionization_data = read(file, "K_iz")
 
             # Test constructor
             rrc = RRC_EoverP_Erg(EoverP, Erg_eV, ionization_data)
