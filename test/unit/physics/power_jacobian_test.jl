@@ -66,11 +66,9 @@
                     "K_mom", "K_mom_by_ela", "K_mom_by_exc", "K_mom_by_diss_exc",
                     "K_mom_by_iz", "K_mom_by_diss_iz",
                     "L_ela", "L_exc", "L_diss_exc", "L_tot",
-                    "Total_Excitation",
                 )
                 fid[name] = copy(data)
             end
-            fid["characteristic_exc_erg_eV"] = RP.config.constants.char_exc_erg_eV
         end
         RP.eRRCs = Electron_RRCs(
             path, joinpath(dirname(dirname(pathof(RAPID2D))), "RRC_data", "eRRCs_T_ud.h5")

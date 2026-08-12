@@ -226,7 +226,7 @@ substituting one for another; none of them are interchangeable.
 ## Particle ledger [m³/s] — each collision counts 1
 - `K_iz`: `e + H₂ → 2e + H₂⁺`
 - `K_diss_iz`: `e + H₂ → 2e + H⁺ + H⁰`, zero below 35 eV impact
-- `K_exc`: EXC-group event rate (singlets + vib + rot). **Not** `Total_Excitation`
+- `K_exc`: EXC-group event rate (singlets + vib + rot)
 - `K_diss_exc`: `e + H₂ → 2H⁰ + e`, triplets plus the B/C singlet branching yields
 
 ## Momentum ledger [m³/s] — each collision counts `w_mom`, `v_z`-weighted moment
@@ -249,11 +249,6 @@ substituting one for another; none of them are interchangeable.
 
 Never form `Kerg_x/K_x` at runtime: the DISS pair is deliberately asymmetric and both are
 0/0 over most of the grid.
-
-## Deprecated
-- `Total_Excitation`, `characteristic_exc_erg_eV`: the pre-2026-08 `K_exc⟨E_exc⟩/12`
-  encoding over electronic channels only. Superseded by `Kerg_exc`; removed once nothing
-  reads them
 
 # Other fields
 - `Dissoc_Ionz`: Rate coefficient for dissociative ionization
@@ -282,15 +277,10 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
     Kerg_diss_exc::RRC_EoverP_Erg{FT}
     Kerg_tot::RRC_EoverP_Erg{FT}
 
-    # ── deprecated, removed in Task B6 once nothing reads it
-    Total_Excitation::RRC_EoverP_Erg{FT}
-
     Dissoc_Ionz::RRC_T_ud{FT}
     Halpha::RRC_T_ud{FT}
     Recomb_H2Ion::RRC_T_ud{FT}
     Recomb_H3Ion::RRC_T_ud{FT}
-
-    characteristic_exc_erg_eV::Union{FT, Nothing}  # deprecated with Total_Excitation
 
     function Electron_RRCs(eRRC_EoverP_Erg_fileName::String, eRRC_T_ud_fileName::String)
         @assert isfile(eRRC_EoverP_Erg_fileName) "File not found: $eRRC_EoverP_Erg_fileName"
@@ -334,10 +324,6 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
         Kerg_exc = srf_eop("L_exc")
         Kerg_diss_exc = srf_eop("L_diss_exc")
         Kerg_tot = srf_eop("L_tot")
-
-        Total_Excitation = srf_eop("Total_Excitation")   # deprecated; removed in B6
-        char_exc = haskey(h5fid, "characteristic_exc_erg_eV") ?
-            Float64(read(h5fid, "characteristic_exc_erg_eV")) : nothing
         close(h5fid)
 
         # Create RRC_T_ud objects for each reaction type from the given H5 file
@@ -360,35 +346,9 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
             K_mom, K_mom_by_ela, K_mom_by_exc, K_mom_by_diss_exc,
             K_mom_by_iz, K_mom_by_diss_iz,
             Kerg_ela, Kerg_exc, Kerg_diss_exc, Kerg_tot,
-            Total_Excitation,
             Dissoc_Ionz, Halpha, Recomb_H2Ion, Recomb_H3Ion,
-            char_exc === nothing ? nothing : FT(char_exc)
         )
     end
-end
-
-"""
-    check_exc_erg_consistency(eRRCs::Electron_RRCs, char_exc_erg_eV)
-
-Verify the loaded electron RRC table's excitation normalization matches RAPID2D's
-`char_exc_erg_eV` (`config.constants`). The `Total_Excitation` surface is energy-normalized
-to the table's `characteristic_exc_erg_eV`, so `P_exc = e·char_exc_erg_eV·n_gas·RRC` only
-reproduces the kinetic loss if the two agree. Missing (`nothing`) → warn + assume our
-value; present but different → error. Called from `initialize_RRCs!`.
-"""
-function check_exc_erg_consistency(eRRCs::Electron_RRCs, char_exc_erg_eV::Real)
-    ch = eRRCs.characteristic_exc_erg_eV
-    if ch === nothing
-        @warn "Electron RRC table has no characteristic_exc_erg_eV; " *
-            "assuming $char_exc_erg_eV eV (RAPID2D's char_exc_erg_eV)."
-    else
-        isapprox(ch, char_exc_erg_eV; rtol = 1.0e-6) || error(
-            "Electron RRC table is normalized to characteristic_exc_erg_eV = $ch eV, " *
-                "but RAPID2D uses char_exc_erg_eV = $char_exc_erg_eV eV. Regenerate the table or " *
-                "update PlasmaConstants.char_exc_erg_eV so they match."
-        )
-    end
-    return nothing
 end
 
 """
@@ -527,8 +487,8 @@ Evaluate the electron reaction rate coefficients on the `(E/p, Ē)` surfaces and
 corresponding collision frequencies `ν = n_H2_gas · K` on `RP.plasma`.
 
 **This is the only place those tables are queried during a simulation step.** Consumers
-read `plasma.ν_en_iz`, `ν_en_diss_iz`, `ν_en_mom_tot`, `P_en_ela`, `P_en_exc`,
-`P_en_diss_exc`; they must not call
+read `plasma.ν_en_iz`, `ν_en_diss_iz`, `ν_en_mom_tot`, `ν_en_mom_ela`, `P_en_ela`,
+`P_en_exc`, `P_en_diss_exc`; they must not call
 [`get_electron_RRC`](@ref) themselves. A step that re-queries ends up with the same
 physical coefficient evaluated at two different plasma states — the momentum equation
 removing drag at one `ν_mom` while the energy equation credits frictional heating at
@@ -562,15 +522,12 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     if RP.flags.Atomic_Collision
         K_mom_tot = get_electron_RRC(RP, :K_mom)
         K_mom_ela = get_electron_RRC(RP, :K_mom_by_ela)
-        K_exc_eff = get_electron_RRC(RP, :Total_Excitation)
         @. pla.ν_en_mom_tot = pla.n_H2_gas * K_mom_tot
         @. pla.ν_en_mom_ela = pla.n_H2_gas * K_mom_ela
-        @. pla.ν_en_exc_eff = pla.n_H2_gas * K_exc_eff
 
         if want_jacobian
             update_rate_jacobian!(RP, :K_mom, pla.dν_dTe.mom_tot)
             update_rate_jacobian!(RP, :K_mom_by_ela, pla.dν_dTe.mom_ela)
-            update_rate_jacobian!(RP, :Total_Excitation, pla.dν_dTe.exc_eff)
         end
 
         # Energy ledger. `update_rate_jacobian!` already multiplies by n_H2_gas·(3/2),

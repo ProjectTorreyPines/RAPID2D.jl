@@ -199,13 +199,12 @@ it is a lag, and a term that pretends otherwise will drift.
     iz::Matrix{FT} = zeros(FT, dims)        # ∂ν_en_iz/∂Tₑ
     mom_tot::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_tot/∂Tₑ
     mom_ela::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_ela/∂Tₑ
-    exc_eff::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_exc_eff/∂Tₑ
     diss_iz::Matrix{FT} = zeros(FT, dims)       # ∂ν_en_diss_iz/∂Tₑ
     ela_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_ela/∂Tₑ at frozen cold-target factor
     exc_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_exc/∂Tₑ
     diss_exc_erg::Matrix{FT} = zeros(FT, dims)  # ∂P_en_diss_exc/∂Tₑ
 
-    # Did the last update_RRCs! materialize the four above? Never true before the
+    # Did the last update_RRCs! materialize the fields above? Never true before the
     # first rate step, which is exactly right: they are zeros then.
     fresh::Bool = false
 end
@@ -343,13 +342,14 @@ Contains the plasma state variables including density, temperature, and velocity
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
     ν_ei_eff::Matrix{FT} = zeros(FT, dims) # Effective electron-ion collision frequency [1/s]
     # Electron-neutral reaction frequencies, ν = n_H2_gas · K(E/p, Ē).
-    # All four are written by `update_RRCs!` and by nothing else, at exactly one point per
-    # step, so every consumer within a step sees the same evaluation state. Read them; do
-    # not re-query the RRC tables (see internal/docs/src/notes/design/rrc-single-evaluation-point.md).
+    # Written by `update_RRCs!` and by nothing else, at exactly one point per step, so
+    # every consumer within a step sees the same evaluation state. Read them; do not
+    # re-query the RRC tables (see internal/docs/src/notes/design/rrc-single-evaluation-point.md).
     ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
-    ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction; drives P_ela [1/s]
-    ν_en_exc_eff::Matrix{FT} = zeros(FT, dims) # Excitation rate normalized to char_exc_erg_eV [1/s]
+    # Diagnostic-only, and the sole auditor of the K_mom_by_* momentum-ledger closure.
+    # NOT a solver input: the elastic energy sink is P_en_ela, not this frequency.
+    ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction [1/s]
     ν_en_diss_iz::Matrix{FT} = zeros(FT, dims) # Dissociative-ionization rate [1/s]
     # Energy-ledger sinks, P = n_H2_gas · Kerg [W per electron]. Written by the same
     # `update_RRCs!` at the same evaluation point as the frequencies above.

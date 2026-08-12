@@ -931,7 +931,7 @@ end
     initialize!(RP)
 
     # Erg ~ 14 eV, E/p = 0.5 / 5e-3 = 100: high enough that inelastic channels are open,
-    # so the four surfaces are genuinely distinct.
+    # so the three surfaces are genuinely distinct.
     RP.plasma.Te_eV .= 9.3
     RP.fields.E_para_tot .= 0.5
     RP.plasma.ue_para .= -3.0e5
@@ -940,10 +940,10 @@ end
     inw = RP.G.nodes.in_wall_nids
     ν_fields() = (
         copy(pla.ν_en_iz), copy(pla.ν_en_mom_tot),
-        copy(pla.ν_en_mom_ela), copy(pla.ν_en_exc_eff),
+        copy(pla.ν_en_mom_ela),
     )
 
-    @testset "all four surfaces are populated, and carry the n_gas factor" begin
+    @testset "all three surfaces are populated, and carry the n_gas factor" begin
         update_RRCs!(RP)
         for f in ν_fields()
             @test all(f[inw] .> 0.0)
@@ -1055,7 +1055,6 @@ end
     @test all(pla.ν_en_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)
     @test all(pla.ν_en_mom_tot .== 0.0)                           # neutral drag stays off
     @test all(pla.ν_en_mom_ela .== 0.0)
-    @test all(pla.ν_en_exc_eff .== 0.0)
 
     # ...and it tracks the state instead of going stale.
     ν1 = copy(pla.ν_en_iz)

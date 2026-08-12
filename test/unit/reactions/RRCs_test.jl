@@ -123,7 +123,6 @@ end
         # Test field types
         @test e_rrcs.K_iz isa RRC_EoverP_Erg
         @test e_rrcs.K_mom isa RRC_EoverP_Erg
-        @test e_rrcs.Total_Excitation isa RRC_EoverP_Erg
 
         # Test data availability
         @test length(e_rrcs.K_iz.EoverP) > 0

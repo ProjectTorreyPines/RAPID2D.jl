@@ -202,6 +202,16 @@ end
     @test all(==(1.0e99), RP.plasma.P_en_exc)   # untouched, not silently refreshed
 end
 
+@testitem "RRC loader: the 12 eV excitation normalization is gone" setup = [LedgerRAPID] begin
+    # The constant is not merely unused, it is unrepresentable: ⟨ΔE⟩_exc runs 0.059 to
+    # 9.72 eV across the operating range, a factor 165. Keeping a field for it invites
+    # someone to reconstruct P_exc from it again.
+    @test !hasfield(RAPID2D.PlasmaConstants{Float64}, :char_exc_erg_eV)
+    RP = ledger_RAPID()
+    @test !hasfield(typeof(RP.eRRCs), :Total_Excitation)
+    @test !hasfield(typeof(RP.plasma), :ν_en_exc_eff)
+end
+
 @testitem "RRC ledger: iz_erg_eV matches the cross-section source BD sampled" begin
     # Yoon 2008 section 9: "The best value of the ionization potential of H2 is 15.426 eV".
     # BD's E_IONIZATION_EV carries that value, and the L_tot assembly above is built with

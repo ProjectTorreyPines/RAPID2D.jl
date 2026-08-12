@@ -49,11 +49,9 @@
                     "K_mom", "K_mom_by_ela", "K_mom_by_exc", "K_mom_by_diss_exc",
                     "K_mom_by_iz", "K_mom_by_diss_iz",
                     "L_ela", "L_exc", "L_diss_exc", "L_tot",
-                    "Total_Excitation",
                 )
                 fid[name] = copy(data)
             end
-            fid["characteristic_exc_erg_eV"] = RP.config.constants.char_exc_erg_eV
         end
         real_T_ud = joinpath(dirname(dirname(pathof(RAPID2D))), "RRC_data", "eRRCs_T_ud.h5")
         RP.eRRCs = Electron_RRCs(path, real_T_ud)
@@ -80,7 +78,7 @@ end
     inw = RP.G.nodes.in_wall_nids
     # ∂Ē/∂Tₑ = 3/2 at fixed u, and the table is linear in Ē, so this is exact.
     expected = (@. n_gas * 1.5 * b)[inw]
-    for f in (:iz, :mom_tot, :mom_ela, :exc_eff)
+    for f in (:iz, :mom_tot, :mom_ela)
         @test getfield(RP.plasma.dν_dTe, f)[inw] ≈ expected rtol = 1.0e-12
     end
 
@@ -104,7 +102,6 @@ end
     @test all(iszero, RP.plasma.dν_dTe.iz)
     @test all(iszero, RP.plasma.dν_dTe.mom_tot)
     @test all(iszero, RP.plasma.dν_dTe.mom_ela)
-    @test all(iszero, RP.plasma.dν_dTe.exc_eff)
 
     # And the frequencies are bit-identical to a run that never heard of ExpRB —
     # this is the flag-off regression in miniature.
@@ -149,7 +146,7 @@ end
     RP.plasma.ue_para[dead] .= 0.0
 
     update_RRCs!(RP)                       # must not throw
-    for f in (:iz, :mom_tot, :mom_ela, :exc_eff)
+    for f in (:iz, :mom_tot, :mom_ela)
         d = getfield(RP.plasma.dν_dTe, f)
         @test all(iszero, d[dead])
         @test !all(iszero, d[RP.G.nodes.in_wall_nids])   # live nodes still carry one

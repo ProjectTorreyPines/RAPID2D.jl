@@ -44,7 +44,6 @@ Fields:
 - `eV_to_K`: Conversion from eV to K [K/eV]
 - `electron_mass_eV`: Electron mass [eV/c²]
 - `proton_mass_eV`: Proton mass [eV/c²]
-- `char_exc_erg_eV`: characteristic excitation energy [eV] (Total_Excitation normalization)
 - `iz_erg_eV`: H2 ionization energy [eV]
 - `diss_iz_erg_eV`: H2 dissociative ionization energy [eV]
 """
@@ -68,12 +67,7 @@ Fields:
     electron_mass_eV::FT = me * c_light^2 / eV_to_J  # Electron mass in eV/c²
     proton_mass_eV::FT = mp * c_light^2 / eV_to_J    # Proton mass in eV/c²
 
-    # Reaction energies (H2; tied to the electron RRC data table). char_exc_erg_eV is the
-    # characteristic excitation energy the Total_Excitation surface is energy-normalized
-    # to — P_exc = e·char_exc_erg_eV·n_gas·RRC reproduces the kinetic loss exactly, so it MUST
-    # equal the table's `characteristic_exc_erg_eV` attribute (validated in Electron_RRCs:
-    # absent → warn + assume this value; present but different → error).
-    char_exc_erg_eV::FT = FT(12.0)       # characteristic excitation energy [eV]
+    # Reaction energies (H2; tied to the electron RRC data table).
     # Yoon 2008 §9, and BD's `E_IONIZATION_EV`. The L_tot ledger is assembled with this
     # value, so it is a consistency requirement, not an accuracy improvement (0.2 %).
     iz_erg_eV::FT = FT(15.426)      # H2 ionization energy (H2 -> H2+ + e-) [eV]
