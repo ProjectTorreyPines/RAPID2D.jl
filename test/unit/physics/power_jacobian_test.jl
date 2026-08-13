@@ -123,8 +123,17 @@ end
     # That makes this sharper than the finite-difference oracle, which truncation
     # caps near 1e-6: a dropped product rule or a missing ∂Ē/∂Tₑ = 3/2 shows up
     # here at the twelfth digit, not the sixth.
+    #
+    # K and L are given their own magnitudes -- [m³/s] and [W·m³] -- because `≈` on
+    # arrays is norm-based. Feeding both from one number put the energy sinks 20 orders
+    # above every particle term, and then `rtol = 1e-12` on the norm could not see them:
+    # dropping `diss_iz_erg_eV·∂ν_DI/∂Tₑ` from the P_DI line left this item green.
+    # Verified by mutation, and it is caught here now.
     a, b = 2.0e-15, 3.5e-17
-    RP = with_surfaces(pj_RAPID(; Te_eV = 5.0); K_of_Ē = Ē -> a + b * Ē)
+    a_L, b_L = 2.0e-35, 3.5e-37
+    RP = with_surfaces(
+        pj_RAPID(; Te_eV = 5.0); K_of_Ē = Ē -> a + b * Ē, L_of_Ē = Ē -> a_L + b_L * Ē
+    )
     RP.flags.scheme.atomic = ExpRB
     eig = eig_at(RP)
 
@@ -134,7 +143,7 @@ end
     inw = RP.G.nodes.in_wall_nids
 
     ue_sq = @. pla.ueR^2 + pla.ueϕ^2 + pla.ueZ^2
-    ν, dν = pla.ν_en_mom_tot, pla.dν_dTe.mom_tot          # all four surfaces are equal here
+    ν, dν = pla.ν_en_mom_tot, pla.dν_dTe.mom_tot          # every K_* surface is equal here
     ν_iz, dν_iz = pla.ν_en_iz, pla.dν_dTe.iz
     ν_diss_iz, dν_diss_iz = pla.ν_en_diss_iz, pla.dν_dTe.diss_iz
     P_ela, dP_ela = pla.P_en_ela, pla.dν_dTe.ela_erg
