@@ -357,3 +357,35 @@ end
         @test_logs min_level = Warn eig_at(quiet)
     end
 end
+
+@testitem "eig_Te: below the table's Ē floor the frozen cold-target factor has no derivative" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse
+
+    # `update_electron_heating_powers!` evaluates the cold-target factor at
+    # `max(Ē, Ē_floor)`, and the value path clamps to the table's bottom row below
+    # that. So for Ē < Ē_floor BOTH the factor and the coefficients are constant in
+    # Tₑ and ∂P/∂Tₑ is exactly zero. A Jacobian that still differentiates
+    # 1.5·T_gas/Ē as 2.25·T_gas/Ē_safe² is not the derivative of the power it
+    # linearises, and the error is not marginal: 1/Ē_floor² = 1e6.
+    #
+    # With u∥ = 0, Ē = (3/2)Tₑ. On the shipped table's bottom row K_iz and L_exc are
+    # identically zero and L_ela is not, so P_en_ela alone carries the term here —
+    # dilution, P_exc and P_drag all vanish and cannot mask the check.
+    for depth in (PartialLinearResponse, FullLinearResponse)
+        RP = pj_RAPID(; Te_eV = 2.0e-4, u_para = 0.0, depth = depth)
+        RP.flags.scheme.atomic = ExpRB
+        inw = RP.G.nodes.in_wall_nids
+
+        Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
+        @test 1.5 * RP.plasma.Te_eV[first(inw)] < Ē_floor      # the premise of the item
+
+        eig = eig_at(RP)
+        @test !all(iszero, RP.plasma.P_en_ela[inw])            # or the check is vacuous
+        @test all(iszero, eig[inw])
+        @test eig[inw] ≈ eig_fd(RP)[inw] atol = 1.0e-12
+
+        # Live again once Ē clears the floor, so the fix cannot be "always zero".
+        RP.plasma.Te_eV .= 1.0
+        @test !all(iszero, eig_at(RP)[inw])
+    end
+end

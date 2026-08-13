@@ -733,8 +733,12 @@ function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # avoids by hoisting Ē_floor the same way).
         Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
         Ē_safe = @. max(Ē_eV, Ē_floor)
+        # Masked below the floor, and this is a correctness matter rather than a
+        # refinement: there `max` freezes the factor the power applies, so ∂/∂Tₑ of
+        # what the power actually computed is exactly zero. Differentiating the clamp
+        # instead reports damping the power does not have.
         @. pla.exprb.eig_Te -= (pla.P_en_ela + pla.P_en_exc) *
-            FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0)
+            ifelse(Ē_eV > Ē_floor, FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0), zero(FT))
         # Dilution, both electron-producing channels.
         RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee *
             (pla.ν_en_iz + pla.ν_en_diss_iz)
@@ -797,17 +801,22 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
             Ē_safe = @. max(Ē_eV, Ē_floor)
             cold = @. one(FT) - FT(1.5) * pla.T_gas_eV / Ē_safe
+            # ∂cold/∂Tₑ, written once because both sinks apply the SAME factor and a
+            # second copy is how the two drift apart. Zero below the floor: there `max`
+            # freezes the factor the power applies, so differentiating the clamp would
+            # report a slope the power does not have.
+            dcold = @. ifelse(
+                Ē_eV > Ē_floor, FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0), zero(FT)
+            )
 
             @. pla.exprb.eig_Te += (
                 me * ue_mag_sq * dν.mom_tot                                   # P_drag
                     # P_ela: product rule across the coefficient AND the cold-target factor.
-                    - (dν.ela_erg * cold + pla.P_en_ela * FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0))
-                    # P_exc carries the SAME cold-target factor as P_ela since Task B3
-                    # round 4, so its derivative is a product rule too -- exactly the
-                    # form used for P_ela one line above. Task B3 shares one
-                    # `cold_factor` between the two sinks; the Jacobian must mirror that
-                    # or the two drift apart.
-                    - (dν.exc_erg * cold + pla.P_en_exc * FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0))
+                    - (dν.ela_erg * cold + pla.P_en_ela * dcold)
+                    # P_exc carries the SAME cold-target factor as P_ela since the
+                    # excitation sink gained it, so its derivative is a product rule too
+                    # -- the same `dcold` by construction rather than by transcription.
+                    - (dν.exc_erg * cold + pla.P_en_exc * dcold)
                     - dν.diss_exc_erg                                         # P_diss_exc (raw, no factor)
             )
 
