@@ -225,6 +225,13 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # leaves this term four orders from its own stability limit. An exact
             # conservation law is worth more than stability in a regime the mass ratio
             # already rules out.
+            #
+            # The cancellation does depend on the electron half being backward Euler,
+            # so `scheme.decay = ExpRB` does NOT conserve — 42 % lost over 60 steps.
+            # `internal/docs/src/notes/issues/`
+            # `ei-momentum-exchange-exact-only-under-backward-euler.md` records that and
+            # the centre-of-mass split that would make conservation structural instead
+            # of a cancellation, for any scheme.
             decay_exponent = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
             bern_decay = exprb_bern.(decay_exponent)
             @. pla.ui_para = (
