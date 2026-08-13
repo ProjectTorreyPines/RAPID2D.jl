@@ -397,6 +397,47 @@ function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
+    mean_energy_floor(RP) -> FT
+
+The bottom of the rate tables' `Ē` axis [eV] — below it `RRC_EoverP_Erg`'s
+`ClampExtrap` freezes every coefficient and the interpolant stops meaning anything.
+
+**A function barrier, not a convenience.** `RAPID.eRRCs` is declared as the abstract
+`AbstractSpeciesRRCs{FT}`, so `RP.eRRCs.Kerg_ela.Erg_eV` infers `Any` at the call
+site, and one `Any` scalar inside a `@.` costs the fused kernel its specialization.
+The `::FT` is what makes it concrete again. Hoisting also avoids the `first` trap:
+`Number` is iterable, so `first` under `@.` would dot into `first.(Erg_eV)` — the
+identity on a vector, not a scalar floor.
+
+Read off `Kerg_ela`, but it is every surface's floor: all of them share the one
+`Erg_eV` vector the constructor read.
+"""
+@inline mean_energy_floor(RP::RAPID{FT}) where {FT <: AbstractFloat} =
+    first(RP.eRRCs.Kerg_ela.Erg_eV)::FT
+
+"""
+    cold_target_factor(Ē, T_gas_eV, Ē_floor)
+    cold_target_slope(Ē, T_gas_eV, Ē_floor)
+
+The `(1 − (3/2)T_gas/Ē)` that a cold-target energy ledger is consumed with, and its
+`∂/∂Tₑ` — which is `∂/∂Ē` times `3/2`, since `Ē = (3/2)Tₑ + ½mₑu∥²/e`.
+
+Defined as a pair because they are used as a pair: `P_ela` and `P_exc` share one
+factor, and every eigenvalue path has to differentiate the factor those powers
+actually applied. Two transcriptions of the same algebra is how the residual and its
+Jacobian drift apart.
+
+**The slope is not `2.25·T_gas/Ē²`.** Below `Ē_floor` the factor is frozen by `max`,
+so its derivative there is exactly zero; differentiating the clamp instead reports
+damping the power does not have.
+"""
+@inline cold_target_factor(Ē::T, T_gas_eV, Ē_floor) where {T} =
+    one(T) - T(1.5) * T_gas_eV / max(Ē, Ē_floor)
+
+@inline cold_target_slope(Ē::T, T_gas_eV, Ē_floor) where {T} =
+    ifelse(Ē > Ē_floor, T(2.25) * T_gas_eV / Ē^2, zero(T))
+
+"""
     update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update electron heating power components for electron energy equation.
@@ -527,8 +568,8 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             #
             # Shared with the excitation term below -- same factor, same floor, computed
             # once -- so elastic and excitation cannot drift apart.
-            Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
-            cold_factor = @. one(FT) - FT(1.5) * pla.T_gas_eV / max(Ē_eV, Ē_floor)
+            Ē_floor = mean_energy_floor(RP)
+            cold_factor = @. cold_target_factor(Ē_eV, pla.T_gas_eV, Ē_floor)
             @. ePowers.ela = pla.P_en_ela * cold_factor
 
             # Excitation, tabulated. No constant survives here: the EXC group spans
@@ -726,19 +767,14 @@ function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # Tₑ too and this depth must pick it up — the sinks share one `cold_factor`
         # in update_electron_heating_powers!, and the Jacobian mirrors that sharing.
         # P_diss_exc stays raw and contributes nothing here.
-        Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee
-        # first(...) MUST be evaluated outside @. -- Number is iterable, so `@.`
-        # would otherwise dot it into `first.(Erg_eV)`, which is the identity on a
-        # vector, not a scalar floor (the same trap update_electron_heating_powers!
-        # avoids by hoisting Ē_floor the same way).
-        Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
-        Ē_safe = @. max(Ē_eV, Ē_floor)
-        # Masked below the floor, and this is a correctness matter rather than a
-        # refinement: there `max` freezes the factor the power applies, so ∂/∂Tₑ of
-        # what the power actually computed is exactly zero. Differentiating the clamp
-        # instead reports damping the power does not have.
-        @. pla.exprb.eig_Te -= (pla.P_en_ela + pla.P_en_exc) *
-            ifelse(Ē_eV > Ē_floor, FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0), zero(FT))
+        # One fused broadcast, no grid temporaries: this runs every step, and
+        # `cold_target_slope` is the same slope `update_electron_heating_powers!`'s
+        # factor has — including the zero below the floor.
+        Ē_floor = mean_energy_floor(RP)
+        @. pla.exprb.eig_Te -= (pla.P_en_ela + pla.P_en_exc) * cold_target_slope(
+            FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee,
+            pla.T_gas_eV, Ē_floor
+        )
         # Dilution, both electron-producing channels.
         RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee *
             (pla.ν_en_iz + pla.ν_en_diss_iz)
@@ -749,8 +785,13 @@ function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
     end
 
-    on_out_wall_nids = RP.G.nodes.on_out_wall_nids
-    isempty(on_out_wall_nids) || (@views pla.exprb.eig_Te[on_out_wall_nids] .= zero_FT)
+    # Indexed rather than `@views … .= `: the SubArray broadcast builds for that is a
+    # heap allocation, small but per step, and this function's contract is that it
+    # makes none. `update_electron_heating_powers!` already zeroes these nodes' powers;
+    # this keeps the eigenvalue from describing a relaxation rate for them.
+    for k in RP.G.nodes.on_out_wall_nids
+        pla.exprb.eig_Te[k] = zero_FT
+    end
 
     @. pla.exprb.eig_Te *= FT(2.0) / FT(3.0) / ee
     return RP
@@ -794,20 +835,11 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             # from. The two differ as soon as a perpendicular drift is on.
             ue_mag_sq = @. pla.ueR^FT(2.0) + pla.ueϕ^FT(2.0) + pla.ueZ^FT(2.0)
             Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee
-            # first(...) MUST be evaluated outside @. -- Number is iterable, so `@.`
-            # would otherwise dot it into `first.(Erg_eV)`, which is the identity on a
-            # vector, not a scalar floor (the same trap update_electron_heating_powers!
-            # avoids by hoisting Ē_floor the same way).
-            Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
-            Ē_safe = @. max(Ē_eV, Ē_floor)
-            cold = @. one(FT) - FT(1.5) * pla.T_gas_eV / Ē_safe
-            # ∂cold/∂Tₑ, written once because both sinks apply the SAME factor and a
-            # second copy is how the two drift apart. Zero below the floor: there `max`
-            # freezes the factor the power applies, so differentiating the clamp would
-            # report a slope the power does not have.
-            dcold = @. ifelse(
-                Ē_eV > Ē_floor, FT(2.25) * pla.T_gas_eV / Ē_safe^FT(2.0), zero(FT)
-            )
+            Ē_floor = mean_energy_floor(RP)
+            # The factor the powers applied, and its slope — one definition each, from
+            # the same pair `update_electron_heating_powers!` consumes.
+            cold = @. cold_target_factor(Ē_eV, pla.T_gas_eV, Ē_floor)
+            dcold = @. cold_target_slope(Ē_eV, pla.T_gas_eV, Ē_floor)
 
             @. pla.exprb.eig_Te += (
                 me * ue_mag_sq * dν.mom_tot                                   # P_drag

@@ -389,3 +389,59 @@ end
         @test !all(iszero, eig_at(RP)[inw])
     end
 end
+
+@testitem "eig_Te: the Ē floor is inferrable and the known-rates path allocates nothing" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, mean_energy_floor,
+        _eig_Te_from_known_rates!, update_RRCs!, update_electron_heating_powers!
+
+    # `RAPID.eRRCs` is declared as the ABSTRACT `AbstractSpeciesRRCs{FT}`, so reading a
+    # field off it directly infers `Any`. An `Any` scalar operand inside `@.` stops
+    # `Broadcast.combine_eltypes` from producing a concrete eltype, and the fused
+    # kernel falls back to per-element dynamic dispatch — a cost proportional to the
+    # grid. Every other rate consumer in this package reaches the tables through a
+    # function barrier for exactly this reason; the Ē-floor lookup has to as well.
+    RP = pj_RAPID(; depth = PartialLinearResponse)
+    RP.flags.scheme.atomic = ExpRB
+    @test @inferred(mean_energy_floor(RP)) isa Float64
+    @test mean_energy_floor(RP) == first(RP.eRRCs.Kerg_ela.Erg_eV)
+
+    # This path was allocation-free before the 2026-08 ledger landed; it then grew two
+    # whole-grid temporaries per step, and it runs every step. What is pinned here is
+    # that nothing GRID-SIZED is allocated, measured by running the same function on
+    # grids that differ by 9x in node count and requiring the byte count not to move.
+    #
+    # It is not zero. Reading a field off `RP.eRRCs` — declared abstract — dispatches
+    # dynamically, and its `Float64` result comes back boxed: one small allocation per
+    # call, independent of the grid. Removing it would mean caching the floor, which
+    # the fixtures above make stale the moment they swap `RP.eRRCs`, or making the
+    # field concrete. A boxed scalar per step is the cheaper of those.
+    function alloc_at(NR, NZ)
+        config = SimulationConfig{Float64}(
+            NR = NR, NZ = NZ, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+            dt = 1.0e-8, t_end_s = 1.0e-6, R0B0 = 1.0, prefilled_gas_pressure = 5.0e-3,
+            snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+            wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        R = RAPID{Float64}(config)
+        R.flags.Atomic_Collision = true
+        R.flags.src = true
+        R.flags.Coulomb_Collision = false
+        R.flags.exprb_eigenvalue = PartialLinearResponse
+        initialize!(R)
+        R.flags.scheme.atomic = ExpRB
+        R.plasma.Te_eV .= 5.0
+        R.plasma.ne .= 1.0e16
+        R.plasma.ni .= 1.0e16
+        update_RRCs!(R)
+        update_electron_heating_powers!(R)
+        _eig_Te_from_known_rates!(R)                    # compile before measuring
+        return @allocated(_eig_Te_from_known_rates!(R)), length(R.plasma.Te_eV)
+    end
+
+    small, n_small = alloc_at(8, 8)
+    large, n_large = alloc_at(24, 24)
+    @test n_large > 8 * n_small                         # the premise of the comparison
+    @test small == large                                # nothing grid-sized survives
+    @test large < 256                                   # and what remains is one scalar
+end
