@@ -50,10 +50,16 @@
         return RP
     end
 
-    function with_surfaces(RP; K_of_Ē)
+    # `L_of_Ē` defaults to `K_of_Ē` so callers doing exact hand-algebra keep one number
+    # everywhere. Anything that compares a RESIDUAL against a SCALE must pass both:
+    # `K_*` is [m³/s] (~1e-15) and `L_*` is [W·m³] (~1e-35), so one value for both puts
+    # the energy sinks 20 orders above the particle terms and every check normalised by
+    # a maximum stops seeing anything but the sinks.
+    function with_surfaces(RP; K_of_Ē, L_of_Ē = K_of_Ē)
         EoverP = collect(range(1.0, 1000.0, 24))
         Erg_eV = collect(10 .^ range(-3, 3, 48))
-        data = [K_of_Ē(E) for _ in EoverP, E in Erg_eV]
+        K_data = [K_of_Ē(E) for _ in EoverP, E in Erg_eV]
+        L_data = [L_of_Ē(E) for _ in EoverP, E in Erg_eV]
         path = joinpath(mktempdir(; cleanup = false), "eRRCs_EoverP_Erg.h5")
         h5open(path, "w") do fid
             fid["EoverP"] = EoverP
@@ -65,9 +71,11 @@
                     "K_iz", "K_diss_iz", "K_exc", "K_diss_exc",
                     "K_mom", "K_mom_by_ela", "K_mom_by_exc", "K_mom_by_diss_exc",
                     "K_mom_by_iz", "K_mom_by_diss_iz",
-                    "L_ela", "L_exc", "L_diss_exc", "L_tot",
                 )
-                fid[name] = copy(data)
+                fid[name] = copy(K_data)
+            end
+            for name in ("L_ela", "L_exc", "L_diss_exc", "L_tot")
+                fid[name] = copy(L_data)
             end
         end
         RP.eRRCs = Electron_RRCs(
@@ -444,4 +452,38 @@ end
     @test n_large > 8 * n_small                         # the premise of the comparison
     @test small == large                                # nothing grid-sized survives
     @test large < 256                                   # and what remains is one scalar
+end
+
+@testitem "eig_Te: PartialLinearResponse is exact once the surfaces stop responding" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse
+
+    # The DEFAULT depth drops the response THROUGH the coefficients on purpose, so a
+    # finite difference of the real assembled power is not its oracle in general. That
+    # is why the only item that touched this path was a transcription of the
+    # implementation — and it says so itself, which means it cannot catch a term both
+    # copies drop.
+    #
+    # Make the dropped part identically zero instead. With Ē-independent surfaces
+    # ∂K/∂Ē = 0, so Partial and the true ∂P/∂Tₑ must agree EXACTLY, and `eig_fd`
+    # becomes a genuine oracle for everything Partial keeps: the cold-target slope,
+    # the dilution rate, and the equilibration term. Coulomb is on so the last of
+    # those is live rather than assumed.
+    # Both units, at their real magnitudes. With one value for K and L alike the energy
+    # sinks land 20 orders above every particle term, `scale` below is set entirely by
+    # the cold-target slope, and the dilution and equilibration terms this item exists
+    # to cover become unfalsifiable — verified by mutation, not assumed.
+    RP = with_surfaces(
+        pj_RAPID(; coulomb = true, depth = PartialLinearResponse);
+        K_of_Ē = _ -> 1.0e-15, L_of_Ē = _ -> 1.0e-35
+    )
+    RP.flags.scheme.atomic = ExpRB
+    inw = RP.G.nodes.in_wall_nids
+
+    analytic = eig_at(RP)
+    numeric = eig_fd(RP)
+    @test !all(iszero, analytic[inw])                   # or the comparison is vacuous
+    @test !all(iszero, RP.plasma.ν_ei[inw])             # the equilibration term is live
+    scale = maximum(abs.(numeric[inw]))
+    @test scale > 0.0
+    @test maximum(abs.(analytic[inw] .- numeric[inw])) < 1.0e-6 * scale
 end
