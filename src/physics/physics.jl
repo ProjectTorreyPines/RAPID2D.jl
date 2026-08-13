@@ -202,11 +202,29 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.scheme.decay === ExpRB
             # Same sink form as `update_ue_para!`, same caveat — see there.
             #
-            # The exponent carries the ATOMIC rate ONLY: Coulomb friction is added
-            # explicitly after this update, so a Coulomb-stiff cell is stepped at
-            # forward Euler whatever this says. The asymmetry predates this branch and
-            # is identical under θ, so fixing it here would move the default. The
-            # electron equation has no such gap — ν_ei_eff sits inside its exponent.
+            # **The exponent carries the ATOMIC rate ONLY, and that is deliberate.**
+            # Coulomb friction stays the explicit increment below, so a Coulomb-stiff
+            # cell is stepped at forward Euler whatever this says — and with
+            # `Atomic_Collision` off the whole update is, since `bern(0) = 1`. Both look
+            # like gaps next to `update_ue_para!`, which carries `ν_ei_eff` inside its
+            # exponent. Do not "fix" it by folding `(mₑ/mᵢ)ν_ei` in here.
+            #
+            # e-i friction is an INTERNAL force, and this pair conserves the momentum it
+            # moves EXACTLY, at any Δt. `update_ue_para!` runs first and loses
+            # `mₑn·Δt·ν_ei(u_e^{n+1} − u_i^n)`; the increment below is charged with that
+            # already-updated `u_e` and the same old `u_i`, so the ions gain
+            # `mᵢn·Δt·(mₑ/mᵢ)ν_ei(u_e^{n+1} − u_i^n)` — the same number, opposite sign,
+            # and the two telescope to zero. Making this half implicit in `u_i` would
+            # charge the ions at `u_i^{n+1}` while the electrons were charged at `u_i^n`,
+            # and the exchange would stop cancelling: measured, that costs ~3e-4 of the
+            # total momentum over 60 steps. `physics_test.jl`'s "e-i Coulomb friction
+            # conserves momentum and equalises u_e, u_i" is what enforces this.
+            #
+            # The stability the fold would buy is not needed: the ion-side rate is the
+            # electron one times mₑ/mᵢ ≈ 2.7e-4, so a Δt resolving the electron friction
+            # leaves this term four orders from its own stability limit. An exact
+            # conservation law is worth more than stability in a regime the mass ratio
+            # already rules out.
             decay_exponent = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
             bern_decay = exprb_bern.(decay_exponent)
             @. pla.ui_para = (
