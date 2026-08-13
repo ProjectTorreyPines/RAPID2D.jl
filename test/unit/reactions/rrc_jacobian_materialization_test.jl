@@ -78,7 +78,7 @@ end
     inw = RP.G.nodes.in_wall_nids
     # ∂Ē/∂Tₑ = 3/2 at fixed u, and the table is linear in Ē, so this is exact.
     expected = (@. n_gas * 1.5 * b)[inw]
-    for f in (:iz, :mom_tot, :mom_ela)
+    for f in (:iz, :diss_iz, :mom_tot, :mom_ela, :ela_erg, :exc_erg, :diss_exc_erg)
         @test getfield(RP.plasma.dν_dTe, f)[inw] ≈ expected rtol = 1.0e-12
     end
 
@@ -100,8 +100,12 @@ end
     @test RP.flags.scheme.atomic === ForwardEuler
     update_RRCs!(RP)
     @test all(iszero, RP.plasma.dν_dTe.iz)
+    @test all(iszero, RP.plasma.dν_dTe.diss_iz)
     @test all(iszero, RP.plasma.dν_dTe.mom_tot)
     @test all(iszero, RP.plasma.dν_dTe.mom_ela)
+    @test all(iszero, RP.plasma.dν_dTe.ela_erg)
+    @test all(iszero, RP.plasma.dν_dTe.exc_erg)
+    @test all(iszero, RP.plasma.dν_dTe.diss_exc_erg)
 
     # And the frequencies are bit-identical to a run that never heard of ExpRB —
     # this is the flag-off regression in miniature.
@@ -138,7 +142,11 @@ end
     # Ē = 0 — below the table's 1e-3 — on every real 2D run. The value path clamps
     # and returns the bottom row, which is harmless because ne = 0 there. The
     # derivative must be 0, because a frozen value has no Tₑ dependence at all.
-    RP = jac_RAPID(; Te_eV = 8.0)
+    # Tₑ = 60 eV, not 8: dissociative ionization has a ~35 eV impact threshold, so at
+    # Ē = 12 eV `K_diss_iz` — and with it `dν_dTe.diss_iz` — is identically zero on
+    # every node, and the liveness guard below could not hold for that field. At
+    # Ē = 90 eV the channel is live at every E/p the table carries.
+    RP = jac_RAPID(; Te_eV = 60.0)
     RP.flags.scheme.atomic = ExpRB
     dead = RP.G.nodes.on_out_wall_nids
     @test !isempty(dead)
@@ -146,7 +154,7 @@ end
     RP.plasma.ue_para[dead] .= 0.0
 
     update_RRCs!(RP)                       # must not throw
-    for f in (:iz, :mom_tot, :mom_ela)
+    for f in (:iz, :diss_iz, :mom_tot, :mom_ela, :ela_erg, :exc_erg, :diss_exc_erg)
         d = getfield(RP.plasma.dν_dTe, f)
         @test all(iszero, d[dead])
         @test !all(iszero, d[RP.G.nodes.in_wall_nids])   # live nodes still carry one

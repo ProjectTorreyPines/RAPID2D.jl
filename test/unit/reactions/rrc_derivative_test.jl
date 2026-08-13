@@ -97,7 +97,7 @@ end
     # nothing new is looked up — only differentiated. Check the wiring survives
     # the real loader and the real (201 × 300) grid.
     eRRCs = load_electron_RRCs()
-    for name in (:K_iz, :K_mom, :K_mom_by_ela)
+    for name in (:K_iz, :K_diss_iz, :K_mom, :K_mom_by_ela, :Kerg_ela, :Kerg_exc, :Kerg_diss_exc)
         rrc = getfield(eRRCs, name)
         Ē_lo, Ē_hi = extrema(rrc.Erg_eV)
         p_lo, p_hi = extrema(rrc.EoverP)

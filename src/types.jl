@@ -172,8 +172,11 @@ end
 """
     ElectronRateJacobians{FT}
 
-`∂ν/∂Tₑ` [1/(s·eV)] for the electron-neutral frequencies, one field per member of
-`PlasmaState`'s `ν_en_*` set — the table half of `∂P/∂Tₑ`.
+`∂ν/∂Tₑ` [1/(s·eV)] for four of `PlasmaState`'s `ν_en_*` frequencies (`iz`,
+`mom_tot`, `mom_ela`, `diss_iz`; `ν_en_iz_tot` is derived downstream, not
+differentiated here), plus `∂P/∂Tₑ` [W per electron / eV] for the three
+energy-ledger sinks (`ela_erg`, `exc_erg`, `diss_exc_erg`) — the table half of
+`∂P/∂Tₑ`.
 
 Written by [`update_RRCs!`](@ref) alongside the frequencies themselves, at the
 same evaluation point, and only under `scheme.atomic == ExpRB` **and**
@@ -198,7 +201,11 @@ it is a lag, and a term that pretends otherwise will drift.
 
     iz::Matrix{FT} = zeros(FT, dims)        # ∂ν_en_iz/∂Tₑ
     mom_tot::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_tot/∂Tₑ
-    mom_ela::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_ela/∂Tₑ
+    # ∂ν_en_mom_ela/∂Tₑ. Diagnostic-only, twin of `ν_en_mom_ela` itself: nothing in
+    # src/ reads it (no solver term uses ν_en_mom_ela), but it is materialized and
+    # tested for the same reason that frequency is — it must stay consistent with
+    # the K_mom_by_* closure it audits.
+    mom_ela::Matrix{FT} = zeros(FT, dims)
     diss_iz::Matrix{FT} = zeros(FT, dims)       # ∂ν_en_diss_iz/∂Tₑ
     ela_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_ela/∂Tₑ at frozen cold-target factor
     exc_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_exc/∂Tₑ
@@ -224,9 +231,10 @@ mean free path and the Coulomb logarithm.
 - `eig_Te`, `eig_Ti` — `(2/3e)·∂P/∂T` [1/s], signed. Written by
   `update_electron_power_jacobian!` / `update_ion_power_jacobian!` under
   `scheme.atomic == ExpRB`; `z = eig·Δt` is formed where it is used.
-- `z_growth` — `cap(ν_iz·Δt)`, **the exponent the last continuity solve used**, cap
-  included. `reaction_θ` and `update_reaction_counts!` must weight the ledger with
-  this and not `Δt·ν`, which is larger whenever the cap bound.
+- `z_growth` — `cap(ν_en_iz_tot·Δt)`, **the exponent the last continuity solve
+  used**, cap included. `reaction_θ` and `update_reaction_counts!` must weight
+  the ledger with this and not `Δt·ν_en_iz_tot`, which is larger whenever the
+  cap bound.
 - `growth_fitted` — whether that solve was the ExpRB one, so the weight is read off
   the solve rather than off a flag that may have moved since.
 
@@ -366,8 +374,10 @@ Contains the plasma state variables including density, temperature, and velocity
     P_en_ela::Matrix{FT} = zeros(FT, dims)      # elastic recoil [W]
     P_en_exc::Matrix{FT} = zeros(FT, dims)      # EXC group: singlets + vib + rot [W]
     P_en_diss_exc::Matrix{FT} = zeros(FT, dims) # DISS group: triplets [W]
-    # ∂ν/∂Tₑ for the four frequencies above, written by the same `update_RRCs!` at
-    # the same evaluation point — and only when `flags.scheme.atomic == ExpRB`.
+    # ∂ν/∂Tₑ for four of the frequencies above, plus ∂P/∂Tₑ for the three
+    # energy-ledger sinks above (seven fields total) — see `ElectronRateJacobians`.
+    # Written by the same `update_RRCs!` at the same evaluation point — and only
+    # when `flags.scheme.atomic == ExpRB`.
     dν_dTe::ElectronRateJacobians{FT} = ElectronRateJacobians{FT}(dims)
     # What `B` is evaluated at, per family. Written only where the matching
     # `flags.scheme.<family>` is `ExpRB`; see [`ExpRBTerms`](@ref).
@@ -772,7 +782,7 @@ of its eigenvalue**, because that is what decides which scheme is right:
 | field | terms | λ | default |
 |---|---|---|---|
 | `transport` | `∇·(𝐃∇f)`, `∇·(f𝐮)` in the `nₑ`, `nᵢ`, `Tₑ` equations | `< 0`, well-resolved | `½` |
-| `growth` | ionization — the `+ν_iz` source | **`> 0`** | `½` |
+| `growth` | ionization — the `+ν_en_iz_tot` source | **`> 0`** | `½` |
 | `decay` | the parallel momentum equation, which its friction dominates | `< 0`, stiff | `1` |
 | `gas` | neutral-gas diffusion | `< 0`, stiff | `1` |
 
@@ -909,8 +919,8 @@ rates, so `λ ≤ 0` structurally and it has no growth branch to exponentiate.
 `FullLinearResponse` does — real physics, and also where a stale slope costs the
 most. Neither is uniformly better, so the default is the one that assumes less.
 
-The continuity equation cannot tell them apart: `∂ν_iz/∂n = 0` exactly, so both give
-`λ = ν_iz` — bit for bit.
+The continuity equation cannot tell them apart: `∂ν_en_iz_tot/∂n = 0` exactly, so
+both give `λ = ν_en_iz_tot` — bit for bit.
 """
 @enum LinearResponseDepth PartialLinearResponse FullLinearResponse
 

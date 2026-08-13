@@ -225,10 +225,23 @@ net_electron_count(N::ReactionCounts) = N.iz .+ N.diz
     net_H2_gas_count(counts, k) -> scalar
 
 `Σₖ νₖ,H₂ Nₖ` — molecules created (negative: destroyed) per unit volume during
-this step. The neutral-gas sink is this, not a second estimate of it: one
-molecule is destroyed for each electron born through either channel, so this is
-exactly `−net_electron_count` — and will stop being a bare negation only once a
-channel that does not consume H₂ 1:1 with an electron lands (recombination).
+this step. The neutral-gas sink is this, not a second estimate of it: today
+`ReactionCounts` only tracks `iz` and `diz`, and both destroy one H₂ per
+electron born, so the sum reduces to `−net_electron_count` — a consequence of
+which channels are booked, not a conservation identity.
+
+**It undercounts.** Dissociative excitation (`e + H₂ → e + H + H*`) destroys an
+H₂ and makes no electron, so it is invisible to `−net_electron_count` by
+construction. Its particle rate `K_diss_exc` is already loaded by
+`update_RRCs!` (`reaction_rate_coefficients.jl:319`) — only its energy sibling
+`Kerg_diss_exc` is consumed (into `P_en_diss_exc`); the channel has no
+`ReactionCounts` field and never reaches this sum. Measured on the shipped
+table, `K_diss_exc/(K_iz + K_diss_iz)` is 182× at Ē = 3 eV, 2.06× at 10 eV,
+0.79× at 20 eV, 0.40× at 50 eV — this sink under-consumes H₂ by roughly 1.4–3×
+through burn-through and by two orders of magnitude in the few-eV band.
+Booking it would need a `diss_exc` row in `REACTION_STOICHIOMETRY` (H₂ → −1,
+no electron) and a matching `ReactionCounts` field; deliberately out of scope
+here.
 
 The indexed form exists because the sink is an elementwise sweep over in-wall
 nodes and has no reason to pay for allocating the whole field.

@@ -107,13 +107,14 @@ end
     # argument goes negative, and `log` throws — so a physics failure is reported as a
     # diagnostics failure, with a stack trace pointing at the wrong file.
     #
-    # Backward Euler (θ = 1) has its pole at z = ν_iz·Δt = 1. Δt = 4e-4 s puts a
-    # discharge that reaches ν_iz ≈ 4e3 1/s well past it.
+    # Backward Euler (θ = 1) has its pole at z = ν_en_iz_tot·Δt = 1 (both channels,
+    # since Task C1). Δt = 4e-4 s puts a discharge that reaches ν_en_iz_tot ≈ 4e3
+    # 1/s well past it.
     RP = atomic_only(; dt = 4.0e-4, nsteps = 6, Te0 = 10.0, θ_growth = 1.0)
     RP.plasma.ue_para .= -1.0e6
 
     # The premise: this really is past the pole. Measured z ≈ 1.78.
-    @test maximum(RP.plasma.ν_en_iz[RP.G.nodes.in_wall_nids]) * RP.dt > 1
+    @test maximum(RP.plasma.ν_en_iz_tot[RP.G.nodes.in_wall_nids]) * RP.dt > 1
 
     err = try
         run_simulation!(RP)

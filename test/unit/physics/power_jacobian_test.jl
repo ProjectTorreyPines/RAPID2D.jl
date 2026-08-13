@@ -325,6 +325,9 @@ end
         update_RRCs!(RP)
         update_electron_power_jacobian!(RP)
         @test all(<=(0.0), RP.plasma.exprb.eig_Te)
+        # `<=` alone admits all-zeros, which a mutation that never writes `eig_Te`
+        # would also pass.
+        @test any(<(0.0), RP.plasma.exprb.eig_Te)
     end
 end
 

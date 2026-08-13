@@ -95,7 +95,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
             end
 
-            # #4: collision drag force  (1-θu)*[-(ν_iz + ν_mom + ν_ei_eff)*ue_para]
+            # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]
             if decay_is_exprb
                 # uⁿ carries bern(−z), applied to the RHS below rather than here.
                 OP.A_LHS += @views spdiagm((bern_decay .- one_FT)[:])
@@ -687,8 +687,14 @@ end
 𝔅 = (P_en_ela + P_en_exc)·(9/4)T_gas/Ē²  +  (3/2)e·(ν_iz + ν_diss_iz)  +  2μ·(3/2)e·ν_ei
 ```
 
-from `P_ela`, `P_exc`, `P_dilution` and `P_equi` — an exact rearrangement of
-[`update_electron_heating_powers!`](@ref), not a linearisation. `𝔅` sums rates that
+from `P_ela`, `P_exc`, `P_dilution` and `P_equi`. Pre-migration, with
+`P_ela ∝ (Tₑ − T_gas)` exact and no other explicit `Tₑ`, this rearrangement of
+[`update_electron_heating_powers!`](@ref) was algebraically exact, not a
+linearisation. **That is no longer true.** `P_en_ela` is now
+`n_H2_gas·Kerg_ela(Ē)·(1 − 1.5·T_gas/Ē)` with `Ē` linear in `Tₑ`, so treating
+`A − 𝔅·Tₑ` as the whole `Tₑ`-response is a local linearisation of the
+cold-target factor — `Kerg_ela(Ē)` and `Kerg_exc(Ē)`'s own `Tₑ`-dependence is
+dropped here (see the note below on what that costs). `𝔅` still sums rates that
 are non-negative in any state the model describes, so `λ = −(2/3e)𝔅 ≤ 0`: no pole
 and no growth branch. Not a licence to drop the exponent cap downstream — `ν_ei` is
 built from `ni`, which the continuity solve can land marginally below zero — only a

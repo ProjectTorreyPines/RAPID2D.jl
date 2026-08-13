@@ -192,7 +192,12 @@ end
     tot = ng .* get_electron_RRC(RP, :Kerg_tot)
     parts = @. pla.P_en_ela + pla.P_en_exc + pla.P_en_diss_exc +
         ee * (15.426 * pla.ν_en_iz + 35.0 * pla.ν_en_diss_iz)
-    @test maximum(abs.(parts .- tot) ./ tot) < 1.0e-6
+    # Masked to in-wall nodes, like the sibling closure at physics_test.jl. `ν_en_iz`
+    # and `ν_en_diss_iz` ARE zeroed on `on_out_wall_nids` (reaction_rate_coefficients.jl)
+    # while `P_en_*` are not, so an unmasked comparison only passes while this fixture's
+    # `on_out_wall_nids` happens to be empty.
+    inw = RP.G.nodes.in_wall_nids
+    @test maximum(abs.(parts[inw] .- tot[inw]) ./ tot[inw]) < 1.0e-6
 end
 
 @testitem "update_RRCs!: the energy ledger is only materialized under Atomic_Collision" setup = [LedgerRAPID] begin
@@ -224,6 +229,10 @@ end
     # it, so a different constant here would break the energy ledger by 0.2 %.
     c = RAPID2D.PlasmaConstants{Float64}()
     @test c.iz_erg_eV == 15.426
+    # Its sibling, previously unpinned: nothing else in the suite fails if
+    # `diss_iz_erg_eV` drifts off 35.0, and `ePowers.diss_iz` and the P_DI Jacobian
+    # term both go 14 % low at 30.0.
+    @test c.diss_iz_erg_eV == 35.0
 end
 
 @testitem "RRC loader: the (T,ud) dissociative-ionization surface is marked legacy" setup = [LedgerRAPID] begin

@@ -154,11 +154,19 @@ end
 @testitem "ExpRB growth: electrons and ions still agree on the event count" setup = [ExpRBGrowthFixtures] begin
     using RAPID2D: ExpRB, check_reaction_counts, net_electron_count, net_ion_count
 
-    # The identity `ReactionCounts` guarantees, asserted under the new scheme: the
-    # ion equation reads the published count and divides by Δt, so it cannot
-    # disagree with the electron equation regardless of which weight formed it.
-    # Also the discrete statement of "one ionization makes one electron and one
-    # ion" — Δnₑ from the solve must equal the count it published.
+    # Two different checks share this item. The FIRST assertion below is real: the
+    # electron continuity solve's actual Δnₑ must equal the ledger
+    # `update_reaction_counts!` published, which pins the solve against the count
+    # rather than the other way round.
+    #
+    # The SECOND assertion is NOT a conservation check — matching the honest framing
+    # in `reactions_test.jl` and `ion_continuity_test.jl`. Under the INTERIM
+    # (`REACTION_STOICHIOMETRY.diz`, DI's ion booked to the H₂⁺ column)
+    # `net_ion_count(N, :H2⁺)` and `net_electron_count(N)` are literally the same
+    # expression, `N.iz .+ N.diz` — equal here because they are the same code, not
+    # because the ion continuity equation was exercised or anything was proven about
+    # charge balance. It pins that fact against the interim being read as a proof,
+    # not as evidence the ion and electron equations agree.
     #
     # BOTH solve paths. `Implicit = false` is not a place where the fit stops
     # applying — the explicit branch runs the same two coefficients, so the ledger

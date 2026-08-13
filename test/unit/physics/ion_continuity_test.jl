@@ -88,10 +88,12 @@ end
     RP.flags.src = true
     update_transport_quantities!(RP)
 
-    # This item is about θ-weighting ORDER, not about the channel split, so DI is
-    # zeroed here to keep the arithmetic below in terms of one rate. That is a
-    # simplification of the test, not of the physics: with DI nonzero the identity
-    # below would hold just the same, because BOTH sides read the total.
+    # This item is about θ-weighting ORDER, not about the channel split, and it is
+    # about the TOTAL rate — so DI is left LIVE (`update_transport_quantities!`
+    # above already populated `ν_en_diss_iz` and `ν_en_iz_tot` for real). A test
+    # that zeroed DI first could not tell `ν_en_iz_tot` from `ν_en_iz` apart; this
+    # one can, because at `Te_eV = 5` the fixture's `ν_en_diss_iz` is genuinely
+    # nonzero (about 1 % of `ν_en_iz`).
     #
     # The title is true again, but for a DIFFERENT reason than when it was written.
     # It used to hold because DI did not exist. Since Task C1, electron continuity
@@ -102,8 +104,6 @@ end
     # So this is not a conservation proof: `net_ion_count(N, :H2⁺)` and
     # `net_electron_count(N)` are the same expression by construction, and the
     # interim is exactly what makes them coincide.
-    RP.plasma.ν_en_diss_iz .= 0.0
-    RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
 
     ne_before = copy(RP.plasma.ne)
     ni_before = copy(RP.plasma.ni)
@@ -112,6 +112,7 @@ end
 
     inw = RP.G.nodes.in_wall_nids
     @test any(>(0), RP.plasma.ν_en_iz_tot[inw])  # the source is not silently zero
+    @test any(>(0), RP.plasma.ν_en_diss_iz[inw]) # nor is DI — this drives it with both channels live
 
     # One event, one of each. Loose by the standards of this file because the two
     # sides are not computed the same way: the electron gain comes back through a

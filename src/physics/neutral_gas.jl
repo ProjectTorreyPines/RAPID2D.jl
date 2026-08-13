@@ -257,9 +257,12 @@ reflective diffusion.
 The two halves are operator-split, sink first, matching the MATLAB original.
 
 **The sink is the electron source, not a copy of it.** It reads
-`net_H2_gas_count`, the same published ledger the H₂⁺ ion source reads, because
-one electron is born for each molecule destroyed. Recomputing the rate here — or
-letting a driver script subtract its own estimate — breaks nuclei conservation:
+`net_H2_gas_count`, the same published ledger the H₂⁺ ion source reads: both
+tracked channels (`iz`, `diz`) destroy one molecule per electron born, so today
+the two ledgers move together. (Dissociative excitation also destroys H₂ but is
+not yet booked into either ledger — see `net_H2_gas_count`'s docstring for the
+gap and its measured size.) Recomputing the rate here — or letting a driver
+script subtract its own estimate — breaks nuclei conservation:
 the scenario scripts that did exactly that overshot the electron supply limit by
 7% at dt = 1e-5, an error that only vanishes as dt → 0 because the script's sink
 was explicit while the electron equation's source was implicit.

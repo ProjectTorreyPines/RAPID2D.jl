@@ -819,7 +819,10 @@ end
             # accurate in general -- that argument (and its actual accuracy bounds) lives
             # at the `cold_factor`/`P_en_exc` comment in `update_electron_heating_powers!`.
             @test 0.2 * room < Te_end < 1.1 * room
-            @test isapprox(Te_end, room; rtol = 0.1)
+            # Measured agreement is ~2e-11 relative (see the comment above); 1e-6
+            # leaves ample slack while still catching a retuned `cold_factor` (e.g.
+            # 1.5 -> 1.48 moves the fixed point to 0.9867*room, far outside this).
+            @test isapprox(Te_end, room; rtol = 1.0e-6)
             if is_hot
                 @test Te_end < Te0                    # hot electrons cooled by the gas
             else
@@ -846,7 +849,9 @@ end
         both_ran = haskey(Te_ends, true) && haskey(Te_ends, false)
         @test both_ran
         if both_ran
-            @test isapprox(Te_ends[true], Te_ends[false]; rtol = 1.0e-4)
+            # Measured agreement is ~1.5e-11 relative (see the comment above); 1e-6
+            # leaves ample slack.
+            @test isapprox(Te_ends[true], Te_ends[false]; rtol = 1.0e-6)
         end
     end
 end
@@ -986,7 +991,7 @@ end
         pla.ν_ei .= 0.0
 
         update_electron_heating_powers!(RP)
-        (; me, ee, iz_erg_eV) = RP.config.constants
+        (; me, ee, iz_erg_eV, diss_iz_erg_eV) = RP.config.constants
 
         # P_drag is charged at the entry-state frequency -- the same number the momentum
         # equation used to remove that momentum.
@@ -1008,6 +1013,14 @@ end
         cold = @. 1.0 - 1.5 * pla.T_gas_eV / Ē
         @test pla.ePowers.exc[inw] ≈ (pla.P_en_exc .* cold)[inw]
         @test pla.ePowers.iz[inw] ≈ (ee * iz_erg_eV .* pla.ν_en_iz)[inw]
+
+        # diss_exc and diss_iz enter ePowers.tot with the SAME sign as iz/exc above and
+        # are otherwise only checked inside the summed closure ("the assembled powers
+        # close against Kerg_tot"), which cannot tell the two apart from a swap of these
+        # two assignment lines in `update_electron_heating_powers!`. Pin each on its own.
+        @test all(>(0.0), pla.ν_en_diss_iz[inw])  # or the diss_iz pin below is vacuous
+        @test pla.ePowers.diss_exc[inw] ≈ pla.P_en_diss_exc[inw]
+        @test pla.ePowers.diss_iz[inw] ≈ (ee * diss_iz_erg_eV .* pla.ν_en_diss_iz)[inw]
     end
 
     @testset "advance_timestep! does not move the frequencies" begin
@@ -1711,10 +1724,15 @@ end
     RP.plasma.Te_eV .= RP.plasma.T_gas_eV
     RP.plasma.ue_para .= 0.0
     update_RRCs!(RP); update_electron_heating_powers!(RP)
-    scale = maximum(abs.(RP.plasma.P_en_exc[inw]))
-    @test scale > 0.0                                          # or the checks below are vacuous
-    @test maximum(abs.(RP.plasma.ePowers.ela[inw])) < 0.02 * scale
-    @test maximum(abs.(RP.plasma.ePowers.exc[inw])) < 0.02 * scale
+    # Scaled against each channel's OWN raw ledger, not a shared one: L_ela is
+    # ~53x smaller than L_exc near this state, so a shared `scale` built from
+    # P_en_exc would let cold_factor errors up to ~1.0 through on the ela line.
+    scale_ela = maximum(abs.(RP.plasma.P_en_ela[inw]))
+    scale_exc = maximum(abs.(RP.plasma.P_en_exc[inw]))
+    @test scale_ela > 0.0                                      # or the check below is vacuous
+    @test scale_exc > 0.0                                      # or the check below is vacuous
+    @test maximum(abs.(RP.plasma.ePowers.ela[inw])) < 0.02 * scale_ela
+    @test maximum(abs.(RP.plasma.ePowers.exc[inw])) < 0.02 * scale_exc
 end
 
 @testitem "Ionization channels: electron production totals both, H2+ production does not" setup = [PhysicsFixtures] begin
