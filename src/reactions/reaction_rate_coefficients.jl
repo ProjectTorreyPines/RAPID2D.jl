@@ -575,7 +575,7 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         end
 
         # ELECTRON production total: both channels make exactly one electron per event.
-        # Continuity, dilution and the growth exponent take this. Under the INTERIM
+        # Continuity, dilution and the growth exponent take this. Under the INTERIM(diz-ion-species)
         # (REACTION_STOICHIOMETRY.diz, until H⁺ is a transportable species) the H₂⁺ ion
         # sources take it too, because DI's ion is booked to H₂⁺ as well — see the
         # field's docstring in types.jl and the comment on REACTION_STOICHIOMETRY.diz.

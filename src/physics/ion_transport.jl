@@ -428,7 +428,7 @@ Advance every ion species one step of
 under the θ-scheme, grouped by `RP.flags.ion_transport_policy`.
 
 The ionization source is `net_ion_count(counts, name)` — `N.iz .+ N.diz` for
-`:H2⁺` under the interim stoichiometry (both channels' ions are booked to this
+`:H2⁺` under the INTERIM(diz-ion-species) stoichiometry (both channels' ions are booked to this
 column) — one ion per event, at a rate set by the **electron** density, so for
 ions it is a pure explicit source with no diagonal counterpart. The counts come
 from `update_RRCs!`'s step-entry rates; the tables are not re-queried here.

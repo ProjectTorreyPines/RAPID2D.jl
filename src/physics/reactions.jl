@@ -156,7 +156,7 @@ function update_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # of the step just taken, per cell. Broadcasting below covers both forms.
         θ = reaction_θ(RP, :iz)
         if RP.flags.scheme.growth === ExpRB
-            # `z_growth` is capped and built from `ν_en_iz_tot` (Task C1), so it books
+            # `z_growth` is capped and built from `ν_en_iz_tot`, so it books
             # the electrons the solve ACTUALLY created, both channels together. Split
             # it by channel share rather than recomputing from Δt·ν: recomputing would
             # undo the cap and book (z/z_cap)× the true number — 4/3 at z = 40.
@@ -261,7 +261,7 @@ net_H2_gas_count(N::ReactionCounts) = -(N.iz .+ N.diz)
 touches it — a species nothing creates or destroys has no source term rather
 than a zero one, so the caller can skip the work entirely.
 
-`:H2⁺` is `N.iz .+ N.diz`, not `N.iz` alone: under the INTERIM
+`:H2⁺` is `N.iz .+ N.diz`, not `N.iz` alone: under the INTERIM(diz-ion-species)
 (`REACTION_STOICHIOMETRY.diz`) DI's ion is booked here too, because H⁺ is not yet
 a transportable species. That makes this identically `net_electron_count` for
 now — not a conservation check, just the consequence of the interim.

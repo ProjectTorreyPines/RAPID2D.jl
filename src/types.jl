@@ -360,7 +360,7 @@ Contains the plasma state variables including density, temperature, and velocity
     ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction [1/s]
     ν_en_diss_iz::Matrix{FT} = zeros(FT, dims) # Dissociative-ionization rate [1/s]
     # ELECTRON production: both channels make exactly one electron per event, so this is
-    # what continuity, dilution and the growth exponent take. Under the INTERIM
+    # what continuity, dilution and the growth exponent take. Under the INTERIM(diz-ion-species)
     # (`REACTION_STOICHIOMETRY.diz`, until H⁺ is a transportable species) it is also what
     # every ION-side rate takes: DI's ion is booked to H₂⁺ too, so H₂⁺ now comes from both
     # channels, not from `ν_en_iz` alone. That will change back to `ν_en_iz` (with H⁺
@@ -569,7 +569,7 @@ Fields include various matrices for solving different parts of the model.
     # Operators for solving continuity equations
     ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
     # Named `_tot`, not `ν_en_iz`, because it is built from `pla.ν_en_iz_tot`: under the
-    # interim (`REACTION_STOICHIOMETRY.diz`) every ion is booked as H₂⁺, so the continuity
+    # INTERIM(diz-ion-species) (`REACTION_STOICHIOMETRY.diz`) every ion is booked as H₂⁺, so the continuity
     # assembly needs both ionization channels, not the H₂⁺-only rate.
     ν_en_iz_tot::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization (both channels) [1/s]
 
@@ -767,6 +767,11 @@ const REACTION_STOICHIOMETRY = (
     # H₂⁺ column keeps the electron count, the charge and nuclei conservation all exact
     # and gets only the ion MASS wrong, for ≤8 % of ions at high E/p and exactly none
     # below 35 eV impact. Change to `:H⁺ => 1` when multi-species ion transport lands.
+    #
+    # THIS COMMENT IS THE ANCHOR for that change. Every other site that follows the
+    # interim carries the tag `INTERIM(diz-ion-species)` and points back here instead of
+    # restating the rationale, so `grep -rn "INTERIM(diz-ion-species)" src/` enumerates
+    # the full change list rather than leaving it to be rediscovered.
     diz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
 )
 

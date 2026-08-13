@@ -185,11 +185,9 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # the step-entry ν_en_iz_tot that continuity and the energy equation share.
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                # ν_en_iz_tot, not ν_en_iz alone: under the INTERIM every ion is booked
-                # as H₂⁺ (`REACTION_STOICHIOMETRY.diz`), so dissociative ionization also
-                # dilutes this population — this is NOT the final physics. When H⁺
-                # becomes a transportable species this reverts to `ν_en_iz` alone, and
-                # H⁺ gains its own dilution rate.
+                # INTERIM(diz-ion-species): ν_en_iz_tot, not ν_en_iz alone, because every
+                # ion is booked as H₂⁺ and so DI dilutes this population too. Why, and
+                # what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
                 @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz_tot
             end
 
@@ -763,9 +761,9 @@ function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # because that term's Tₑ was explicit and this one's mostly is not. That is the
         # depth's definition applied honestly, not an omission: `FullLinearResponse` is
         # where the rest of the response lives.
-        # Since Task B3 round 4 P_exc carries the SAME factor, so it has an explicit
-        # Tₑ too and this depth must pick it up — the sinks share one `cold_factor`
-        # in update_electron_heating_powers!, and the Jacobian mirrors that sharing.
+        # P_exc carries the SAME factor, so it has an explicit Tₑ too and this depth
+        # must pick it up — the sinks share one `cold_target_factor` in
+        # update_electron_heating_powers!, and the Jacobian mirrors that sharing.
         # P_diss_exc stays raw and contributes nothing here.
         # One fused broadcast, no grid temporaries: this runs every step, and
         # `cold_target_slope` is the same slope `update_electron_heating_powers!`'s
@@ -949,11 +947,9 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             ν_a = @. pla.n_H2_gas * (FT(0.5) * K_ela + K_cx)
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                # ν_en_iz_tot, not ν_en_iz alone: under the INTERIM every ion is booked
-                # as H₂⁺ (`REACTION_STOICHIOMETRY.diz`), so dissociative ionization also
-                # dilutes this population — this is NOT the final physics. When H⁺
-                # becomes a transportable species this reverts to `ν_en_iz` alone, and
-                # H⁺ gains its own dilution rate.
+                # INTERIM(diz-ion-species): ν_en_iz_tot, not ν_en_iz alone, because every
+                # ion is booked as H₂⁺ and so DI dilutes this population too. Why, and
+                # what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
                 @. ν_a += Z_i * pla.ν_en_iz_tot      # electron rate: no T_i dependence
             end
             @. pla.exprb.eig_Ti -= ν_a * FT(1.5) * ee
@@ -1052,11 +1048,9 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # is per ion, and one ion carries Z of them (see `update_ui_para!`).
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                # ν_en_iz_tot, not ν_en_iz alone: under the INTERIM every ion is booked
-                # as H₂⁺ (`REACTION_STOICHIOMETRY.diz`), so dissociative ionization also
-                # dilutes this population — this is NOT the final physics. When H⁺
-                # becomes a transportable species this reverts to `ν_en_iz` alone, and
-                # H⁺ gains its own dilution rate.
+                # INTERIM(diz-ion-species): ν_en_iz_tot, not ν_en_iz alone, because every
+                # ion is booked as H₂⁺ and so DI dilutes this population too. Why, and
+                # what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
                 @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz_tot
             end
 
