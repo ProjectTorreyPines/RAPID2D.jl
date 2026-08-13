@@ -236,9 +236,13 @@ construction. Its particle rate `K_diss_exc` is already loaded by
 `update_RRCs!` (`reaction_rate_coefficients.jl:319`) — only its energy sibling
 `Kerg_diss_exc` is consumed (into `P_en_diss_exc`); the channel has no
 `ReactionCounts` field and never reaches this sum. Measured on the shipped
-table, `K_diss_exc/(K_iz + K_diss_iz)` is 182× at Ē = 3 eV, 2.06× at 10 eV,
-0.79× at 20 eV, 0.40× at 50 eV — this sink under-consumes H₂ by roughly 1.4–3×
-through burn-through and by two orders of magnitude in the few-eV band.
+table, the median of `K_diss_exc/(K_iz + K_diss_iz)` over E/p is 18 at
+Ē = 5 eV, 2.1 at 10, 1.1 at 15, 0.79 at 20, 0.40 at 50 and 0.19 at 300 — so
+this sink under-consumes H₂ by 1.2–3× from burn-through up, and by more than an
+order of magnitude in the few-eV band, where ionization has barely switched on
+and dissociative excitation is nearly the whole H₂ loss. (Quote the median, not
+the range: below Ē ≈ 5 eV the denominator is near zero on most E/p rows, so the
+ratio there is numerically unbounded and says nothing.)
 Booking it would need a `diss_exc` row in `REACTION_STOICHIOMETRY` (H₂ → −1,
 no electron) and a matching `ReactionCounts` field; deliberately out of scope
 here.
