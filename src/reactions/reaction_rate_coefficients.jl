@@ -586,6 +586,36 @@ function update_RRCs!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
+    erg_axis_bounds(RP, reaction) -> (Ē_lo, Ē_hi)
+
+The endpoints of one `(E/p, Ē)` surface's `Ē` axis [eV], as a concrete `Tuple{FT,FT}`.
+
+**A function barrier, not a convenience** — the same one [`mean_energy_floor`](@ref) is,
+and for the same reason twice over. `RAPID.eRRCs` is declared as the abstract
+`AbstractSpeciesRRCs{FT}`, and `reaction` selects the field at RUNTIME, so
+`getfield(RP.eRRCs, reaction).Erg_eV` infers `Vector{FT} where FT<:AbstractFloat` and
+`first` of it comes back `::AbstractFloat`. Handing that to
+`clamp.(mean_Ke_eV, Ē_lo, Ē_hi)` costs the fused kernel its specialization, on every
+node, on every call. The `::FT` is what makes it concrete again.
+
+**The `isa` test below does not do that job.** `rrc isa RRC_EoverP_Erg` narrows to the
+UnionAll, not to `RRC_EoverP_Erg{FT}`, so it validates without concretising — which is
+exactly the premise a review once cleared this site on. The annotations are load-bearing;
+the `isa` is only an error message.
+
+Every `RRC_EoverP_Erg` shares the one `Erg_eV` vector the constructor read, so the pair
+is the same for every surface and `Ē_lo` is [`mean_energy_floor`](@ref).
+"""
+@inline function erg_axis_bounds(
+        RP::RAPID{FT}, reaction::Symbol
+    ) where {FT <: AbstractFloat}
+    rrc = getfield(RP.eRRCs, reaction)
+    rrc isa RRC_EoverP_Erg ||
+        throw(ArgumentError("the Ē axis is defined for (E/p, Ē) surfaces; $reaction is not one"))
+    return (first(rrc.Erg_eV)::FT, last(rrc.Erg_eV)::FT)
+end
+
+"""
     update_rate_jacobian!(RP, reaction, out) -> out
 
 Write `∂ν/∂Tₑ = n_H2_gas · (3/2) · ∂K/∂Ē` for one `(E/p, Ē)` surface into `out`.
@@ -614,7 +644,10 @@ function update_rate_jacobian!(
 
     # Clamp on the Ē axis only. E/p carries no Tₑ dependence, so the interpolant
     # clamps it exactly as the value path does and nothing needs masking there.
-    Ē_lo, Ē_hi = first(rrc.Erg_eV), last(rrc.Erg_eV)
+    # Through `erg_axis_bounds` rather than off `rrc` directly: the bounds are scalar
+    # operands of a whole-grid broadcast, and read off the abstract field they arrive
+    # `::AbstractFloat`. See that function; pinned by `rrc_type_stability_test.jl`.
+    Ē_lo, Ē_hi = erg_axis_bounds(RP, reaction)
     Ē_query = clamp.(mean_Ke_eV, Ē_lo, Ē_hi)
 
     rrc.dK_dĒ(out, (abs_Epara_over_pGas, Ē_query))
@@ -627,7 +660,7 @@ function update_rate_jacobian!(
 end
 
 # Export types and functions for reaction rate coefficients
-export update_RRCs!, update_rate_jacobian!, ion_rate_jacobian
+export update_RRCs!, update_rate_jacobian!, ion_rate_jacobian, erg_axis_bounds
 export AbstractReactionRateCoefficient
 export RRC_EoverP_Erg, RRC_T_ud, RRC_T_ud_gFac
 export Electron_RRCs, H2_Ion_RRCs
