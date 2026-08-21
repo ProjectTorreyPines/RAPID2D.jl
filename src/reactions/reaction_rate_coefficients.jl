@@ -159,6 +159,30 @@ function read_T_ud_surface(h5fid, name::AbstractString, order::Symbol)
 end
 
 """
+    t_axis_bounds(RP, reaction) -> (T_lo, T_hi)
+
+The endpoints of one `(T, u_d)` ion surface's temperature axis [eV], as a concrete
+`Tuple{FT,FT}`. The ion-side twin of [`erg_axis_bounds`](@ref), and a function barrier
+for the same reason: `RAPID.iRRCs` is the abstract `AbstractSpeciesRRCs{FT}` and
+`reaction` selects the field at runtime, so `first(rrc.T_eV)` arrives `::AbstractFloat`
+and would enter `clamp.` over the whole grid as a non-concrete scalar operand.
+
+**Separate from [`ion_rate_jacobian`](@ref) on purpose.** That function also asserts
+`::Matrix{FT}` on its `dK_dT` call, and that assertion alone makes its RETURN type
+concrete — so a test on the return type cannot see whether these scalars are pinned.
+Mutation-checked: removing the `::FT` here leaves `ion_rate_jacobian` inferring
+`Matrix{Float64}` regardless. This accessor is what makes the scalar layer testable.
+"""
+@inline function t_axis_bounds(
+        RP::RAPID{FT}, reaction::Symbol
+    ) where {FT <: AbstractFloat}
+    rrc = getfield(RP.iRRCs, reaction)
+    rrc isa RRC_T_ud ||
+        throw(ArgumentError("the T axis is defined for (T, u_d) surfaces; $reaction is not one"))
+    return (first(rrc.T_eV)::FT, last(rrc.T_eV)::FT)
+end
+
+"""
     ion_rate_jacobian(RP, reaction) -> Matrix
 
 `∂K/∂T_i` for one `(T, u_d)` ion surface, at the same `(T_i, |u_i∥|)` the value
@@ -173,9 +197,21 @@ function ion_rate_jacobian(RP::RAPID{FT}, reaction::Symbol) where {FT <: Abstrac
     rrc isa RRC_T_ud ||
         throw(ArgumentError("∂/∂T_i is defined for (T, u_d) surfaces; $reaction is not one"))
 
-    T_lo, T_hi = first(rrc.T_eV), last(rrc.T_eV)
+    # Two concretising assertions, and BOTH are needed — dropping either leaves this
+    # function inferring `Any`, which then propagates into the two whole-grid
+    # broadcasts `update_ion_power_jacobian!` builds from its result.
+    #   `::FT`        — `RP.iRRCs` is the abstract `AbstractSpeciesRRCs{FT}` and
+    #                   `reaction` selects the field at runtime, so `first(rrc.T_eV)`
+    #                   arrives `::AbstractFloat` and would enter `clamp.` as a
+    #                   non-concrete scalar operand.
+    #   `::Matrix{FT}` — `RRC_T_ud` declares `itp` and `dK_dT` with no type at all
+    #                   (see the struct), so the call is `Any` however well the
+    #                   scalars are pinned.
+    # Pinned by `rrc_type_stability_test.jl`; the same barrier idiom as
+    # [`erg_axis_bounds`](@ref) and [`mean_energy_floor`](@ref).
+    T_lo, T_hi = t_axis_bounds(RP, reaction)
     T_query = clamp.(RP.plasma.Ti_eV, T_lo, T_hi)
-    out = rrc.dK_dT((T_query, abs.(RP.plasma.ui_para)))
+    out = rrc.dK_dT((T_query, abs.(RP.plasma.ui_para)))::Matrix{FT}
     # Exact equality is the in-range test — `clamp` returns its argument untouched
     # inside the interval and a bound outside it.
     @. out = ifelse(RP.plasma.Ti_eV == T_query, out, zero(FT))
@@ -660,7 +696,7 @@ function update_rate_jacobian!(
 end
 
 # Export types and functions for reaction rate coefficients
-export update_RRCs!, update_rate_jacobian!, ion_rate_jacobian, erg_axis_bounds
+export update_RRCs!, update_rate_jacobian!, ion_rate_jacobian, erg_axis_bounds, t_axis_bounds
 export AbstractReactionRateCoefficient
 export RRC_EoverP_Erg, RRC_T_ud, RRC_T_ud_gFac
 export Electron_RRCs, H2_Ion_RRCs

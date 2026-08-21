@@ -1,14 +1,34 @@
 # Type-stability pins for the RRC accessors.
 #
 # `RAPID.eRRCs` and `RAPID.iRRCs` are declared as the ABSTRACT `AbstractSpeciesRRCs{FT}`
-# (`types.jl`), so a direct field read off them infers `Any`. One non-concrete SCALAR
-# inside a `@.` stops `Broadcast.combine_eltypes` from producing a concrete eltype and
-# the fused kernel falls back to per-element dynamic dispatch — a cost proportional to
-# the grid, plus a boxed allocation per call.
+# (`types.jl`), so a direct field read off them infers `Any`, and a non-concrete scalar
+# handed to a whole-grid broadcast makes the CALL SITE unspecialisable.
 #
-# Every accessor that pulls a scalar off those fields and hands it to array code must
-# therefore be a FUNCTION BARRIER with a concretising `::FT`. These tests are what stop
-# one from silently losing it.
+# **What that costs, measured — not what it is often claimed to cost.** The common
+# telling is that `Broadcast.combine_eltypes` fails and the loop drops to per-element
+# dynamic dispatch, so the penalty grows with the grid. That is wrong, and it had been
+# repeated through three comments and a PR description here before anyone measured it.
+# A `Broadcasted` is built from VALUES, so at run time its arg tuple is
+# `Tuple{Matrix{Float64}, Float64, Float64}` and `combine_eltypes` returns a concrete
+# `Float64` — the kernel that actually executes IS specialised. Only the compiler's
+# static view is lost. Measured on the pattern in isolation:
+#
+#     N          abstract    concrete   ratio   extra alloc
+#     2 500        872 ns      569 ns    1.53        32 B
+#     40 000      9916 ns     6666 ns    1.49        32 B
+#     160 000    38625 ns    26458 ns    1.46        32 B
+#
+# The extra allocation is CONSTANT and the ratio SHRINKS toward ~1.46. That is one
+# dynamic dispatch plus a fixed box plus lost inlining — a constant-factor tax on a
+# memory-bound loop, not a per-element blowup. Worth fixing; not worth overstating, and
+# never worth asserting as a ratio in a test.
+#
+# So the reason to keep these barriers is TYPE STABILITY as a contract: an `Any` that
+# escapes a function propagates into its callers' broadcasts too (see the ion case
+# below, whose `Any` return reaches two more grid broadcasts in
+# `update_ion_power_jacobian!`). Every accessor that pulls a scalar off those fields
+# must carry a concretising `::FT`. These tests are what stop one from silently losing
+# it.
 #
 # The `@test @inferred(f(x)) isa T` form is load-bearing and the parentheses are not
 # optional. `a isa T` lowers to `Expr(:call, :isa, a, T)`, so writing
@@ -25,7 +45,11 @@
 
     # Small, cheap, and with a plasma state real enough that the query point lands
     # inside the tables rather than on a clamp for every node.
-    function ts_RAPID(; Te_eV = 5.0, ne = 1.0e16)
+    # `Ti_eV` defaults to 1 eV, not the 0.026 eV `initialize!` leaves: the ion elastic
+    # `∂K/∂T` is genuinely flat at room temperature (measured 0.0 across the grid, and
+    # 6.1e-16 at 1 eV), so a fixture left at the default would let a type assertion pass
+    # on a function returning all zeros.
+    function ts_RAPID(; Te_eV = 5.0, ne = 1.0e16, Ti_eV = 1.0)
         config = SimulationConfig{Float64}(
             NR = 8, NZ = 8, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
             dt = 1.0e-8, t_end_s = 1.0e-6, R0B0 = 1.0,
@@ -39,6 +63,7 @@
         RP.flags.src = true
         initialize!(RP)
         RP.plasma.Te_eV .= Te_eV
+        RP.plasma.Ti_eV .= Ti_eV
         RP.plasma.ne .= ne
         RP.plasma.ni .= ne
         RP.plasma.ue_para .= -1.0e5
@@ -105,4 +130,61 @@ end
     lo, hi = erg_axis_bounds(RP, :Kerg_ela)
     q = clamp_query(RP, :Kerg_ela)
     @test all(lo .<= q .<= hi)
+end
+
+@testitem "RRC accessors: ion_rate_jacobian returns a concrete Matrix" setup = [TypeStabilityFixtures] begin
+    using RAPID2D: ion_rate_jacobian, t_axis_bounds
+
+    # The twin of the `update_rate_jacobian!` case, 430 lines earlier in the same file
+    # and reached through `RP.iRRCs` instead of `RP.eRRCs`. Found by sweeping for the
+    # pattern rather than by reading the diff, which is why it outlived the first fix.
+    #
+    # Two separate leaks have to be closed here, and closing only the obvious one
+    # leaves the return type `Any`:
+    #
+    #   1. `first(rrc.T_eV)` off the abstract field — the same `::FT` as elsewhere.
+    #   2. `RRC_T_ud` declares `itp` and `dK_dT` with NO TYPE AT ALL, so `rrc.dK_dT(…)`
+    #      is `Any` however well the scalars are pinned.
+    #
+    # Unlike `update_rate_jacobian!` — which returns its `out` ARGUMENT and so has an
+    # inferrable return type no matter how dynamic its interior — this function builds
+    # its result, so `@inferred` on the function itself is the honest pin.
+    RP = ts_RAPID()
+
+    jac_of(rp, sym) = ion_rate_jacobian(rp, sym)
+    tbounds_of(rp, sym) = t_axis_bounds(rp, sym)
+
+    # The scalar layer needs its OWN assertion. `ion_rate_jacobian`'s `::Matrix{FT}`
+    # makes the return type concrete whether or not the T-axis scalars are pinned, so
+    # `@inferred` on the function alone cannot see this leak — verified by mutation:
+    # dropping the `::FT` still leaves the function inferring `Matrix{Float64}`.
+    for sym in (
+            :Elastic, :Charge_Exchange, :Target_Ionization,
+            :Projectile_Dissociation, :Particle_Exchange,
+        )
+        @test @inferred(tbounds_of(RP, sym)) isa Tuple{Float64, Float64}
+    end
+    lo, hi = t_axis_bounds(RP, :Elastic)
+    @test lo < hi
+    @test (lo, hi) == t_axis_bounds(RP, :Charge_Exchange)   # one shared T_eV vector
+
+    for sym in (:Elastic, :Charge_Exchange)
+        @test @inferred(jac_of(RP, sym)) isa Matrix{Float64}
+        @test size(jac_of(RP, sym)) == size(RP.plasma.Ti_eV)
+    end
+
+    # Anti-vacuity: the derivative must not be identically zero here, or "it inferred a
+    # Matrix{Float64}" would hold for a function that had stopped computing anything.
+    @test any(!iszero, ion_rate_jacobian(RP, :Elastic))
+
+    # Outside the T axis the derivative is deliberately zeroed, so the in-range mask is
+    # doing work rather than passing everything through.
+    RP_cold = ts_RAPID(; Ti_eV = 1.0e-8)    # far below the table's bottom row (1 meV)
+    @test @inferred(jac_of(RP_cold, :Elastic)) isa Matrix{Float64}
+    @test all(iszero, ion_rate_jacobian(RP_cold, :Elastic))
+
+    # Every field of `H2_Ion_RRCs` is an `RRC_T_ud`, so the `isa` guard inside is
+    # unreachable for any symbol that names one — an unknown symbol fails earlier, in
+    # `getfield`. Asserted as it behaves rather than as the guard suggests.
+    @test_throws FieldError ion_rate_jacobian(RP, :not_a_surface)
 end
