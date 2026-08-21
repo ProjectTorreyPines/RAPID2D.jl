@@ -129,25 +129,30 @@ end
 
 Contains the power terms for electron energy equation.
 
+**Units are W PER ELECTRON, not W/m³.** `update_Te!` applies `(2/3)·P·dt/e` with no
+`nₑ` anywhere, matching a `(3/2)d(k_B Tₑ)/dt = ΣP` form in which both sides are the
+budget of one electron. Multiply by `nₑ` to get a volumetric power density.
+
 # Fields
-- `tot`: Total power density [W/m³]
-- `drag`: Power from drag forces [W/m³]
-- `ela`: Power lost to neutrals via elastic recoil, ~2mₑ/M per momentum-transfer collision [W/m³]
-- `conv`: Power from convective transport [W/m³]
-- `diffu`: Power from diffusive transport [W/m³]
-- `heat`: Power from heating sources (e.g., ohmic) [W/m³]
-- `iz`: Power from ionization [W/m³]
-- `exc`: Power from excitation [W/m³]
-- `diss_exc`: Power lost to dissociative excitation (DISS group) [W/m³]
-- `diss_iz`: Power lost to dissociative ionization (35 eV/event) [W/m³]
-- `dilution`: Power from density dilution [W/m³]
-- `equi`: Power from temperature equilibration [W/m³]
+- `tot`: Total, the sum the temperature update consumes
+- `drag`: Ordered drift converted to random motion (neutral friction + Coulomb)
+- `ela`: Lost to neutrals via elastic recoil, ~2mₑ/M per momentum-transfer collision
+- `conv`: From convective transport
+- `diffu`: From diffusive transport
+- `heat`: From heating sources (e.g., ohmic)
+- `iz`: Lost to ionization
+- `exc`: Lost to excitation
+- `diss_exc`: Lost to dissociative excitation (DISS group)
+- `diss_iz`: Lost to dissociative ionization (35 eV/event)
+- `dilution`: Redistribution when newborn electrons enter at rest; not a loss of total
+  electron energy
+- `equi`: Temperature equilibration with the ions
 """
 @kwdef mutable struct ElectronHeatingPowers{FT <: AbstractFloat}
     dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
 
-    # Power terms - all in W/m³
-    tot::Matrix{FT} = zeros(FT, dims)        # Total power density
+    # Power terms - all in W PER ELECTRON (see the docstring), not W/m³
+    tot::Matrix{FT} = zeros(FT, dims)        # Total
     drag::Matrix{FT} = zeros(FT, dims)       # Power from drag forces
     ela::Matrix{FT} = zeros(FT, dims)        # Power lost to neutrals via elastic collisions
     conv::Matrix{FT} = zeros(FT, dims)       # Power from convective transport
@@ -207,9 +212,13 @@ it is a lag, and a term that pretends otherwise will drift.
     # the K_mom_by_* closure it audits.
     mom_ela::Matrix{FT} = zeros(FT, dims)
     diss_iz::Matrix{FT} = zeros(FT, dims)       # ∂ν_en_diss_iz/∂Tₑ
-    ela_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_ela/∂Tₑ at frozen cold-target factor
-    exc_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_exc/∂Tₑ
-    diss_exc_erg::Matrix{FT} = zeros(FT, dims)  # ∂P_en_diss_exc/∂Tₑ
+    # Derivatives of the RAW ledger products `P_en_* = n_gas·Kerg_*`, via ∂Kerg/∂Ē. The
+    # cold-target factor is NOT inside them: `ela_erg` and `exc_erg` are combined with it
+    # by the product rule during eigenvalue assembly (`dν.X_erg·cold + P_en_X·dcold`),
+    # which is why they must stay factor-free here.
+    ela_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_ela/∂Tₑ, no cold-target factor
+    exc_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_exc/∂Tₑ, no cold-target factor
+    diss_exc_erg::Matrix{FT} = zeros(FT, dims)  # ∂P_en_diss_exc/∂Tₑ (consumed raw anyway)
 
     # Did the last update_RRCs! materialize the fields above? Never true before the
     # first rate step, which is exactly right: they are zeros then.
@@ -262,16 +271,20 @@ end
 
 Contains the power terms for ion energy equation.
 
+**Units are W PER ION, not W/m³** — the same convention as [`ElectronHeatingPowers`].
+`update_Ti!` applies `(2/3)·P·dt/e` with no `nᵢ` anywhere. Multiply by `nᵢ` for a
+volumetric power density.
+
 # Fields
-- `tot`: Total power density [W/m³]
-- `atomic`: Power from atomic processes [W/m³]
-- `equi`: Power from temperature equilibration [W/m³]
+- `tot`: Total, the sum the temperature update consumes
+- `atomic`: From atomic processes
+- `equi`: Temperature equilibration with the electrons
 """
 @kwdef mutable struct IonHeatingPowers{FT <: AbstractFloat}
     dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
 
-    # Power terms - all in W/m³
-    tot::Matrix{FT} = zeros(FT, dims)        # Total power density
+    # Power terms - all in W PER ION (see the docstring), not W/m³
+    tot::Matrix{FT} = zeros(FT, dims)        # Total
     atomic::Matrix{FT} = zeros(FT, dims)     # Power from atomic processes
     equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
 end
@@ -353,7 +366,9 @@ Contains the plasma state variables including density, temperature, and velocity
     # Written by `update_RRCs!` and by nothing else, at exactly one point per step, so
     # every consumer within a step sees the same evaluation state. Read them; do not
     # re-query the RRC tables (see internal/docs/src/notes/design/rrc-single-evaluation-point.md).
-    ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
+    # The H₂ → H₂⁺ channel ALONE. Dissociative ionization is `ν_en_diss_iz`, and anything
+    # that wants "an electron was made" wants `ν_en_iz_tot` below — not this.
+    ν_en_iz::Matrix{FT} = zeros(FT, dims) # Non-dissociative ionization rate [1/s]
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
     # Diagnostic-only, and the sole auditor of the K_mom_by_* momentum-ledger closure.
     # NOT a solver input: the elastic energy sink is P_en_ela, not this frequency.
