@@ -554,7 +554,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # remove that momentum, so the discrete energy budget closes.
 
             # Calculate velocity magnitudes for drag forces
-            ue_mag_sq = @. pla.ueR^FT(2.0) .+ pla.ueϕ^FT(2.0) .+ pla.ueZ^FT(2.0)
+            ue_mag_sq = @. pla.ueR^2 .+ pla.ueϕ^2 .+ pla.ueZ^2
             ue_dot_ui = @. pla.ueR * pla.uiR + pla.ueϕ * pla.uiϕ + pla.ueZ * pla.uiZ
 
             @. ePowers.drag = me * (
@@ -577,7 +577,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             #
             # Ē is the table's own query coordinate, rebuilt here rather than read: it is
             # the same expression `_eRRC_query_point` uses.
-            Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee
+            Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
             # The 1/Ē divergence is self-limiting only INSIDE the table: there,
             # Kerg_ela ∝ Ē (the Ē_ela ≃ Ē identity in the comment above), so the product
             # stays finite as Ē → 0. Below the table's bottom row, `RRC_EoverP_Erg.itp`
@@ -795,7 +795,7 @@ function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # factor has — including the zero below the floor.
         Ē_floor = mean_energy_floor(RP)
         @. pla.exprb.eig_Te -= (pla.P_en_ela + pla.P_en_exc) * cold_target_slope(
-            FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee,
+            FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee,
             pla.T_gas_eV, Ē_floor
         )
         # Dilution, both electron-producing channels.
@@ -856,8 +856,8 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             # Same velocity magnitude update_electron_heating_powers! charges the
             # drag and the dilution with — NOT ue_para, which is what Ē is built
             # from. The two differ as soon as a perpendicular drift is on.
-            ue_mag_sq = @. pla.ueR^FT(2.0) + pla.ueϕ^FT(2.0) + pla.ueZ^FT(2.0)
-            Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^FT(2.0) / ee
+            ue_mag_sq = @. pla.ueR^2 + pla.ueϕ^2 + pla.ueZ^2
+            Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
             Ē_floor = mean_energy_floor(RP)
             # The factor the powers applied, and its slope — one definition each, from
             # the same pair `update_electron_heating_powers!` consumes.
@@ -980,7 +980,7 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             @. pla.exprb.eig_Ti -= ν_a * FT(1.5) * ee
 
             if linear_response
-                ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
+                ui_mag_sq = @. pla.uiR^2 + pla.uiϕ^2 + pla.uiZ^2
                 ΔE = @. (
                     FT(0.5) * mi * ui_mag_sq - FT(1.5) * (pla.Ti_eV - pla.T_gas_eV) * ee
                 )
@@ -1055,7 +1055,7 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             iRRC_elastic = get_H2_ion_RRC(RP, :Elastic)
 
             # Calculate ion velocity magnitude squared
-            ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
+            ui_mag_sq = @. pla.uiR^2 + pla.uiϕ^2 + pla.uiZ^2
 
             # Calculate average energy change from atomic collisions
             # Energy balance: kinetic energy loss minus thermal energy change
