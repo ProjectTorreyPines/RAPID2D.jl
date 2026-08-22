@@ -463,6 +463,56 @@ end
     @test large < 256                                   # and what remains is one scalar
 end
 
+@testitem "heating powers: the cold-target factor costs no grid temporary" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, update_RRCs!,
+        update_electron_heating_powers!
+
+    # `update_electron_heating_powers!` runs EVERY step whatever the scheme flags say,
+    # so a grid temporary here is paid on every step of every run. The 2026-08 ledger
+    # branch briefly added two — `Ē_eV` and `cold_factor` — and they are now folded
+    # into the two consuming broadcasts, with the shared factor parked in
+    # `ePowers.ela` between them rather than in a fresh array.
+    #
+    # This is NOT a zero-allocation contract, and pretending otherwise would make the
+    # test a lie: the function still builds `ue_mag_sq`, `ue_dot_ui` and the transport
+    # branches' own temporaries, about ten grid arrays in total. What is pinned is the
+    # PER-NODE cost, which is what a new temporary moves. Measured on this
+    # configuration: 98 B/node before the fold, 81.7 B/node after (24x24), 80.4 (48x48).
+    # One more `Matrix{Float64}` temporary is +8 B/node, so the bound below catches it.
+    function bytes_per_node(NR, NZ)
+        config = SimulationConfig{Float64}(
+            NR = NR, NZ = NZ, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+            dt = 1.0e-8, t_end_s = 1.0e-6, R0B0 = 1.0, prefilled_gas_pressure = 5.0e-3,
+            snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+            wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        R = RAPID{Float64}(config)
+        R.flags.Atomic_Collision = true
+        R.flags.src = true
+        R.flags.exprb_eigenvalue = PartialLinearResponse
+        initialize!(R)
+        R.flags.scheme.atomic = ExpRB
+        R.plasma.Te_eV .= 5.0
+        R.plasma.ne .= 1.0e16
+        R.plasma.ni .= 1.0e16
+        R.plasma.ue_para .= -1.0e5
+        R.fields.E_para_tot .= -50.0
+        update_RRCs!(R)
+        update_electron_heating_powers!(R)              # compile before measuring
+        n = length(R.plasma.Te_eV)
+        return @allocated(update_electron_heating_powers!(R)) / n
+    end
+
+    small, large = bytes_per_node(24, 24), bytes_per_node(48, 48)
+
+    # Grid-independence of the RATE is the premise: if the per-node cost itself moved
+    # with the grid, bounding it at one size would say nothing about the other.
+    @test isapprox(small, large; rtol = 0.05)
+    @test small < 85.0
+    @test large < 85.0
+end
+
 @testitem "eig_Te: PartialLinearResponse is exact once the surfaces stop responding" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB, PartialLinearResponse
 
@@ -474,9 +524,21 @@ end
     #
     # Make the dropped part identically zero instead. With Ē-independent surfaces
     # ∂K/∂Ē = 0, so Partial and the true ∂P/∂Tₑ must agree EXACTLY, and `eig_fd`
-    # becomes a genuine oracle for everything Partial keeps: the cold-target slope,
-    # the dilution rate, and the equilibration term. Coulomb is on so the last of
-    # those is live rather than assumed.
+    # becomes a genuine oracle for TWO of the three things Partial keeps: the
+    # cold-target slope and the dilution rate. Mutation-checked — deleting either is
+    # caught, at 43x and 5.0e5x tolerance respectively.
+    #
+    # **It does NOT cover the equilibration term, and an earlier version of this
+    # comment claimed it did** on the grounds that `Coulomb_Collision = true` made it
+    # "live rather than assumed". It is not a fixture problem and cannot be fixed by
+    # one: `2μ(3/2)e·ν_ei` is 4.7e-18 here against a `scale` of 2.4e6 set by the
+    # cold-target slope, so the term sits 24 orders below the tolerance and stays there
+    # for any `ν_ei` — 10¹⁰ still leaves 18 orders. The mass ratio μ ≈ 2.7e-4 and the
+    # `e` are what put it there.
+    #
+    # That term has its own item, which drives `ν_ei` directly at 1e8 and 1e10:
+    # "eig_Te: the equilibration term is differentiated, not lumped in with ∂ν_ei/∂Tₑ".
+    # Two tests, two regimes; neither pretends to be the other.
     # Both units, at their real magnitudes. With one value for K and L alike the energy
     # sinks land 20 orders above every particle term, `scale` below is set entirely by
     # the cold-target slope, and the dilution and equilibration terms this item exists
@@ -491,7 +553,6 @@ end
     analytic = eig_at(RP)
     numeric = eig_fd(RP)
     @test !all(iszero, analytic[inw])                   # or the comparison is vacuous
-    @test !all(iszero, RP.plasma.ν_ei[inw])             # the equilibration term is live
     scale = maximum(abs.(numeric[inw]))
     @test scale > 0.0
     @test maximum(abs.(analytic[inw] .- numeric[inw])) < 1.0e-6 * scale

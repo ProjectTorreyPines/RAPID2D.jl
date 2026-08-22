@@ -577,7 +577,6 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             #
             # Ē is the table's own query coordinate, rebuilt here rather than read: it is
             # the same expression `_eRRC_query_point` uses.
-            Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
             # The 1/Ē divergence is self-limiting only INSIDE the table: there,
             # Kerg_ela ∝ Ē (the Ē_ela ≃ Ē identity in the comment above), so the product
             # stays finite as Ē → 0. Below the table's bottom row, `RRC_EoverP_Erg.itp`
@@ -592,8 +591,20 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # Shared with the excitation term below -- same factor, same floor, computed
             # once -- so elastic and excitation cannot drift apart.
             Ē_floor = mean_energy_floor(RP)
-            cold_factor = @. cold_target_factor(Ē_eV, pla.T_gas_eV, Ē_floor)
-            @. ePowers.ela = pla.P_en_ela * cold_factor
+            # The factor is parked in `ePowers.ela` as SCRATCH rather than built in a
+            # fresh grid array, and Ē is folded into the same fused kernel instead of
+            # being materialised first. This function runs every step whatever the
+            # scheme flags say, and those two temporaries were the only per-step
+            # allocation this branch added; both are gone. Ē is not transcribed again
+            # either — it appears here exactly as often as before.
+            #
+            # **The factor is consumed at the excitation site below, both times.**
+            # Keeping one array is what makes "same factor, same floor, computed once"
+            # literal rather than a promise about two call sites agreeing.
+            @. ePowers.ela = cold_target_factor(
+                FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee,
+                pla.T_gas_eV, Ē_floor
+            )
 
             # Excitation, tabulated. No constant survives here: the EXC group spans
             # 0.0441 eV (rot) to 14.9 eV, a factor 338 in per-event cost, so its mean cost
@@ -632,7 +643,15 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # Retire this the day BD exports `L_exc_rot` separately: the exact factor
             # can then be applied to the rotational part alone, leaving the rest of EXC
             # (vibration, electronic) on the literal `consume_as` contract.
-            @. ePowers.exc = pla.P_en_exc * cold_factor
+            # `ePowers.ela` still holds the shared cold-target factor here.
+            #
+            # ORDER IS LOAD-BEARING: excitation must consume it BEFORE elastic
+            # overwrites it. Swapping these two lines silently gives excitation a
+            # spurious `P_en_ela` factor — caught by physics_test.jl's
+            # "ePowers.exc ≈ P_en_exc .* cold", which is why that test is not
+            # redundant with the elastic one beside it.
+            @. ePowers.exc = pla.P_en_exc * ePowers.ela
+            @. ePowers.ela = pla.P_en_ela * ePowers.ela
 
             # Dissociative excitation, charged separately because its energy split from
             # EXC is not recoverable afterwards: a B-excited molecule costs its full
