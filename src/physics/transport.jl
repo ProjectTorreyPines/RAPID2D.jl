@@ -17,10 +17,9 @@ export update_transport_quantities!,
 
 Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
 
-`damp_state = false` skips the out-wall damping of `ue_para`, `ui_para` and
-`mean_ExB_R/Z` — the only part of this function that accumulates rather than
-recomputes. Pass it when re-deriving coefficients from a state that has already been
-damped, so the dose is not applied twice; the step loop keeps the default.
+`damp_state = false` skips the out-wall damping of `ue_para`, `ui_para`, `mean_ExB_R/Z` —
+the only part that accumulates rather than recomputes. For re-deriving from a state that
+already carries its damping. Dies with `Damp_Transp_outWall`.
 """
 function update_transport_quantities!(
         RP::RAPID{FT}; damp_state::Bool = true
@@ -195,16 +194,9 @@ function update_transport_quantities!(
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dperp)
 
-    # Apply damping function outside wall if enabled.
-    #
-    # Split by what is being damped, because the two halves have different algebra.
-    # `Dpara`/`Dperp` are rebuilt from scratch above, so damping them is a projection —
-    # idempotent, and it must happen on every call or the operators this function
-    # assembles would carry undamped diffusivities into the next step.
-    #
-    # The STATE below is not rebuilt; `*=` accumulates. Once per state production is
-    # the intended dose, so a caller re-deriving coefficients from a state that has
-    # already been damped passes `damp_state = false` rather than compounding it.
+    # Damping outside the wall. `Dpara`/`Dperp` are rebuilt above, so damping them is a
+    # projection and must run every call. The state below is NOT rebuilt — `*=`
+    # accumulates — so re-deriving from an already-damped state opts out.
     if RP.flags.Damp_Transp_outWall
         @. tp.Dpara *= RP.damping_func
         @. tp.Dperp *= RP.damping_func

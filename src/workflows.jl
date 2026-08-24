@@ -164,35 +164,12 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         dt = RP.dt
         t_end = RP.t_end_s
 
-        # ESTABLISH the coefficient invariant the loop below only MAINTAINS: the in-loop
-        # refresh runs at the END of the body, so without this the first step consumes
-        # the `ν_en_*` / `P_en_*` that `initialize!` materialized — for the state it
-        # built, not for any initial condition assigned since. Ahead of the initial
-        # snapshots too, which report those same materialized rates. One RRC evaluation
-        # per run. See internal/docs/src/notes/issues/stale-rrcs-on-first-step.md.
-        #
-        # Only on a FRESH run. `RP.step > 0` means we are resuming (`RP.t_end_s = …;
-        # run_simulation!(RP)` again), and a resumed state came out of a complete loop
-        # body whose stage F already established exactly this — there is no invariant
-        # left to establish, and re-deriving would not be free: the out-wall damping
-        # `update_transport_quantities!` applies is not idempotent, and neither is the
-        # rate query, which runs BEFORE that damping and so returns different `ν_en_*`
-        # the second time round (see time-level-consistency-deferred.md §4b). Guarding
-        # on the loop never having run keeps "split a run in two" bit-identical to
-        # running it whole.
-        #
-        # `damp_state = false` covers the other half: on a fresh run the state may still
-        # have been damped already — `initialize!` does it, and so does every driver
-        # that re-syncs by hand — and damping is a suppression profile, applied once per
-        # state production, not a dose to accumulate.
-        #
-        # CAVEAT, deliberate: what this establishes is the COEFFICIENT invariant, not the
-        # damping one. A `ue_para` assigned here and never damped stays undamped through
-        # step 1 and is first damped by stage F at the end of it. Doing better needs to
-        # know whether the state we were handed carries its dose, which nothing records —
-        # the two cases are indistinguishable from here, so this picks the one that leaves
-        # every existing caller closest to its previous behaviour. Out-wall only
-        # (`damping_func` is 1 inside), measured at 1.6e-14 relative on in-wall `ne`.
+        # Establish the invariant the loop only maintains: its refresh runs at the END of
+        # the body, so step 1 would otherwise consume the rates `initialize!` built rather
+        # than the initial condition assigned since. Ahead of the snapshots, which report
+        # those rates too. Fresh runs only and without re-damping — this function is not
+        # idempotent in either respect, so a resume must not re-enter it.
+        # notes/issues/stale-rrcs-on-first-step.md
         if RP.step == 0
             update_transport_quantities!(RP; damp_state = false)
         end
