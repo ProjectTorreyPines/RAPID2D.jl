@@ -50,7 +50,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     νi_eff = zeros(FT, size(pla.ne))
 
     if RP.flags.Atomic_Collision
-        @. ν_sum_mom_iz_ei += pla.ν_en_mom_tot + pla.ν_en_iz
+        @. ν_sum_mom_iz_ei += pla.ν_en_mom_tot + pla.ν_en_iz_tot
 
         iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
         iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)

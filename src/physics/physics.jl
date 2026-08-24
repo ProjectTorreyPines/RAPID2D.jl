@@ -47,12 +47,12 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         pla = RP.plasma
         F = RP.fields
 
-        # Total decay rate of the drift. ν_iz belongs here because newborn electrons
-        # enter at rest — dilution, not momentum transfer to the gas. ν_ei_eff
-        # (= ξ_sptz·ν_ei) is the Coulomb half of the same friction; its u_i∥ half is
-        # added as a source below. The combined momentum-Ampère solvers build the
-        # identical sum.
-        ν_sum_mom_iz_ei = @. pla.ν_en_iz + pla.ν_en_mom_tot + pla.ν_ei_eff
+        # Total decay rate of the drift. ν_iz_tot belongs here because newborn electrons
+        # (from EITHER ionization channel) enter at rest — dilution, not momentum
+        # transfer to the gas. ν_ei_eff (= ξ_sptz·ν_ei) is the Coulomb half of the same
+        # friction; its u_i∥ half is added as a source below. The combined
+        # momentum-Ampère solvers build the identical sum.
+        ν_sum_mom_iz_ei = @. pla.ν_en_iz_tot + pla.ν_en_mom_tot + pla.ν_ei_eff
 
         # Backward Euler by default (θ_imp.decay = 1): friction-dominated, so at large
         # Δt BE lands on u∞ = S/ν while CN rings about it. ExpRB replaces the constant
@@ -95,7 +95,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
             end
 
-            # #4: collision drag force  (1-θu)*[-(ν_iz + ν_mom + ν_ei_eff)*ue_para]
+            # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]
             if decay_is_exprb
                 # uⁿ carries bern(−z), applied to the RHS below rather than here.
                 OP.A_LHS += @views spdiagm((bern_decay .- one_FT)[:])
@@ -182,10 +182,13 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # Ions are born at rest, so ionization is a dilution rate: events per
             # second over the ions already present, n_e·ν_iz/(n_e/Z) = Z·ν_iz. Uses
-            # the step-entry ν_en_iz that continuity and the energy equation share.
+            # the step-entry ν_en_iz_tot that continuity and the energy equation share.
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
+                # INTERIM(diz-ion-species): ν_en_iz_tot, not ν_en_iz alone, because every
+                # ion is booked as H₂⁺ and so DI dilutes this population too. Why, and
+                # what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
+                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz_tot
             end
 
             # TODO: convection/pressure are ignored for ions; adding them needs a
@@ -199,11 +202,36 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.scheme.decay === ExpRB
             # Same sink form as `update_ue_para!`, same caveat — see there.
             #
-            # The exponent carries the ATOMIC rate ONLY: Coulomb friction is added
-            # explicitly after this update, so a Coulomb-stiff cell is stepped at
-            # forward Euler whatever this says. The asymmetry predates this branch and
-            # is identical under θ, so fixing it here would move the default. The
-            # electron equation has no such gap — ν_ei_eff sits inside its exponent.
+            # **The exponent carries the ATOMIC rate ONLY, and that is deliberate.**
+            # Coulomb friction stays the explicit increment below, so a Coulomb-stiff
+            # cell is stepped at forward Euler whatever this says — and with
+            # `Atomic_Collision` off the whole update is, since `bern(0) = 1`. Both look
+            # like gaps next to `update_ue_para!`, which carries `ν_ei_eff` inside its
+            # exponent. Do not "fix" it by folding `(mₑ/mᵢ)ν_ei` in here.
+            #
+            # e-i friction is an INTERNAL force, and this pair conserves the momentum it
+            # moves EXACTLY, at any Δt. `update_ue_para!` runs first and loses
+            # `mₑn·Δt·ν_ei(u_e^{n+1} − u_i^n)`; the increment below is charged with that
+            # already-updated `u_e` and the same old `u_i`, so the ions gain
+            # `mᵢn·Δt·(mₑ/mᵢ)ν_ei(u_e^{n+1} − u_i^n)` — the same number, opposite sign,
+            # and the two telescope to zero. Making this half implicit in `u_i` would
+            # charge the ions at `u_i^{n+1}` while the electrons were charged at `u_i^n`,
+            # and the exchange would stop cancelling: measured, that costs ~3e-4 of the
+            # total momentum over 60 steps. `physics_test.jl`'s "e-i Coulomb friction
+            # conserves momentum and equalises u_e, u_i" is what enforces this.
+            #
+            # The stability the fold would buy is not needed: the ion-side rate is the
+            # electron one times mₑ/mᵢ ≈ 2.7e-4, so a Δt resolving the electron friction
+            # leaves this term four orders from its own stability limit. An exact
+            # conservation law is worth more than stability in a regime the mass ratio
+            # already rules out.
+            #
+            # The cancellation does depend on the electron half being backward Euler,
+            # so `scheme.decay = ExpRB` does NOT conserve — 42 % lost over 60 steps.
+            # `internal/docs/src/notes/issues/`
+            # `ei-momentum-exchange-exact-only-under-backward-euler.md` records that and
+            # the centre-of-mass split that would make conservation structural instead
+            # of a cancellation, for any scheme.
             decay_exponent = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
             bern_decay = exprb_bern.(decay_exponent)
             @. pla.ui_para = (
@@ -392,6 +420,47 @@ function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
+    mean_energy_floor(RP) -> FT
+
+The bottom of the rate tables' `Ē` axis [eV] — below it `RRC_EoverP_Erg`'s
+`ClampExtrap` freezes every coefficient and the interpolant stops meaning anything.
+
+**A function barrier, not a convenience.** `RAPID.eRRCs` is declared as the abstract
+`AbstractSpeciesRRCs{FT}`, so `RP.eRRCs.Kerg_ela.Erg_eV` infers `Any` at the call
+site, and one `Any` scalar inside a `@.` costs the fused kernel its specialization.
+The `::FT` is what makes it concrete again. Hoisting also avoids the `first` trap:
+`Number` is iterable, so `first` under `@.` would dot into `first.(Erg_eV)` — the
+identity on a vector, not a scalar floor.
+
+Read off `Kerg_ela`, but it is every surface's floor: all of them share the one
+`Erg_eV` vector the constructor read.
+"""
+@inline mean_energy_floor(RP::RAPID{FT}) where {FT <: AbstractFloat} =
+    first(RP.eRRCs.Kerg_ela.Erg_eV)::FT
+
+"""
+    cold_target_factor(Ē, T_gas_eV, Ē_floor)
+    cold_target_slope(Ē, T_gas_eV, Ē_floor)
+
+The `(1 − (3/2)T_gas/Ē)` that a cold-target energy ledger is consumed with, and its
+`∂/∂Tₑ` — which is `∂/∂Ē` times `3/2`, since `Ē = (3/2)Tₑ + ½mₑu∥²/e`.
+
+Defined as a pair because they are used as a pair: `P_ela` and `P_exc` share one
+factor, and every eigenvalue path has to differentiate the factor those powers
+actually applied. Two transcriptions of the same algebra is how the residual and its
+Jacobian drift apart.
+
+**The slope is not `2.25·T_gas/Ē²`.** Below `Ē_floor` the factor is frozen by `max`,
+so its derivative there is exactly zero; differentiating the clamp instead reports
+damping the power does not have.
+"""
+@inline cold_target_factor(Ē::T, T_gas_eV, Ē_floor) where {T} =
+    one(T) - T(1.5) * T_gas_eV / max(Ē, Ē_floor)
+
+@inline cold_target_slope(Ē::T, T_gas_eV, Ē_floor) where {T} =
+    ifelse(Ē > Ē_floor, T(2.25) * T_gas_eV / Ē^2, zero(T))
+
+"""
     update_electron_heating_powers!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update electron heating power components for electron energy equation.
@@ -408,21 +477,18 @@ Update electron heating power components for electron energy equation.
   - Collision drag power
   - Elastic energy loss to neutrals (2me/M per momentum-transfer collision)
   - Heat generation from density gradients
-  - Ionization, excitation, and dilution powers
+  - Ionization, dissociative ionization, excitation, dissociative excitation,
+    and dilution powers
   - Temperature equilibration power with ions
 - All powers stored in the RP.plasma.ePowers struct
 """
 function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_heating_powers!" begin
         # Extract physical constants + reaction energies (all in RP.config.constants).
-        # char_exc_erg_eV normalizes the Total_Excitation surface and is validated at load
-        # against the table's characteristic_exc_erg_eV (Electron_RRCs), so P_exc
-        # reproduces the kinetic loss exactly.
-        @unpack ee, qe, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
-        # Two different masses. `m_H2` is the NEUTRAL molecule an electron recoils
-        # off; `m_i` is the ion it equilibrates with. Equal for H₂/H₂⁺, which is why
-        # one symbol served both, and unequal for any other declared ion.
-        m_H2 = RP.config.constants.mi
+        @unpack ee, qe, me, iz_erg_eV, diss_iz_erg_eV = RP.config.constants
+        # `m_i` is the ion mass electrons equilibrate with in the equi term below.
+        # The elastic recoil no longer needs a separate neutral mass here: `P_en_ela`
+        # already carries 2mₑ/M internally (see the ela block).
         m_i = bulk_ion_mass(RP)
         OP = RP.operators
 
@@ -440,6 +506,8 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.ela .= zero_FT
         ePowers.iz .= zero_FT
         ePowers.exc .= zero_FT
+        ePowers.diss_exc .= zero_FT
+        ePowers.diss_iz .= zero_FT
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
 
@@ -486,7 +554,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             # remove that momentum, so the discrete energy budget closes.
 
             # Calculate velocity magnitudes for drag forces
-            ue_mag_sq = @. pla.ueR^FT(2.0) .+ pla.ueϕ^FT(2.0) .+ pla.ueZ^FT(2.0)
+            ue_mag_sq = @. pla.ueR^2 .+ pla.ueϕ^2 .+ pla.ueZ^2
             ue_dot_ui = @. pla.ueR * pla.uiR + pla.ueϕ * pla.uiϕ + pla.ueZ * pla.uiZ
 
             @. ePowers.drag = me * (
@@ -494,33 +562,115 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
                     + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
             )
 
-            # Elastic energy loss to neutrals: each ELASTIC momentum-transfer
-            # collision hands a fraction ~2me/M of the electron energy to the gas
-            # molecule. This is the dominant electron cooling channel below the ~9 eV
-            # excitation threshold; without it Te saturates ~20% above the kinetic
-            # (BD) value at low E/p and cool-downs stall above the true saturation
-            # point.
+            # Elastic recoil. `P_en_ela = n_gas·Kerg_ela` already contains 2mₑ/M and the
+            # e — do NOT reapply them. It is a COLD-TARGET coefficient (molecule at rest),
+            # so unlike a (Tₑ − T_gas) form it does not vanish at thermal equilibrium; the
+            # factor below is what restores that, and it is not optional. Substituting
+            # Ē_ela ≃ Ē shows the factor IS (Tₑ − T_gas), recovered:
             #
-            # The rate here must be the ELASTIC share of the drift friction, not the
-            # total: the inelastic share of `Total_Momentum` carries its momentum into
-            # excitation/ionization, which are charged separately just below, and
-            # those channels do not also transfer 2me/M to the molecule. Using total
-            # `Total_Momentum` over-counts this term by +42% at E/p ≈ 100 and +345% at
-            # E/p ≈ 1000, where elastic is only 71% and 22% of the drift friction.
-            @. ePowers.ela = (FT(2.0) * me / m_H2) * pla.ν_en_mom_ela *
-                FT(1.5) * (pla.Te_eV - pla.T_gas_eV) * ee
+            #   n_g·Kerg_ela·(1 − (3/2)T_gas/Ē)
+            #     ≃ (2mₑ/M)·ν_mom_ela·[ (3/2)(Tₑ − T_gas)e + ½mₑu∥² ]
+            #
+            # — including the ½mₑu∥² the old form lost by approximating Ē as (3/2)Tₑ.
+            # Below T_gas the factor is negative and the gas HEATS the electrons, which
+            # the relaxation testitem's cold branch exercises.
+            #
+            # Ē is the table's own query coordinate, rebuilt here rather than read: it is
+            # the same expression `_eRRC_query_point` uses.
+            # The 1/Ē divergence is self-limiting only INSIDE the table: there,
+            # Kerg_ela ∝ Ē (the Ē_ela ≃ Ē identity in the comment above), so the product
+            # stays finite as Ē → 0. Below the table's bottom row, `RRC_EoverP_Erg.itp`
+            # is ClampExtrap and freezes `Kerg_ela` at a finite boundary value, so the
+            # cancellation fails and the factor diverges -- `max(Ē_eV, eps(FT))` would
+            # turn that into a `-1.8e14`-scale factor instead of the intended guard.
+            # Floor at the table's own bottom Ē row instead: the honest clamp, since
+            # that is the point below which the interpolant stops meaning anything
+            # (bounds the factor to ~-38 rather than ~-1.8e14). Ē_eV = 1e-3 eV is
+            # Tₑ ≈ 7.7 K, so this floor guards a diverging solve, not a physical regime.
+            #
+            # Shared with the excitation term below -- same factor, same floor, computed
+            # once -- so elastic and excitation cannot drift apart.
+            Ē_floor = mean_energy_floor(RP)
+            # The factor is parked in `ePowers.ela` as SCRATCH rather than built in a
+            # fresh grid array, and Ē is folded into the same fused kernel instead of
+            # being materialised first. This function runs every step whatever the
+            # scheme flags say, and those two temporaries were the only per-step
+            # allocation this branch added; both are gone. Ē is not transcribed again
+            # either — it appears here exactly as often as before.
+            #
+            # **The factor is consumed at the excitation site below, both times.**
+            # Keeping one array is what makes "same factor, same floor, computed once"
+            # literal rather than a promise about two call sites agreeing.
+            @. ePowers.ela = cold_target_factor(
+                FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee,
+                pla.T_gas_eV, Ē_floor
+            )
 
-            # Excitation power (energy lost to excite particles). ν_en_exc_eff is
-            # normalized to char_exc_erg_eV, so the product is the true kinetic loss.
-            @. ePowers.exc = ee * char_exc_erg_eV * pla.ν_en_exc_eff
+            # Excitation, tabulated. No constant survives here: the EXC group spans
+            # 0.0441 eV (rot) to 14.9 eV, a factor 338 in per-event cost, so its mean cost
+            # is a function of where the distribution sits and ran 0.059-9.72 eV across
+            # the operating range against the 12.0 eV this used to hard-code.
+            #
+            # DEVIATION FROM THE LEDGER'S WRITTEN CONTRACT -- deliberate, and loud on
+            # purpose. `L_exc`'s `consume_as` attribute in the HDF5 file says
+            # `P = n_e * n_gas * L_exc`, no factor. Every other term in this function
+            # consumes its ledger column literally; this is the one place that does not,
+            # so it must announce itself or a reader cross-checking BD's own docs will
+            # read the mismatch as a bug.
+            #
+            # Why: `Kerg_exc`, like `Kerg_ela`, is a ONE-WAY coefficient -- computed
+            # against a stationary, ground-state H2 -- so with no correction it keeps
+            # draining energy at Tₑ = T_gas, which is why (pre-fix) this equation settled
+            # Tₑ at ~0.0111 eV instead of relaxing to T_gas. Only rotation matters here:
+            # ΔE_rot = 0.0441 eV is 1.7x room_T_eV, so a real thermal population is
+            # already pre-excited at 300 K; vibration (0.516 eV) and the electronic
+            # channels (>= 11.2 eV) have no such population and need no correction.
+            #
+            # The form below is PHENOMENOLOGICAL, not exact detailed balance. The exact
+            # rotational factor is `1 - exp(ΔE/Tₑ - ΔE/T_gas)`, but applied to the WHOLE
+            # EXC group (rotation is not exported separately) it does not return to 1 at
+            # high Tₑ -- it plateaus at 0.816, since superelastic never stops and its
+            # rate relative to excitation is fixed by the gas Boltzmann ratio, not by Tₑ.
+            # That would cut electronic excitation by a permanent 18.4%. The linear
+            # cold-target form shares both correct limits (0 at Tₑ = T_gas, -> 1 at high
+            # Tₑ) and costs only 0.28% at Tₑ = 9.2 eV instead of 18.4%; in the band where
+            # rotation IS the whole group (Tₑ ~ 0.05-0.15 eV) the linear and exact forms
+            # agree within ~15% (14% at 0.05 eV, 10% at 0.15 eV), so this is not
+            # over-correcting where it matters. That agreement narrows fast below 0.05 eV
+            # -- 34% low at Tₑ = 0.03 eV -- which is why the band above starts there and
+            # not lower.
+            #
+            # Retire this the day BD exports `L_exc_rot` separately: the exact factor
+            # can then be applied to the rotational part alone, leaving the rest of EXC
+            # (vibration, electronic) on the literal `consume_as` contract.
+            # `ePowers.ela` still holds the shared cold-target factor here.
+            #
+            # ORDER IS LOAD-BEARING: excitation must consume it BEFORE elastic
+            # overwrites it. Swapping these two lines silently gives excitation a
+            # spurious `P_en_ela` factor — caught by physics_test.jl's
+            # "ePowers.exc ≈ P_en_exc .* cold", which is why that test is not
+            # redundant with the elastic one beside it.
+            @. ePowers.exc = pla.P_en_exc * ePowers.ela
+            @. ePowers.ela = pla.P_en_ela * ePowers.ela
+
+            # Dissociative excitation, charged separately because its energy split from
+            # EXC is not recoverable afterwards: a B-excited molecule costs its full
+            # 11.184 eV whether or not it later dissociates, so that energy stays in exc.
+            # Stays RAW, no cold-target factor: the DISS group is the triplets,
+            # thresholds 8.9-11.8 eV, with no thermal population at 300 K to return
+            # energy from -- there is no superelastic channel here to correct for.
+            @. ePowers.diss_exc = pla.P_en_diss_exc
 
             # For ionization
             if RP.flags.src
-                # Ionization power (energy lost to ionize particles)
+                # Two channels, per-event costs a factor 2.3 apart. Each is a SINGLE
+                # channel with a SINGLE threshold, which is the one case where
+                # e·ε·ν reconstructs the loss exactly.
                 @. ePowers.iz = pla.ν_en_iz * iz_erg_eV * ee
+                @. ePowers.diss_iz = pla.ν_en_diss_iz * diss_iz_erg_eV * ee
 
-                # Dilution power (energy change due to density increase)
-                @. ePowers.dilution = pla.ν_en_iz * (
+                # Dilution: BOTH channels create exactly one electron per event.
+                @. ePowers.dilution = (pla.ν_en_iz + pla.ν_en_diss_iz) * (
                     FT(1.5) * pla.Te_eV * ee
                         - FT(0.5) * me * ue_mag_sq
                 )
@@ -537,7 +687,8 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # Calculate total power (sum of all components)
         @. ePowers.tot = (
             ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu
-                - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.exc - ePowers.equi
+                - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.diss_iz
+                - ePowers.exc - ePowers.diss_exc - ePowers.equi
         )
 
         # # Zero out power values outside the wall
@@ -550,7 +701,9 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             @views ePowers.ela[on_out_wall_nids] .= zero_FT
             @views ePowers.dilution[on_out_wall_nids] .= zero_FT
             @views ePowers.iz[on_out_wall_nids] .= zero_FT
+            @views ePowers.diss_iz[on_out_wall_nids] .= zero_FT
             @views ePowers.exc[on_out_wall_nids] .= zero_FT
+            @views ePowers.diss_exc[on_out_wall_nids] .= zero_FT
             @views ePowers.equi[on_out_wall_nids] .= zero_FT
             @views ePowers.heat[on_out_wall_nids] .= zero_FT
         end
@@ -614,30 +767,59 @@ end
 
 ```
 (3/2)e·dTₑ/dt = A − 𝔅·Tₑ,
-𝔅 = (2mₑ/m_H₂)·ν_ela·(3/2)e  +  (3/2)e·ν_iz  +  2μ·(3/2)e·ν_ei
+𝔅 = (P_en_ela + P_en_exc)·(9/4)T_gas/Ē²  +  (3/2)e·(ν_iz + ν_diss_iz)  +  2μ·(3/2)e·ν_ei
 ```
 
-from `P_ela`, `P_dilution` and `P_equi` — an exact rearrangement of
-[`update_electron_heating_powers!`](@ref), not a linearisation. `𝔅` sums rates that
+from `P_ela`, `P_exc`, `P_dilution` and `P_equi`. Pre-migration, with
+`P_ela ∝ (Tₑ − T_gas)` exact and no other explicit `Tₑ`, this rearrangement of
+[`update_electron_heating_powers!`](@ref) was algebraically exact, not a
+linearisation. **That is no longer true.** `P_en_ela` is now
+`n_H2_gas·Kerg_ela(Ē)·(1 − 1.5·T_gas/Ē)` with `Ē` linear in `Tₑ`, so treating
+`A − 𝔅·Tₑ` as the whole `Tₑ`-response is a local linearisation of the
+cold-target factor — `Kerg_ela(Ē)` and `Kerg_exc(Ē)`'s own `Tₑ`-dependence is
+dropped here (see the note below on what that costs). `𝔅` still sums rates that
 are non-negative in any state the model describes, so `λ = −(2/3e)𝔅 ≤ 0`: no pole
 and no growth branch. Not a licence to drop the exponent cap downstream — `ν_ei` is
 built from `ni`, which the continuity solve can land marginally below zero — only a
 statement that the branch is not where a positive `λ` comes from.
-`P_drag`, `P_exc` and `P_iz` carry no explicit `Tₑ` and stay in the source,
-which is where their `Tₑ` dependence is discarded — see [`LinearResponseDepth`](@ref)
-for what that costs.
+`P_drag`, `P_diss_exc`, `P_iz` and `P_diss_iz` carry no explicit `Tₑ` — and since
+2026-08 neither do most of `P_ela` and `P_exc`, whose responses now live inside
+`Kerg_ela(Ē)` and `Kerg_exc(Ē)`; only the cold-target factor they share is written
+down here — see [`LinearResponseDepth`](@ref) for what the rest costs.
 """
 function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     @unpack ee, me = RP.config.constants
-    m_H2 = RP.config.constants.mi
     zero_FT = zero(FT)
 
     fill!(pla.exprb.eig_Te, zero_FT)
 
     if RP.flags.Atomic_Collision
-        @. pla.exprb.eig_Te -= (FT(2.0) * me / m_H2) * pla.ν_en_mom_ela * FT(1.5) * ee
-        RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee * pla.ν_en_iz
+        # P_ela's explicit Tₑ is now ONLY the cold-target factor: the rest lives inside
+        # Kerg_ela(Ē), which this depth discards by construction. Differentiating
+        #     P_ela = P_en_ela·(1 − (3/2)T_gas/Ē),  Ē = (3/2)Tₑ + ½mₑu∥²/e
+        # at frozen P_en_ela gives +(9/4)·T_gas/Ē², and ePowers.tot SUBTRACTS P_ela, so
+        # it enters negative — damping, no growth branch, same guarantee as before.
+        #
+        # It is much weaker than the pre-2026-08 −(2mₑ/M)·ν_ela·(3/2)e this replaced,
+        # because that term's Tₑ was explicit and this one's mostly is not. That is the
+        # depth's definition applied honestly, not an omission: `FullLinearResponse` is
+        # where the rest of the response lives.
+        # P_exc carries the SAME factor, so it has an explicit Tₑ too and this depth
+        # must pick it up — the sinks share one `cold_target_factor` in
+        # update_electron_heating_powers!, and the Jacobian mirrors that sharing.
+        # P_diss_exc stays raw and contributes nothing here.
+        # One fused broadcast, no grid temporaries: this runs every step, and
+        # `cold_target_slope` is the same slope `update_electron_heating_powers!`'s
+        # factor has — including the zero below the floor.
+        Ē_floor = mean_energy_floor(RP)
+        @. pla.exprb.eig_Te -= (pla.P_en_ela + pla.P_en_exc) * cold_target_slope(
+            FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee,
+            pla.T_gas_eV, Ē_floor
+        )
+        # Dilution, both electron-producing channels.
+        RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee *
+            (pla.ν_en_iz + pla.ν_en_diss_iz)
     end
     if RP.flags.Coulomb_Collision
         m_i = bulk_ion_mass(RP)
@@ -645,8 +827,13 @@ function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
     end
 
-    on_out_wall_nids = RP.G.nodes.on_out_wall_nids
-    isempty(on_out_wall_nids) || (@views pla.exprb.eig_Te[on_out_wall_nids] .= zero_FT)
+    # Indexed rather than `@views … .= `: the SubArray broadcast builds for that is a
+    # heap allocation, small but per step, and this function's contract is that it
+    # makes none. `update_electron_heating_powers!` already zeroes these nodes' powers;
+    # this keeps the eigenvalue from describing a relaxation rate for them.
+    for k in RP.G.nodes.on_out_wall_nids
+        pla.exprb.eig_Te[k] = zero_FT
+    end
 
     @. pla.exprb.eig_Te *= FT(2.0) / FT(3.0) / ee
     return RP
@@ -678,8 +865,7 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
                     "update_transport_quantities! after changing it."
             )
         )
-        @unpack ee, me, char_exc_erg_eV, iz_erg_eV = RP.config.constants
-        m_H2 = RP.config.constants.mi
+        @unpack ee, me, iz_erg_eV, diss_iz_erg_eV = RP.config.constants
         zero_FT = zero(FT)
         dν = pla.dν_dTe
 
@@ -689,21 +875,32 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             # Same velocity magnitude update_electron_heating_powers! charges the
             # drag and the dilution with — NOT ue_para, which is what Ē is built
             # from. The two differ as soon as a perpendicular drift is on.
-            ue_mag_sq = @. pla.ueR^FT(2.0) + pla.ueϕ^FT(2.0) + pla.ueZ^FT(2.0)
+            ue_mag_sq = @. pla.ueR^2 + pla.ueϕ^2 + pla.ueZ^2
+            Ē_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
+            Ē_floor = mean_energy_floor(RP)
+            # The factor the powers applied, and its slope — one definition each, from
+            # the same pair `update_electron_heating_powers!` consumes.
+            cold = @. cold_target_factor(Ē_eV, pla.T_gas_eV, Ē_floor)
+            dcold = @. cold_target_slope(Ē_eV, pla.T_gas_eV, Ē_floor)
 
             @. pla.exprb.eig_Te += (
                 me * ue_mag_sq * dν.mom_tot                                   # P_drag
-                    - (FT(2.0) * me / m_H2) * FT(1.5) * ee * (
-                    pla.ν_en_mom_ela + (pla.Te_eV - pla.T_gas_eV) * dν.mom_ela  # P_ela
-                )
-                    - ee * char_exc_erg_eV * dν.exc_eff                           # P_exc
+                    # P_ela: product rule across the coefficient AND the cold-target factor.
+                    - (dν.ela_erg * cold + pla.P_en_ela * dcold)
+                    # P_exc carries the SAME cold-target factor as P_ela since the
+                    # excitation sink gained it, so its derivative is a product rule too
+                    # -- the same `dcold` by construction rather than by transcription.
+                    - (dν.exc_erg * cold + pla.P_en_exc * dcold)
+                    - dν.diss_exc_erg                                         # P_diss_exc (raw, no factor)
             )
 
             if RP.flags.src
+                ν_new = @. pla.ν_en_iz + pla.ν_en_diss_iz
+                dν_new = @. dν.iz + dν.diss_iz
                 @. pla.exprb.eig_Te += -(
-                    ee * iz_erg_eV * dν.iz                                    # P_iz
-                        + dν.iz * (FT(1.5) * pla.Te_eV * ee - FT(0.5) * me * ue_mag_sq)
-                        + FT(1.5) * ee * pla.ν_en_iz                              # P_dilution
+                    ee * (iz_erg_eV * dν.iz + diss_iz_erg_eV * dν.diss_iz)    # P_iz, P_DI
+                        + dν_new * (FT(1.5) * pla.Te_eV * ee - FT(0.5) * me * ue_mag_sq)
+                        + FT(1.5) * ee * ν_new                                # P_dilution
                 )
             end
         end
@@ -715,10 +912,10 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             # rather than a trade. `update_ion_power_jacobian!` carries the same
             # term; the two must agree about one piece of physics.
             #
-            # bulk_ion_mass, not the m_H2 unpacked above: one is the ion Tₑ
-            # equilibrates with, the other the neutral it recoils off. Equal for
-            # H₂/H₂⁺ and unequal for any other declared ion. Hoisted, because `@.`
-            # would call it once per cell.
+            # bulk_ion_mass, not a neutral mass: one is the ion Tₑ equilibrates
+            # with, the other the neutral it recoils off. Equal for H₂/H₂⁺ and
+            # unequal for any other declared ion. Hoisted, because `@.` would
+            # call it once per cell.
             m_i = bulk_ion_mass(RP)
             μ_reduced = m_i * me / (m_i + me)^2
             @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
@@ -794,12 +991,15 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             ν_a = @. pla.n_H2_gas * (FT(0.5) * K_ela + K_cx)
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                @. ν_a += Z_i * pla.ν_en_iz          # electron rate: no T_i dependence
+                # INTERIM(diz-ion-species): ν_en_iz_tot, not ν_en_iz alone, because every
+                # ion is booked as H₂⁺ and so DI dilutes this population too. Why, and
+                # what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
+                @. ν_a += Z_i * pla.ν_en_iz_tot      # electron rate: no T_i dependence
             end
             @. pla.exprb.eig_Ti -= ν_a * FT(1.5) * ee
 
             if linear_response
-                ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
+                ui_mag_sq = @. pla.uiR^2 + pla.uiϕ^2 + pla.uiZ^2
                 ΔE = @. (
                     FT(0.5) * mi * ui_mag_sq - FT(1.5) * (pla.Ti_eV - pla.T_gas_eV) * ee
                 )
@@ -874,7 +1074,7 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             iRRC_elastic = get_H2_ion_RRC(RP, :Elastic)
 
             # Calculate ion velocity magnitude squared
-            ui_mag_sq = @. pla.uiR^FT(2.0) + pla.uiϕ^FT(2.0) + pla.uiZ^FT(2.0)
+            ui_mag_sq = @. pla.uiR^2 + pla.uiϕ^2 + pla.uiZ^2
 
             # Calculate average energy change from atomic collisions
             # Energy balance: kinetic energy loss minus thermal energy change
@@ -886,13 +1086,16 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Note: 0.5 factor for elastic collisions (momentum transfer efficiency)
             eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
 
-            # Ionization contribution, from the step-entry ν_en_iz (update_RRCs!) that the
-            # electron continuity and energy equations use — the electron rate governs it.
-            # Z·ν_iz, not ν_iz: the events are counted per electron and this equation is
-            # per ion, and one ion carries Z of them (see `update_ui_para!`).
+            # Ionization contribution, from the step-entry ν_en_iz_tot (update_RRCs!) that
+            # the electron continuity and energy equations use — the electron rate governs
+            # it. Z·ν_iz, not ν_iz: the events are counted per electron and this equation
+            # is per ion, and one ion carries Z of them (see `update_ui_para!`).
             if RP.flags.src
                 Z_i = FT(bulk_ion_charge(RP))
-                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz
+                # INTERIM(diz-ion-species): ν_en_iz_tot, not ν_en_iz alone, because every
+                # ion is booked as H₂⁺ and so DI dilutes this population too. Why, and
+                # what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
+                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz_tot
             end
 
             # Calculate atomic power: collision frequency times energy change
@@ -941,11 +1144,12 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # θ (`θ_imp.transport` vs `θ_imp.growth`) and so cannot share a sum.
         fill!(op.RHS, zero(FT))
         if RP.flags.src && RP.flags.Implicit
-            # The implicit half of the ionization source needs ν_en_iz as a diagonal
-            # operator. Assembled here rather than in update_RRCs! so that a run
-            # with `src` off never builds one. ν_en_iz itself was materialized by
-            # update_RRCs! at the step-entry state — do not re-query the table here.
-            op.ν_en_iz .= @views spdiagm(pla.ν_en_iz[:])
+            # The implicit half of the ionization source needs ν_en_iz_tot (BOTH
+            # electron-producing channels) as a diagonal operator. Assembled here
+            # rather than in update_RRCs! so that a run with `src` off never builds
+            # one. ν_en_iz_tot itself was materialized by update_RRCs! at the
+            # step-entry state — do not re-query the table here.
+            op.ν_en_iz_tot .= @views spdiagm(pla.ν_en_iz_tot[:])
         end
 
         if RP.flags.diffu
@@ -957,10 +1161,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
         end
 
-        # A GROWTH eigenvalue, z = +ν_iz·Δt, and the EXACT local Jacobian since
-        # ν_iz does not depend on n — so ExpRB reproduces e^(νΔt) at any step,
-        # while every θ has a pole here (BE at z = 1, CN at z = 2) past which it
-        # returns a negative density.
+        # A GROWTH eigenvalue, z = +ν_iz_tot·Δt (BOTH electron-producing channels —
+        # newborn electrons dilute the drift the same way regardless of which channel
+        # made them), and the EXACT local Jacobian since ν_iz_tot does not depend on n
+        # — so ExpRB reproduces e^(νΔt) at any step, while every θ has a pole here (BE
+        # at z = 1, CN at z = 2) past which it returns a negative density.
         #
         # Derived ONCE and stored, because `update_reaction_counts!` must weight
         # its ledger with the same z — cap included. Written whether or not `src`
@@ -973,7 +1178,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # ledger, and `scheme.growth` can move between the two calls.
         growth_is_exprb = RP.flags.scheme.growth === ExpRB
         pla.exprb.growth_fitted = growth_is_exprb
-        growth_is_exprb && @. pla.exprb.z_growth = exprb_cap_exponent(pla.ν_en_iz * dt)
+        growth_is_exprb && @. pla.exprb.z_growth = exprb_cap_exponent(pla.ν_en_iz_tot * dt)
 
         fit_growth = RP.flags.src && growth_is_exprb
         bern_growth = if fit_growth
@@ -1000,7 +1205,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 @. op.RHS = (bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS
             else
                 if RP.flags.src
-                    @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz
+                    @. op.RHS += (one(FT) - θ_gr) * pla.ne * pla.ν_en_iz_tot
                 end
                 @. op.RHS = pla.ne + dt * op.RHS
             end
@@ -1009,7 +1214,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # its explicit half above: all three used to be added unconditionally,
             # so `flags.diffu = false` removed only the explicit half and left θ·Δt
             # of the diffusion still acting implicitly, and a run that turned `src`
-            # off mid-way kept ionizing through a stale ν_en_iz. The ion path
+            # off mid-way kept ionizing through a stale ν_en_iz_tot. The ion path
             # honours the flags in full, which is how the mismatch showed up.
             #
             # Gated by ZEROING the weight rather than by branching, so this stays
@@ -1020,7 +1225,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             θ_d = RP.flags.diffu ? θ_tr : zero(FT)
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
             θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
-            @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz)
+            @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz_tot)
             if fit_growth
                 # bern(z) on the diagonal, as a deviation from the identity so the
                 # pattern is untouched. This is the side that cancels on a growth
@@ -1041,7 +1246,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             @. pla.ne = ((bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / bern_growth
         else
             if RP.flags.src
-                @. op.RHS += pla.ne * pla.ν_en_iz
+                @. op.RHS += pla.ne * pla.ν_en_iz_tot
             end
             @. RP.plasma.ne += dt * op.RHS
         end
@@ -1632,7 +1837,7 @@ function _refuse_full_response_decay(flags::SimulationFlags)
     flags.exprb_eigenvalue === FullLinearResponse && throw(
         ArgumentError(
             "scheme.decay = ExpRB cannot honour exprb_eigenvalue = FullLinearResponse: " *
-                "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz + ν_ei_eff), the " *
+                "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz_tot + ν_ei_eff), the " *
                 "stated rate, and nothing computes the −(mₑu∥²/e)·∂ν/∂Ē that would " *
                 "complete it. Reaching here means the depth was set after initialize!, " *
                 "which validate_scheme_flags refuses. Use " *
@@ -1718,7 +1923,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     end
 
     # Effective electron collision frequency
-    ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
+    ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz_tot + pla.ν_ei_eff
 
     @. accel_para_tilde += (
         facEM / dt * F.ψ_self
@@ -2069,7 +2274,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
 
         # Effective electron collision frequency
-        ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz + pla.ν_ei_eff
+        ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz_tot + pla.ν_ei_eff
 
         @. accel_para_tilde += (
             facEM / dt * F.ψ_self

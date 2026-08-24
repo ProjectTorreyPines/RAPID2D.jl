@@ -106,8 +106,8 @@ end
     RP = RAPID{Float64}(config)
     initialize!(RP)
 
-    RRC_iz = get_electron_RRC(RP, RP.eRRCs, :Ionization)
-    RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :Total_Momentum)
+    RRC_iz = get_electron_RRC(RP, RP.eRRCs, :K_iz)
+    RRC_mom_tot = get_electron_RRC(RP, RP.eRRCs, :K_mom)
     @test size(RRC_iz) == (RP.G.NR, RP.G.NZ)
     @test size(RRC_mom_tot) == (RP.G.NR, RP.G.NZ)
     @test all(RRC_iz .>= 0.0)
@@ -155,7 +155,16 @@ end
     end
 
     # Golden re-measured against the current RRC table; re-measure if the table changes.
-    @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -492253.1332931324
+    # Re-baselined 2026-08-11 for the BD 2026-08 cross sections (Stage A). Previous value
+    # -492253.1332931324 came from the N1000000_heat_with_rrc_ela table; the ~12% drop in
+    # magnitude tracks K_mom rising 10-18% at this operating point (more momentum-transfer
+    # friction on the electrons at fixed E). Cross sections only — the energy closures
+    # are unchanged at this stage.
+    # Re-baselined 2026-08-12 for Stage C (task C1): update_ue_para! now dilutes the
+    # drift with ν_en_iz_tot (both ionization channels) instead of ν_en_iz alone, and
+    # dissociative ionization is non-zero at this operating point — a small extra
+    # momentum-randomizing channel pulls the drift down slightly further.
+    @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -430695.500813412
 
     op = RP.operators
     update_RRCs!(RP)
@@ -642,7 +651,7 @@ end
     ini_sum = sum(RP.plasma.ne)
 
     @testset "(a) table clamps to the low-field boundary, threshold still applies" begin
-        rrc_iz = RP.eRRCs.Ionization
+        rrc_iz = RP.eRRCs.K_iz
         @test rrc_iz.itp(0.0, 15.0) == rrc_iz.itp(rrc_iz.EoverP[1], 15.0)  # clamped
         @test rrc_iz.itp(0.0, 15.0) > 0.0                                  # ...and nonzero
         @test rrc_iz.itp(0.0, 1.5) == 0.0    # 15.46 eV energy threshold still enforced
@@ -744,6 +753,7 @@ end
 
     # 500 × 1 ms = 0.5 s ≈ 4.6 tau_E — long enough to converge from either side.
     nsteps = 500
+    Te_ends = Dict{Bool, FT}()
     for (Te0, is_hot) in ((0.1, true), (0.001, false))
         @testset "Te0 = $Te0 eV ($(is_hot ? "cools" : "heats")) onto room_T_eV" begin
             RP, config, ini_sum = build_relaxation_case(Te0)
@@ -755,8 +765,64 @@ end
                 update_transport_quantities!(RP)
             end
             Te_end = weighted_Te(RP)
+            Te_ends[is_hot] = Te_end
 
-            @test isapprox(Te_end, room; rtol = 0.1)   # within 1.3% (hot) / 3.9% (cold)
+            # Stage A note (kept separate from the Stage B / cold-target-on-exc notes
+            # below on purpose -- the effects are unrelated, and this migration was
+            # staged precisely so they would not get conflated). Before Task B3, this
+            # same assertion pinned Te_end ~ 0.0048 eV, caused by the deprecated
+            # `Total_Excitation` alias carrying the raw EXC-group rate in the cold band
+            # -- a 272x over-charge on rotational excitation. Task B3 deleted the formula
+            # that read that alias.
+            #
+            # Stage B, first pass (2026-08-11): retargeting the assertion at what the
+            # model then guaranteed. With P_exc = n_gas*Kerg_exc uncorrected, Tₑ
+            # equilibrated BELOW T_gas -- a known, bounded model limitation, not a bug:
+            # `Kerg_exc`, like `Kerg_ela`, is a ONE-WAY coefficient (stationary,
+            # ground-state H2), so it kept draining energy at Tₑ = T_gas with no
+            # superelastic return. Only rotation mattered in practice: its threshold,
+            # ΔE_rot = 0.0441 eV, is only 1.7x room_T_eV, so a real fraction of molecules
+            # are thermally pre-excited at 300 K; vibration (0.516 eV) and the electronic
+            # channels (>= 11.2 eV) have essentially no thermal population there. Left
+            # unmodeled at the time, deliberately: BD's own assessment
+            # (BreakdownDynamics.jl, claudedocs/vib_rot_assessment/ASSESSMENT.md -- that
+            # repo, not this one) puts the superelastic omission at ~0.5% under avalanche
+            # conditions, and Tₑ ≈ T_gas is a brief initial transient in any driven run.
+            #
+            # Stage B, second pass (2026-08-11, same day): the human partner directed
+            # adding the correction anyway, as physics rather than a bug fix -- the same
+            # cold-target factor already applied to P_ela now also applies to P_exc (see
+            # `update_electron_heating_powers!`, which documents why the form is
+            # phenomenological rather than exact detailed balance). Tₑ now DOES relax to
+            # room_T_eV, confirmed below. But this is not the exact physics: the
+            # correction is a linear approximation applied to the WHOLE EXC group
+            # because rotation is not exported separately, not the true detailed-balance
+            # factor applied to rotation alone. BD exporting `L_exc_rot` would still be
+            # an improvement, letting the exact factor replace this one.
+            #
+            # Two assertions below, and the pair is still the point. The bracket guards
+            # the equation against a sign flip, a divergence, or an excitation sink wrong
+            # by a large factor -- deliberately loose, not hugging the now-correct
+            # equilibrium, so a small future retuning of the phenomenological factor does
+            # not need to keep re-tightening it. The second assertion below USED to be a
+            # `@test_broken` tripwire watching for this exact repair; converted to a
+            # plain `@test` now that the repair has landed (Te_end -> room_T_eV to ~2e-11
+            # relative, both directions, measured -- see task-B3-report.md).
+            #
+            # What that second assertion does NOT do: validate the phenomenological
+            # form's magnitude or shape. T_gas is now an exact fixed point BY
+            # CONSTRUCTION -- both P_ela's and P_exc's cold-target factors are defined to
+            # vanish at Ē = 1.5*T_gas, so `isapprox(Te_end, room)` mechanically follows
+            # from that shared zero-crossing, which this task imposed, not from anything
+            # empirically validated about the linear form away from T_gas. Do not read
+            # the tight agreement above as evidence the phenomenological approximation is
+            # accurate in general -- that argument (and its actual accuracy bounds) lives
+            # at the `cold_factor`/`P_en_exc` comment in `update_electron_heating_powers!`.
+            @test 0.2 * room < Te_end < 1.1 * room
+            # Measured agreement is ~2e-11 relative (see the comment above); 1e-6
+            # leaves ample slack while still catching a retuned `cold_factor` (e.g.
+            # 1.5 -> 1.48 moves the fixed point to 0.9867*room, far outside this).
+            @test isapprox(Te_end, room; rtol = 1.0e-6)
             if is_hot
                 @test Te_end < Te0                    # hot electrons cooled by the gas
             else
@@ -769,17 +835,38 @@ end
             @test !any(isnan, RP.plasma.Te_eV)
         end
     end
+
+    @testset "both directions converge to the SAME fixed point" begin
+        # The real diagnostic value here: a sign error or a divergence in the energy
+        # equation would not generally land cooling-from-hot and heating-from-cold on the
+        # same equilibrium. Measured agreement after 500 steps (0.5 s): ~1.5e-11 relative
+        # (see task-B3-report.md); rtol below is set with ample margin.
+        #
+        # Guarded rather than indexed directly: if a branch above errors before reaching
+        # `Te_ends[is_hot] = Te_end`, indexing a missing key raises KeyError, which reports
+        # as an Error rather than a clean Fail. haskey turns that into an ordinary failed
+        # assertion instead.
+        both_ran = haskey(Te_ends, true) && haskey(Te_ends, false)
+        @test both_ran
+        if both_ran
+            # Measured agreement is ~1.5e-11 relative (see the comment above); 1e-6
+            # leaves ample slack.
+            @test isapprox(Te_ends[true], Te_ends[false]; rtol = 1.0e-6)
+        end
+    end
 end
 
-@testitem "P_ela is charged with the ELASTIC share of the drift friction" setup = [PhysicsFixtures] begin
-    # The 2me/mi recoil is handed to the molecule by ELASTIC momentum-transfer collisions
-    # only; the inelastic share of Total_Momentum carries its momentum into excitation and
-    # ionization, which the same function charges separately as P_exc / P_iz. Spending the
-    # total on P_ela counts those twice.
-    #
-    # The relaxation scenario above cannot catch this: it runs at Te ~ 0.026-0.1 eV, far
-    # below the ~9 eV excitation threshold, where no inelastic channel is open and the two
-    # moments coincide. This item picks a state where they demonstrably do not.
+@testitem "P_ela reads Kerg_ela with the cold-target factor, not a re-applied 2me/mi" setup = [PhysicsFixtures] begin
+    # Re-baselined 2026-08-11 for the tabulated energy ledger (Stage B). P_ela no longer
+    # derives from ν_en_mom_ela / K_mom_by_ela (an elastic SHARE of a momentum-transfer
+    # rate, scaled by an approximate (Te - T_gas) factorization) -- it reads
+    # P_en_ela = n_gas*Kerg_ela directly, a distinct ledger column that is elastic-only by
+    # construction, with the cold-target factor applied at the use site. The double-count
+    # this test used to guard against (spending K_mom_by_ela vs the K_mom total) is now
+    # structurally impossible: nothing in update_electron_heating_powers! touches
+    # ν_en_mom_ela or K_mom any more for P_ela. This item is kept, retargeted at the new
+    # formula, so a future regression that reintroduces a momentum-share dependency (or
+    # drops the cold-target factor) still has a test pointed at the elastic channel.
     FT = Float64
     p_gas = 5.0e-3                       # Pa; E/p = E_para / p_gas
     config = SimulationConfig{FT}(
@@ -801,28 +888,27 @@ end
     RP.flags.Atomic_Collision = true
     initialize!(RP)
 
-    # Erg = 1.5*Te (u_para = 0) ~ 14 eV, E/p = 0.5 / 5e-3 = 100 -> elastic share ~0.7
+    # Erg = 1.5*Te (u_para = 0) ~ 14 eV, E/p = 0.5 / 5e-3 = 100.
     RP.plasma.Te_eV .= 9.3
     RP.fields.E_para_tot .= 0.5
-    # The heating powers read the materialized ν_en_*, so hand-setting the state is not
-    # enough — update_RRCs! is what carries it onto the reaction-rate surfaces.
+    # The heating powers read the materialized ν_en_*/P_en_*, so hand-setting the state is
+    # not enough — update_RRCs! is what carries it onto the reaction-rate surfaces.
     update_RRCs!(RP)
     RAPID2D.update_electron_heating_powers!(RP)
 
-    K_tot = get_electron_RRC(RP, :Total_Momentum)
-    K_ela = get_electron_RRC(RP, :Momentum_by_ela)
     inw = RP.G.nodes.in_wall_nids
-
-    # The chosen state must actually separate the two moments, or this test proves nothing.
-    @test all(K_ela[inw] .< K_tot[inw])
-    @test maximum(K_ela[inw] ./ K_tot[inw]) < 0.9
-
     (; ee, me, mi) = RP.config.constants
     pla = RP.plasma
-    recoil = @. (2 * me / mi) * pla.n_H2_gas * 1.5 * (pla.Te_eV - pla.T_gas_eV) * ee
-    @test pla.ePowers.ela[inw] ≈ (recoil .* K_ela)[inw]
-    # ...and is NOT the total-momentum version, which is what the bug computed.
-    @test !isapprox(pla.ePowers.ela[inw], (recoil .* K_tot)[inw]; rtol = 0.05)
+
+    Ē = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
+    cold = @. 1.0 - 1.5 * pla.T_gas_eV / Ē
+    @test pla.ePowers.ela[inw] ≈ (pla.P_en_ela .* cold)[inw]
+
+    # ...and is NOT what re-applying 2me/mi on top of Kerg_ela (which already carries it)
+    # would give -- the exact silent factor-5.4e-4 bug the ledger's own docs warn about.
+    @test !isapprox(
+        pla.ePowers.ela[inw], ((2 * me / mi) .* pla.P_en_ela .* cold)[inw]; rtol = 0.05
+    )
 end
 
 # ── RRC evaluation point ─────────────────────────────────────────────────────────────
@@ -854,7 +940,7 @@ end
     initialize!(RP)
 
     # Erg ~ 14 eV, E/p = 0.5 / 5e-3 = 100: high enough that inelastic channels are open,
-    # so the four surfaces are genuinely distinct.
+    # so the three surfaces are genuinely distinct.
     RP.plasma.Te_eV .= 9.3
     RP.fields.E_para_tot .= 0.5
     RP.plasma.ue_para .= -3.0e5
@@ -863,16 +949,16 @@ end
     inw = RP.G.nodes.in_wall_nids
     ν_fields() = (
         copy(pla.ν_en_iz), copy(pla.ν_en_mom_tot),
-        copy(pla.ν_en_mom_ela), copy(pla.ν_en_exc_eff),
+        copy(pla.ν_en_mom_ela),
     )
 
-    @testset "all four surfaces are populated, and carry the n_gas factor" begin
+    @testset "all three surfaces are populated, and carry the n_gas factor" begin
         update_RRCs!(RP)
         for f in ν_fields()
             @test all(f[inw] .> 0.0)
         end
         @test pla.ν_en_mom_tot[inw] ≈
-            (pla.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum))[inw]
+            (pla.n_H2_gas .* get_electron_RRC(RP, :K_mom))[inw]
         # At E/p ~ 100 elastic is only ~70% of the drift friction, so the two momentum
         # surfaces must not coincide -- otherwise the rest of this item proves nothing.
         @test all(pla.ν_en_mom_ela[inw] .< pla.ν_en_mom_tot[inw])
@@ -895,7 +981,7 @@ end
         # advance_timestep! advances u_para (update_ue_para!) before the energy equation
         # runs, so mid-step the lookup coordinate has moved. Imitate that move directly.
         pla.ue_para .*= 5.0
-        ν_mid = pla.n_H2_gas .* get_electron_RRC(RP, :Total_Momentum)
+        ν_mid = pla.n_H2_gas .* get_electron_RRC(RP, :K_mom)
         @test !isapprox(ν_mid[inw], ν_entry[inw]; rtol = 1.0e-3)   # the state really moved
         @test pla.ν_en_mom_tot == ν_entry                          # ...the field did not
 
@@ -905,7 +991,7 @@ end
         pla.ν_ei .= 0.0
 
         update_electron_heating_powers!(RP)
-        (; me, ee, char_exc_erg_eV, iz_erg_eV) = RP.config.constants
+        (; me, ee, iz_erg_eV, diss_iz_erg_eV) = RP.config.constants
 
         # P_drag is charged at the entry-state frequency -- the same number the momentum
         # equation used to remove that momentum.
@@ -914,10 +1000,27 @@ end
             pla.ePowers.drag[inw], (me .* ue_mag_sq .* ν_mid)[inw]; rtol = 1.0e-3
         )
 
-        # The inelastic channels read their own materialized frequencies. nu_en_exc_eff is
-        # normalized to char_exc_erg_eV, which is why that constant appears bare here.
-        @test pla.ePowers.exc[inw] ≈ (ee * char_exc_erg_eV .* pla.ν_en_exc_eff)[inw]
+        # Re-baselined 2026-08-11 for the tabulated energy ledger (Stage B). Excitation is
+        # no longer nu_en_exc_eff normalized by the constant char_exc_erg_eV -- it is read
+        # straight off the ledger as P_en_exc = n_gas*Kerg_exc, which already carries its
+        # own (Ē-dependent) per-event cost.
+        #
+        # Re-baselined again 2026-08-11 (deliberate physics addition, not a fix): P_exc
+        # now carries the same cold-target factor as P_ela, added to correct for the
+        # one-way (no-superelastic-return) rotational excitation coefficient -- see
+        # update_electron_heating_powers! for the full justification.
+        Ē = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
+        cold = @. 1.0 - 1.5 * pla.T_gas_eV / Ē
+        @test pla.ePowers.exc[inw] ≈ (pla.P_en_exc .* cold)[inw]
         @test pla.ePowers.iz[inw] ≈ (ee * iz_erg_eV .* pla.ν_en_iz)[inw]
+
+        # diss_exc and diss_iz enter ePowers.tot with the SAME sign as iz/exc above and
+        # are otherwise only checked inside the summed closure ("the assembled powers
+        # close against Kerg_tot"), which cannot tell the two apart from a swap of these
+        # two assignment lines in `update_electron_heating_powers!`. Pin each on its own.
+        @test all(>(0.0), pla.ν_en_diss_iz[inw])  # or the diss_iz pin below is vacuous
+        @test pla.ePowers.diss_exc[inw] ≈ pla.P_en_diss_exc[inw]
+        @test pla.ePowers.diss_iz[inw] ≈ (ee * diss_iz_erg_eV .* pla.ν_en_diss_iz)[inw]
     end
 
     @testset "advance_timestep! does not move the frequencies" begin
@@ -969,7 +1072,6 @@ end
     @test all(pla.ν_en_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)
     @test all(pla.ν_en_mom_tot .== 0.0)                           # neutral drag stays off
     @test all(pla.ν_en_mom_ela .== 0.0)
-    @test all(pla.ν_en_exc_eff .== 0.0)
 
     # ...and it tracks the state instead of going stale.
     ν1 = copy(pla.ν_en_iz)
@@ -1185,10 +1287,12 @@ end
 # steady state, which is where a dropped channel becomes visible.
 
 @testitem "Xsec momentum relaxes to the parallel force balance (Coulomb ON)" setup = [PhysicsFixtures] begin
-    # Governing equation (Yoo, IFPC 2024):
-    #   du∥/dt = qe·E∥/me − (ν_mom + ν_iz)·u∥ − ξ_sptz·ν_ei·(u∥ − u_i∥)
+    # Governing equation (Yoo, IFPC 2024), extended for Stage C (task C1):
+    #   du∥/dt = qe·E∥/me − (ν_mom + ν_iz_tot)·u∥ − ξ_sptz·ν_ei·(u∥ − u_i∥)
     # Steady state with the ions held at rest is therefore exactly
-    #   u∥ = qe·E∥ / [ me·(ν_mom + ν_iz + ν_ei_eff) ]        , ν_ei_eff ≡ ξ_sptz·ν_ei
+    #   u∥ = qe·E∥ / [ me·(ν_mom + ν_iz_tot + ν_ei_eff) ]    , ν_ei_eff ≡ ξ_sptz·ν_ei
+    # ν_iz_tot, not ν_iz alone: BOTH ionization channels dilute the drift (newborn
+    # electrons from either enter at rest), matching update_ue_para!.
     #
     # The collision frequencies are frozen (update_transport_quantities! is called ONCE,
     # never inside the loop), the ions are pinned at rest and every spatial term is off,
@@ -1226,7 +1330,7 @@ end
 
     RAPID2D.update_transport_quantities!(RP)     # populate the ν's once, then freeze
     ν_mom = copy(RP.plasma.ν_en_mom_tot)
-    ν_iz = copy(RP.plasma.ν_en_iz)
+    ν_iz = copy(RP.plasma.ν_en_iz_tot)
     ν_ei_eff = copy(RP.plasma.ν_ei_eff)
 
     inw = RP.G.nodes.in_wall_nids
@@ -1283,7 +1387,7 @@ end
 
     RAPID2D.update_transport_quantities!(RP)
     ν_mom = copy(RP.plasma.ν_en_mom_tot)
-    ν_iz = copy(RP.plasma.ν_en_iz)
+    ν_iz = copy(RP.plasma.ν_en_iz_tot)   # BOTH channels — see the Coulomb ON item above
 
     RP.plasma.ue_para .= 0.0
     RP.plasma.ui_para .= 0.0
@@ -1341,7 +1445,10 @@ end
     RP.fields.E_para_tot .= 0.0          # ...then switch the drive OFF: pure decay
 
     inw = RP.G.nodes.in_wall_nids
-    ν_tot = @. RP.plasma.ν_en_mom_tot + RP.plasma.ν_en_iz + RP.plasma.ν_ei_eff
+    # ν_en_iz_tot: both channels dilute the drift, matching update_ue_para!. Using the
+    # iz channel alone here would under-state the drag and this item exists precisely
+    # to catch a missing collision channel.
+    ν_tot = @. RP.plasma.ν_en_mom_tot + RP.plasma.ν_en_iz_tot + RP.plasma.ν_ei_eff
     τ = 1 / (sum(ν_tot[inw]) / length(inw))
     @test minimum(RP.plasma.ν_ei_eff[inw]) > maximum(RP.plasma.ν_en_mom_tot[inw])
     @test 1.0e-9 < τ < 1.0e-3            # sanity band for this regime
@@ -1532,7 +1639,8 @@ end
             @test abs(I_tor) < 1.0e-2                 # self-field really is negligible
 
             # each Coulomb setting lands on ITS OWN analytic balance
-            ν_drag = @. ref.plasma.ν_en_mom_tot + ref.plasma.ν_en_iz + ref.plasma.ν_ei_eff
+            # ν_en_iz_tot: both channels dilute the drift (see update_ue_para!).
+            ν_drag = @. ref.plasma.ν_en_mom_tot + ref.plasma.ν_en_iz_tot + ref.plasma.ν_ei_eff
             expected = @. qe * ref.fields.E_para_tot / (me * ν_drag)
             @test isapprox(ref.plasma.ue_para[inw], expected[inw]; rtol = 1.0e-3)
 
@@ -1542,4 +1650,112 @@ end
             end
         end
     end
+end
+
+@testitem "Energy sinks: the assembled powers close against Kerg_tot" setup = [PhysicsFixtures] begin
+    using RAPID2D: update_RRCs!, update_electron_heating_powers!, get_electron_RRC
+    # The strongest single test in this migration. BD assembles Kerg_tot from the exported
+    # parts AFTER hard-zeroing, so the five sinks must reproduce it — up to the cold-target
+    # factor RAPID2D applies to P_ela AND (deliberate deviation from the ledger's own
+    # consume_as contract, see update_electron_heating_powers!) to P_exc, which is why
+    # both are divided back out here rather than compared raw.
+    config = SimulationConfig{Float64}(
+        NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    config.Output_path = scratch_output_dir()
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.Atomic_Collision = true
+    RP.flags.src = true
+    RP.plasma.Te_eV .= 5.0
+    RP.fields.E_para_tot .= 30.0
+    update_RRCs!(RP)
+    update_electron_heating_powers!(RP)
+
+    pla, eP = RP.plasma, RP.plasma.ePowers
+    ng = pla.n_H2_gas
+    Ē = @. 1.5 * pla.Te_eV + 0.5 * RP.config.constants.me * pla.ue_para^2 / RP.config.constants.ee
+    cold = @. 1.0 - 1.5 * pla.T_gas_eV / Ē
+
+    # NOT `@. ng * get_electron_RRC(...)`: `@.` dot-broadcasts the CALL too, and
+    # RAPID{FT} has no Broadcast.broadcastable, so it falls to Base's iterable
+    # fallback and dies on length(RP). Call once, then broadcast the multiply.
+    tot = ng .* get_electron_RRC(RP, :Kerg_tot)
+    # P_ela and P_exc were both charged with the cold-target factor; divide it back out of
+    # both to compare against the raw ledger. P_diss_exc stays raw (no superelastic return
+    # to correct for at the DISS-group thresholds), matching how it is charged above.
+    parts = @. eP.ela / cold + eP.exc / cold + eP.diss_exc + eP.iz + eP.diss_iz
+    inw = RP.G.nodes.in_wall_nids
+    @test maximum(abs.(parts[inw] .- tot[inw]) ./ tot[inw]) < 1.0e-6
+end
+
+@testitem "Energy sinks: the gas heats electrons below T_gas" setup = [PhysicsFixtures] begin
+    using RAPID2D: update_RRCs!, update_electron_heating_powers!
+    # The cold branch of the relaxation testitem in miniature, isolated so a failure points
+    # at the sign of the cold-target factor rather than at 500 timesteps.
+    config = SimulationConfig{Float64}(
+        NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    config.Output_path = scratch_output_dir()
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.Atomic_Collision = true
+    RP.flags.src = false
+    inw = RP.G.nodes.in_wall_nids
+
+    # Below T_gas: P_ela must be NEGATIVE (a source).
+    RP.plasma.Te_eV .= 0.001
+    update_RRCs!(RP); update_electron_heating_powers!(RP)
+    @test all(<(0.0), RP.plasma.ePowers.ela[inw])
+
+    # Above T_gas: P_ela must be POSITIVE (a sink).
+    RP.plasma.Te_eV .= 1.0
+    update_RRCs!(RP); update_electron_heating_powers!(RP)
+    @test all(>(0.0), RP.plasma.ePowers.ela[inw])
+
+    # At T_gas with no drift: BOTH P_ela AND P_exc must vanish, to the 0.6 % offset
+    # between RAPID2D's room_T_eV = 0.026 and BD's cold-band anchor 1.5 x 0.02585 --
+    # they now share the identical cold-target factor (deliberate physics addition:
+    # P_exc is one-way, like P_ela, and gets the same correction). ePowers.exc can no
+    # longer serve as its own nonzero reference scale here, so scale against the RAW
+    # ledger P_en_exc (pre-factor) instead.
+    RP.plasma.Te_eV .= RP.plasma.T_gas_eV
+    RP.plasma.ue_para .= 0.0
+    update_RRCs!(RP); update_electron_heating_powers!(RP)
+    # Scaled against each channel's OWN raw ledger, not a shared one: L_ela is
+    # ~53x smaller than L_exc near this state, so a shared `scale` built from
+    # P_en_exc would let cold_factor errors up to ~1.0 through on the ela line.
+    scale_ela = maximum(abs.(RP.plasma.P_en_ela[inw]))
+    scale_exc = maximum(abs.(RP.plasma.P_en_exc[inw]))
+    @test scale_ela > 0.0                                      # or the check below is vacuous
+    @test scale_exc > 0.0                                      # or the check below is vacuous
+    @test maximum(abs.(RP.plasma.ePowers.ela[inw])) < 0.02 * scale_ela
+    @test maximum(abs.(RP.plasma.ePowers.exc[inw])) < 0.02 * scale_exc
+end
+
+@testitem "Ionization channels: electron production totals both, H2+ production does not" setup = [PhysicsFixtures] begin
+    using RAPID2D: update_RRCs!
+    config = SimulationConfig{Float64}(
+        NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    config.Output_path = scratch_output_dir()
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.Atomic_Collision = true
+    RP.flags.src = true
+    # High E/p, where DI reaches ~7 % of iz by rate — low enough to miss, high enough
+    # that a site using the wrong one is detectable.
+    RP.plasma.Te_eV .= 60.0
+    RP.fields.E_para_tot .= 300.0
+    update_RRCs!(RP)
+
+    pla = RP.plasma
+    @test all(>(0.0), pla.ν_en_diss_iz[RP.G.nodes.in_wall_nids])
+    @test pla.ν_en_iz_tot ≈ pla.ν_en_iz .+ pla.ν_en_diss_iz
+    # The channel is a real fraction here, so a site that swapped the two would move.
+    frac = sum(pla.ν_en_diss_iz) / sum(pla.ν_en_iz)
+    @test 0.01 < frac < 0.2
 end

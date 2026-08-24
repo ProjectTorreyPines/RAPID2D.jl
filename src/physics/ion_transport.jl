@@ -427,10 +427,11 @@ Advance every ion species one step of
 
 under the θ-scheme, grouped by `RP.flags.ion_transport_policy`.
 
-The ionization source is `nₑ·ν_iz` — one ion per electron, at a rate set by the
-**electron** density, so for ions it is a pure explicit source with no diagonal
-counterpart. `ν_iz` is the value `update_RRCs!` materialized at the step-entry
-state; the tables are not re-queried here.
+The ionization source is `net_ion_count(counts, name)` — `N.iz .+ N.diz` for
+`:H2⁺` under the INTERIM(diz-ion-species) stoichiometry (both channels' ions are booked to this
+column) — one ion per event, at a rate set by the **electron** density, so for
+ions it is a pure explicit source with no diagonal counterpart. The counts come
+from `update_RRCs!`'s step-entry rates; the tables are not re-queried here.
 
 The wall is the Robin condition of [`wall_absorption_speeds`](@ref) at
 `config.ion_wall_albedo`, and what it takes is booked at the face. That matters

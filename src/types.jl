@@ -129,23 +129,30 @@ end
 
 Contains the power terms for electron energy equation.
 
+**Units are W PER ELECTRON, not W/m³.** `update_Te!` applies `(2/3)·P·dt/e` with no
+`nₑ` anywhere, matching a `(3/2)d(k_B Tₑ)/dt = ΣP` form in which both sides are the
+budget of one electron. Multiply by `nₑ` to get a volumetric power density.
+
 # Fields
-- `tot`: Total power density [W/m³]
-- `drag`: Power from drag forces [W/m³]
-- `ela`: Power lost to neutrals via elastic recoil, ~2mₑ/M per momentum-transfer collision [W/m³]
-- `conv`: Power from convective transport [W/m³]
-- `diffu`: Power from diffusive transport [W/m³]
-- `heat`: Power from heating sources (e.g., ohmic) [W/m³]
-- `iz`: Power from ionization [W/m³]
-- `exc`: Power from excitation [W/m³]
-- `dilution`: Power from density dilution [W/m³]
-- `equi`: Power from temperature equilibration [W/m³]
+- `tot`: Total, the sum the temperature update consumes
+- `drag`: Ordered drift converted to random motion (neutral friction + Coulomb)
+- `ela`: Lost to neutrals via elastic recoil, ~2mₑ/M per momentum-transfer collision
+- `conv`: From convective transport
+- `diffu`: From diffusive transport
+- `heat`: From heating sources (e.g., ohmic)
+- `iz`: Lost to ionization
+- `exc`: Lost to excitation
+- `diss_exc`: Lost to dissociative excitation (DISS group)
+- `diss_iz`: Lost to dissociative ionization (35 eV/event)
+- `dilution`: Redistribution when newborn electrons enter at rest; not a loss of total
+  electron energy
+- `equi`: Temperature equilibration with the ions
 """
 @kwdef mutable struct ElectronHeatingPowers{FT <: AbstractFloat}
     dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
 
-    # Power terms - all in W/m³
-    tot::Matrix{FT} = zeros(FT, dims)        # Total power density
+    # Power terms - all in W PER ELECTRON (see the docstring), not W/m³
+    tot::Matrix{FT} = zeros(FT, dims)        # Total
     drag::Matrix{FT} = zeros(FT, dims)       # Power from drag forces
     ela::Matrix{FT} = zeros(FT, dims)        # Power lost to neutrals via elastic collisions
     conv::Matrix{FT} = zeros(FT, dims)       # Power from convective transport
@@ -153,6 +160,8 @@ Contains the power terms for electron energy equation.
     heat::Matrix{FT} = zeros(FT, dims)       # Power from heating (q)
     iz::Matrix{FT} = zeros(FT, dims)         # Power from ionization
     exc::Matrix{FT} = zeros(FT, dims)        # Power from excitation
+    diss_exc::Matrix{FT} = zeros(FT, dims)   # Power lost to dissociative excitation (DISS group)
+    diss_iz::Matrix{FT} = zeros(FT, dims)    # Power lost to dissociative ionization (35 eV/event)
     dilution::Matrix{FT} = zeros(FT, dims)   # Power from density dilution
     equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
 end
@@ -168,8 +177,11 @@ end
 """
     ElectronRateJacobians{FT}
 
-`∂ν/∂Tₑ` [1/(s·eV)] for the electron-neutral frequencies, one field per member of
-`PlasmaState`'s `ν_en_*` set — the table half of `∂P/∂Tₑ`.
+`∂ν/∂Tₑ` [1/(s·eV)] for four of `PlasmaState`'s `ν_en_*` frequencies (`iz`,
+`mom_tot`, `mom_ela`, `diss_iz`; `ν_en_iz_tot` is derived downstream, not
+differentiated here), plus `∂P/∂Tₑ` [W per electron / eV] for the three
+energy-ledger sinks (`ela_erg`, `exc_erg`, `diss_exc_erg`) — the table half of
+`∂P/∂Tₑ`.
 
 Written by [`update_RRCs!`](@ref) alongside the frequencies themselves, at the
 same evaluation point, and only under `scheme.atomic == ExpRB` **and**
@@ -194,10 +206,21 @@ it is a lag, and a term that pretends otherwise will drift.
 
     iz::Matrix{FT} = zeros(FT, dims)        # ∂ν_en_iz/∂Tₑ
     mom_tot::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_tot/∂Tₑ
-    mom_ela::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_mom_ela/∂Tₑ
-    exc_eff::Matrix{FT} = zeros(FT, dims)   # ∂ν_en_exc_eff/∂Tₑ
+    # ∂ν_en_mom_ela/∂Tₑ. Diagnostic-only, twin of `ν_en_mom_ela` itself: nothing in
+    # src/ reads it (no solver term uses ν_en_mom_ela), but it is materialized and
+    # tested for the same reason that frequency is — it must stay consistent with
+    # the K_mom_by_* closure it audits.
+    mom_ela::Matrix{FT} = zeros(FT, dims)
+    diss_iz::Matrix{FT} = zeros(FT, dims)       # ∂ν_en_diss_iz/∂Tₑ
+    # Derivatives of the RAW ledger products `P_en_* = n_gas·Kerg_*`, via ∂Kerg/∂Ē. The
+    # cold-target factor is NOT inside them: `ela_erg` and `exc_erg` are combined with it
+    # by the product rule during eigenvalue assembly (`dν.X_erg·cold + P_en_X·dcold`),
+    # which is why they must stay factor-free here.
+    ela_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_ela/∂Tₑ, no cold-target factor
+    exc_erg::Matrix{FT} = zeros(FT, dims)       # ∂P_en_exc/∂Tₑ, no cold-target factor
+    diss_exc_erg::Matrix{FT} = zeros(FT, dims)  # ∂P_en_diss_exc/∂Tₑ (consumed raw anyway)
 
-    # Did the last update_RRCs! materialize the four above? Never true before the
+    # Did the last update_RRCs! materialize the fields above? Never true before the
     # first rate step, which is exactly right: they are zeros then.
     fresh::Bool = false
 end
@@ -217,9 +240,10 @@ mean free path and the Coulomb logarithm.
 - `eig_Te`, `eig_Ti` — `(2/3e)·∂P/∂T` [1/s], signed. Written by
   `update_electron_power_jacobian!` / `update_ion_power_jacobian!` under
   `scheme.atomic == ExpRB`; `z = eig·Δt` is formed where it is used.
-- `z_growth` — `cap(ν_iz·Δt)`, **the exponent the last continuity solve used**, cap
-  included. `reaction_θ` and `update_reaction_counts!` must weight the ledger with
-  this and not `Δt·ν`, which is larger whenever the cap bound.
+- `z_growth` — `cap(ν_en_iz_tot·Δt)`, **the exponent the last continuity solve
+  used**, cap included. `reaction_θ` and `update_reaction_counts!` must weight
+  the ledger with this and not `Δt·ν_en_iz_tot`, which is larger whenever the
+  cap bound.
 - `growth_fitted` — whether that solve was the ExpRB one, so the weight is read off
   the solve rather than off a flag that may have moved since.
 
@@ -247,16 +271,20 @@ end
 
 Contains the power terms for ion energy equation.
 
+**Units are W PER ION, not W/m³** — the same convention as [`ElectronHeatingPowers`].
+`update_Ti!` applies `(2/3)·P·dt/e` with no `nᵢ` anywhere. Multiply by `nᵢ` for a
+volumetric power density.
+
 # Fields
-- `tot`: Total power density [W/m³]
-- `atomic`: Power from atomic processes [W/m³]
-- `equi`: Power from temperature equilibration [W/m³]
+- `tot`: Total, the sum the temperature update consumes
+- `atomic`: From atomic processes
+- `equi`: Temperature equilibration with the electrons
 """
 @kwdef mutable struct IonHeatingPowers{FT <: AbstractFloat}
     dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
 
-    # Power terms - all in W/m³
-    tot::Matrix{FT} = zeros(FT, dims)        # Total power density
+    # Power terms - all in W PER ION (see the docstring), not W/m³
+    tot::Matrix{FT} = zeros(FT, dims)        # Total
     atomic::Matrix{FT} = zeros(FT, dims)     # Power from atomic processes
     equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
 end
@@ -335,15 +363,36 @@ Contains the plasma state variables including density, temperature, and velocity
     sptz_fac::Matrix{FT} = zeros(FT, dims) # Spitzer factor for conductivity
     ν_ei_eff::Matrix{FT} = zeros(FT, dims) # Effective electron-ion collision frequency [1/s]
     # Electron-neutral reaction frequencies, ν = n_H2_gas · K(E/p, Ē).
-    # All four are written by `update_RRCs!` and by nothing else, at exactly one point per
-    # step, so every consumer within a step sees the same evaluation state. Read them; do
-    # not re-query the RRC tables (see internal/docs/src/notes/design/rrc-single-evaluation-point.md).
-    ν_en_iz::Matrix{FT} = zeros(FT, dims) # Electron ionization rate [1/s]
+    # Written by `update_RRCs!` and by nothing else, at exactly one point per step, so
+    # every consumer within a step sees the same evaluation state. Read them; do not
+    # re-query the RRC tables (see internal/docs/src/notes/design/rrc-single-evaluation-point.md).
+    # The H₂ → H₂⁺ channel ALONE. Dissociative ionization is `ν_en_diss_iz`, and anything
+    # that wants "an electron was made" wants `ν_en_iz_tot` below — not this.
+    ν_en_iz::Matrix{FT} = zeros(FT, dims) # Non-dissociative ionization rate [1/s]
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims) # Electron drift-friction frequency (v_z-weighted) [1/s]
-    ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction; drives P_ela [1/s]
-    ν_en_exc_eff::Matrix{FT} = zeros(FT, dims) # Excitation rate normalized to char_exc_erg_eV [1/s]
-    # ∂ν/∂Tₑ for the four frequencies above, written by the same `update_RRCs!` at
-    # the same evaluation point — and only when `flags.scheme.atomic == ExpRB`.
+    # Diagnostic-only, and the sole auditor of the K_mom_by_* momentum-ledger closure.
+    # NOT a solver input: the elastic energy sink is P_en_ela, not this frequency.
+    ν_en_mom_ela::Matrix{FT} = zeros(FT, dims) # Elastic share of the drift friction [1/s]
+    ν_en_diss_iz::Matrix{FT} = zeros(FT, dims) # Dissociative-ionization rate [1/s]
+    # ELECTRON production: both channels make exactly one electron per event, so this is
+    # what continuity, dilution and the growth exponent take. Under the INTERIM(diz-ion-species)
+    # (`REACTION_STOICHIOMETRY.diz`, until H⁺ is a transportable species) it is also what
+    # every ION-side rate takes: DI's ion is booked to H₂⁺ too, so H₂⁺ now comes from both
+    # channels, not from `ν_en_iz` alone. That will change back to `ν_en_iz` (with H⁺
+    # gaining its own rate) when multi-species ion transport lands.
+    ν_en_iz_tot::Matrix{FT} = zeros(FT, dims) # ν_en_iz + ν_en_diss_iz [1/s]
+    # Energy-ledger sinks, P = n_H2_gas · Kerg [W per electron]. Written by the same
+    # `update_RRCs!` at the same evaluation point as the frequencies above.
+    # `P_en_ela` is the RAW cold-target coefficient: it does NOT vanish at Tₑ = T_gas.
+    # The `(1 − 3T_gas/2Ē)` factor is applied at the use site, not here, so this array
+    # stays a pure function of the table.
+    P_en_ela::Matrix{FT} = zeros(FT, dims)      # elastic recoil [W]
+    P_en_exc::Matrix{FT} = zeros(FT, dims)      # EXC group: singlets + vib + rot [W]
+    P_en_diss_exc::Matrix{FT} = zeros(FT, dims) # DISS group: triplets [W]
+    # ∂ν/∂Tₑ for four of the frequencies above, plus ∂P/∂Tₑ for the three
+    # energy-ledger sinks above (seven fields total) — see `ElectronRateJacobians`.
+    # Written by the same `update_RRCs!` at the same evaluation point — and only
+    # when `flags.scheme.atomic == ExpRB`.
     dν_dTe::ElectronRateJacobians{FT} = ElectronRateJacobians{FT}(dims)
     # What `B` is evaluated at, per family. Written only where the matching
     # `flags.scheme.<family>` is `ExpRB`; see [`ExpRBTerms`](@ref).
@@ -534,7 +583,10 @@ Fields include various matrices for solving different parts of the model.
 
     # Operators for solving continuity equations
     ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
-    ν_en_iz::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization [1/s]
+    # Named `_tot`, not `ν_en_iz`, because it is built from `pla.ν_en_iz_tot`: under the
+    # INTERIM(diz-ion-species) (`REACTION_STOICHIOMETRY.diz`) every ion is booked as H₂⁺, so the continuity
+    # assembly needs both ionization channels, not the H₂⁺-only rate.
+    ν_en_iz_tot::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization (both channels) [1/s]
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
@@ -609,8 +661,10 @@ See [`ReactionState`](@ref) for why these are stored rather than recomputed, and
     dims::Tuple{Int, Int}
     "e + H₂ → 2e + H₂⁺"
     iz::Matrix{FT} = zeros(FT, dims)
-    # Dissoc_Ionz, Recomb_H2Ion, Recomb_H3Ion append here — see Electron_RRCs,
-    # which already loads all three tables.
+    "e + H₂ → 2e + H⁺ + H⁰"
+    diz::Matrix{FT} = zeros(FT, dims)
+    # Recomb_H2Ion, Recomb_H3Ion append here — see Electron_RRCs, which already
+    # loads both tables.
 end
 
 """
@@ -700,12 +754,17 @@ step by hand, and see the note there before adding a channel.
 | channel | e | H₂⁺ | H₃⁺ | H⁺ | H₂ | H⁰ | `θ` family |
 |---|---|---|---|---|---|---|---|
 | `iz` — e + H₂ → 2e + H₂⁺ | +1 | +1 | | | −1 | | `:growth` |
-| *`diz` — e + H₂ → 2e + H⁺ + H⁰* | +1 | | | +1 | −1 | +1 | `:growth` |
+| `diz` — e + H₂ → 2e + H⁺ + H⁰ | +1 | (+1)¹ | | +1 | −1 | +1 | `:growth` |
 | *`rec_H2` — e + H₂⁺ → 2H⁰* | −1 | −1 | | | | +2 | `:decay` |
 | *`rec_H3` — e + H₃⁺ → H₂ + H⁰* | −1 | | −1 | | +1 | +1 | `:decay` |
 
 (italic rows are not implemented; the table records the intent so the
 stoichiometry is settled before the rates arrive.)
+
+¹ `diz`'s true ion is H⁺, in its own column. The `ions` field below books it to
+H₂⁺ instead — an INTERIM, not a correction to this row — because
+`set_ion_species!` refuses a second species. See the comment on
+`REACTION_STOICHIOMETRY.diz`.
 
 `θ` names the [`ImplicitWeights`](@ref) member the channel's quadrature uses —
 see [`reaction_θ`](@ref). It is data rather than a line in the producer so that a
@@ -714,6 +773,21 @@ cares how the integral was evaluated can ask instead of assume.
 """
 const REACTION_STOICHIOMETRY = (
     iz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
+    # Dissociative ionization: e + H₂ → 2e + H⁺ + H⁰. One electron like `iz`, one H₂
+    # destroyed, and one H⁰ that nothing tracks yet (which is why there is no H⁰ column).
+    #
+    # ⚠ The ion is H⁺, and this row says H₂⁺ ON PURPOSE. `set_ion_species!` refuses a
+    # second species — `ion_transport.jl:727` names six blockers — so a `:H⁺` here would
+    # create electrons with no ion and break quasi-neutrality. Carrying the charge on the
+    # H₂⁺ column keeps the electron count, the charge and nuclei conservation all exact
+    # and gets only the ion MASS wrong, for ≤8 % of ions at high E/p and exactly none
+    # below 35 eV impact. Change to `:H⁺ => 1` when multi-species ion transport lands.
+    #
+    # THIS COMMENT IS THE ANCHOR for that change. Every other site that follows the
+    # interim carries the tag `INTERIM(diz-ion-species)` and points back here instead of
+    # restating the rationale, so `grep -rn "INTERIM(diz-ion-species)" src/` enumerates
+    # the full change list rather than leaving it to be rediscovered.
+    diz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
 )
 
 """
@@ -728,7 +802,7 @@ of its eigenvalue**, because that is what decides which scheme is right:
 | field | terms | λ | default |
 |---|---|---|---|
 | `transport` | `∇·(𝐃∇f)`, `∇·(f𝐮)` in the `nₑ`, `nᵢ`, `Tₑ` equations | `< 0`, well-resolved | `½` |
-| `growth` | ionization — the `+ν_iz` source | **`> 0`** | `½` |
+| `growth` | ionization — the `+ν_en_iz_tot` source | **`> 0`** | `½` |
 | `decay` | the parallel momentum equation, which its friction dominates | `< 0`, stiff | `1` |
 | `gas` | neutral-gas diffusion | `< 0`, stiff | `1` |
 
@@ -865,8 +939,8 @@ rates, so `λ ≤ 0` structurally and it has no growth branch to exponentiate.
 `FullLinearResponse` does — real physics, and also where a stale slope costs the
 most. Neither is uniformly better, so the default is the one that assumes less.
 
-The continuity equation cannot tell them apart: `∂ν_iz/∂n = 0` exactly, so both give
-`λ = ν_iz` — bit for bit.
+The continuity equation cannot tell them apart: `∂ν_en_iz_tot/∂n = 0` exactly, so
+both give `λ = ν_en_iz_tot` — bit for bit.
 """
 @enum LinearResponseDepth PartialLinearResponse FullLinearResponse
 
@@ -1110,7 +1184,7 @@ function validate_scheme_flags(flags::SimulationFlags)
         throw(
             ArgumentError(
                 "exprb_eigenvalue = FullLinearResponse is not available for scheme.decay: " *
-                    "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz + ν_ei_eff), the " *
+                    "update_ue_para! fits λ = −(ν_en_mom_tot + ν_en_iz_tot + ν_ei_eff), the " *
                     "stated rate, and nothing computes the −(mₑu∥²/e)·∂ν/∂Ē that " *
                     "completes it. Use exprb_eigenvalue = PartialLinearResponse, or " *
                     "scheme.decay = Theta."

@@ -170,8 +170,10 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
         # tot_W_mag =(1/2)*∫Jϕ⋅Aϕ dV
         snap0D.tot_W_mag += 0.5 * sum(@. RP.plasma.Jϕ * RP.fields.ψ_self / RP.G.R2D * RP.G.inVol2D)
 
-        # Ohmic dissipation [W]
-        ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom_tot + pla.ν_en_iz
+        # Ohmic dissipation [W]. ν_en_iz_tot, not ν_en_iz alone: this mirrors the SAME
+        # momentum-randomizing sum update_ue_para! and the momentum-Ampere solvers use
+        # (physics.jl), and both ionization channels dilute the drift identically.
+        ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom_tot + pla.ν_en_iz_tot
         @unpack me, ee = RP.config.constants
 
         σ_conductivity = @. pla.ne * ee^2 / (me * ν_eff)
@@ -381,7 +383,9 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.Pi_atomic .= pla.iPowers.atomic
     snap2D.Pi_equi .= pla.iPowers.equi
 
-    ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom_tot + pla.ν_en_iz
+    # ν_en_iz_tot, not ν_en_iz alone: mirrors the momentum-randomizing sum the
+    # momentum solve itself uses (see the 0D Ohmic-dissipation comment above).
+    ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom_tot + pla.ν_en_iz_tot
     @. snap2D.η_resistivity = (me * ν_eff) / (pla.ne * ee^2)
 
     # Handle near-zero density regions

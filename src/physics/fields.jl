@@ -325,8 +325,8 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     # =========================================================================
     # 2. Calculate critical densities
     # =========================================================================
-    @. pla.nc_para = (eps0 / (ee * pla.Te_eV)) * (F.Bϕ / F.Bpol)^FT(2.0) * (F.Eϕ / pla.γ_shape_fac)^FT(2.0)
-    @. pla.nc_perp = eps0 / me * (F.Btot * F.Bpol / F.Bϕ)^FT(2.0) * (FT(1.0) / pla.γ_shape_fac)^FT(2.0)
+    @. pla.nc_para = (eps0 / (ee * pla.Te_eV)) * (F.Bϕ / F.Bpol)^2 * (F.Eϕ / pla.γ_shape_fac)^2
+    @. pla.nc_perp = eps0 / me * (F.Btot * F.Bpol / F.Bϕ)^2 * (FT(1.0) / pla.γ_shape_fac)^2
 
     # =========================================================================
     # 3. Calculate self-consistent electric fields (MATLAB lines 582-620)

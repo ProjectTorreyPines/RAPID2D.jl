@@ -3,9 +3,13 @@
         update_transport_quantities!
 
     # The cached rates and every derivative surface built from them: exactly what
-    # `update_RRCs!` writes, and what nothing else is allowed to write.
-    const CACHED_RATES = (:ν_en_iz, :ν_en_mom_tot, :ν_en_mom_ela, :ν_en_exc_eff)
-    const CACHED_JACOBIANS = (:iz, :mom_tot, :mom_ela, :exc_eff)
+    # `update_RRCs!` writes, and what nothing else is allowed to write (its own
+    # docstring lists these eight `plasma.*` fields as the consumer-facing set).
+    const CACHED_RATES = (
+        :ν_en_iz, :ν_en_diss_iz, :ν_en_iz_tot, :ν_en_mom_tot, :ν_en_mom_ela,
+        :P_en_ela, :P_en_exc, :P_en_diss_exc,
+    )
+    const CACHED_JACOBIANS = (:iz, :diss_iz, :mom_tot, :mom_ela, :ela_erg, :exc_erg, :diss_exc_erg)
 
     # Above the ionization threshold on purpose: at Ē ≈ 5 eV every ionization rate and
     # derivative is exactly zero, and a test that poisons zeros proves nothing.

@@ -63,7 +63,7 @@ end
     @test all(isfinite, EoverP)
     @test all(iszero, EoverP[dead])
 
-    K = get_electron_RRC(RP, :Ionization)
+    K = get_electron_RRC(RP, :K_iz)
     @test all(isfinite, K)
 
     update_RRCs!(RP)

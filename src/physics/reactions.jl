@@ -41,6 +41,7 @@ function reset_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     rx = RP.reactions
     empty!(rx.published)
     fill!(rx.counts.iz, zero(FT))
+    fill!(rx.counts.diz, zero(FT))
     return RP
 end
 
@@ -126,10 +127,15 @@ actually ionized at — because it holds `θ`, `prev_n` and the just-solved `ne`
 one scope. Anywhere else it would have to be reconstructed from state that may
 have moved, which is the failure this replaces.
 
-`N_iz = Δt·ν_en_iz·n*` with `ν_en_iz` as `update_RRCs!` materialized it at the
-step-entry state; the tables are not re-queried here. Δt is baked in on purpose —
-a count is what it is, and a consumer cannot accidentally scale it by a step
-length other than the one it was formed with.
+`N_iz = Δt·ν_en_iz·n*` and `N_diz = Δt·ν_en_diss_iz·n*`, with the rates as
+`update_RRCs!` materialized them at the step-entry state; the tables are not
+re-queried here. Δt is baked in on purpose — a count is what it is, and a
+consumer cannot accidentally scale it by a step length other than the one it
+was formed with.
+
+Under `scheme.growth === ExpRB` the two channels share one capped exponent
+(`exprb.z_growth`, built from `ν_en_iz_tot`) and are split by their instantaneous
+rate share rather than each recomputed from `Δt·ν` — see the branch below.
 
 With `flags.src` off the counts are zeroed rather than left stale, so a run that
 switches the source off stops creating particles on the same step.
@@ -138,27 +144,38 @@ function update_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     rx, pla = RP.reactions, RP.plasma
     N = rx.counts
 
-    # ── e + H₂ → 2e + H₂⁺ ───────────────────────────────────────────────────
+    # ── e + H₂ → 2e + H₂⁺ / e + H₂ → 2e + H⁺ + H⁰ ──────────────────────────
     if RP.flags.src
-        # θ comes from the table, not from this line: a `:decay` channel added
-        # later then picks up backward Euler by existing.
+        # The θ FAMILY comes from the table, not from this line: a `:decay` channel
+        # added later then picks up backward Euler by existing. The CHANNEL asked
+        # for here is `:iz`, not `:diz`, but that is not a second lookup skipped —
+        # `:diz` is in the same `:growth` family as `:iz` (REACTION_STOICHIOMETRY),
+        # so `reaction_θ(RP, :iz)` and `reaction_θ(RP, :diz)` would answer identically;
+        # asking once and reusing it below is just not paying for that twice.
         # From RP, not from flags alone: under ExpRB the weight is the fitted θ(z)
         # of the step just taken, per cell. Broadcasting below covers both forms.
         θ = reaction_θ(RP, :iz)
         if RP.flags.scheme.growth === ExpRB
-            # `exprb.z_growth`, not `Δt·ν_en_iz`: the two differ exactly when the solve
-            # capped, and then `Δt·ν` books (z/z_cap)× the electrons that were born
-            # — 4/3 at z = 40 — so the ion source and the gas sink would outrun the
-            # continuity equation they are supposed to mirror.
-            @. N.iz = pla.exprb.z_growth * ((one(FT) - θ) * RP.prev_n + θ * pla.ne)
+            # `z_growth` is capped and built from `ν_en_iz_tot`, so it books
+            # the electrons the solve ACTUALLY created, both channels together. Split
+            # it by channel share rather than recomputing from Δt·ν: recomputing would
+            # undo the cap and book (z/z_cap)× the true number — 4/3 at z = 40.
+            frac_iz = @. ifelse(pla.ν_en_iz_tot > zero(FT), pla.ν_en_iz / pla.ν_en_iz_tot, one(FT))
+            born = @. pla.exprb.z_growth * ((one(FT) - θ) * RP.prev_n + θ * pla.ne)
+            @. N.iz = born * frac_iz
+            @. N.diz = born * (one(FT) - frac_iz)
         else
             dt = RP.dt
-            @. N.iz = dt * ((one(FT) - θ) * RP.prev_n + θ * pla.ne) * pla.ν_en_iz
+            n_star = @. (one(FT) - θ) * RP.prev_n + θ * pla.ne
+            @. N.iz = dt * n_star * pla.ν_en_iz
+            @. N.diz = dt * n_star * pla.ν_en_diss_iz
         end
     else
         fill!(N.iz, zero(FT))
+        fill!(N.diz, zero(FT))
     end
     push!(rx.published, :iz)
+    push!(rx.published, :diz)
 
     return RP
 end
@@ -196,28 +213,46 @@ end
 
 `Σₖ νₖ,ₑ Nₖ` — electrons created per unit volume during this step, `[m⁻³]`.
 
-Aliases the channel array when only one channel contributes, so it allocates
-nothing; do not write through the result.
+Both channels make exactly one electron per event (`REACTION_STOICHIOMETRY`), so
+this is `N.iz .+ N.diz`. Allocates: with two channels contributing there is no
+single array left to alias.
 """
-net_electron_count(N::ReactionCounts) = N.iz
-# + N.diz − N.rec_H2 − N.rec_H3
+net_electron_count(N::ReactionCounts) = N.iz .+ N.diz
+# − N.rec_H2 − N.rec_H3
 
 """
     net_H2_gas_count(counts)    -> Matrix
     net_H2_gas_count(counts, k) -> scalar
 
 `Σₖ νₖ,H₂ Nₖ` — molecules created (negative: destroyed) per unit volume during
-this step. The neutral-gas sink is this, not a second estimate of it: one
-molecule is destroyed for each electron born, so `−net_electron_count` today and
-a genuinely different combination once dissociative channels land.
+this step. The neutral-gas sink is this, not a second estimate of it: today
+`ReactionCounts` only tracks `iz` and `diz`, and both destroy one H₂ per
+electron born, so the sum reduces to `−net_electron_count` — a consequence of
+which channels are booked, not a conservation identity.
 
-Unlike the other two this combination cannot alias a channel array, so the
-whole-field form allocates. The indexed form exists because the sink is an
-elementwise sweep over in-wall nodes and has no reason to pay for that.
+**It undercounts.** Dissociative excitation (`e + H₂ → e + H + H*`) destroys an
+H₂ and makes no electron, so it is invisible to `−net_electron_count` by
+construction. Its particle rate `K_diss_exc` is already loaded by
+`update_RRCs!` (`reaction_rate_coefficients.jl:319`) — only its energy sibling
+`Kerg_diss_exc` is consumed (into `P_en_diss_exc`); the channel has no
+`ReactionCounts` field and never reaches this sum. Measured on the shipped
+table, the median of `K_diss_exc/(K_iz + K_diss_iz)` over E/p is 18 at
+Ē = 5 eV, 2.1 at 10, 1.1 at 15, 0.79 at 20, 0.40 at 50 and 0.19 at 300 — so
+this sink under-consumes H₂ by 1.2–3× from burn-through up, and by more than an
+order of magnitude in the few-eV band, where ionization has barely switched on
+and dissociative excitation is nearly the whole H₂ loss. (Quote the median, not
+the range: below Ē ≈ 5 eV the denominator is near zero on most E/p rows, so the
+ratio there is numerically unbounded and says nothing.)
+Booking it would need a `diss_exc` row in `REACTION_STOICHIOMETRY` (H₂ → −1,
+no electron) and a matching `ReactionCounts` field; deliberately out of scope
+here.
+
+The indexed form exists because the sink is an elementwise sweep over in-wall
+nodes and has no reason to pay for allocating the whole field.
 """
-net_H2_gas_count(N::ReactionCounts) = -N.iz
-@inline net_H2_gas_count(N::ReactionCounts, k::Integer) = -N.iz[k]
-# − N.diz + N.rec_H3
+net_H2_gas_count(N::ReactionCounts) = -(N.iz .+ N.diz)
+@inline net_H2_gas_count(N::ReactionCounts, k::Integer) = -(N.iz[k] + N.diz[k])
+# + N.rec_H3
 
 """
     net_ion_count(counts, name) -> Matrix or nothing
@@ -225,10 +260,16 @@ net_H2_gas_count(N::ReactionCounts) = -N.iz
 `Σₖ νₖ,ₛ Nₖ` for the ion species called `name`, or `nothing` when no channel
 touches it — a species nothing creates or destroys has no source term rather
 than a zero one, so the caller can skip the work entirely.
+
+`:H2⁺` is `N.iz .+ N.diz`, not `N.iz` alone: under the INTERIM(diz-ion-species)
+(`REACTION_STOICHIOMETRY.diz`) DI's ion is booked here too, because H⁺ is not yet
+a transportable species. That makes this identically `net_electron_count` for
+now — not a conservation check, just the consequence of the interim.
 """
 function net_ion_count(N::ReactionCounts, name::Symbol)
-    name === :H2⁺ && return N.iz
-    # :H⁺  → N.diz
+    name === :H2⁺ && return N.iz .+ N.diz
+    # :H⁺  → N.diz alone, once REACTION_STOICHIOMETRY.diz.ions changes to :H⁺ => 1
+    #        and H⁺ is a declared, transportable species — see the docstring above.
     # :H3⁺ → −N.rec_H3
     return nothing
 end

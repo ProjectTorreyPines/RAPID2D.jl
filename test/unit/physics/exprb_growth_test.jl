@@ -55,7 +55,9 @@ end
     # NEGATIVE densities, which is a different kind of failure from a large error.
     RP0 = growth_RAPID()
     inw = RP0.G.nodes.in_wall_nids
-    ν = copy(RP0.plasma.ν_en_iz)
+    # ν_en_iz_tot, not ν_en_iz alone: z_growth (what the solve actually fits) is built
+    # from the total of both ionization channels since task C1.
+    ν = copy(RP0.plasma.ν_en_iz_tot)
     n₀ = 1.0e14
     t_end = 10 / maximum(ν[inw])            # ~10 e-foldings
 
@@ -127,16 +129,21 @@ end
     RP.flags.scheme.growth = ExpRB
     RP.dt = 2.0e-5
     prev = copy(RP.plasma.ne)
-    ν = copy(RP.plasma.ν_en_iz)
+    # z_growth is built from ν_en_iz_tot (both channels) since task C1.
+    ν = copy(RP.plasma.ν_en_iz_tot)
     solve_electron_continuity_equation!(RP)
 
     # That θ IS the fitted weight is asserted in "the ledger reads the fitted
     # weight on BOTH solve paths"; what is checked here is the count built from it.
+    #
+    # `net_electron_count`, not `counts.iz` alone: since task C2, `born` is split
+    # between `N.iz` and `N.diz` by channel share (REACTION_STOICHIOMETRY.diz), so
+    # only the SUM reproduces the total this fixture's E/p actually grows at.
     θ = reaction_θ(RP, :iz)
     inw = RP.G.nodes.in_wall_nids
     counts = check_reaction_counts(RP)
     expected = @. RP.dt * ((1 - θ) * prev + θ * RP.plasma.ne) * ν
-    @test counts.iz[inw] ≈ expected[inw] rtol = 1.0e-12
+    @test net_electron_count(counts)[inw] ≈ expected[inw] rtol = 1.0e-12
 
     # Growth is where θ_fit falls BELOW ½ — the fitted weight leans explicit as
     # the step outruns the rate, which is the opposite of what stiffness intuition
@@ -147,11 +154,19 @@ end
 @testitem "ExpRB growth: electrons and ions still agree on the event count" setup = [ExpRBGrowthFixtures] begin
     using RAPID2D: ExpRB, check_reaction_counts, net_electron_count, net_ion_count
 
-    # The identity `ReactionCounts` guarantees, asserted under the new scheme: the
-    # ion equation reads the published count and divides by Δt, so it cannot
-    # disagree with the electron equation regardless of which weight formed it.
-    # Also the discrete statement of "one ionization makes one electron and one
-    # ion" — Δnₑ from the solve must equal the count it published.
+    # Two different checks share this item. The FIRST assertion below is real: the
+    # electron continuity solve's actual Δnₑ must equal the ledger
+    # `update_reaction_counts!` published, which pins the solve against the count
+    # rather than the other way round.
+    #
+    # The SECOND assertion is NOT a conservation check — matching the honest framing
+    # in `reactions_test.jl` and `ion_continuity_test.jl`. Under the INTERIM
+    # (`REACTION_STOICHIOMETRY.diz`, DI's ion booked to the H₂⁺ column)
+    # `net_ion_count(N, :H2⁺)` and `net_electron_count(N)` are literally the same
+    # expression, `N.iz .+ N.diz` — equal here because they are the same code, not
+    # because the ion continuity equation was exercised or anything was proven about
+    # charge balance. It pins that fact against the interim being read as a proof,
+    # not as evidence the ion and electron equations agree.
     #
     # BOTH solve paths. `Implicit = false` is not a place where the fit stops
     # applying — the explicit branch runs the same two coefficients, so the ledger
@@ -192,7 +207,8 @@ end
         RP.flags.scheme.growth = ExpRB
         RP.dt = 2.0e-5
         inw = RP.G.nodes.in_wall_nids
-        expected = exprb_theta.(exprb_cap_exponent.(RP.plasma.ν_en_iz .* RP.dt))
+        # ν_en_iz_tot: z_growth is built from both channels since task C1.
+        expected = exprb_theta.(exprb_cap_exponent.(RP.plasma.ν_en_iz_tot .* RP.dt))
         solve_electron_continuity_equation!(RP)
 
         θ = reaction_θ(RP, :iz)
@@ -212,15 +228,17 @@ end
 end
 
 @testitem "ExpRB growth: the ledger counts the growth the cap allowed, not the one it refused" setup = [ExpRBGrowthFixtures] begin
-    using RAPID2D: ExpRB, Theta, EXPRB_MAX_EXPONENT
+    using RAPID2D: ExpRB, Theta, EXPRB_MAX_EXPONENT, net_electron_count
 
-    # One ionization makes one electron, so with no transport the published count
-    # IS the density increase — an identity the quadrature satisfies by
-    # construction, at any θ and at any step. It is what lets the ion source and
-    # the gas sink read `N.iz` instead of re-deriving the growth.
+    # One ionization, of EITHER channel, makes one electron, so with no transport
+    # the published TOTAL count IS the density increase — an identity the
+    # quadrature satisfies by construction, at any θ and at any step. Since task
+    # C2 that total is `net_electron_count(N) = N.iz .+ N.diz`, not `N.iz` alone:
+    # the ExpRB branch below splits one capped `born` between the two channels by
+    # their instantaneous rate share, so only the sum reproduces it.
     #
     # Above the cap the solve advances with `z_cap` while the ledger multiplied by
-    # the uncapped `ν_en_iz`, and the count came out `(z/z_cap)×` too large — 4/3
+    # the uncapped `ν_en_iz_tot`, and the count came out `(z/z_cap)×` too large — 4/3
     # at `z = 40`. Ion production and neutral depletion then exceed the electrons
     # actually born, on a branch that only warns.
     function counted_vs_born(RP, dt)
@@ -228,10 +246,10 @@ end
         n_before = copy(RP.plasma.ne)
         solve_electron_continuity_equation!(RP)
         inw = RP.G.nodes.in_wall_nids
-        return check_reaction_counts(RP).iz[inw], (RP.plasma.ne .- n_before)[inw]
+        return net_electron_count(check_reaction_counts(RP))[inw], (RP.plasma.ne .- n_before)[inw]
     end
 
-    ν_probe = maximum(growth_RAPID().plasma.ν_en_iz[growth_RAPID().G.nodes.in_wall_nids])
+    ν_probe = maximum(growth_RAPID().plasma.ν_en_iz_tot[growth_RAPID().G.nodes.in_wall_nids])
 
     for implicit in (true, false)
         # z ≈ 40: past EXPRB_MAX_EXPONENT, so the solve caps and the ledger must follow.
@@ -251,9 +269,49 @@ end
 
     # The identity is a property of the quadrature, not of ExpRB: Crank–Nicolson
     # satisfies it too, below its pole. Asserting it here says the ledger contract
-    # is what the cap broke, not the ledger.
+    # is what the cap broke, not the ledger. Also covers the Theta/CN branch with DI
+    # left at its natural (nonzero, at this fixture's E/p) value — `net_electron_count`
+    # sums both channels there too, so nothing needs to be silenced.
     cn = growth_RAPID()
     @test cn.flags.scheme.growth === Theta
     counted, born = counted_vs_born(cn, 1 / ν_probe)
     @test counted ≈ born rtol = 1.0e-12
+end
+
+@testitem "ExpRB growth: the channel split matches the instantaneous rate share" setup = [ExpRBGrowthFixtures] begin
+    using RAPID2D: ExpRB, check_reaction_counts
+
+    # Every other ExpRB item in this suite compares the SUM `net_electron_count(N)
+    # = N.iz .+ N.diz`, which is invariant under how that sum is split between the
+    # two channels — the ExpRB branch of `update_reaction_counts!` does not
+    # recompute N.iz and N.diz from Δt·ν (that would undo the solve's cap); it
+    # takes the one capped `born` and splits it by `frac_iz = ν_en_iz/ν_en_iz_tot`.
+    # Swapping `frac_iz` and `(one(FT) - frac_iz)`, or making the `ifelse` guard
+    # answer `zero(FT)` instead of `one(FT)` on the 0/0 cells, would still leave
+    # every SUM-based assertion in the suite green. This item looks at the split
+    # itself, not just its sum.
+    RP = growth_RAPID()          # Te_eV = 8, EoverP = 100: DI is genuinely nonzero here
+    RP.flags.scheme.growth = ExpRB
+    RP.dt = 2.0e-5
+    solve_electron_continuity_equation!(RP)
+
+    counts = check_reaction_counts(RP)
+    inw = RP.G.nodes.in_wall_nids
+    ν_iz, ν_tot = RP.plasma.ν_en_iz, RP.plasma.ν_en_iz_tot
+
+    # The split matches the instantaneous rate share exactly. A swapped
+    # frac_iz/(1 - frac_iz) fails this immediately (it inverts the ratio).
+    @test counts.iz[inw] ./ (counts.iz[inw] .+ counts.diz[inw]) ≈ ν_iz[inw] ./ ν_tot[inw] rtol = 1.0e-12
+
+    # Not vacuous: DI actually contributes at this fixture's E/p, so the ratio
+    # above is not trivially 1/1.
+    @test !all(iszero, counts.diz[inw])
+
+    # Finite EVERYWHERE, including the out-of-wall cells where ν_en_iz_tot == 0 —
+    # exactly the 0/0 cells the `ifelse(ν_en_iz_tot > 0, ..., one(FT))` guard
+    # exists for. A guard that answered `zero(FT)` there divides 0/0 into NaN,
+    # which then propagates through `net_electron_count`.
+    @test any(iszero, ν_tot)                # else the check below is vacuous
+    @test all(isfinite, counts.iz)
+    @test all(isfinite, counts.diz)
 end

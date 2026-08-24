@@ -256,10 +256,13 @@ reflective diffusion.
 
 The two halves are operator-split, sink first, matching the MATLAB original.
 
-**The sink is the electron source, not a copy of it.** It reads the very same
-`plasma.ν_en_iz` that `solve_electron_continuity_equation!` uses, because one
-electron is born for each molecule destroyed. Recomputing the rate here — or
-letting a driver script subtract its own estimate — breaks nuclei conservation:
+**The sink is the electron source, not a copy of it.** It reads
+`net_H2_gas_count`, the same published ledger the H₂⁺ ion source reads: both
+tracked channels (`iz`, `diz`) destroy one molecule per electron born, so today
+the two ledgers move together. (Dissociative excitation also destroys H₂ but is
+not yet booked into either ledger — see `net_H2_gas_count`'s docstring for the
+gap and its measured size.) Recomputing the rate here — or letting a driver
+script subtract its own estimate — breaks nuclei conservation:
 the scenario scripts that did exactly that overshot the electron supply limit by
 7% at dt = 1e-5, an error that only vanishes as dt → 0 because the script's sink
 was explicit while the electron equation's source was implicit.
@@ -278,8 +281,11 @@ forward Euler and skips the solve, but is bound by the explicit CFL limit
 `min(dR,dZ)²/(4D)`.
 
 The diffusivity is evaluated per cell against the *molecular* destruction rate
-`n_e·K_iz = n_e·ν_en_iz/n_H2`, not the electron's `ν_en_iz`. Those differ by
-`n_e/n_H2` and it is the molecule's fate that sets its free path.
+`n_e·K_iz_tot = n_e·ν_en_iz_tot/n_H2`, not the electron's `ν_en_iz_tot`. Those
+differ by `n_e/n_H2` and it is the molecule's fate that sets its free path. Both
+this diffusivity and the burn-out sink above now total both channels — the
+diffusivity because it is a live rate read straight from `ν_en_iz_tot`, the sink
+because `net_H2_gas_count` sums `N.iz` and `N.diz` (`REACTION_STOICHIOMETRY.diz`).
 """
 function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_neutral_H2_gas_density!" begin
@@ -310,8 +316,9 @@ function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloa
         D = similar(pla.n_H2_gas)
         @inbounds for k in eachindex(D)
             n = pla.n_H2_gas[k]
-            # ν seen by a MOLECULE, not by an electron
-            ν_iz_gas = n > zero_FT ? pla.ne[k] * pla.ν_en_iz[k] / n : zero_FT
+            # ν seen by a MOLECULE, not by an electron. BOTH ionization channels
+            # destroy one H₂ molecule per event, so this takes the total.
+            ν_iz_gas = n > zero_FT ? pla.ne[k] * pla.ν_en_iz_tot[k] / n : zero_FT
             D[k] = neutral_gas_diffusivity(n, pla.T_gas_eV, ν_iz_gas, L_char)
         end
 

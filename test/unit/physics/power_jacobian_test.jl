@@ -50,18 +50,33 @@
         return RP
     end
 
-    function with_surfaces(RP; K_of_Ē)
+    # `L_of_Ē` defaults to `K_of_Ē` so callers doing exact hand-algebra keep one number
+    # everywhere. Anything that compares a RESIDUAL against a SCALE must pass both:
+    # `K_*` is [m³/s] (~1e-15) and `L_*` is [W·m³] (~1e-35), so one value for both puts
+    # the energy sinks 20 orders above the particle terms and every check normalised by
+    # a maximum stops seeing anything but the sinks.
+    function with_surfaces(RP; K_of_Ē, L_of_Ē = K_of_Ē)
         EoverP = collect(range(1.0, 1000.0, 24))
         Erg_eV = collect(10 .^ range(-3, 3, 48))
-        data = [K_of_Ē(E) for _ in EoverP, E in Erg_eV]
+        K_data = [K_of_Ē(E) for _ in EoverP, E in Erg_eV]
+        L_data = [L_of_Ē(E) for _ in EoverP, E in Erg_eV]
         path = joinpath(mktempdir(; cleanup = false), "eRRCs_EoverP_Erg.h5")
         h5open(path, "w") do fid
             fid["EoverP"] = EoverP
             fid["Erg_eV"] = Erg_eV
-            for name in ("Ionization", "Total_Momentum", "Momentum_by_ela", "Total_Excitation")
-                fid[name] = copy(data)
+            # Electron_RRCs now reads the full 2026-08 group ledger (Task B1); every
+            # (E/p, Ē) surface it reads must exist in the file, even the ones this
+            # test does not exercise, or the constructor throws on a missing dataset.
+            for name in (
+                    "K_iz", "K_diss_iz", "K_exc", "K_diss_exc",
+                    "K_mom", "K_mom_by_ela", "K_mom_by_exc", "K_mom_by_diss_exc",
+                    "K_mom_by_iz", "K_mom_by_diss_iz",
+                )
+                fid[name] = copy(K_data)
             end
-            fid["characteristic_exc_erg_eV"] = RP.config.constants.char_exc_erg_eV
+            for name in ("L_ela", "L_exc", "L_diss_exc", "L_tot")
+                fid[name] = copy(L_data)
+            end
         end
         RP.eRRCs = Electron_RRCs(
             path, joinpath(dirname(dirname(pathof(RAPID2D))), "RRC_data", "eRRCs_T_ud.h5")
@@ -108,29 +123,51 @@ end
     # That makes this sharper than the finite-difference oracle, which truncation
     # caps near 1e-6: a dropped product rule or a missing ∂Ē/∂Tₑ = 3/2 shows up
     # here at the twelfth digit, not the sixth.
+    #
+    # K and L are given their own magnitudes -- [m³/s] and [W·m³] -- because `≈` on
+    # arrays is norm-based. Feeding both from one number put the energy sinks 20 orders
+    # above every particle term, and then `rtol = 1e-12` on the norm could not see them:
+    # dropping `diss_iz_erg_eV·∂ν_DI/∂Tₑ` from the P_DI line left this item green.
+    # Verified by mutation, and it is caught here now.
     a, b = 2.0e-15, 3.5e-17
-    RP = with_surfaces(pj_RAPID(; Te_eV = 5.0); K_of_Ē = Ē -> a + b * Ē)
+    a_L, b_L = 2.0e-35, 3.5e-37
+    RP = with_surfaces(
+        pj_RAPID(; Te_eV = 5.0); K_of_Ē = Ē -> a + b * Ē, L_of_Ē = Ē -> a_L + b_L * Ē
+    )
     RP.flags.scheme.atomic = ExpRB
     eig = eig_at(RP)
 
     cnst = RP.config.constants
-    ee, me, char_exc_erg_eV, iz_erg_eV = cnst.ee, cnst.me, cnst.char_exc_erg_eV, cnst.iz_erg_eV
-    m_H2 = cnst.mi
+    ee, me, iz_erg_eV, diss_iz_erg_eV = cnst.ee, cnst.me, cnst.iz_erg_eV, cnst.diss_iz_erg_eV
     pla = RP.plasma
     inw = RP.G.nodes.in_wall_nids
 
     ue_sq = @. pla.ueR^2 + pla.ueϕ^2 + pla.ueZ^2
-    ν, dν = pla.ν_en_mom_tot, pla.dν_dTe.mom_tot          # all four surfaces are equal here
-    ν_ela, dν_ela = pla.ν_en_mom_ela, pla.dν_dTe.mom_ela
-    ν_exc, dν_exc = pla.ν_en_exc_eff, pla.dν_dTe.exc_eff
+    ν, dν = pla.ν_en_mom_tot, pla.dν_dTe.mom_tot          # every K_* surface is equal here
     ν_iz, dν_iz = pla.ν_en_iz, pla.dν_dTe.iz
+    ν_diss_iz, dν_diss_iz = pla.ν_en_diss_iz, pla.dν_dTe.diss_iz
+    P_ela, dP_ela = pla.P_en_ela, pla.dν_dTe.ela_erg
+    P_exc, dP_exc = pla.P_en_exc, pla.dν_dTe.exc_erg
+    dP_diss_exc = pla.dν_dTe.diss_exc_erg
+
+    # Same cold-target factor update_electron_heating_powers! shares between P_ela
+    # and P_exc, and the same product rule _eig_Te_from_linear_response! applies to
+    # both.
+    Ē_eV = @. 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
+    Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
+    Ē_safe = @. max(Ē_eV, Ē_floor)
+    cold = @. 1 - 1.5 * pla.T_gas_eV / Ē_safe
 
     dP = @. (
         me * ue_sq * dν                                               # ∂P_drag/∂Tₑ
-            - (2 * me / m_H2) * 1.5 * ee * (ν_ela + (pla.Te_eV - pla.T_gas_eV) * dν_ela)
-            - ee * char_exc_erg_eV * dν_exc
-            - ee * iz_erg_eV * dν_iz
-            - (dν_iz * (1.5 * pla.Te_eV * ee - 0.5 * me * ue_sq) + 1.5 * ee * ν_iz)
+            - (dP_ela * cold + P_ela * 2.25 * pla.T_gas_eV / Ē_safe^2)     # P_ela
+            - (dP_exc * cold + P_exc * 2.25 * pla.T_gas_eV / Ē_safe^2)     # P_exc
+            - dP_diss_exc                                                  # P_diss_exc
+            - ee * (iz_erg_eV * dν_iz + diss_iz_erg_eV * dν_diss_iz)       # P_iz, P_DI
+            - (
+            (dν_iz + dν_diss_iz) * (1.5 * pla.Te_eV * ee - 0.5 * me * ue_sq)
+                + 1.5 * ee * (ν_iz + ν_diss_iz)
+        )
     )
     @test eig[inw] ≈ ((2 / 3) .* dP ./ ee)[inw] rtol = 1.0e-12
 
@@ -241,6 +278,76 @@ end
     @test all(eig_at(hot)[inw] .< eig_at(cold)[inw])
 end
 
+@testitem "Power Jacobian: FullLinearResponse matches a finite difference of the new sinks" begin
+    using RAPID2D
+    using RAPID2D: update_RRCs!, update_electron_heating_powers!,
+        update_electron_power_jacobian!, FullLinearResponse, ExpRB
+
+    function powered(Te0)
+        config = SimulationConfig{Float64}(
+            NR = 6, NZ = 6, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        RP = RAPID{Float64}(config)
+        RP.flags.scheme.atomic = ExpRB
+        RP.flags.exprb_eigenvalue = FullLinearResponse
+        initialize!(RP)
+        RP.flags.Atomic_Collision = true
+        RP.flags.src = true
+        RP.plasma.Te_eV .= Te0
+        RP.fields.E_para_tot .= 30.0
+        update_RRCs!(RP)
+        update_electron_heating_powers!(RP)
+        return RP
+    end
+
+    Te0 = 5.0
+    h = 1.0e-4 * Te0
+    RP = powered(Te0)
+    update_electron_power_jacobian!(RP)
+    ee = RP.config.constants.ee
+    # eig_Te = (2/3e)·∂P/∂Tₑ, so undo the prefactor to compare against ΔP/ΔTₑ.
+    analytic = @. RP.plasma.exprb.eig_Te * 1.5 * ee
+
+    Pp = powered(Te0 + h).plasma.ePowers.tot
+    Pm = powered(Te0 - h).plasma.ePowers.tot
+    numeric = @. (Pp - Pm) / (2h)
+
+    inw = RP.G.nodes.in_wall_nids
+    scale = maximum(abs.(numeric[inw]))
+    @test maximum(abs.(analytic[inw] .- numeric[inw])) < 1.0e-3 * scale
+end
+
+@testitem "Power Jacobian: PartialLinearResponse still cannot produce a growth branch" begin
+    using RAPID2D
+    using RAPID2D: update_RRCs!, update_electron_power_jacobian!,
+        PartialLinearResponse, ExpRB
+    # The depth's guarantee: it sums rates that are non-negative in any state the model
+    # describes, so λ ≤ 0 and there is no pole. The cold-target factor is the one new
+    # term that could break it — it flips sign below T_gas — so check both sides.
+    for Te0 in (0.001, 5.0)
+        config = SimulationConfig{Float64}(
+            NR = 6, NZ = 6, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 1.0e-8, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        RP = RAPID{Float64}(config)
+        RP.flags.scheme.atomic = ExpRB
+        RP.flags.exprb_eigenvalue = PartialLinearResponse
+        initialize!(RP)
+        RP.flags.Atomic_Collision = true
+        RP.flags.src = true
+        RP.plasma.Te_eV .= Te0
+        update_RRCs!(RP)
+        update_electron_power_jacobian!(RP)
+        @test all(<=(0.0), RP.plasma.exprb.eig_Te)
+        # `<=` alone admits all-zeros, which a mutation that never writes `eig_Te`
+        # would also pass.
+        @test any(<(0.0), RP.plasma.exprb.eig_Te)
+    end
+end
+
 @testitem "eig_Te: the heat-flux omission is announced too" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse
     const Warn = Base.CoreLogging.Warn
@@ -266,4 +373,215 @@ end
         quiet.flags.scheme.atomic = ExpRB
         @test_logs min_level = Warn eig_at(quiet)
     end
+end
+
+@testitem "eig_Te: below the table's Ē floor the frozen cold-target factor has no derivative" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse
+
+    # `update_electron_heating_powers!` evaluates the cold-target factor at
+    # `max(Ē, Ē_floor)`, and the value path clamps to the table's bottom row below
+    # that. So for Ē < Ē_floor BOTH the factor and the coefficients are constant in
+    # Tₑ and ∂P/∂Tₑ is exactly zero. A Jacobian that still differentiates
+    # 1.5·T_gas/Ē as 2.25·T_gas/Ē_safe² is not the derivative of the power it
+    # linearises, and the error is not marginal: 1/Ē_floor² = 1e6.
+    #
+    # With u∥ = 0, Ē = (3/2)Tₑ. On the shipped table's bottom row K_iz and L_exc are
+    # identically zero and L_ela is not, so P_en_ela alone carries the term here —
+    # dilution, P_exc and P_drag all vanish and cannot mask the check.
+    for depth in (PartialLinearResponse, FullLinearResponse)
+        RP = pj_RAPID(; Te_eV = 2.0e-4, u_para = 0.0, depth = depth)
+        RP.flags.scheme.atomic = ExpRB
+        inw = RP.G.nodes.in_wall_nids
+
+        Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
+        @test 1.5 * RP.plasma.Te_eV[first(inw)] < Ē_floor      # the premise of the item
+
+        eig = eig_at(RP)
+        @test !all(iszero, RP.plasma.P_en_ela[inw])            # or the check is vacuous
+        @test all(iszero, eig[inw])
+        @test eig[inw] ≈ eig_fd(RP)[inw] atol = 1.0e-12
+
+        # Live again once Ē clears the floor, so the fix cannot be "always zero".
+        RP.plasma.Te_eV .= 1.0
+        @test !all(iszero, eig_at(RP)[inw])
+    end
+end
+
+@testitem "eig_Te: the Ē floor is inferrable and the known-rates path allocates nothing" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, mean_energy_floor,
+        _eig_Te_from_known_rates!, update_RRCs!, update_electron_heating_powers!
+
+    # `RAPID.eRRCs` is declared as the ABSTRACT `AbstractSpeciesRRCs{FT}`, so reading a
+    # field off it directly infers `Any`. An `Any` scalar operand inside `@.` stops
+    # `Broadcast.combine_eltypes` from producing a concrete eltype, and the fused
+    # kernel falls back to per-element dynamic dispatch — a cost proportional to the
+    # grid. Every other rate consumer in this package reaches the tables through a
+    # function barrier for exactly this reason; the Ē-floor lookup has to as well.
+    RP = pj_RAPID(; depth = PartialLinearResponse)
+    RP.flags.scheme.atomic = ExpRB
+    @test @inferred(mean_energy_floor(RP)) isa Float64
+    @test mean_energy_floor(RP) == first(RP.eRRCs.Kerg_ela.Erg_eV)
+
+    # This path was allocation-free before the 2026-08 ledger landed; it then grew two
+    # whole-grid temporaries per step, and it runs every step. What is pinned here is
+    # that nothing GRID-SIZED is allocated, measured by running the same function on
+    # grids that differ by 9x in node count and requiring the byte count not to move.
+    #
+    # It is not zero. Reading a field off `RP.eRRCs` — declared abstract — dispatches
+    # dynamically, and its `Float64` result comes back boxed: one small allocation per
+    # call, independent of the grid. Removing it would mean caching the floor, which
+    # the fixtures above make stale the moment they swap `RP.eRRCs`, or making the
+    # field concrete. A boxed scalar per step is the cheaper of those.
+    function alloc_at(NR, NZ)
+        config = SimulationConfig{Float64}(
+            NR = NR, NZ = NZ, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+            dt = 1.0e-8, t_end_s = 1.0e-6, R0B0 = 1.0, prefilled_gas_pressure = 5.0e-3,
+            snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+            wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        R = RAPID{Float64}(config)
+        R.flags.Atomic_Collision = true
+        R.flags.src = true
+        R.flags.Coulomb_Collision = false
+        R.flags.exprb_eigenvalue = PartialLinearResponse
+        initialize!(R)
+        R.flags.scheme.atomic = ExpRB
+        R.plasma.Te_eV .= 5.0
+        R.plasma.ne .= 1.0e16
+        R.plasma.ni .= 1.0e16
+        update_RRCs!(R)
+        update_electron_heating_powers!(R)
+        _eig_Te_from_known_rates!(R)                    # compile before measuring
+        return @allocated(_eig_Te_from_known_rates!(R)), length(R.plasma.Te_eV)
+    end
+
+    small, n_small = alloc_at(8, 8)
+    large, n_large = alloc_at(24, 24)
+    @test n_large > 8 * n_small                         # the premise of the comparison
+    @test small == large                                # nothing grid-sized survives
+    @test large < 256                                   # and what remains is one scalar
+end
+
+@testitem "heating powers: the cold-target factor costs no grid temporary" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, update_RRCs!,
+        update_electron_heating_powers!
+
+    # `update_electron_heating_powers!` runs EVERY step whatever the scheme flags say,
+    # so a grid temporary here is paid on every step of every run. The 2026-08 ledger
+    # branch briefly added two — `Ē_eV` and `cold_factor` — and they are now folded
+    # into the two consuming broadcasts, with the shared factor parked in
+    # `ePowers.ela` between them rather than in a fresh array.
+    #
+    # This is NOT a zero-allocation contract, and pretending otherwise would make the
+    # test a lie: the function still builds `ue_mag_sq`, `ue_dot_ui` and the transport
+    # branches' own temporaries. What is pinned is how many WHOLE-GRID arrays it
+    # builds, counted against a same-process measurement of one such array rather than
+    # against a byte constant.
+    #
+    # **Counted, not bounded in bytes, because bytes are not portable here.** An
+    # earlier version of this test asserted `< 85 B/node`, measured locally at 81.7,
+    # and it failed CI on macOS at 91.3 while passing on ubuntu. Same Julia 1.12.7 on
+    # both runners; the difference is one whole-grid array's worth of inlining
+    # decision, and the local machine on 1.12.6 differed again. Observed baselines:
+    #
+    #     local  1.12.6 aarch64   81.7 B/node   (24x24)   ~10 arrays
+    #     ubuntu 1.12.7 x86_64    < 85          (24x24)   ~10 arrays
+    #     macOS  1.12.7 aarch64   91.3          (24x24)   ~11 arrays
+    #
+    # The platform spread (~9 B/node) is the same size as the signal this test exists
+    # to catch (the two temporaries the fold removed, ~16 B/node), so **no absolute
+    # byte bound can both pass everywhere and catch a two-array regression**. The
+    # ceiling below is therefore deliberately loose: it catches a gross regression —
+    # fusion breaking, or a handful of temporaries returning — and does not pretend to
+    # catch one or two. The sharp check is the measurement recorded in the commit that
+    # removed them (24x24: 56448 -> 47072 B, exactly two grid arrays).
+    function bytes_per_node(NR, NZ)
+        config = SimulationConfig{Float64}(
+            NR = NR, NZ = NZ, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
+            dt = 1.0e-8, t_end_s = 1.0e-6, R0B0 = 1.0, prefilled_gas_pressure = 5.0e-3,
+            snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+            wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        R = RAPID{Float64}(config)
+        R.flags.Atomic_Collision = true
+        R.flags.src = true
+        R.flags.exprb_eigenvalue = PartialLinearResponse
+        initialize!(R)
+        R.flags.scheme.atomic = ExpRB
+        R.plasma.Te_eV .= 5.0
+        R.plasma.ne .= 1.0e16
+        R.plasma.ni .= 1.0e16
+        R.plasma.ue_para .= -1.0e5
+        R.fields.E_para_tot .= -50.0
+        update_RRCs!(R)
+        update_electron_heating_powers!(R)              # compile before measuring
+        n = length(R.plasma.Te_eV)
+        # What one whole-grid array costs on THIS machine, including its header —
+        # the unit the ceiling is expressed in.
+        one_grid_array = @allocated(similar(R.plasma.Te_eV))
+        return @allocated(update_electron_heating_powers!(R)) / n,
+            one_grid_array / n
+    end
+
+    (small, unit_small) = bytes_per_node(24, 24)
+    (large, unit_large) = bytes_per_node(48, 48)
+
+    # Grid-independence of the RATE is the premise: if the per-node cost itself moved
+    # with the grid, bounding it at one size would say nothing about the other. The
+    # residual gap is the function's fixed overhead spread over more nodes.
+    @test isapprox(small, large; rtol = 0.1)
+
+    # Fewer than 15 whole-grid arrays per call. Baselines above sit at 10-11, so this
+    # tolerates the platform spread and a future inlining change, while a fusion
+    # failure — where each `@.` stops fusing and materialises its operands — lands
+    # well past it.
+    @test small / unit_small < 15.0
+    @test large / unit_large < 15.0
+end
+
+@testitem "eig_Te: PartialLinearResponse is exact once the surfaces stop responding" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse
+
+    # The DEFAULT depth drops the response THROUGH the coefficients on purpose, so a
+    # finite difference of the real assembled power is not its oracle in general. That
+    # is why the only item that touched this path was a transcription of the
+    # implementation — and it says so itself, which means it cannot catch a term both
+    # copies drop.
+    #
+    # Make the dropped part identically zero instead. With Ē-independent surfaces
+    # ∂K/∂Ē = 0, so Partial and the true ∂P/∂Tₑ must agree EXACTLY, and `eig_fd`
+    # becomes a genuine oracle for TWO of the three things Partial keeps: the
+    # cold-target slope and the dilution rate. Mutation-checked — deleting either is
+    # caught, at 43x and 5.0e5x tolerance respectively.
+    #
+    # **It does NOT cover the equilibration term, and an earlier version of this
+    # comment claimed it did** on the grounds that `Coulomb_Collision = true` made it
+    # "live rather than assumed". It is not a fixture problem and cannot be fixed by
+    # one: `2μ(3/2)e·ν_ei` is 4.7e-18 here against a `scale` of 2.4e6 set by the
+    # cold-target slope, so the term sits 24 orders below the tolerance and stays there
+    # for any `ν_ei` — 10¹⁰ still leaves 18 orders. The mass ratio μ ≈ 2.7e-4 and the
+    # `e` are what put it there.
+    #
+    # That term has its own item, which drives `ν_ei` directly at 1e8 and 1e10:
+    # "eig_Te: the equilibration term is differentiated, not lumped in with ∂ν_ei/∂Tₑ".
+    # Two tests, two regimes; neither pretends to be the other.
+    # Both units, at their real magnitudes. With one value for K and L alike the energy
+    # sinks land 20 orders above every particle term, `scale` below is set entirely by
+    # the cold-target slope, and the dilution and equilibration terms this item exists
+    # to cover become unfalsifiable — verified by mutation, not assumed.
+    RP = with_surfaces(
+        pj_RAPID(; coulomb = true, depth = PartialLinearResponse);
+        K_of_Ē = _ -> 1.0e-15, L_of_Ē = _ -> 1.0e-35
+    )
+    RP.flags.scheme.atomic = ExpRB
+    inw = RP.G.nodes.in_wall_nids
+
+    analytic = eig_at(RP)
+    numeric = eig_fd(RP)
+    @test !all(iszero, analytic[inw])                   # or the comparison is vacuous
+    scale = maximum(abs.(numeric[inw]))
+    @test scale > 0.0
+    @test maximum(abs.(analytic[inw] .- numeric[inw])) < 1.0e-6 * scale
 end

@@ -93,11 +93,11 @@ end
 @testitem "RRC_EoverP_Erg: real tables carry a usable derivative on both axes' interior" begin
     using RAPID2D: load_electron_RRCs
 
-    # The four surfaces update_RRCs! reads are exactly the four ∂P/∂Tₑ needs, so
+    # The surfaces update_RRCs! reads are exactly the ones ∂P/∂Tₑ needs, so
     # nothing new is looked up — only differentiated. Check the wiring survives
     # the real loader and the real (201 × 300) grid.
     eRRCs = load_electron_RRCs()
-    for name in (:Ionization, :Total_Momentum, :Momentum_by_ela, :Total_Excitation)
+    for name in (:K_iz, :K_diss_iz, :K_mom, :K_mom_by_ela, :Kerg_ela, :Kerg_exc, :Kerg_diss_exc)
         rrc = getfield(eRRCs, name)
         Ē_lo, Ē_hi = extrema(rrc.Erg_eV)
         p_lo, p_hi = extrema(rrc.EoverP)

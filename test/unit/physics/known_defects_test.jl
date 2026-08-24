@@ -107,13 +107,14 @@ end
     # argument goes negative, and `log` throws — so a physics failure is reported as a
     # diagnostics failure, with a stack trace pointing at the wrong file.
     #
-    # Backward Euler (θ = 1) has its pole at z = ν_iz·Δt = 1. Δt = 4e-4 s puts a
-    # discharge that reaches ν_iz ≈ 4e3 1/s well past it.
+    # Backward Euler (θ = 1) has its pole at z = ν_en_iz_tot·Δt = 1 (both channels,
+    # since Task C1). Δt = 4e-4 s puts a discharge that reaches ν_en_iz_tot ≈ 4e3
+    # 1/s well past it.
     RP = atomic_only(; dt = 4.0e-4, nsteps = 6, Te0 = 10.0, θ_growth = 1.0)
     RP.plasma.ue_para .= -1.0e6
 
     # The premise: this really is past the pole. Measured z ≈ 1.78.
-    @test maximum(RP.plasma.ν_en_iz[RP.G.nodes.in_wall_nids]) * RP.dt > 1
+    @test maximum(RP.plasma.ν_en_iz_tot[RP.G.nodes.in_wall_nids]) * RP.dt > 1
 
     err = try
         run_simulation!(RP)
@@ -128,4 +129,85 @@ end
     # …and while it does not, pin WHICH failure, so this cannot quietly start
     # recording some unrelated crash as the same defect.
     err === nothing || @test err isa DomainError
+end
+
+@testitem "DEFECT: scheme.decay = ExpRB loses the e-i momentum the θ path conserves exactly" begin
+    using RAPID2D: ExpRB, Theta
+
+    # e-i friction is an INTERNAL force: what the electrons lose the ions must gain.
+    # Under the default `scheme.decay = Theta` this holds to MACHINE PRECISION at any
+    # Δt, and not by accident — `update_ue_para!` is backward Euler and loses
+    # `mₑn·Δt·ν_ei(u_e^{n+1} − u_i^n)`, while `update_ui_para!`'s explicit Coulomb
+    # increment is charged with that same already-updated `u_e` and the same old `u_i`.
+    # The two telescope.
+    #
+    # ExpRB breaks the pairing: the electron half is now an exponential fit, so what it
+    # removes is not `Δt·ν_ei(u_e^{n+1} − u_i^n)` at all, while the ion half still adds
+    # exactly that. Measured below, the pair loses 42 % of its total momentum over 60
+    # steps and both species equilibrate onto 0.58·u_cm instead of u_cm.
+    #
+    # This is why the ion exponent cannot simply absorb `(mₑ/mᵢ)ν_ei` alongside the
+    # atomic rate — see the comment in `update_ui_para!`. A real fix has to make the ion
+    # half mirror whatever the electron half did, which is a design change, not a
+    # rearrangement.
+    FT = Float64
+    function relax(scheme)
+        config = SimulationConfig{FT}(
+            NR = 12, NZ = 12, prefilled_gas_pressure = 5.0e-3, R0B0 = 1.0, dt = 1.0e-9,
+        )
+        RP = RAPID{FT}(config)
+        RP.flags = SimulationFlags{FT}(
+            ud_evolve = true, Implicit = true,
+            Atomic_Collision = false,          # Coulomb is the ONLY channel
+            Coulomb_Collision = true, Spitzer_Resistivity = true, src = false,
+            Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
+            diffu = false, convec = false, Ampere = false,
+            E_para_self_ES = false, E_para_self_EM = false,
+            update_ni_independently = false, Include_ud_convec_term = false,
+            Include_ud_pressure_term = false, Include_ud_diffu_term = false,
+        )
+        RP.flags.scheme.decay = scheme
+        initialize!(RP)
+
+        n0 = 1.0e18
+        RP.plasma.ne .= n0
+        RP.plasma.ni .= n0                     # nₑ == nᵢ is what makes the exchange exact
+        RP.plasma.Te_eV .= 10.0
+        RP.plasma.Ti_eV .= 1.0
+        RAPID2D.update_transport_quantities!(RP)
+        RP.fields.E_para_tot .= 0.0            # no drive: pure internal relaxation
+
+        inw = RP.G.nodes.in_wall_nids
+        RP.dt = 1 / (sum(RP.plasma.ν_ei_eff[inw]) / length(inw))
+        me, mi = RP.config.constants.me, RP.config.constants.mi
+        ue0, ui0 = 1.0e5, 0.0
+        RP.plasma.ue_para .= ue0
+        RP.plasma.ui_para .= ui0
+        for _ in 1:60
+            RAPID2D.update_ue_para!(RP)
+            RAPID2D.update_ui_para!(RP)
+        end
+        ue = sum(RP.plasma.ue_para[inw]) / length(inw)
+        ui = sum(RP.plasma.ui_para[inw]) / length(inw)
+        p0 = me * n0 * ue0 + mi * n0 * ui0
+        return (
+            drift = (me * n0 * ue + mi * n0 * ui) / p0 - 1,
+            u_ratio = ue / ((me * ue0 + mi * ui0) / (me + mi)),
+            gap = abs(ue - ui) / abs(ue0 - ui0),
+        )
+    end
+
+    θ, ex = relax(Theta), relax(ExpRB)
+
+    # The θ path, stated here so the ExpRB number below is read against something.
+    @test abs(θ.drift) < 1.0e-14                # machine precision, not bit-exact zero
+    @test isapprox(θ.u_ratio, 1.0; rtol = 1.0e-10)
+
+    @test_broken isapprox(ex.drift, 0.0; atol = 1.0e-10)   # INTENDED: also exact
+    # Pinned from the other side, so this cannot rot into a silent pass.
+    @test ex.drift < -0.4                                   # measured -0.418
+    @test isapprox(ex.u_ratio, 0.582; rtol = 1.0e-2)
+    # The species DO still equilibrate -- they just meet at the wrong velocity, which is
+    # what makes this quiet rather than obviously broken.
+    @test ex.gap < 1.0e-6
 end

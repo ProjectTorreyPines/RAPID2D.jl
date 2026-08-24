@@ -40,11 +40,14 @@ end
     end
 
     @testset "RRC_EoverP_Erg" begin
-        # Load test data directly
+        # Load test data directly. K_iz is just a convenient 2-D sample surface for
+        # exercising the generic RRC_EoverP_Erg struct/interpolation -- any surface on
+        # this file's grid would do (the deprecated "Ionization" alias this used to read
+        # no longer ships, see Task B7).
         h5open(EoverP_Erg_file, "r") do file
             EoverP = read(file, "EoverP")
             Erg_eV = read(file, "Erg_eV")
-            ionization_data = read(file, "Ionization")
+            ionization_data = read(file, "K_iz")
 
             # Test constructor
             rrc = RRC_EoverP_Erg(EoverP, Erg_eV, ionization_data)
@@ -121,15 +124,14 @@ end
         e_rrcs = Electron_RRCs(EoverP_Erg_file, e_tud_file)
 
         # Test field types
-        @test e_rrcs.Ionization isa RRC_EoverP_Erg
-        @test e_rrcs.Total_Momentum isa RRC_EoverP_Erg
-        @test e_rrcs.Total_Excitation isa RRC_EoverP_Erg
+        @test e_rrcs.K_iz isa RRC_EoverP_Erg
+        @test e_rrcs.K_mom isa RRC_EoverP_Erg
 
         # Test data availability
-        @test length(e_rrcs.Ionization.EoverP) > 0
-        @test length(e_rrcs.Ionization.Erg_eV) > 0
-        @test size(e_rrcs.Ionization.raw_data, 1) == length(e_rrcs.Ionization.EoverP)
-        @test size(e_rrcs.Ionization.raw_data, 2) == length(e_rrcs.Ionization.Erg_eV)
+        @test length(e_rrcs.K_iz.EoverP) > 0
+        @test length(e_rrcs.K_iz.Erg_eV) > 0
+        @test size(e_rrcs.K_iz.raw_data, 1) == length(e_rrcs.K_iz.EoverP)
+        @test size(e_rrcs.K_iz.raw_data, 2) == length(e_rrcs.K_iz.Erg_eV)
     end
 
     @testset "H2_Ion_RRCs" begin
@@ -178,7 +180,7 @@ end
 
     # Test get_electron_RRC function - make sure it runs without errors
     # and returns expected size
-    RRC_iz = get_electron_RRC(mock_RP, eRRCs, :Ionization)
+    RRC_iz = get_electron_RRC(mock_RP, eRRCs, :K_iz)
     @test size(RRC_iz) == size(mock_RP.G.R2D)
     @test !any(isnan.(RRC_iz))
 

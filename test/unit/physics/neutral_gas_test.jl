@@ -289,7 +289,7 @@ end
 end
 
 @testitem "Neutral gas update: the sink is exactly the electron source" begin
-    using RAPID2D: update_neutral_H2_gas_density!
+    using RAPID2D: update_neutral_H2_gas_density!, net_H2_gas_count
 
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30,
@@ -306,6 +306,9 @@ end
     RP.plasma.ne .= 1.0e18
     RAPID2D.update_transport_quantities!(RP)
     RP.plasma.ν_en_iz .= 5.0e5
+    # solve_electron_continuity_equation! and the gas diffusivity read ν_en_iz_tot
+    # (task C1); kept in sync since this poke bypasses update_RRCs!.
+    RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
 
     # Run the producer, then the sink — the order `advance_timestep!` uses. The
     # sink must destroy exactly what the electron equation created, so `expected`
@@ -317,10 +320,56 @@ end
     update_neutral_H2_gas_density!(RP)
 
     inw = RP.G.nodes.in_wall_nids
-    expected = @. n_before - RP.reactions.counts.iz
+    # net_H2_gas_count, not counts.iz alone: this fixture's ν_en_iz_tot poke
+    # (below the wall-only ν_en_iz .= 5e5 line) leaves counts.diz == 0, so the
+    # two forms agree here, but the sink must track the NET count in general —
+    # see "the sink includes the dissociative-ionization channel" below for a
+    # state where they would not.
+    expected = n_before .+ net_H2_gas_count(RP.reactions.counts)
     @test RP.plasma.n_H2_gas[inw] ≈ expected[inw] rtol = 1.0e-10
     # and that IS the electron gain, one nucleus each way
     @test (RP.plasma.ne - ne_before)[inw] ≈ (n_before - RP.plasma.n_H2_gas)[inw] rtol = 1.0e-9
+end
+
+@testitem "Neutral gas update: the sink includes the dissociative-ionization channel" begin
+    using RAPID2D: update_neutral_H2_gas_density!, update_RRCs!, net_H2_gas_count,
+        solve_electron_continuity_equation!
+
+    # Same Te/(E/p) as exprb_growth_test.jl's `growth_RAPID` fixture, chosen there
+    # because DI is genuinely nonzero at that state — reused here so the gas sink
+    # gets at least one integration test where `counts.diz` is not silently zero.
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 8, NZ = 8,
+        prefilled_gas_pressure = 5.0e-3, R0B0 = 1.0, dt = 1.0e-8,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    RP.flags.Atomic_Collision = true
+    RP.flags.src = true
+    RP.flags.Coulomb_Collision = false
+    RP.flags.Te_evolve = false
+    RP.flags.ud_evolve = false
+    RP.flags.diffu = false
+    RP.flags.convec = false
+    initialize!(RP)
+
+    RP.plasma.Te_eV .= 8.0
+    RP.plasma.ne .= 1.0e14
+    RP.plasma.ni .= 1.0e14
+    RP.plasma.ue_para .= -1.0e6
+    ee = RP.config.constants.ee
+    EoverP = 100.0
+    @. RP.fields.E_para_tot = -EoverP * RP.plasma.n_H2_gas * RP.plasma.T_gas_eV * ee
+    update_RRCs!(RP)
+
+    inw = RP.G.nodes.in_wall_nids
+    n_before = copy(RP.plasma.n_H2_gas)
+    solve_electron_continuity_equation!(RP)
+    @test !all(iszero, RP.reactions.counts.diz[inw])   # coverage cannot silently lapse
+
+    update_neutral_H2_gas_density!(RP)
+    expected = n_before .+ net_H2_gas_count(RP.reactions.counts)
+    @test RP.plasma.n_H2_gas[inw] ≈ expected[inw] rtol = 1.0e-10
 end
 
 @testitem "Neutral gas update: density never goes negative" begin
@@ -339,6 +388,7 @@ end
     RP.plasma.ne .= 1.0e19
     RAPID2D.update_transport_quantities!(RP)
     RP.plasma.ν_en_iz .= 1.0e6
+    RP.plasma.ν_en_iz_tot .= RP.plasma.ν_en_iz
 
     RAPID2D.update_reaction_counts!(RP)
     update_neutral_H2_gas_density!(RP)

@@ -40,7 +40,9 @@
     end
 
     # The rate `update_ui_para!` divides by, rebuilt here so the closed form below
-    # is not just the code read back.
+    # is not just the code read back. `ν_en_iz_tot`, not `ν_en_iz` alone: under the
+    # interim (`REACTION_STOICHIOMETRY.diz`) DI's ion is booked to H₂⁺ too, so both
+    # channels dilute this population — see the matching comment in `update_ui_para!`.
     function ion_drag_rate(RP)
         pla = RP.plasma
         K_ela = get_H2_ion_RRC(RP, :Elastic)
@@ -48,7 +50,7 @@
         ν = @. pla.n_H2_gas * (0.5 * K_ela + K_cx)
         if RP.flags.src
             Z_i = bulk_ion_charge(RP)
-            @. ν += Z_i * pla.ν_en_iz
+            @. ν += Z_i * pla.ν_en_iz_tot
         end
         return ν
     end
