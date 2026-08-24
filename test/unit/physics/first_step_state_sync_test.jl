@@ -23,11 +23,12 @@
     lib = atomic_only(; dt, Te0, resync = false)
     hand = atomic_only(; dt, Te0, resync = true)
 
-    # Premise: `damping_func` is identically 1 on this geometry, so the extra
-    # `update_transport_quantities!` in `hand` cannot differ through the one part of
-    # that function which is not idempotent (`ue_para *= damping_func`,
-    # `transport.jl:195`). If a future fixture change breaks this, the `==` below
-    # would start measuring damping rather than the invariant.
+    # Premise: `damping_func` is identically 1 here, so the extra
+    # `update_transport_quantities!` in `hand` cannot differ through the one part of that
+    # function which is not idempotent (`ue_para *= damping_func`). Note it is built from
+    # `fitted_wall`, NOT the `wall_R/Z` that defines `in_wall_nids` — and at this
+    # resolution the fitted wall spans the whole grid, so every node reads as inside.
+    # If a fixture change breaks that, `==` below starts measuring damping instead.
     @test all(isone, hand.damping_func)
 
     run_simulation!(lib)
