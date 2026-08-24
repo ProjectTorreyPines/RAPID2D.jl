@@ -13,11 +13,18 @@ export update_transport_quantities!,
     calculate_particle_fluxes!
 
 """
-    update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_transport_quantities!(RP::RAPID{FT}; damp_state = true) where {FT<:AbstractFloat}
 
 Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
+
+`damp_state = false` skips the out-wall damping of `ue_para`, `ui_para` and
+`mean_ExB_R/Z` — the only part of this function that accumulates rather than
+recomputes. Pass it when re-deriving coefficients from a state that has already been
+damped, so the dose is not applied twice; the step loop keeps the default.
 """
-function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function update_transport_quantities!(
+        RP::RAPID{FT}; damp_state::Bool = true
+    ) where {FT <: AbstractFloat}
     pla = RP.plasma
     tp = RP.transport
     # The module-level `EE`, not `constants.ee`: the Maxwellian speed helpers convert
@@ -188,16 +195,28 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dperp)
 
-    # Apply damping function outside wall if enabled
+    # Apply damping function outside wall if enabled.
+    #
+    # Split by what is being damped, because the two halves have different algebra.
+    # `Dpara`/`Dperp` are rebuilt from scratch above, so damping them is a projection —
+    # idempotent, and it must happen on every call or the operators this function
+    # assembles would carry undamped diffusivities into the next step.
+    #
+    # The STATE below is not rebuilt; `*=` accumulates. Once per state production is
+    # the intended dose, so a caller re-deriving coefficients from a state that has
+    # already been damped passes `damp_state = false` rather than compounding it.
     if RP.flags.Damp_Transp_outWall
         @. tp.Dpara *= RP.damping_func
         @. tp.Dperp *= RP.damping_func
-        @. pla.ue_para *= RP.damping_func
 
-        @. pla.mean_ExB_R *= RP.damping_func
-        @. pla.mean_ExB_Z *= RP.damping_func
+        if damp_state
+            @. pla.ue_para *= RP.damping_func
 
-        @. pla.ui_para *= RP.damping_func
+            @. pla.mean_ExB_R *= RP.damping_func
+            @. pla.mean_ExB_Z *= RP.damping_func
+
+            @. pla.ui_para *= RP.damping_func
+        end
     end
 
     # Project the parallel speeds onto (R, ϕ, Z). `"upara"` is the only representation

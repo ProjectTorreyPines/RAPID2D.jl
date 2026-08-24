@@ -170,7 +170,24 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         # built, not for any initial condition assigned since. Ahead of the initial
         # snapshots too, which report those same materialized rates. One RRC evaluation
         # per run. See internal/docs/src/notes/issues/stale-rrcs-on-first-step.md.
-        update_transport_quantities!(RP)
+        #
+        # Only on a FRESH run. `RP.step > 0` means we are resuming (`RP.t_end_s = …;
+        # run_simulation!(RP)` again), and a resumed state came out of a complete loop
+        # body whose stage F already established exactly this — there is no invariant
+        # left to establish, and re-deriving would not be free: the out-wall damping
+        # `update_transport_quantities!` applies is not idempotent, and neither is the
+        # rate query, which runs BEFORE that damping and so returns different `ν_en_*`
+        # the second time round (see time-level-consistency-deferred.md §4b). Guarding
+        # on the loop never having run keeps "split a run in two" bit-identical to
+        # running it whole.
+        #
+        # `damp_state = false` covers the other half: on a fresh run the state may still
+        # have been damped already — `initialize!` does it, and so does every driver
+        # that re-syncs by hand — and damping is a suppression profile, applied once per
+        # state production, not a dose to accumulate.
+        if RP.step == 0
+            update_transport_quantities!(RP; damp_state = false)
+        end
 
         # Initial snapshots at t_start_s
         @timeit RAPID_TIMER "initial_snapshots" begin

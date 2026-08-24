@@ -38,6 +38,90 @@
     @test lib.plasma.ue_para == hand.plasma.ue_para
 end
 
+@testitem "splitting a run in two does not change the answer" begin
+    # The re-sync above must not re-dose the out-wall damping. `ue_para`, `ui_para` and
+    # `mean_ExB_R/Z` are multiplied by `damping_func` IN PLACE (`transport.jl:198-205`)
+    # — the one part of `update_transport_quantities!` that accumulates rather than
+    # recomputes, `Dpara`/`Dperp` being rebuilt from scratch first. Damping expresses a
+    # suppression profile, applied once per state production; a re-derivation that
+    # applies it again squares it.
+    #
+    # Stated as the user-visible invariant rather than as a property of the call:
+    # `RP.t_end_s = …; run_simulation!(RP)` is the documented resume idiom (see the
+    # SEQUENTIAL blocks in `physics_test.jl`), and a resumed run is handed a state its
+    # predecessor already damped. Two half-runs must therefore equal one whole run, bit
+    # for bit.
+    #
+    # The geometry matters: the atomic fixture above has `damping_func ≡ 1` and cannot
+    # see any of this. Here the wall sits strictly inside the domain, so a band of nodes
+    # carries 0 < damping_func < 1, and `ue_para` is nonzero there. Out-wall velocities
+    # reach in-wall nodes through the convection/diffusion stencil before
+    # `treat_electron_outside_wall!` clears the band, so "outside the wall" is not the
+    # same as "cannot matter".
+    FT = Float64
+    function damped_geometry(t_end)
+        config = SimulationConfig{FT}(
+            NR = 20, NZ = 28, R_min = 0.1, R_max = 0.5, Z_min = -0.4, Z_max = 0.4,
+            dt = 1.0e-6, t_end_s = t_end, R0B0 = 1.0,
+            Dpara0 = 10.0, Dperp0 = 0.1, prefilled_gas_pressure = 5.0e-3,
+            wall_R = [0.15, 0.45, 0.45, 0.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+            snap0D_Δt_s = 3.0e-6, snap2D_Δt_s = 3.0e-6,
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        RP = RAPID{FT}(config)
+        RP.flags = SimulationFlags{FT}(
+            convec = true, diffu = true, ud_evolve = true, src = false,
+            Te_evolve = false, Ti_evolve = false, Ampere = false,
+            E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+            update_ni_independently = false, Include_ud_convec_term = false,
+            Coulomb_Collision = false, negative_n_correction = false,
+        )
+        initialize!(RP)
+        G = RP.G
+        @. RP.plasma.ne = 1.0e6 * exp(-((G.R2D - 0.3)^2 / 5.0e-4 + G.Z2D^2 / 2.0e-3))
+        RP.plasma.ne[G.nodes.on_out_wall_nids] .= 0.0
+        RP.plasma.ue_para .= 1.0e6          # nonzero OUTSIDE the wall too
+        RP.fields.BR_ext .= 10.0e-4
+        RP.fields.BZ_ext .= 20.0e-4
+        RAPID2D.combine_external_and_self_fields!(RP)
+        return RP
+    end
+
+    whole = damped_geometry(6.0e-6)
+    split = damped_geometry(3.0e-6)
+
+    # Premise: this geometry really does damp, partially, on a real band of nodes.
+    # Without it the assertions below are vacuous — which is how the defect they pin
+    # stayed invisible to the fixture above.
+    d = whole.damping_func
+    @test count(x -> 1.0e-3 < x < 0.999, d) > 0
+    @test all(isone, d[whole.G.nodes.in_wall_nids])
+
+    run_simulation!(whole)
+
+    run_simulation!(split)
+    split.t_end_s = 6.0e-6
+    run_simulation!(split)                  # resumes; must not re-damp what it inherits
+
+    @test whole.step == split.step
+    @test whole.plasma.ne == split.plasma.ne
+    @test whole.plasma.ue_para == split.plasma.ue_para
+
+    # The other half of the same rule, isolated: entering the loop must not itself be a
+    # damping event. `t_end_s = 0` runs the entry and no step at all, so anything that
+    # moves here moved before any physics did.
+    entry = damped_geometry(6.0e-6)
+    entry.t_end_s = 0.0
+    u_before = copy(entry.plasma.ue_para)
+    ui_before = copy(entry.plasma.ui_para)
+
+    run_simulation!(entry)
+
+    @test entry.step == 0
+    @test entry.plasma.ue_para == u_before
+    @test entry.plasma.ui_para == ui_before
+end
+
 @testitem "5 eV electrons cool and ionize on the first step" setup = [AtomicOnlyOneStep] begin
     # The user-visible face of the same defect, and the one that made it look like
     # physics: with the rates left at their `initialize!` state (Ē = 0.039 eV) every
