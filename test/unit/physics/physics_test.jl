@@ -314,6 +314,20 @@ end
             # 5 % tolerance had left. See issues/stale-rrcs-on-first-step.md.
             @test isapprox(actual_R, expected_R, rtol = 8.0e-2)
             @test isapprox(actual_Z, expected_Z, rtol = 8.0e-2)
+
+            # The band above has to admit a 5 % bias nobody has explained, which leaves
+            # it too slack to catch a regression that stays inside it. So pin the bias
+            # itself, per combination, as the fraction it actually is. `atol` is 0.5
+            # percentage points: two orders tighter than the band, and loose enough not
+            # to trip on a different BLAS.
+            bias = Dict(
+                (false, false) => (0.05288, 0.052292),
+                (false, true) => (0.02261, 0.050766),
+                (true, false) => (0.052295, 0.051733),
+                (true, true) => (0.021852, 0.05018),
+            )[(implicit, upwind)]
+            @test isapprox(actual_R / expected_R - 1, bias[1]; atol = 5.0e-3)
+            @test isapprox(actual_Z / expected_Z - 1, bias[2]; atol = 5.0e-3)
         end
     end
 

@@ -116,10 +116,75 @@ end
     ui_before = copy(entry.plasma.ui_para)
 
     run_simulation!(entry)
+    run_simulation!(entry)                  # `step` is still 0, so the entry runs again
 
     @test entry.step == 0
     @test entry.plasma.ue_para == u_before
     @test entry.plasma.ui_para == ui_before
+end
+
+@testitem "DEFECT: a hand re-sync and the library's disagree where the wall damping bites" begin
+    using RAPID2D: update_transport_quantities!
+
+    # issues/stale-rrcs-on-first-step.md §0.3
+    #
+    # The two ways of establishing the invariant are not interchangeable on a geometry
+    # that damps. `update_transport_quantities!` queries the rate tables at the TOP of
+    # the function and damps `ue_para` at the BOTTOM, so a driver calling it by hand
+    # gets rates at the undamped velocity and a damped state, while the library's entry
+    # call (`damp_state = false`) gets rates at whatever velocity it is handed. Measured
+    # 2.0 % on `ν_en_mom_tot` at out-wall nodes.
+    #
+    # Fixing it needs either the ordering repaired inside that function or a marker
+    # recording whether a state carries its damping — both larger than the defect they
+    # would close, and both tangled with out-wall damping being a stand-in for wall
+    # boundary conditions that is meant to disappear (plans/PLAN_wall-robin-numerics.md).
+    # Pinned rather than fixed, so it is visible and cannot rot into a silent pass.
+    FT = Float64
+    function damped(t_end)
+        config = SimulationConfig{FT}(
+            NR = 20, NZ = 28, R_min = 0.1, R_max = 0.5, Z_min = -0.4, Z_max = 0.4,
+            dt = 1.0e-6, t_end_s = t_end, R0B0 = 1.0,
+            Dpara0 = 10.0, Dperp0 = 0.1, prefilled_gas_pressure = 5.0e-3,
+            wall_R = [0.15, 0.45, 0.45, 0.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+            snap0D_Δt_s = 3.0e-6, snap2D_Δt_s = 3.0e-6,
+        )
+        config.Output_path = mktempdir(; cleanup = false)
+        RP = RAPID{FT}(config)
+        RP.flags = SimulationFlags{FT}(
+            convec = true, diffu = true, ud_evolve = true, src = false,
+            Te_evolve = false, Ti_evolve = false, Ampere = false,
+            E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+            update_ni_independently = false, Include_ud_convec_term = false,
+            Coulomb_Collision = false, negative_n_correction = false,
+        )
+        initialize!(RP)
+        G = RP.G
+        @. RP.plasma.ne = 1.0e6 * exp(-((G.R2D - 0.3)^2 / 5.0e-4 + G.Z2D^2 / 2.0e-3))
+        RP.plasma.ne[G.nodes.on_out_wall_nids] .= 0.0
+        RP.plasma.ue_para .= 1.0e6
+        RP.fields.BR_ext .= 10.0e-4
+        RP.fields.BZ_ext .= 20.0e-4
+        RAPID2D.combine_external_and_self_fields!(RP)
+        return RP
+    end
+
+    lib = damped(3.0e-6)
+    hand = damped(3.0e-6)
+    update_transport_quantities!(hand)      # the documented workaround
+
+    # The premise: this geometry damps, so the two paths CAN diverge here.
+    @test count(x -> 1.0e-3 < x < 0.999, lib.damping_func) > 0
+
+    run_simulation!(lib)
+    run_simulation!(hand)
+
+    # INTENDED: the workaround is redundant, so it cannot change the answer.
+    @test_broken lib.plasma.ue_para == hand.plasma.ue_para
+    # Pinned from the other side so this cannot start recording some unrelated drift:
+    # in-wall density stays together to round-off even while the out-wall states differ.
+    inw = lib.G.nodes.in_wall_nids
+    @test isapprox(lib.plasma.ne[inw], hand.plasma.ne[inw]; rtol = 1.0e-10)
 end
 
 @testitem "5 eV electrons cool and ionize on the first step" setup = [AtomicOnlyOneStep] begin

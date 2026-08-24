@@ -185,6 +185,14 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         # have been damped already — `initialize!` does it, and so does every driver
         # that re-syncs by hand — and damping is a suppression profile, applied once per
         # state production, not a dose to accumulate.
+        #
+        # CAVEAT, deliberate: what this establishes is the COEFFICIENT invariant, not the
+        # damping one. A `ue_para` assigned here and never damped stays undamped through
+        # step 1 and is first damped by stage F at the end of it. Doing better needs to
+        # know whether the state we were handed carries its dose, which nothing records —
+        # the two cases are indistinguishable from here, so this picks the one that leaves
+        # every existing caller closest to its previous behaviour. Out-wall only
+        # (`damping_func` is 1 inside), measured at 1.6e-14 relative on in-wall `ne`.
         if RP.step == 0
             update_transport_quantities!(RP; damp_state = false)
         end
