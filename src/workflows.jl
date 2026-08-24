@@ -164,6 +164,14 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         dt = RP.dt
         t_end = RP.t_end_s
 
+        # ESTABLISH the coefficient invariant the loop below only MAINTAINS: the in-loop
+        # refresh runs at the END of the body, so without this the first step consumes
+        # the `ν_en_*` / `P_en_*` that `initialize!` materialized — for the state it
+        # built, not for any initial condition assigned since. Ahead of the initial
+        # snapshots too, which report those same materialized rates. One RRC evaluation
+        # per run. See internal/docs/src/notes/issues/stale-rrcs-on-first-step.md.
+        update_transport_quantities!(RP)
+
         # Initial snapshots at t_start_s
         @timeit RAPID_TIMER "initial_snapshots" begin
             update_snaps0D!(RP)
