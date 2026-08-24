@@ -475,10 +475,27 @@ end
     #
     # This is NOT a zero-allocation contract, and pretending otherwise would make the
     # test a lie: the function still builds `ue_mag_sq`, `ue_dot_ui` and the transport
-    # branches' own temporaries, about ten grid arrays in total. What is pinned is the
-    # PER-NODE cost, which is what a new temporary moves. Measured on this
-    # configuration: 98 B/node before the fold, 81.7 B/node after (24x24), 80.4 (48x48).
-    # One more `Matrix{Float64}` temporary is +8 B/node, so the bound below catches it.
+    # branches' own temporaries. What is pinned is how many WHOLE-GRID arrays it
+    # builds, counted against a same-process measurement of one such array rather than
+    # against a byte constant.
+    #
+    # **Counted, not bounded in bytes, because bytes are not portable here.** An
+    # earlier version of this test asserted `< 85 B/node`, measured locally at 81.7,
+    # and it failed CI on macOS at 91.3 while passing on ubuntu. Same Julia 1.12.7 on
+    # both runners; the difference is one whole-grid array's worth of inlining
+    # decision, and the local machine on 1.12.6 differed again. Observed baselines:
+    #
+    #     local  1.12.6 aarch64   81.7 B/node   (24x24)   ~10 arrays
+    #     ubuntu 1.12.7 x86_64    < 85          (24x24)   ~10 arrays
+    #     macOS  1.12.7 aarch64   91.3          (24x24)   ~11 arrays
+    #
+    # The platform spread (~9 B/node) is the same size as the signal this test exists
+    # to catch (the two temporaries the fold removed, ~16 B/node), so **no absolute
+    # byte bound can both pass everywhere and catch a two-array regression**. The
+    # ceiling below is therefore deliberately loose: it catches a gross regression —
+    # fusion breaking, or a handful of temporaries returning — and does not pretend to
+    # catch one or two. The sharp check is the measurement recorded in the commit that
+    # removed them (24x24: 56448 -> 47072 B, exactly two grid arrays).
     function bytes_per_node(NR, NZ)
         config = SimulationConfig{Float64}(
             NR = NR, NZ = NZ, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
@@ -501,16 +518,27 @@ end
         update_RRCs!(R)
         update_electron_heating_powers!(R)              # compile before measuring
         n = length(R.plasma.Te_eV)
-        return @allocated(update_electron_heating_powers!(R)) / n
+        # What one whole-grid array costs on THIS machine, including its header —
+        # the unit the ceiling is expressed in.
+        one_grid_array = @allocated(similar(R.plasma.Te_eV))
+        return @allocated(update_electron_heating_powers!(R)) / n,
+            one_grid_array / n
     end
 
-    small, large = bytes_per_node(24, 24), bytes_per_node(48, 48)
+    (small, unit_small) = bytes_per_node(24, 24)
+    (large, unit_large) = bytes_per_node(48, 48)
 
     # Grid-independence of the RATE is the premise: if the per-node cost itself moved
-    # with the grid, bounding it at one size would say nothing about the other.
-    @test isapprox(small, large; rtol = 0.05)
-    @test small < 85.0
-    @test large < 85.0
+    # with the grid, bounding it at one size would say nothing about the other. The
+    # residual gap is the function's fixed overhead spread over more nodes.
+    @test isapprox(small, large; rtol = 0.1)
+
+    # Fewer than 15 whole-grid arrays per call. Baselines above sit at 10-11, so this
+    # tolerates the platform spread and a future inlining change, while a fusion
+    # failure — where each `@.` stops fusing and materialises its operands — lands
+    # well past it.
+    @test small / unit_small < 15.0
+    @test large / unit_large < 15.0
 end
 
 @testitem "eig_Te: PartialLinearResponse is exact once the surfaces stop responding" setup = [PowerJacobianFixtures] begin
