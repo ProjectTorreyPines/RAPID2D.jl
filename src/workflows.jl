@@ -164,6 +164,16 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         dt = RP.dt
         t_end = RP.t_end_s
 
+        # Establish the invariant the loop only maintains: its refresh runs at the END of
+        # the body, so step 1 would otherwise consume the rates `initialize!` built rather
+        # than the initial condition assigned since. Ahead of the snapshots, which report
+        # those rates too. Fresh runs only and without re-damping — this function is not
+        # idempotent in either respect, so a resume must not re-enter it.
+        # notes/issues/stale-rrcs-on-first-step.md
+        if RP.step == 0
+            update_transport_quantities!(RP; damp_state = false)
+        end
+
         # Initial snapshots at t_start_s
         @timeit RAPID_TIMER "initial_snapshots" begin
             update_snaps0D!(RP)

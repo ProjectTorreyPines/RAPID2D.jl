@@ -22,7 +22,11 @@
         :Ampere, :E_para_self_ES, :E_para_self_EM, :Coulomb_Collision, :Gas_evolve,
     )
 
-    function atomic_only(; dt, nsteps = 1, Te0 = 0.03, θ_growth = 0.5)
+    # `resync = false` hands `run_simulation!` a plasma whose state was replaced after
+    # `initialize!` and NOT re-synced — the shape every driver in this repo has to work
+    # around by hand. `first_step_state_sync_test.jl` is the one caller that wants it;
+    # everything here keeps the default so the defect under test is the only variable.
+    function atomic_only(; dt, nsteps = 1, Te0 = 0.03, θ_growth = 0.5, resync = true)
         config = SimulationConfig{Float64}(
             NR = 6, NZ = 6, R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2,
             dt = dt, t_end_s = nsteps * dt, R0B0 = 1.0,
@@ -52,7 +56,7 @@
         RP.plasma.ν_ei .= 0.0
         # The re-sync every driver in `test/tmp_regression/` performs, because
         # `initialize!` computed its rates for the state replaced just above.
-        update_transport_quantities!(RP)
+        resync && update_transport_quantities!(RP)
         return RP
     end
 end

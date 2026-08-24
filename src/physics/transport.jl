@@ -13,11 +13,17 @@ export update_transport_quantities!,
     calculate_particle_fluxes!
 
 """
-    update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
+    update_transport_quantities!(RP::RAPID{FT}; damp_state = true) where {FT<:AbstractFloat}
 
 Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
+
+`damp_state = false` skips the out-wall damping of `ue_para`, `ui_para`, `mean_ExB_R/Z` —
+the only part that accumulates rather than recomputes. For re-deriving from a state that
+already carries its damping. Dies with `Damp_Transp_outWall`.
 """
-function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function update_transport_quantities!(
+        RP::RAPID{FT}; damp_state::Bool = true
+    ) where {FT <: AbstractFloat}
     pla = RP.plasma
     tp = RP.transport
     # The module-level `EE`, not `constants.ee`: the Maxwellian speed helpers convert
@@ -188,16 +194,21 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dperp)
 
-    # Apply damping function outside wall if enabled
+    # Damping outside the wall. `Dpara`/`Dperp` are rebuilt above, so damping them is a
+    # projection and must run every call. The state below is NOT rebuilt — `*=`
+    # accumulates — so re-deriving from an already-damped state opts out.
     if RP.flags.Damp_Transp_outWall
         @. tp.Dpara *= RP.damping_func
         @. tp.Dperp *= RP.damping_func
-        @. pla.ue_para *= RP.damping_func
 
-        @. pla.mean_ExB_R *= RP.damping_func
-        @. pla.mean_ExB_Z *= RP.damping_func
+        if damp_state
+            @. pla.ue_para *= RP.damping_func
 
-        @. pla.ui_para *= RP.damping_func
+            @. pla.mean_ExB_R *= RP.damping_func
+            @. pla.mean_ExB_Z *= RP.damping_func
+
+            @. pla.ui_para *= RP.damping_func
+        end
     end
 
     # Project the parallel speeds onto (R, ϕ, Z). `"upara"` is the only representation

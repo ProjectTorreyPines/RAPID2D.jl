@@ -206,7 +206,8 @@ end
 @testitem "Pure Convection: constant ue_para" setup = [PhysicsFixtures] begin
     # A Gaussian blob is advected along B at a CONSTANT parallel velocity. Convection is
     # the only transport term enabled — no sources, diffusion, heating, or field
-    # evolution — so the density centroid must move by exactly ue_para·b·t_end.
+    # evolution — so the density centroid must track ue_para·b·t_end, up to the discrete
+    # centroid's systematic bias (quantified at the assertion below).
     # Repeated over all four (implicit × upwind) scheme combinations.
     FT = Float64
     config = SimulationConfig{FT}(
@@ -291,8 +292,42 @@ end
                 @test all(RP.plasma.ne .>= -1.0e-9 * maximum(ini_ne))
             end
 
-            @test isapprox(actual_R, expected_R, rtol = 5.0e-2)
-            @test isapprox(actual_Z, expected_Z, rtol = 5.0e-2)
+            # The tolerance bounds a SYSTEMATIC forward bias of the discrete centroid,
+            # not round-off. Measured on this grid, (R, Z) error against the analytic
+            # displacement, all four combinations:
+            #
+            #   central  explicit  (+5.29, +5.23) %   min(ne) = -9.5e-4
+            #   upwind   explicit  (+2.26, +5.08) %   min(ne) =  0
+            #   central  implicit  (+5.23, +5.17) %   min(ne) = -9.7e-4
+            #   upwind   implicit  (+2.19, +5.02) %   min(ne) =  0
+            #
+            # Central-scheme undershoot explains the central-vs-upwind gap in R and
+            # nothing else: upwind is positivity-preserving and still runs +5 % in Z.
+            # That common ~5 % is undiagnosed and predates this assertion; it is NOT a
+            # property of the scheme under test, since every scheme shows it.
+            #
+            # One percentage point of the above appeared when `run_simulation!` began
+            # establishing the coefficient invariant before its loop: the blob now
+            # advects for all 100 steps instead of 99, because the `ue_para` assigned
+            # after `initialize!` reaches the convection operator on step 1. That point
+            # is the fix working, and it happened to be the point of headroom the old
+            # 5 % tolerance had left. See issues/stale-rrcs-on-first-step.md.
+            @test isapprox(actual_R, expected_R, rtol = 8.0e-2)
+            @test isapprox(actual_Z, expected_Z, rtol = 8.0e-2)
+
+            # The band above has to admit a 5 % bias nobody has explained, which leaves
+            # it too slack to catch a regression that stays inside it. So pin the bias
+            # itself, per combination, as the fraction it actually is. `atol` is 0.5
+            # percentage points: two orders tighter than the band, and loose enough not
+            # to trip on a different BLAS.
+            bias = Dict(
+                (false, false) => (0.05288, 0.052292),
+                (false, true) => (0.02261, 0.050766),
+                (true, false) => (0.052295, 0.051733),
+                (true, true) => (0.021852, 0.05018),
+            )[(implicit, upwind)]
+            @test isapprox(actual_R / expected_R - 1, bias[1]; atol = 5.0e-3)
+            @test isapprox(actual_Z / expected_Z - 1, bias[2]; atol = 5.0e-3)
         end
     end
 
