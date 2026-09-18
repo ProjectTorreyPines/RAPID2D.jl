@@ -376,8 +376,8 @@ end
     Γ = gross_impingement(n_w, RP.plasma.T_gas_eV, M_H2_GAS)
     rate = sum(
         f.area * gross_impingement(
-                RP.plasma.n_H2_gas[f.rid, f.zid], RP.plasma.T_gas_eV, M_H2_GAS
-            ) for f in faces
+            RP.plasma.n_H2_gas[f.rid, f.zid], RP.plasma.T_gas_eV, M_H2_GAS
+        ) for f in faces
     )
     @test rate ≈ Γ * sum(f.area for f in faces) rtol = 1.0e-14
     @test rate > 0
