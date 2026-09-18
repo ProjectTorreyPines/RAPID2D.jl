@@ -506,10 +506,16 @@ end
     # NoExtrap this was a DomainError that killed whole runs.
     n = (length(R1D), length(Z1D))
     data = [r + 10z for r in R1D, z in Z1D]
+    # `≈`, not `==`: the clamped query lands exactly on the last node while the in-domain
+    # query reaches it through the ordinary interpolation path, and the kernels are written
+    # with `muladd`, which Julia may or may not fuse into an FMA. The two paths can therefore
+    # receive different fusion decisions and disagree in the last ULP — macos-26-arm64 gave
+    # 11.5 vs 11.499999999999998 for exactly this pair. What is under test is that an
+    # out-of-domain query is clamped rather than thrown on, not bit-identical arithmetic.
     for method in (:linear, :cubic)
         itp = my_interpolation(R1D, Z1D, data; method)
-        @test itp(last(R1D) + 0.5, 0.0) == itp(last(R1D), 0.0)
-        @test itp(first(R1D) - 0.5, 0.0) == itp(first(R1D), 0.0)
-        @test itp(1.5, last(Z1D) + 0.3) == itp(1.5, last(Z1D))
+        @test itp(last(R1D) + 0.5, 0.0) ≈ itp(last(R1D), 0.0)
+        @test itp(first(R1D) - 0.5, 0.0) ≈ itp(first(R1D), 0.0)
+        @test itp(1.5, last(Z1D) + 0.3) ≈ itp(1.5, last(Z1D))
     end
 end
