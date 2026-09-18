@@ -30,7 +30,9 @@ end
     Bbig(z) = (zb = big(z); iszero(zb) ? big(1.0) : zb / expm1(zb))
     function worst_bigfloat_error()
         worst, worst_z = 0.0, 0.0
-        for z in vcat(-10 .^ range(-18, 2.3, 400), 10 .^ range(-18, 2.3, 400))
+        # -(10 .^ x), parenthesized: Julia 1.13 binds the sign into the literal, so a bare
+        # -10 .^ x is (-10)^x and raises DomainError on these fractional exponents.
+        for z in vcat(-(10 .^ range(-18, 2.3, 400)), 10 .^ range(-18, 2.3, 400))
             err = Float64(abs(big(exprb_bern(z)) - Bbig(z)) / abs(Bbig(z)))
             err > worst && ((worst, worst_z) = (err, z))
         end
