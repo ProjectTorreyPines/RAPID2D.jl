@@ -143,3 +143,47 @@ end
     @test booked > 0
     @test (N0 - N1) ≈ booked rtol = 1.0e-10
 end
+
+@testitem "electron Robin wall: the late-time wall loss rate converges with the grid" tags = [:regression] begin
+    # The legacy rule v_absorb = D/(2Δx) moved the absorbed fraction ~4× over NR = 31 → 181
+    # (internal/docs/src/notes/TODO/wall-boundary-conditions.md §1.1). A kinetic Robin
+    # coefficient is a surface property, so once the profile has relaxed to its lowest
+    # eigenmode the decay rate must settle as the grid refines. The early transient is a
+    # boundary layer of thickness √(D⊥t) far below any of these cells and is not the claim.
+    using RAPID2D: ImplicitWeights
+    function decay_rate(NR, NZ)
+        config = SimulationConfig{Float64}(
+            device_Name = "manual", NR = NR, NZ = NZ, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 1.0e-4, t_end_s = 2.0e-2, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        config.Output_path = mktempdir()
+        RP = RAPID{Float64}(config)
+        RP.flags = SimulationFlags{Float64}(
+            electron_wall = :robin, diffu = true, convec = false, src = false,
+            Atomic_Collision = true, Coulomb_Collision = false, mean_ExB = false, turb_ExB_mixing = false,
+            E_para_self_ES = false, E_para_self_EM = false, Ampere = false, Te_evolve = false,
+            ud_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
+            secondary_electron = false, negative_n_correction = false,
+        )
+        w = RP.flags.θ_imp
+        RP.flags.θ_imp = ImplicitWeights{Float64}(transport = 1.0, growth = w.growth, decay = w.decay, gas = w.gas)
+        initialize!(RP)
+        inw = RP.G.nodes.in_wall_nids
+        RP.plasma.ne .= 0
+        RP.plasma.ne[inw] .= 1.0e14
+        total() = sum(RP.G.Jacob[inw] .* RP.plasma.ne[inw])
+        run_simulation!(RP)                 # 0 → 20 ms: relax onto the eigenmode
+        N1, t1 = total(), RP.time_s
+        RP.t_end_s = 4.0e-2
+        run_simulation!(RP)                 # 20 → 40 ms: measure the decay
+        N2, t2 = total(), RP.time_s
+        return log(N1 / N2) / (t2 - t1)
+    end
+    γ31, γ61, γ121 = decay_rate(31, 31), decay_rate(61, 61), decay_rate(121, 121)
+    d1, d2 = abs(γ61 - γ31) / γ31, abs(γ121 - γ61) / γ61
+    @info "electron Robin wall late-time loss rate" γ_31 = γ31 γ_61 = γ61 γ_121 = γ121 step_31_61 = d1 step_61_121 = d2
+    @test γ31 > 0
+    # first-order convergence: each refinement halves the change (measured 0.152 → 0.069)
+    @test d2 < 0.1
+    @test d2 < 0.6 * d1
+end
