@@ -1,7 +1,7 @@
 # ∇·(u f) in flux form on cell faces, rows on in-wall nodes only.
 #
 #     F_{i+½} = u⁺_{i+½} f_i + u⁻_{i+½} f_{i+1},   u_{i+½} = ½(u_i + u_{i+1}),   u^± = ½(u ± |u|)
-#     (∇·(u f))_i = [J_{i+½} F_{i+½} − J_{i−½} F_{i−½}] / (J_i ΔR)  +  [F_{j+½} − F_{j−½}] / ΔZ
+#     (∇·(u f))_i = [R_{i+½} F_{i+½} − R_{i−½} F_{i−½}] / (R_i ΔR)  +  [F_{j+½} − F_{j−½}] / ΔZ
 #
 # Every interior face is shared by exactly two rows with opposite signs, so Σ_i V_i (∇·(u f))_i
 # telescopes to the wall faces alone — the property the nodal upwind `∇𝐮` lacks (no rows on
@@ -25,7 +25,7 @@ function build_face_flux_divergence(
     ) where {FT <: AbstractFloat}
     NR, NZ = G.NR, G.NZ
     Ng = NR * NZ
-    J = G.Jacob
+    R = G.R2D
     inv_dR, inv_dZ = one(FT) / G.dR, one(FT) / G.dZ
     half = FT(0.5)
     I = Int[]
@@ -59,8 +59,11 @@ function build_face_flux_divergence(
             ii = i + di
             nb_in = is_in_wall(G, ii, j)
             u_face = nb_in ? half * (uR[i, j] + uR[ii, j]) : uR[i, j]
-            J_face = nb_in ? half * (J[i, j] + J[ii, j]) : J[i, j]
-            add_face!(r, nb_in ? nid(ii, j) : 0, nb_in, u_face, sgn * J_face / J[i, j] * inv_dR)
+            # face radius R ± ΔR/2 on every R-face, wall faces included — the same
+            # A_f/V_i = R_face/(R_i ΔR) that `wall_faces` books, so the diagonal outflow
+            # term and the ledger are one arithmetic
+            R_face = R[i, j] + di * G.dR / 2
+            add_face!(r, nb_in ? nid(ii, j) : 0, nb_in, u_face, sgn * R_face / R[i, j] * inv_dR)
         end
         for (dj, sgn) in ((1, one(FT)), (-1, -one(FT)))
             jj = j + dj

@@ -1152,6 +1152,14 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         robin = RP.flags.electron_wall === :robin
         faces_e = robin ? wall_faces(RP.G) : nothing
         A_e, v_e = robin ? electron_transport_operator(RP, faces_e) : (nothing, nothing)
+        # Under `:robin` convection is the face-flux operator on the same faces: its
+        # outflow term is a diagonal debit like the Robin one, so the two speeds add into
+        # one ledger coefficient per face.
+        C_e = nothing
+        if robin && RP.flags.convec
+            C_e = build_face_flux_divergence(RP.G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
+            v_e .+= face_outflow_speeds(RP.G, faces_e, pla.ueR, pla.ueZ)
+        end
         if RP.flags.src && RP.flags.Implicit
             # The implicit half of the ionization source needs ν_en_iz_tot (BOTH
             # electron-producing channels) as a diagonal operator. Assembled here
@@ -1171,7 +1179,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         end
         if RP.flags.convec
             # -∇⋅(n 𝐮)
-            op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
+            if robin
+                op.RHS .-= reshape(C_e * vec(pla.ne), size(pla.ne))
+            else
+                op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
+            end
         end
 
         # A GROWTH eigenvalue, z = +ν_iz_tot·Δt (BOTH electron-producing channels —
@@ -1239,7 +1251,8 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
             θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
             if robin
-                op.A_LHS.matrix = op.II - dt * (θ_d * A_e - θ_c * op.∇𝐮.matrix + θ_s * op.ν_en_iz_tot.matrix)
+                conv_e = isnothing(C_e) ? spzeros(FT, size(op.II)...) : C_e
+                op.A_LHS.matrix = op.II - dt * (θ_d * A_e - θ_c * conv_e + θ_s * op.ν_en_iz_tot.matrix)
             else
                 @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz_tot)
             end
@@ -1334,14 +1347,15 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             @. Ntracker.cum2D_Ni_src += Ne_iz
         end
 
-        if RP.flags.electron_wall === :zeroing
-            Ntracker.cum0D_Ne_loss += sum(Ne_loss)
-            @. Ntracker.cum2D_Ne_loss[on_out_wall_nids] += Ne_loss
-        end
+        # Booked under BOTH wall modes. Under `:robin` the diffusion operator never
+        # writes outside the wall, so whatever the band holds arrived by convection
+        # (the nodal `∇𝐮` still sweeps across the wall until the face-flux operator
+        # lands); zeroing it is a convective wall loss and belongs in the same tracker
+        # as the Robin ledger. With convection off the band stays 0 and this adds 0.
+        Ntracker.cum0D_Ne_loss += sum(Ne_loss)
+        @. Ntracker.cum2D_Ne_loss[on_out_wall_nids] += Ne_loss
 
         # Set electron density to zero outside the wall
-        # Set electron density to zero outside the wall. Under `:robin` those rows are
-        # identity in the solve, so this is an invariant guard, not a loss.
         RP.plasma.ne[on_out_wall_nids] .= 0.0
 
         # Damp out electron temperature outside the wall

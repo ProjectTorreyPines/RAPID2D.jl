@@ -107,3 +107,39 @@ end
     @test sum(RP.G.Jacob[inw] .* RP.plasma.ne[inw]) ≈ N0 rtol = 1.0e-12
     @test RP.diagnostics.Ntracker.cum0D_Ne_loss == 0
 end
+
+@testitem "electron Robin wall + face-flux convection: the ledger closes with both channels on" begin
+    # Under `:robin` convection is the face-flux operator: its wall-face outflow is a
+    # diagonal debit like the Robin one, so one ledger coefficient per face (diffusive +
+    # convective speed) books exactly what the two operators removed. The nodal upwind
+    # operator could not do this (no rows on the grid frame; a central-difference branch
+    # at |u| < eps), which is why the electron half of the face-flux work rides in this PR.
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 2.0e-6, t_end_s = 2.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    config.Output_path = mktempdir()
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags{Float64}(
+        electron_wall = :robin, diffu = true, convec = true, src = false,
+        Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = true,
+        turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+        Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
+        update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
+    )
+    initialize!(RP)
+    G = RP.G
+    inw = G.nodes.in_wall_nids
+    RP.plasma.ne .= 0
+    RP.plasma.ne[inw] .= 1.0e14
+    # a poloidal drift toward the outer wall; E_para_self_ES is off so nothing rebuilds it
+    RP.plasma.mean_ExB_R .= 2.0e4
+    RP.plasma.mean_ExB_Z .= 0.0
+    N0 = sum(G.Jacob[inw] .* RP.plasma.ne[inw])
+    loss0 = RP.diagnostics.Ntracker.cum0D_Ne_loss
+    run_simulation!(RP)
+    N1 = sum(G.Jacob[inw] .* RP.plasma.ne[inw])
+    booked = (RP.diagnostics.Ntracker.cum0D_Ne_loss - loss0) / (2π * G.dR * G.dZ)
+    @test booked > 0
+    @test (N0 - N1) ≈ booked rtol = 1.0e-10
+end
