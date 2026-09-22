@@ -44,3 +44,19 @@ function electron_transport_operator(RP::RAPID{FT}, faces) where {FT <: Abstract
     )
     return A, v_absorb
 end
+
+"Book what the electron Robin wall took this step, per face, into the electron tracker."
+function book_electron_wall_loss!(
+        RP::RAPID{FT}, faces, v_absorb::AbstractVector{FT},
+        n_new::AbstractArray{FT}, n_prev::AbstractArray{FT}, θ
+    ) where {FT <: AbstractFloat}
+    isempty(faces) && return RP
+    ledger = WallLedger{FT}(length(faces))
+    accumulate_wall_absorption!(ledger, faces, v_absorb, n_new, RP.dt; n_prev = n_prev, θ = θ)
+    Ntracker = RP.diagnostics.Ntracker
+    Ntracker.cum0D_Ne_loss += sum(ledger.absorbed)
+    for (k, f) in enumerate(faces)
+        Ntracker.cum2D_Ne_loss[f.nid] += ledger.absorbed[k]
+    end
+    return RP
+end

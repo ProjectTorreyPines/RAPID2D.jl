@@ -45,3 +45,65 @@ end
     @test v2 == v
     @test A == build_wall_diffusion_matrix(RP.G, tp.DRR, tp.DRZ, tp.DZZ; faces = faces, v_absorb = v)
 end
+
+@testitem "electron Robin wall: what the wall took plus what remains is what there was" begin
+    function one_step(θ)
+        config = SimulationConfig{Float64}(
+            device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 2.0e-6, t_end_s = 2.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,   # no mid-run snapshot: `update_snaps0D!` resets the tracker
+        )
+        config.Output_path = mktempdir()
+        RP = RAPID{Float64}(config)
+        RP.flags = SimulationFlags{Float64}(
+            electron_wall = :robin, diffu = true, convec = false, src = false,
+            Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false,
+            turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+            Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
+            update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
+        )
+        w = RP.flags.θ_imp
+        RP.flags.θ_imp = ImplicitWeights{Float64}(transport = θ, growth = θ, decay = w.decay, gas = w.gas)
+        initialize!(RP)
+        G = RP.G
+        inw = G.nodes.in_wall_nids
+        RP.plasma.ne .= 0
+        RP.plasma.ne[inw] .= 1.0e14 .* (1 .+ 0.3 .* sin.(3 .* G.R2D[inw]))   # in-wall only; on/out stay 0
+        N0 = sum(G.Jacob[inw] .* RP.plasma.ne[inw])
+        loss0 = RP.diagnostics.Ntracker.cum0D_Ne_loss
+        run_simulation!(RP)
+        N1 = sum(G.Jacob[inw] .* RP.plasma.ne[inw])
+        absorbed = (RP.diagnostics.Ntracker.cum0D_Ne_loss - loss0) / (2π * G.dR * G.dZ)
+        return N0, N1, absorbed, RP
+    end
+    for θ in (1.0, 0.5)
+        N0, N1, absorbed, RP = one_step(θ)
+        @test absorbed > 0
+        @test (N0 - N1) ≈ absorbed rtol = 1.0e-10
+        @test all(==(0), RP.plasma.ne[RP.G.nodes.on_out_wall_nids])
+        @test sum(RP.diagnostics.Ntracker.cum2D_Ne_loss) ≈ RP.diagnostics.Ntracker.cum0D_Ne_loss rtol = 1.0e-12
+    end
+end
+
+@testitem "electron Robin wall: R_e = 1 conserves Σ J·ne exactly" begin
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 2.0e-6, t_end_s = 1.0e-5, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, electron_wall_albedo = 1.0,
+    )
+    config.Output_path = mktempdir()
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags{Float64}(
+        electron_wall = :robin, diffu = true, convec = false, src = false,
+        Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false, turb_ExB_mixing = false,
+        E_para_self_ES = false, E_para_self_EM = false, Ampere = false, Te_evolve = false,
+        ud_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
+        secondary_electron = false, negative_n_correction = false,
+    )
+    initialize!(RP)
+    inw = RP.G.nodes.in_wall_nids
+    RP.plasma.ne .= 0
+    RP.plasma.ne[inw] .= 1.0e14
+    N0 = sum(RP.G.Jacob[inw] .* RP.plasma.ne[inw])
+    run_simulation!(RP)
+    @test sum(RP.G.Jacob[inw] .* RP.plasma.ne[inw]) ≈ N0 rtol = 1.0e-12
+    @test RP.diagnostics.Ntracker.cum0D_Ne_loss == 0
+end

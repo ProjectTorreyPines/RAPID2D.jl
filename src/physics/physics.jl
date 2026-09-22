@@ -1143,6 +1143,15 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # weighting step below instead, because the two families carry different
         # θ (`θ_imp.transport` vs `θ_imp.growth`) and so cannot share a sum.
         fill!(op.RHS, zero(FT))
+
+        # `:robin`: the wall-aware operator (rows on in-wall nodes only, Robin debit on the
+        # diagonal) replaces the whole-grid `∇𝐃∇`, and the loss is booked per face from the
+        # same arithmetic the operator used. `:zeroing` is the legacy path.
+        RP.flags.electron_wall in (:zeroing, :robin) ||
+            throw(ArgumentError("electron_wall must be :zeroing or :robin, got :$(RP.flags.electron_wall)"))
+        robin = RP.flags.electron_wall === :robin
+        faces_e = robin ? wall_faces(RP.G) : nothing
+        A_e, v_e = robin ? electron_transport_operator(RP, faces_e) : (nothing, nothing)
         if RP.flags.src && RP.flags.Implicit
             # The implicit half of the ionization source needs ν_en_iz_tot (BOTH
             # electron-producing channels) as a diagonal operator. Assembled here
@@ -1154,7 +1163,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
 
         if RP.flags.diffu
             # ∇⋅𝐃⋅∇n
-            op.RHS .+= compute_∇𝐃∇f_directly(RP, pla.ne)
+            if robin
+                op.RHS .+= reshape(A_e * vec(pla.ne), size(pla.ne))
+            else
+                op.RHS .+= compute_∇𝐃∇f_directly(RP, pla.ne)
+            end
         end
         if RP.flags.convec
             # -∇⋅(n 𝐮)
@@ -1225,7 +1238,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             θ_d = RP.flags.diffu ? θ_tr : zero(FT)
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
             θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
-            @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz_tot)
+            if robin
+                op.A_LHS.matrix = op.II - dt * (θ_d * A_e - θ_c * op.∇𝐮.matrix + θ_s * op.ν_en_iz_tot.matrix)
+            else
+                @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz_tot)
+            end
             if fit_growth
                 # bern(z) on the diagonal, as a deviation from the identity so the
                 # pattern is untouched. This is the side that cancels on a growth
@@ -1239,16 +1256,19 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 factorize!(op.ne_solver, op.A_LHS.matrix)
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
+            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, θ_d)
         elseif fit_growth
             # Same two coefficients as the assembled path: no matrix is not the same
             # as no fit. `op.RHS` still holds transport, which is not part of λ and
             # rides the increment like any other frozen source.
             @. pla.ne = ((bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / bern_growth
+            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
         else
             if RP.flags.src
                 @. op.RHS += pla.ne * pla.ν_en_iz_tot
             end
             @. RP.plasma.ne += dt * op.RHS
+            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
         end
 
         # Publish how many ionizations this step made, from the θ and the nⁿ/nⁿ⁺¹
@@ -1314,10 +1334,14 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             @. Ntracker.cum2D_Ni_src += Ne_iz
         end
 
-        Ntracker.cum0D_Ne_loss += sum(Ne_loss)
-        @. Ntracker.cum2D_Ne_loss[on_out_wall_nids] += Ne_loss
+        if RP.flags.electron_wall === :zeroing
+            Ntracker.cum0D_Ne_loss += sum(Ne_loss)
+            @. Ntracker.cum2D_Ne_loss[on_out_wall_nids] += Ne_loss
+        end
 
         # Set electron density to zero outside the wall
+        # Set electron density to zero outside the wall. Under `:robin` those rows are
+        # identity in the solve, so this is an invariant guard, not a loss.
         RP.plasma.ne[on_out_wall_nids] .= 0.0
 
         # Damp out electron temperature outside the wall
