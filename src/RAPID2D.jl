@@ -50,6 +50,7 @@ include("numerics/wall_diffusion.jl")      # wall-aware 9-point tensor operator
 include("diagnostics/field_moments.jl")    # shape statistics, for direction checks
 include("physics/wall_ledger.jl")          # per-face absorbed/emitted inventory
 include("physics/ion_transport.jl")        # which equation the ion species share
+include("physics/electron_wall.jl")
 include("physics/fields.jl")
 include("physics/transport.jl")
 
