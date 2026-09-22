@@ -47,6 +47,7 @@ include("physics/neutral_gas.jl")
 include("physics/wall.jl")   # wall face geometry; shares the Maxwellian speeds
 include("physics/transport_channels.jl")   # the (v∥, λ∥, v⊥, λ⊥) basis
 include("numerics/wall_diffusion.jl")      # wall-aware 9-point tensor operator
+include("numerics/face_flux.jl")           # ∇·(u f) on cell faces, wall-aware
 include("diagnostics/field_moments.jl")    # shape statistics, for direction checks
 include("physics/wall_ledger.jl")          # per-face absorbed/emitted inventory
 include("physics/ion_transport.jl")        # which equation the ion species share
