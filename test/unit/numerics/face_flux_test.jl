@@ -93,3 +93,28 @@ end
     @test dR_new[deep] ≈ dR_old[deep] rtol = G.dR / minimum(G.R1D)
     @test !isapprox(dR_new[deep], dR_old[deep]; rtol = 1.0e-12)   # and they are not the same arithmetic
 end
+
+@testitem "face flux: central interior faces (upwind = false) still telescope to the wall outflow" begin
+    using RAPID2D: build_face_flux_divergence, face_outflow_speeds, wall_faces
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    faces = wall_faces(G)
+    inw = G.nodes.in_wall_nids
+    n = zeros(G.NR, G.NZ)
+    n[inw] .= 1.0e14 .* (1 .+ 0.2 .* cos.(2 .* G.Z2D[inw]))
+    Rc = 0.5 * (G.R1D[1] + G.R1D[end])
+    uR = @. 1.0e5 * sign(Rc - G.R2D)
+    uZ = @. 3.0e4 * sin(G.Z2D)
+    A = build_face_flux_divergence(G, uR, uZ; upwind = false)
+    d = A * vec(n)
+    total = sum(G.Jacob[inw] .* d[inw]) * G.dR * G.dZ
+    v_out = face_outflow_speeds(G, faces, uR, uZ)
+    boundary = sum(f.area * v_out[k] * n[f.nid] for (k, f) in enumerate(faces)) / (2π)
+    @test total ≈ boundary rtol = 1.0e-12         # wall faces stay upwind; interior central faces cancel
+    @test A != build_face_flux_divergence(G, uR, uZ; upwind = true)
+end

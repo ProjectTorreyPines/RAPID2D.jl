@@ -142,6 +142,78 @@ end
     booked = (RP.diagnostics.Ntracker.cum0D_Ne_loss - loss0) / (2π * G.dR * G.dZ)
     @test booked > 0
     @test (N0 - N1) ≈ booked rtol = 1.0e-10
+    # the convective channel really is on: some wall face sees an outflow
+    using RAPID2D: face_outflow_speeds, wall_faces
+    @test any(>(0), face_outflow_speeds(G, wall_faces(G), RP.plasma.ueR, RP.plasma.ueZ))
+end
+
+# One driver for the flag combinations below: in-wall uniform density, an imposed
+# poloidal drift when convection is on, one step, and the ledger identity.
+@testsnippet RobinLedgerDriver begin
+    using RAPID2D: ImplicitWeights
+    function robin_one_step(;
+            diffu, convec, implicit = true, θ = 0.5, secondary = false,
+            independent_ions = false, drift = convec ? 2.0e4 : 0.0
+        )
+        config = SimulationConfig{Float64}(
+            device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 2.0e-6, t_end_s = 2.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        config.Output_path = mktempdir()
+        RP = RAPID{Float64}(config)
+        RP.flags = SimulationFlags{Float64}(
+            electron_wall = :robin, diffu = diffu, convec = convec, Implicit = implicit, src = false,
+            Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = convec,
+            turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+            Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
+            update_ni_independently = independent_ions, secondary_electron = secondary,
+            negative_n_correction = false,
+        )
+        w = RP.flags.θ_imp
+        RP.flags.θ_imp = ImplicitWeights{Float64}(transport = θ, growth = w.growth, decay = w.decay, gas = w.gas)
+        initialize!(RP)
+        G = RP.G
+        inw = G.nodes.in_wall_nids
+        RP.plasma.ne .= 0
+        RP.plasma.ne[inw] .= 1.0e14
+        RP.plasma.ni .= RP.plasma.ne
+        RP.plasma.mean_ExB_R .= drift
+        RP.plasma.mean_ExB_Z .= 0.0
+        N0 = sum(G.Jacob[inw] .* RP.plasma.ne[inw])
+        loss0 = RP.diagnostics.Ntracker.cum0D_Ne_loss
+        run_simulation!(RP)
+        N1 = sum(G.Jacob[inw] .* RP.plasma.ne[inw])
+        booked = (RP.diagnostics.Ntracker.cum0D_Ne_loss - loss0) / (2π * G.dR * G.dZ)
+        return (; N0, N1, booked, RP)
+    end
+end
+
+@testitem "electron Robin wall: no transport, no loss booked" setup = [RobinLedgerDriver] begin
+    r = robin_one_step(diffu = false, convec = false)
+    @test r.N1 == r.N0
+    @test r.booked == 0
+end
+
+@testitem "electron Robin wall: convection only, θ = 0.5 — booked with the θ the solve used" setup = [RobinLedgerDriver] begin
+    r = robin_one_step(diffu = false, convec = true, θ = 0.5)
+    @test r.booked > 0
+    @test (r.N0 - r.N1) ≈ r.booked rtol = 1.0e-10
+end
+
+@testitem "electron Robin wall: explicit scheme books at nⁿ and the ledger closes" setup = [RobinLedgerDriver] begin
+    r = robin_one_step(diffu = true, convec = true, implicit = false)
+    @test r.booked > 0
+    @test (r.N0 - r.N1) ≈ r.booked rtol = 1.0e-10
+end
+
+@testitem "electron Robin wall: secondary electrons cannot enter the loss ledger without a source" setup = [RobinLedgerDriver] begin
+    # The legacy injection puts γ·ni on out-wall nodes; under :robin those rows are never
+    # solved, so it would sit for one step and be zeroed. Until the face-source path (PR3)
+    # lands the injection is skipped under :robin, and the ledger must still close.
+    r = robin_one_step(diffu = true, convec = true, secondary = true, independent_ions = true)
+    @test r.booked > 0
+    @test (r.N0 - r.N1) ≈ r.booked rtol = 1.0e-10
+    @test all(==(0), r.RP.plasma.ne[r.RP.G.nodes.on_out_wall_nids])
 end
 
 @testitem "electron Robin wall: the late-time wall loss rate converges with the grid" tags = [:regression] begin
