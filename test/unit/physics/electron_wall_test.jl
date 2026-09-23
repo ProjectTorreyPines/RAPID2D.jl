@@ -354,3 +354,10 @@ end
     @test maximum(ne) > 1.5 * minimum(ne)                # …so the flow piles up in the downstream wall cells
     @test all(>=(0), ne)
 end
+
+@testitem "an electron albedo outside [0, 1] is rejected even when only convection reaches the wall" setup = [UniformWallDriver] begin
+    # With diffu = false the diffusive builder (which validates the albedo) never runs, so the
+    # convective path must validate it itself: 1.5 would turn the wall into a source.
+    @test_throws ArgumentError uniform_wall_run(diffu = false, convec = true, albedo = 1.5, nsteps = 1)
+    @test_throws ArgumentError uniform_wall_run(diffu = false, convec = true, albedo = -0.1, nsteps = 1)
+end

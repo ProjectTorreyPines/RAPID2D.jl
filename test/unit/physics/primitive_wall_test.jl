@@ -4,20 +4,21 @@
 # both down there. PLAN_wall-flux-channels.md PR2b Task 2b.2.
 
 @testsnippet PrimitiveWallDriver begin
-    function primitive_one_step(; primitive_advection, Implicit = true)
+    function primitive_one_step(; primitive_advection, Implicit = true, heat_flux = false, albedo = 0.0, convec = true)
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
             dt = 2.0e-6, t_end_s = 4.0e-6, snap0D_Δt_s = 4.0e-6, snap2D_Δt_s = 4.0e-6,
+            electron_wall_albedo = albedo,
         )
         config.Output_path = mktempdir()
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
             electron_wall = :robin, primitive_advection = primitive_advection, Implicit = Implicit,
-            diffu = true, convec = true, src = false, Atomic_Collision = false, Coulomb_Collision = false,
+            diffu = true, convec = convec, src = false, Atomic_Collision = false, Coulomb_Collision = false,
             mean_ExB = false, turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false,
             Ampere = false, Te_evolve = true, ud_evolve = true, Ti_evolve = false, Gas_evolve = false,
             update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
-            Include_ud_pressure_term = false,
+            Include_ud_pressure_term = false, Include_heat_flux_term = heat_flux,
         )
         initialize!(RP)
         G = RP.G
@@ -76,4 +77,21 @@ end
     @test sum(abs.(LTe[inw]) .* vol[inw]) > 0
     @test abs(sum(LTe[inw] .* vol[inw])) < 1.0e-10 * sum(abs.(LTe[inw]) .* vol[inw])
     @test all(iszero, LTe[G.nodes.on_out_wall_nids])
+end
+
+@testitem "heat-flux term under :mass_flux reads nothing outside the wall" setup = [PrimitiveWallDriver] begin
+    # The legacy form differentiates log(ne) on the whole grid, and ne is zero on the excluded
+    # band. Freeze the density (convec = false, mirror wall) so it stays uniform: then every
+    # piece of −∇·(T u) − T u·∇ln n vanishes on the in-wall operators and Te must stay uniform.
+    # Anything else is the band being read.
+    RP = primitive_one_step(; primitive_advection = :mass_flux, heat_flux = true, albedo = 1.0, convec = false)
+    inw = RP.G.nodes.in_wall_nids
+    @test all(isfinite, RP.plasma.Te_eV[inw])
+    @test all(x -> isapprox(x, 12.0; rtol = 1.0e-10), RP.plasma.Te_eV[inw])
+    # With convection and an absorbing wall the density develops a gradient at the wall and the
+    # term responds to it: a finite, small, physical response, not a NaN
+    RP0 = primitive_one_step(; primitive_advection = :mass_flux, heat_flux = true)
+    Te = RP0.plasma.Te_eV[RP0.G.nodes.in_wall_nids]
+    @test all(isfinite, Te)
+    @test all(x -> abs(x - 12.0) < 0.5, Te)
 end

@@ -70,7 +70,6 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         θ_op = RP.flags.θ_imp.decay
         θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
 
-        validate_primitive_advection_flag(RP.flags)
         mass_flux = RP.flags.primitive_advection === :mass_flux
         pops = mass_flux ? electron_primitive_operators(RP) : nothing
 
@@ -573,10 +572,23 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         if RP.flags.Include_heat_flux_term
             # NOTE: Assumption: 𝐪 ≈ p*𝐮 (heat flux is about in the order of pressure*velocity)
             # Pcond = Pheat = -∇⋅(Te * 𝐮) - Te*𝐮⋅∇(ln_n)
-            ePowers.heat .= ee * (
-                - compute_∇f𝐮_directly(RP, pla.Te_eV)
-                    - pla.Te_eV * compute_𝐮∇f_directly(RP, log.(pla.ne))
-            )
+            if mass_flux
+                # = −(𝐮⋅∇)Te − Te ∇⋅𝐮 − Te (𝐮⋅∇) ln n, every term from the in-wall operators, so the
+                # excluded band (where ne = 0 and log ne = −∞) is never read. The floor keeps
+                # log finite on empty rows; those rows contribute nothing anyway.
+                ln_n = log.(max.(pla.ne, one(FT)))
+                ePowers.heat .= ee * (
+                    -apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u
+                        .- pla.Te_eV .* apply_op(pops.U_op, ln_n)
+                )
+            else
+                # `.*`: this was a matrix product, which threw a DimensionMismatch on any
+                # non-square grid — the term had never been runnable on the nodal path.
+                ePowers.heat .= ee * (
+                    - compute_∇f𝐮_directly(RP, pla.Te_eV)
+                        .- pla.Te_eV .* compute_𝐮∇f_directly(RP, log.(pla.ne))
+                )
+            end
         end
 
 
@@ -1182,6 +1194,9 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # same arithmetic the operator used. `:zeroing` is the legacy path.
         RP.flags.electron_wall in (:zeroing, :robin) ||
             throw(ArgumentError("electron_wall must be :zeroing or :robin, got :$(RP.flags.electron_wall)"))
+        # Validated here, on the path every step takes, so a misspelt symbol cannot fall
+        # through `=== :mass_flux` checks and silently run the nodal operators.
+        validate_primitive_advection_flag(RP.flags)
         robin = RP.flags.electron_wall === :robin
         faces_e = robin ? wall_faces(RP.G) : nothing
         # Diffusive Robin part only when diffusion is on; otherwise the ledger coefficient
@@ -1204,7 +1219,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         if robin && RP.flags.convec
             C_e = build_face_flux_divergence(RP.G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
             v_out = face_outflow_speeds(RP.G, faces_e, pla.ueR, pla.ueZ)
-            albedo_e = FT(RP.config.electron_wall_albedo)
+            albedo_e = electron_wall_albedo(RP)
             if albedo_e > zero(FT)
                 returned = zeros(FT, size(C_e, 1))
                 for (k, f) in enumerate(faces_e)

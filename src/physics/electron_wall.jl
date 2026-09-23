@@ -27,11 +27,23 @@ function electron_wall_channels(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return chans
 end
 
-"Robin coefficient per wall face for electrons: Σ_channels ¼v̄_n · (1 − R_e)."
+"""
+    electron_wall_albedo(RP) -> FT
+
+`config.electron_wall_albedo`, validated to lie in [0, 1]. Both wall channels read the albedo
+through this — the diffusive builder validates too, but it does not run with `diffu = false`,
+and an out-of-range value would otherwise turn the convective debit into a source.
+"""
+function electron_wall_albedo(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    a = FT(RP.config.electron_wall_albedo)
+    zero(FT) <= a <= one(FT) ||
+        throw(ArgumentError("electron_wall_albedo must lie in [0, 1], got $a"))
+    return a
+end
+
+"Robin coefficient per wall face for electrons: Σ_channels ¼v̄_n · (1 − a_f)."
 function electron_wall_absorption_speeds(RP::RAPID{FT}, faces) where {FT <: AbstractFloat}
-    return wall_absorption_speeds(
-        electron_wall_channels(RP), faces, FT(RP.config.electron_wall_albedo)
-    )
+    return wall_absorption_speeds(electron_wall_channels(RP), faces, electron_wall_albedo(RP))
 end
 
 "Wall-aware `∇·(𝐃∇·)` for electrons plus its Robin coefficients, from the legacy tensor."
