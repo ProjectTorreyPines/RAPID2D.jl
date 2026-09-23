@@ -1204,15 +1204,15 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         if robin && RP.flags.convec
             C_e = build_face_flux_divergence(RP.G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
             v_out = face_outflow_speeds(RP.G, faces_e, pla.ueR, pla.ueZ)
-            R_e = FT(RP.config.electron_wall_albedo)
-            if R_e > zero(FT)
+            albedo_e = FT(RP.config.electron_wall_albedo)
+            if albedo_e > zero(FT)
                 returned = zeros(FT, size(C_e, 1))
                 for (k, f) in enumerate(faces_e)
-                    returned[f.nid] += R_e * f.area_per_volume * v_out[k]
+                    returned[f.nid] += albedo_e * f.area_per_volume * v_out[k]
                 end
                 C_e -= spdiagm(returned)
             end
-            v_e .+= (one(FT) - R_e) .* v_out
+            v_e .+= (one(FT) - albedo_e) .* v_out
         end
         if RP.flags.src && RP.flags.Implicit
             # The implicit half of the ionization source needs ν_en_iz_tot (BOTH

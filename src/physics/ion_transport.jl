@@ -95,8 +95,8 @@ function wall_absorption_speeds(
     v_absorb = Vector{FT}(undef, length(faces))
     for (k, f) in enumerate(faces)
         c = get!(() -> total_ceiling(channels_with_directions, f.outward), ceilings, f.outward)
-        R = albedo isa AbstractVector ? albedo[k] : albedo
-        v_absorb[k] = (one(FT) - FT(R)) * c[f.nid]
+        albedo_f = albedo isa AbstractVector ? albedo[k] : albedo
+        v_absorb[k] = (one(FT) - FT(albedo_f)) * c[f.nid]
     end
     return v_absorb
 end
