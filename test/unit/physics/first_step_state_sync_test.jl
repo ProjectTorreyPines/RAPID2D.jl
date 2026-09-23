@@ -141,8 +141,12 @@ end
     # would close, and both tangled with out-wall damping being a stand-in for wall
     # boundary conditions that is meant to disappear (plans/PLAN_wall-robin-numerics.md).
     # Pinned rather than fixed, so it is visible and cannot rot into a silent pass.
+    #
+    # The damping only runs under the legacy `primitive_advection = :nodal`, so the
+    # defect is pinned on that path; under the default `:mass_flux` nothing is damped and
+    # the two paths must agree exactly (asserted at the end).
     FT = Float64
-    function damped(t_end)
+    function damped(t_end; primitive_advection = :nodal)
         config = SimulationConfig{FT}(
             NR = 20, NZ = 28, R_min = 0.1, R_max = 0.5, Z_min = -0.4, Z_max = 0.4,
             dt = 1.0e-6, t_end_s = t_end, R0B0 = 1.0,
@@ -158,6 +162,7 @@ end
             E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
             update_ni_independently = false, Include_ud_convec_term = false,
             Coulomb_Collision = false, negative_n_correction = false,
+            primitive_advection = primitive_advection,
         )
         initialize!(RP)
         G = RP.G
@@ -186,6 +191,14 @@ end
     # in-wall density stays together to round-off even while the out-wall states differ.
     inw = lib.G.nodes.in_wall_nids
     @test isapprox(lib.plasma.ne[inw], hand.plasma.ne[inw]; rtol = 1.0e-10)
+
+    # Default path: no damping, so the hand re-sync is exactly redundant.
+    lib_mf = damped(3.0e-6; primitive_advection = :mass_flux)
+    hand_mf = damped(3.0e-6; primitive_advection = :mass_flux)
+    update_transport_quantities!(hand_mf)
+    run_simulation!(lib_mf)
+    run_simulation!(hand_mf)
+    @test lib_mf.plasma.ue_para == hand_mf.plasma.ue_para
 end
 
 @testitem "5 eV electrons cool and ionize on the first step" setup = [AtomicOnlyOneStep] begin

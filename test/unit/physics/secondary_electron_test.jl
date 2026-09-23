@@ -24,6 +24,7 @@
     RP = RAPID{Float64}(config)
     initialize!(RP)
     RP.flags.update_ni_independently = true
+    RP.flags.electron_wall = :zeroing  # legacy band injection under test
     RP.flags.secondary_electron = true
     RP.flags.γ_2nd_electron = 0.1
 
@@ -67,6 +68,7 @@ end
     RP = RAPID{Float64}(config)
     initialize!(RP)
     RP.flags.update_ni_independently = true
+    RP.flags.electron_wall = :zeroing  # legacy band injection under test
     RP.flags.secondary_electron = true
     RP.flags.γ_2nd_electron = 0.1
 
@@ -110,6 +112,7 @@ end
         RP = RAPID{Float64}(config)
         initialize!(RP)
         RP.flags.update_ni_independently = true
+        RP.flags.electron_wall = :zeroing  # legacy band injection under test
         RP.flags.secondary_electron = sec
         RP.flags.γ_2nd_electron = γ
         RP.plasma.ne .= 1.0e15
@@ -181,6 +184,7 @@ end
         initialize!(RP)
         RP.flags.update_ni_independently = true
         RP.flags.convec = false                 # leave only the Robin channel
+        RP.flags.electron_wall = :zeroing  # legacy band injection under test
         RP.flags.secondary_electron = sec
         RP.flags.γ_2nd_electron = γ
         RP.plasma.ne .= 1.0e15
@@ -243,6 +247,7 @@ end
         RP = RAPID{Float64}(config)
         initialize!(RP)
         RP.flags.update_ni_independently = false
+        RP.flags.electron_wall = :zeroing  # legacy band injection under test
         RP.flags.secondary_electron = sec
         RP.flags.γ_2nd_electron = 0.5
         RP.plasma.ne .= 1.0e15

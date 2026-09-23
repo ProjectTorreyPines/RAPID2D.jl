@@ -38,9 +38,9 @@
     end
 end
 
-@testitem "primitive_advection flag: :nodal default, :mass_flux accepted, anything else rejected" begin
-    @test SimulationFlags{Float64}().primitive_advection === :nodal
-    @test SimulationFlags{Float64}(primitive_advection = :mass_flux).primitive_advection === :mass_flux
+@testitem "primitive_advection flag: :mass_flux default, :nodal accepted, anything else rejected" begin
+    @test SimulationFlags{Float64}().primitive_advection === :mass_flux
+    @test SimulationFlags{Float64}(primitive_advection = :nodal).primitive_advection === :nodal
 end
 
 @testitem "u∥ and Te stay uniform through a step at the wall under :mass_flux" setup = [PrimitiveWallDriver] begin

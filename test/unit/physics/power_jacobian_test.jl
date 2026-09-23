@@ -508,6 +508,9 @@ end
         R.flags.Atomic_Collision = true
         R.flags.src = true
         R.flags.exprb_eigenvalue = PartialLinearResponse
+        # The `:mass_flux` path assembles its wall-aware operators inside this call
+        # (deferred: cache them per step), which would swamp the fusion check below.
+        R.flags.primitive_advection = :nodal
         initialize!(R)
         R.flags.scheme.atomic = ExpRB
         R.plasma.Te_eV .= 5.0
