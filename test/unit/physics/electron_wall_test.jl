@@ -299,7 +299,7 @@ end
         N0 = Ntot()
         run_simulation!(RP)
         Nend = Ntot()
-        return (; N0, Nend, booked = RP.diagnostics.Ntracker.cum0D_Ne_loss, rate0, RP, inw)
+        return (; N0, Nend, booked = RP.diagnostics.Ntracker.cum0D_Ne_loss, rate0, RP, inw, faces, v_conv)
     end
 end
 
@@ -333,4 +333,24 @@ end
     r100 = uniform_wall_run(diffu = false, convec = true, albedo = 0.0, nsteps = 100)
     @test r100.Nend < 0.5 * r100.N0
     @test r100.booked ≈ r100.N0 - r100.Nend rtol = 1.0e-10
+end
+
+@testitem "uniform density, convection: albedo 0.5 halves the convective loss, albedo 1 keeps every electron (pile-up, no net flux)" setup = [UniformWallDriver] begin
+    # θ = 1 books at the step-end wall density, which the albedo itself changes, so the
+    # halving is exact in the COEFFICIENT: booked = (1 − R)·Σ_f A_f·v_out,f·n¹_w·dt.
+    for (R, r) in (
+            (0.0, uniform_wall_run(diffu = false, convec = true, albedo = 0.0, nsteps = 1)),
+            (0.5, uniform_wall_run(diffu = false, convec = true, albedo = 0.5, nsteps = 1)),
+        )
+        ne = r.RP.plasma.ne
+        expected = (1 - R) * sum(f.area * r.v_conv[k] * ne[f.nid] for (k, f) in enumerate(r.faces)) * r.RP.dt
+        @test r.booked ≈ expected rtol = 1.0e-10
+        @test (r.N0 - r.Nend) ≈ r.booked rtol = 1.0e-10
+    end
+    r1 = uniform_wall_run(diffu = false, convec = true, albedo = 1.0, nsteps = 100)
+    @test r1.booked == 0
+    @test r1.Nend ≈ r1.N0 rtol = 1.0e-10                 # nothing leaves a zero-net-flux wall
+    ne = r1.RP.plasma.ne[r1.inw]
+    @test maximum(ne) > 1.5 * minimum(ne)                # …so the flow piles up in the downstream wall cells
+    @test all(>=(0), ne)
 end
