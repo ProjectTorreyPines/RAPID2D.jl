@@ -259,3 +259,78 @@ end
     @test d2 < 0.1
     @test d2 < 0.6 * d1
 end
+
+# ── Simple, readable checks on a uniform density: what the wall takes and at what rate ──────
+@testsnippet UniformWallDriver begin
+    using RAPID2D: ImplicitWeights, wall_faces, electron_wall_absorption_speeds, face_outflow_speeds
+    # uniform n0 in-wall, transport only, θ = 1; convection driven by a FIXED u∥ along the manual
+    # device's vertical field (ud_evolve = false, mean_ExB = false), so nothing recomputes u.
+    function uniform_wall_run(; diffu, convec, albedo, nsteps, upara = 1.0e6)
+        config = SimulationConfig{Float64}(
+            device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 2.0e-6, t_end_s = nsteps * 2.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+            electron_wall_albedo = albedo,
+        )
+        config.Output_path = mktempdir()
+        RP = RAPID{Float64}(config)
+        RP.flags = SimulationFlags{Float64}(
+            electron_wall = :robin, diffu = diffu, convec = convec, Implicit = true, src = false,
+            Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false,
+            turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+            Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
+            update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
+        )
+        w = RP.flags.θ_imp
+        RP.flags.θ_imp = ImplicitWeights{Float64}(transport = 1.0, growth = w.growth, decay = w.decay, gas = w.gas)
+        initialize!(RP)
+        G = RP.G
+        inw = G.nodes.in_wall_nids
+        RP.plasma.ne .= 0
+        RP.plasma.ne[inw] .= 1.0e14
+        RP.plasma.ni .= RP.plasma.ne
+        RP.plasma.ue_para .= convec ? upara : 0.0
+        RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
+        RP.plasma.ueZ .= RP.plasma.ue_para .* RP.fields.bZ
+        faces = wall_faces(G)
+        v_diff = diffu ? electron_wall_absorption_speeds(RP, faces) : zeros(length(faces))
+        v_conv = convec ? face_outflow_speeds(G, faces, RP.plasma.ueR, RP.plasma.ueZ) : zeros(length(faces))
+        rate0 = sum(f.area * (v_diff[k] + v_conv[k]) for (k, f) in enumerate(faces)) * 1.0e14   # /s at n = n0
+        Ntot() = sum(G.Jacob[inw] .* RP.plasma.ne[inw]) * 2π * G.dR * G.dZ
+        N0 = Ntot()
+        run_simulation!(RP)
+        Nend = Ntot()
+        return (; N0, Nend, booked = RP.diagnostics.Ntracker.cum0D_Ne_loss, rate0, RP, inw)
+    end
+end
+
+@testitem "uniform density, diffusion only: first-step loss is the wall's own Σ A·v_absorb·n, booked exactly" setup = [UniformWallDriver] begin
+    r = uniform_wall_run(diffu = true, convec = false, albedo = 0.0, nsteps = 1)
+    loss = r.N0 - r.Nend
+    @test loss > 0
+    @test r.booked ≈ loss rtol = 1.0e-10
+    # θ = 1 books at n¹ ≤ n0, so the rate sits just below the n0 estimate
+    @test 0.98 < loss / r.RP.dt / r.rate0 <= 1.0
+end
+
+@testitem "uniform density: albedo 0.5 halves the diffusive loss, albedo 1 conserves and stays uniform over 100 steps" setup = [UniformWallDriver] begin
+    r0 = uniform_wall_run(diffu = true, convec = false, albedo = 0.0, nsteps = 1)
+    rh = uniform_wall_run(diffu = true, convec = false, albedo = 0.5, nsteps = 1)
+    @test rh.booked / r0.booked ≈ 0.5 rtol = 5.0e-3          # v_absorb ∝ (1 − R); the 0.3 % is n¹ ≠ n0
+    r1 = uniform_wall_run(diffu = true, convec = false, albedo = 1.0, nsteps = 100)
+    @test r1.booked == 0
+    @test r1.Nend ≈ r1.N0 rtol = 1.0e-12
+    ne = r1.RP.plasma.ne[r1.inw]
+    @test (maximum(ne) - minimum(ne)) / (sum(ne) / length(ne)) < 1.0e-12
+end
+
+@testitem "uniform density, convection only: the loss is the downstream-face outflow n·A·max(u·n̂,0), booked exactly" setup = [UniformWallDriver] begin
+    r = uniform_wall_run(diffu = false, convec = true, albedo = 0.0, nsteps = 1)
+    loss = r.N0 - r.Nend
+    @test loss > 0
+    @test r.booked ≈ loss rtol = 1.0e-10
+    @test loss / r.RP.dt ≈ r.rate0 rtol = 1.0e-6              # n¹ = n0 on the (upwind) owner cell at step 1
+    # the same over 100 steps: what left is what was booked
+    r100 = uniform_wall_run(diffu = false, convec = true, albedo = 0.0, nsteps = 100)
+    @test r100.Nend < 0.5 * r100.N0
+    @test r100.booked ≈ r100.N0 - r100.Nend rtol = 1.0e-10
+end
