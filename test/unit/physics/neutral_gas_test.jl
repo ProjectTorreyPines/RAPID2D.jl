@@ -302,7 +302,12 @@ end
     # One electron born per molecule destroyed. The gas must lose exactly what
     # solve_electron_continuity_equation! adds, i.e. dt·ne·ν_en_iz with the SAME
     # ν the electron equation reads — otherwise nuclei are created or destroyed.
-    # A uniform state makes diffusion a no-op, isolating the sink arithmetic.
+    # Electron transport off, isolating the sink arithmetic. (A uniform state used to
+    # be enough — whole-grid diffusion is a no-op on it — but the Robin wall drains
+    # the face-owning cells and the implicit solve spreads that into every in-wall
+    # node within the step.)
+    RP.flags.diffu = false
+    RP.flags.convec = false
     RP.plasma.ne .= 1.0e18
     RAPID2D.update_transport_quantities!(RP)
     RP.plasma.ν_en_iz .= 5.0e5

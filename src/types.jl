@@ -77,6 +77,7 @@ Contains simulation configuration parameters.
     # Fraction of ions the wall returns to the plasma. 0 = fully absorbing,
     # 1 = perfectly reflecting; the Robin coefficient is ¼v̄_n(1 − R).
     ion_wall_albedo::FT = FT(0.0)
+    electron_wall_albedo::FT = FT(0.0)       # fraction of absorbed electrons returned through the same face
 
     # Output intervals
     snap0D_Δt_s::FT = FT(20.0e-6)  # Time interval for 1D snapshots
@@ -1104,6 +1105,11 @@ Contains boolean flags that control various aspects of the simulation.
     evolve_ud_inWall_only::Bool = false       # Only evolve drift velocity inside wall
     evolve_Te_inWall_only::Bool = false       # Only evolve Te inside wall
     Damp_Transp_outWall::Bool = true          # Damp transport outside wall
+    # How u∥ and Te are advected/diffused near the wall: :nodal = whole-grid nodal operators
+    # with the damped out-wall band (legacy); :mass_flux = (u·∇)f derived from the face mass
+    # flux + reflective in-wall diffusion, nothing read or damped outside the wall (PR2b).
+    primitive_advection::Symbol = :mass_flux
+    electron_wall::Symbol = :robin            # :robin (wall-aware operator, face ledger) | :zeroing (legacy: ne[on/out] = 0 each step)
 
     # Artificial limiters to avoid numerical instabilities.
     #

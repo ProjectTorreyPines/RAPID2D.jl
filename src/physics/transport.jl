@@ -202,7 +202,8 @@ function update_transport_quantities!(
         @. tp.Dperp *= RP.damping_func
 
         if damp_state
-            @. pla.ue_para *= RP.damping_func
+            # u∥ keeps its legacy damping only while the nodal operators read the band.
+            RP.flags.primitive_advection === :nodal && (@. pla.ue_para *= RP.damping_func)
 
             @. pla.mean_ExB_R *= RP.damping_func
             @. pla.mean_ExB_Z *= RP.damping_func
