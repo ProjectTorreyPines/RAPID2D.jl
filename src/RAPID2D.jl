@@ -53,6 +53,7 @@ include("diagnostics/field_moments.jl")    # shape statistics, for direction che
 include("physics/wall_ledger.jl")          # per-face absorbed/emitted inventory
 include("physics/ion_transport.jl")        # which equation the ion species share
 include("physics/electron_wall.jl")
+include("physics/primitive_transport.jl")  # u∥/Te operators under primitive_advection = :mass_flux
 include("physics/fields.jl")
 include("physics/transport.jl")
 

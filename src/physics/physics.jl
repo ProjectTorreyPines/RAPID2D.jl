@@ -70,6 +70,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         θ_op = RP.flags.θ_imp.decay
         θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
 
+        validate_primitive_advection_flag(RP.flags)
+        mass_flux = RP.flags.primitive_advection === :mass_flux
+        pops = mass_flux ? electron_primitive_operators(RP) : nothing
+
         # Rue_ei, part 1 (uⁿ). A LEDGER of the exchange over the step, so it must use
         # the quadrature the update actually performed — θ(z) under ExpRB.
         if RP.flags.Coulomb_Collision
@@ -86,8 +90,13 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # #2: Advection term (1-θ_op)*[-(𝐮⋅∇)*ue_para]. θ_op, not θu: the fitted
             # weight belongs to the friction's eigenvalue, not to a nonlocal operator.
             if RP.flags.Include_ud_convec_term
-                accel_para_tilde .+= (one_FT - θ_op) * (-OP.𝐮∇ * pla.ue_para)
-                @. OP.A_LHS += θ_op * dt * OP.𝐮∇
+                if mass_flux
+                    accel_para_tilde .+= (one_FT - θ_op) * (-apply_op(pops.U_op, pla.ue_para))
+                    OP.A_LHS = OP.A_LHS + θ_op * dt * pops.U_op
+                else
+                    accel_para_tilde .+= (one_FT - θ_op) * (-OP.𝐮∇ * pla.ue_para)
+                    @. OP.A_LHS += θ_op * dt * OP.𝐮∇
+                end
             end
 
             # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
@@ -109,8 +118,13 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
             if RP.flags.Include_ud_diffu_term
-                accel_para_tilde .+= (one_FT - θ_op) * (OP.∇𝐃∇ * pla.ue_para)
-                @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
+                if mass_flux
+                    accel_para_tilde .+= (one_FT - θ_op) * apply_op(pops.D_op, pla.ue_para)
+                    OP.A_LHS = OP.A_LHS - θ_op * dt * pops.D_op
+                else
+                    accel_para_tilde .+= (one_FT - θ_op) * (OP.∇𝐃∇ * pla.ue_para)
+                    @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
+                end
             end
 
             # bern(−z) formed as bern(z) + z, not the algebraically equal
@@ -145,7 +159,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
 
             if RP.flags.Include_ud_convec_term
-                accel_by_grad_ud = calculate_electron_acceleration_by_convection(RP)
+                accel_by_grad_ud = mass_flux ? -apply_op(pops.U_op, pla.ue_para) :
+                    calculate_electron_acceleration_by_convection(RP)
                 @. pla.ue_para += inv_factor * dt * (accel_by_grad_ud)
             end
         end
@@ -320,17 +335,28 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 # ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
 
                 # Calculate LHS
+                mass_flux = RP.flags.primitive_advection === :mass_flux
+                pops = mass_flux ? electron_primitive_operators(RP) : nothing
                 if RP.flags.Include_Te_diffu_term
                     # P_diffu = 1.5*∇𝐃∇*Te
                     @. ePowers_tilde -= θimp * pla.ePowers.diffu
-                    @. OP.A_LHS -= two_thirds_FT * FT(1.5) * (dt * θimp * OP.∇𝐃∇)
+                    if mass_flux
+                        OP.A_LHS = OP.A_LHS - two_thirds_FT * FT(1.5) * (dt * θimp) * pops.D_op
+                    else
+                        @. OP.A_LHS -= two_thirds_FT * FT(1.5) * (dt * θimp * OP.∇𝐃∇)
+                    end
                 end
 
                 if RP.flags.Include_Te_convec_term
-                    # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)
                     @. ePowers_tilde -= θimp * pla.ePowers.conv
-                    div_u = calculate_divergence(RP.G, pla.ueR, pla.ueZ)
-                    OP.A_LHS .-= two_thirds_FT * (@views dt * θimp * (-FT(1.5) * OP.∇𝐮 + spdiagm(FT(0.5) * div_u[:])))
+                    if mass_flux
+                        # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮)
+                        OP.A_LHS = OP.A_LHS - two_thirds_FT * (dt * θimp) * (-FT(1.5) * pops.U_op - spdiagm(vec(pops.div_u)))
+                    else
+                        # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)
+                        div_u = calculate_divergence(RP.G, pla.ueR, pla.ueZ)
+                        OP.A_LHS .-= two_thirds_FT * (@views dt * θimp * (-FT(1.5) * OP.∇𝐮 + spdiagm(FT(0.5) * div_u[:])))
+                    end
                 end
 
                 # LHS written as a deviation from the identity, so the sparsity
@@ -511,10 +537,15 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
 
+        mass_flux = RP.flags.primitive_advection === :mass_flux
+        pops = mass_flux ? electron_primitive_operators(RP) : nothing
+
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
             # P_diffu = 1.5*∇𝐃∇*Te
-            if RP.flags.Implicit
+            if mass_flux
+                ePowers.diffu .= ee * FT(1.5) * apply_op(pops.D_op, pla.Te_eV)
+            elseif RP.flags.Implicit
                 ePowers.diffu .= ee * FT(1.5) * (OP.∇𝐃∇ * pla.Te_eV)
             else
                 ePowers.diffu .= ee * FT(1.5) * compute_∇𝐃∇f_directly(RP, RP.plasma.Te_eV)
@@ -523,8 +554,10 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
         # If convection term is included in temperature equation
         if RP.flags.Include_Te_convec_term
-            # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)
-            if RP.flags.Implicit
+            # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)  =  -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)
+            if mass_flux
+                ePowers.conv .= ee * (-FT(1.5) * apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u)
+            elseif RP.flags.Implicit
                 ePowers.conv .= ee * (
                     -FT(1.5) * (OP.∇𝐮 * pla.Te_eV)
                         .+ FT(0.5) * pla.Te_eV .* calculate_divergence(RP.G, pla.ueR, pla.ueZ)
@@ -1368,9 +1401,12 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # Set electron density to zero outside the wall
         RP.plasma.ne[on_out_wall_nids] .= 0.0
 
-        # Damp out electron temperature outside the wall
-        out_wall_nids = RP.G.nodes.out_wall_nids
-        @. RP.plasma.Te_eV[out_wall_nids] *= RP.damping_func[out_wall_nids]
+        # Damp out electron temperature outside the wall — legacy band only. Under
+        # :mass_flux no operator reads the band, so nothing there needs pulling down.
+        if RP.flags.primitive_advection === :nodal
+            out_wall_nids = RP.G.nodes.out_wall_nids
+            @. RP.plasma.Te_eV[out_wall_nids] *= RP.damping_func[out_wall_nids]
+        end
 
         # Correct negative densities if enabled
         if RP.flags.negative_n_correction
@@ -1993,7 +2029,11 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
     Au .= OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
     if flags.Include_ud_convec_term
-        Au .+= dt * θimp * OP.𝐮∇
+        if RP.flags.primitive_advection === :mass_flux
+            Au.matrix = Au.matrix + dt * θimp * electron_primitive_operators(RP).U_op
+        else
+            Au .+= dt * θimp * OP.𝐮∇
+        end
     end
     Au_X_ui_para = Au * pla.ui_para
 
@@ -2340,7 +2380,10 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         A_u = OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
         if flags.Include_ud_convec_term
-            A_u += dt * θimp * (OP.𝐮∇.matrix)
+            A_u += dt * θimp * (
+                RP.flags.primitive_advection === :mass_flux ?
+                    electron_primitive_operators(RP).U_op : OP.𝐮∇.matrix
+            )
         end
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
