@@ -347,10 +347,6 @@ function update_transport_related_operators!(RP::RAPID{FT}) where {FT <: Abstrac
         update_∇𝐮_operator!(RP)
     end
 
-    if !isempty(OP.∇𝐮_i.k2csc)
-        update_∇𝐮_operator!(RP, RP.plasma.uiR, RP.plasma.uiZ; ∇𝐮 = OP.∇𝐮_i)
-    end
-
     if !isempty(OP.∇𝐃∇.k2csc)
         update_∇𝐃∇_operator!(RP)
     end

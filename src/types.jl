@@ -590,17 +590,8 @@ Fields include various matrices for solving different parts of the model.
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
-    # The same operator built from the ION velocities. A separate instance rather
-    # than a rebuild, because electrons and ions are advanced in the same step and
-    # `update_∇𝐮_operator!` defaults to `ueR`/`ueZ` — an ion solve that forgot to
-    # pass its own velocities would drift the ions the wrong way and still run.
-    ∇𝐮_i::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
-
-    # Impurity pinch, ∇⋅(n 𝐖) with 𝐖 = 𝐃∇n_i/(Z_i n_i). ONE operator for every
-    # species: the species enters only as the scalar Z_z multiplying 𝐖, and since
-    # Z_z > 0 it cannot flip an upwind direction either, so the coefficients are
-    # shared exactly and each species costs one sparse matvec.
-    ∇𝐮_pinch::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    # Ion convection has no cached operator: `ion_step_operators` builds the face-flux
+    # divergence from `uiR`/`uiZ` every step (`convective_wall_operator`).
 
     # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
     # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index

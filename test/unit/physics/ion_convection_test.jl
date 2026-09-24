@@ -7,12 +7,13 @@
 # recovered once the turbulent D switches on — depends on this term existing and
 # on it reading `uiR`/`uiZ` rather than `ueR`/`ueZ`.
 #
-# The wall treatment here is the one electrons already have: `∇·(n𝐮)` sweeps the
-# interior with no wall awareness, material convects onto out-of-wall nodes, and
-# `treat_ion_outside_wall!` zeroes and books it. A wall-aware convective flux is
-# its own piece of work; mixing a Robin diffusive wall with an outflow convective
-# wall is not an inconsistency, since the two channels deliver to a surface by
-# genuinely different mechanisms.
+# The wall is the one the electron continuity equation has under `:robin`:
+# convection is the face-flux operator (`build_face_flux_divergence`, rows on
+# in-wall nodes only), so nothing is ever written outside the wall, and the
+# outflow through a wall face is a diagonal debit booked on the per-face ledger
+# next to the Robin diffusive speed. There is no band to zero and no second
+# bookkeeping pass — diffusion and convection reach the surface by different
+# mechanisms (`¼v̄n` and `n𝐮·n̂`) and add into one coefficient per face.
 
 @testsnippet IonDrift begin
     # Only what `drift_case` itself calls. A name imported here reaches the SNIPPET
@@ -23,13 +24,14 @@
     using RAPID2D: update_transport_related_operators!
 
     "A case with prescribed, uniform parallel velocities and no field solve."
-    function drift_case(; ui = 3.0e4, ue = -3.0e4, NR = 25, NZ = 25)
+    function drift_case(; ui = 3.0e4, ue = -3.0e4, NR = 25, NZ = 25, kw...)
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = NR, NZ = NZ,
             R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
             wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
             prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-8,
-            t_end_s = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+            t_end_s = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0;
+            kw...
         )
         RP = RAPID{Float64}(config)
         initialize!(RP)
@@ -58,6 +60,13 @@
         w = vec(RP.G.Jacob)[inw] .* vec(n)[inw]
         return sum(w .* vec(RP.G.Z2D)[inw]) / sum(w)
     end
+
+    "Particles inside the wall: Σ 2π·J·ΔR·ΔZ·n over in-wall nodes."
+    function particles_inside(RP, n)
+        inw = RP.G.nodes.in_wall_nids
+        vol = vec(RP.G.Jacob) .* (2π * RP.G.dR * RP.G.dZ)
+        return sum(vol[inw] .* vec(n)[inw])
+    end
 end
 
 @testitem "Ions convect along their own velocity" setup = [IonDrift] begin
@@ -83,9 +92,8 @@ end
 end
 
 @testitem "Ions do not convect along the ELECTRON velocity" setup = [IonDrift] begin
-    # The bug this exists to catch: `update_∇𝐮_operator!` defaults to `ueR`/`ueZ`,
-    # so an ion operator built without explicit velocities compiles, runs, and
-    # silently drifts the ions the wrong way.
+    # The bug this exists to catch: a face-flux operator built from the default
+    # (electron) velocities compiles, runs, and silently drifts the ions the wrong way.
     RP = drift_case(; ui = 3.0e4, ue = -3.0e4)
     RP.flags.src = false
     RP.flags.diffu = false
@@ -116,10 +124,10 @@ end
     @test RP.plasma.ni == before
 end
 
-@testitem "The ion operator is the diffusion operator minus the ion flux divergence" setup = [IonDrift] begin
+@testitem "The ion operator is the diffusion operator minus the ion face-flux divergence" setup = [IonDrift] begin
     using RAPID2D: wall_faces, ion_transport_operator, ion_transport_groups,
         ion_transport_channels, ion_channel_directions, shared_turbulent_channel,
-        solve_ion_group!, SparseLUSolver
+        solve_ion_group!, SparseLUSolver, build_face_flux_divergence
     using RAPID2D.SparseArrays
     using RAPID2D.LinearAlgebra
 
@@ -138,38 +146,87 @@ end
         G, groups[1], ion_channel_directions(RP);
         faces = wall_faces(G), albedo = RP.config.ion_wall_albedo
     )
-    A = A_diff - RP.operators.∇𝐮_i.matrix
+    # the same face-flux divergence the electron equation uses, from the ION velocities
+    A = A_diff - build_face_flux_divergence(G, RP.plasma.uiR, RP.plasma.uiZ; upwind = RP.flags.upwind)
     N = reshape(copy(vec(RP.plasma.ni)), :, 1)
     solve_ion_group!(N, groups[1], A, SparseLUSolver{Float64}(), RP.dt; θ = RP.flags.θ_imp.transport)
 
     solve_ion_continuity_equation!(RP)
     @test vec(RP.plasma.ni) ≈ N[:, 1]
-
-    # and the ion flux-divergence operator is genuinely a different matrix from
-    # the electron one, because the velocities differ
-    @test RP.operators.∇𝐮_i.matrix != RP.operators.∇𝐮.matrix
 end
 
-@testitem "Convected ions leaving the wall are booked, not lost silently" setup = [IonDrift] begin
-    using RAPID2D: treat_ion_outside_wall!
-
-    # The Robin debit books what DIFFUSION takes. Convection puts material on
-    # out-of-wall nodes instead, where `treat_ion_outside_wall!` books it. The two
-    # paths must not overlap and must not leave a gap.
+@testitem "Ion convection leaves through the wall faces: nothing lands outside, the ledger books what left" setup = [IonDrift] begin
+    # Convection alone, twenty implicit steps, no boundary pass in between. The
+    # face-flux rows stop at the wall, so the band outside stays exactly zero, and the
+    # diagonal outflow debit is the very number the ledger books — even with diffusion
+    # off, when there is no Robin coefficient for it to ride on.
     RP = drift_case(; ui = 3.0e4)
     RP.flags.src = false
     RP.flags.diffu = false
-    inw = RP.G.nodes.in_wall_nids
-    outside = setdiff(1:(RP.G.NR * RP.G.NZ), inw)
+    G = RP.G
+    outside = setdiff(1:(G.NR * G.NZ), G.nodes.in_wall_nids)
+    vec(RP.plasma.ni)[outside] .= 0.0
+    N0 = particles_inside(RP, RP.plasma.ni)
+    RP.diagnostics.Ntracker.cum0D_Ni_loss = 0.0
 
     for _ in 1:20
         solve_ion_continuity_equation!(RP)
     end
-    # convection alone does deposit outside — that is what the boundary pass is for
-    @test any(>(0), vec(RP.plasma.ni)[outside])
 
-    RP.diagnostics.Ntracker.cum0D_Ni_loss = 0.0
-    treat_ion_outside_wall!(RP)
-    @test RP.diagnostics.Ntracker.cum0D_Ni_loss > 0
     @test all(==(0.0), vec(RP.plasma.ni)[outside])
+    booked = RP.diagnostics.Ntracker.cum0D_Ni_loss
+    @test booked > 0
+    @test N0 - particles_inside(RP, RP.plasma.ni) ≈ booked rtol = 1.0e-10
+end
+
+@testitem "ion_wall_albedo scales the convective outflow, and R = 1 keeps every convected ion" setup = [IonDrift] begin
+    using RAPID2D: wall_faces, face_outflow_speeds
+
+    # A uniform slab under a uniform flow, one explicit step: interior faces carry the
+    # same flux on both sides, so Σ J·n changes only by what crosses the downstream wall
+    # faces — the gross outflow n₀·A_f·max(u·n̂, 0) per face, of which the wall keeps 1 − R.
+    function one_explicit_step(albedo)
+        RP = drift_case(; ui = 3.0e4, ion_wall_albedo = albedo)
+        RP.flags.src = false
+        RP.flags.diffu = false
+        RP.flags.Implicit = false
+        G = RP.G
+        inw = G.nodes.in_wall_nids
+        RP.plasma.ni .= 0.0
+        RP.plasma.ni[inw] .= 1.0e15
+        N0 = particles_inside(RP, RP.plasma.ni)
+        faces = wall_faces(G)
+        v_out = face_outflow_speeds(G, faces, RP.plasma.uiR, RP.plasma.uiZ)
+        gross = RP.dt * sum(f.area * v_out[k] * 1.0e15 for (k, f) in enumerate(faces))
+        RP.diagnostics.Ntracker.cum0D_Ni_loss = 0.0
+        solve_ion_continuity_equation!(RP)
+        lost = N0 - particles_inside(RP, RP.plasma.ni)
+        return (; N0, lost, booked = RP.diagnostics.Ntracker.cum0D_Ni_loss, gross)
+    end
+
+    r0 = one_explicit_step(0.0)
+    @test r0.gross > 0
+    @test r0.lost ≈ r0.gross rtol = 1.0e-10
+    @test r0.booked ≈ r0.lost rtol = 1.0e-10
+
+    r5 = one_explicit_step(0.5)
+    @test r5.lost ≈ 0.5 * r5.gross rtol = 1.0e-10
+    @test r5.booked ≈ r5.lost rtol = 1.0e-10
+
+    # R = 1: what reaches a wall face comes straight back through it — no net flux, the
+    # slab piles up against the downstream wall instead of draining
+    r1 = one_explicit_step(1.0)
+    @test abs(r1.lost) <= 1.0e-12 * r1.N0
+    @test r1.booked == 0.0
+end
+
+@testitem "an ion albedo outside [0, 1] is rejected even when only convection reaches the wall" setup = [IonDrift] begin
+    # The diffusive builder validates the albedo, but it does not run with `diffu = false`;
+    # an out-of-range value would otherwise turn the convective wall debit into a source.
+    for bad in (1.5, -0.1)
+        RP = drift_case(; ui = 3.0e4, ion_wall_albedo = bad)
+        RP.flags.src = false
+        RP.flags.diffu = false
+        @test_throws ArgumentError solve_ion_continuity_equation!(RP)
+    end
 end

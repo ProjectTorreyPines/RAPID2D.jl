@@ -102,6 +102,21 @@ function wall_absorption_speeds(
 end
 
 """
+    ion_wall_albedo(RP) -> FT
+
+`config.ion_wall_albedo`, validated to lie in [0, 1]. Both ion wall channels read the
+albedo through this — the diffusive builder validates too, but it does not run with
+`diffu = false`, and an out-of-range value would otherwise turn the convective debit
+into a source.
+"""
+function ion_wall_albedo(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    a = FT(RP.config.ion_wall_albedo)
+    zero(FT) <= a <= one(FT) ||
+        throw(ArgumentError("ion_wall_albedo must lie in [0, 1], got $a"))
+    return a
+end
+
+"""
     ion_transport_operator(G, group, directions; faces, albedo, cross_terms) -> (A, v_absorb)
 
 Assemble the wall-aware `∇·(𝐃∇·)` a group of ion species will share, and the
@@ -439,17 +454,18 @@ because the wall-aware operator never writes outside the wall, so the older
 accounting — read whatever density is found on out-of-wall nodes — would report
 exactly zero loss for a wall that is in fact draining.
 
-Convection is `−∇·(n𝐮_i)` from `operators.∇𝐮_i`, built from the **ion**
-velocities. It is shared by every group: `ν_ii` couples the species into one
-fluid far faster than transport separates them, so a species-resolved `𝐮` would
-be modelling a drift friction forbids.
+Convection is `−∇·(n𝐮_i)` through the face-flux operator
+([`convective_wall_operator`](@ref)), built from the **ion** velocities and shared
+by every group: `ν_ii` couples the species into one fluid far faster than
+transport separates them, so a species-resolved `𝐮` would be modelling a drift
+friction forbids.
 
-The two wall treatments differ by channel, which is deliberate. Diffusion leaves
-through the Robin face term at `¼v̄_n(1−R)` and is booked there; convection uses
-the interior-sweeping operator, deposits on out-of-wall nodes, and is booked by
-`treat_ion_outside_wall!`. The paths do not overlap — the Robin debit never
-writes outside the wall — and a surface reached at `n𝐮·n̂` is not the same
-boundary condition as one reached at `¼v̄n`.
+Both channels leave through the wall faces and nowhere else. Diffusion is the
+Robin face term at `¼v̄_n(1−R)`, convection the outflow `max(𝐮_i·n̂, 0)(1−R)`
+— different mechanisms, one coefficient per face. The operator charges both on
+the diagonal of the owning in-wall row and never writes outside the wall, and
+`book_ion_wall_loss!` books the same products per face, so `Δ(Σ J·nᵢ)` equals
+the ledger to round-off and the band outside the wall stays identically zero.
 """
 function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return @timeit RAPID_TIMER "solve_ion_continuity_equation!" begin
@@ -484,13 +500,13 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
                 push!(tp.ion_solvers, SparseLUSolver{FT}())
             end
             for (gi, (group, A, v_absorb)) in enumerate(groups)
-                # Built here, not in `ion_step_operators`: one cached operator
-                # serves every group, so it must be filled immediately before the
-                # group that consumes it.
-                add_ion_pinch_source!(RP, group, ion_pinch_divergence(RP, group, dirs), N, S)
+                # The pinch is explicit, from nⁿ: its source goes in before the solve
+                # and its wall outflow is booked at that same nⁿ afterwards.
+                P = ion_pinch_divergence(RP, group, dirs, faces)
+                add_ion_pinch_source!(RP, group, P, N, S)
                 n_prev = N[:, group.sids]
                 solve_ion_group!(N, group, A, tp.ion_solvers[gi], dt; θ = θ, S = S)
-                book_ion_wall_loss!(RP, group, faces, v_absorb, N, n_prev, θ)
+                book_ion_wall_loss!(RP, group, faces, v_absorb, N, n_prev, θ; pinch = P)
             end
         end
 
@@ -506,9 +522,8 @@ The operators this step will invert, one per transport group, the wall faces the
 were built against, and the per-mechanism directions they were built from.
 
 `directions` is returned rather than kept internal so the caller can build each
-group's pinch operator ([`ion_pinch_divergence`](@ref)) at the moment that group
-is solved. That operator is cached in a single slot, so building all of them here
-would leave every group holding a reference to the LAST group's tensor.
+group's pinch operator ([`ion_pinch_divergence`](@ref)) from that group's own
+tensor at the moment the group is solved.
 
 With diffusion off there is nothing for a policy to partition — every species
 sees the same (null) diffusion — so a single group covers them all and carries
@@ -516,27 +531,34 @@ only the convective term. There is no `𝐃` in that case either, hence no pinch
 the pinch is a friction correction to a diffusive flux, not a flux of its own.
 """
 function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    tp, G = RP.transport, RP.G
+    tp, G, pla = RP.transport, RP.G, RP.plasma
     ns = length(tp.ion_species)
-    convection = RP.flags.convec ? RP.operators.∇𝐮_i.matrix : nothing
+    faces = wall_faces(G)
+    albedo = ion_wall_albedo(RP)
+    # Convection is the face-flux operator on the same faces the Robin term uses: its
+    # wall-face outflow is a diagonal debit like the diffusive one, so the two speeds add
+    # into one ledger coefficient per face. Built from the ION velocities.
+    C, v_conv = if RP.flags.convec
+        convective_wall_operator(G, faces, pla.uiR, pla.uiZ, albedo; upwind = RP.flags.upwind)
+    else
+        (nothing, zeros(FT, length(faces)))
+    end
 
     if !RP.flags.diffu
         group = IonTransportGroup(collect(1:ns), DiffusionChannel{FT}[])
         Ng = G.NR * G.NZ
-        A = isnothing(convection) ? spzeros(FT, Ng, Ng) : -convection
-        return [(group, A, FT[])], WallFace{FT}[], ()
+        A = isnothing(C) ? spzeros(FT, Ng, Ng) : -C
+        return [(group, A, v_conv)], faces, ()
     end
 
     turb = shared_turbulent_channel(RP)
     per_species = [ion_transport_channels(RP, sp, turb) for sp in tp.ion_species]
     dirs = ion_channel_directions(RP)
     weights = [reshape(view(tp.ion_N, :, s), G.NR, G.NZ) for s in 1:ns]
-    faces = wall_faces(G)
-    albedo = FT(RP.config.ion_wall_albedo)
 
     ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
         A, v_absorb = ion_transport_operator(G, group, dirs; faces = faces, albedo = albedo)
-        return (group, isnothing(convection) ? A : A - convection, v_absorb)
+        return (group, isnothing(C) ? A : A - C, v_absorb .+ v_conv)
     end
     return ops, faces, dirs
 end
@@ -576,9 +598,12 @@ function ion_pinch_velocity(
         D_ZZ::AbstractMatrix{FT}
     ) where {FT <: AbstractFloat}
     pla, G = RP.plasma, RP.G
-    # Central differences: this builds a COEFFICIENT field. The upwinding that
-    # matters for stability is in the divergence operator, which does it properly.
-    ∇n_R, ∇n_Z = calculate_grad_of_scalar_F(RP, pla.ni; upwind = false)
+    # Central differences inside, one-sided at the wall: this builds a COEFFICIENT
+    # field, and the upwinding that matters for stability is in the divergence
+    # operator. It must not read the empty band outside the wall — a central
+    # difference there saw the drop to zero and pointed 𝐖 inward at every
+    # wall-adjacent cell, so no pinch flux could ever reach a wall face.
+    ∇n_R, ∇n_Z = wall_gradient(G, pla.ni)
 
     cap_R = one(FT) / G.dR
     cap_Z = one(FT) / G.dZ
@@ -602,11 +627,14 @@ function ion_pinch_velocity(
 end
 
 """
-    ion_pinch_divergence(RP, group, directions) -> (; divergence, driver) or nothing
+    ion_pinch_divergence(RP, group, directions, faces) -> (; divergence, v_out, driver) or nothing
 
-`divergence` such that `divergence * n_z = ∇⋅(n_z 𝐖)`, built from the group's own
-diffusion tensor, and `driver`: the index of the species whose profile 𝐖 was
-built from.
+`divergence` such that `divergence * n_z = ∇⋅(n_z 𝐖)` on the in-wall rows, built
+from the group's own diffusion tensor through the face-flux operator convection
+uses ([`convective_wall_operator`](@ref)); `v_out`, the net outflow speed
+`(1 − R_i)·max(𝐖·n̂, 0)` per wall face, which species `z` books as `Z_z·v_out`
+at `nⁿ` because the term is explicit; and `driver`: the index of the species
+whose profile 𝐖 was built from.
 
 The two travel together because they are one fact. 𝐖 is `𝐃∇n_driver/(Z_driver
 n_driver)`, so the term describes species z being dragged along **driver's**
@@ -617,12 +645,12 @@ against `Σ_{s≠z}`, at which point this becomes a driver per receiving species
 the change is confined to these two fields.
 
 Returns `nothing` when the pinch is off, which is how the caller stays free of a
-branch. The operator is cached in `operators.∇𝐮_pinch` and allocated on first
-use — `flags.ion_pinch` is routinely set after `initialize!` — so every later
-step rebuilds values into a fixed sparsity pattern instead of a new matrix.
+branch. The matrix is rebuilt on every call from the current tensor and profile;
+with the pinch off (the default) nothing is built at all.
 """
 function ion_pinch_divergence(
-        RP::RAPID{FT}, group::IonTransportGroup{FT}, directions
+        RP::RAPID{FT}, group::IonTransportGroup{FT}, directions,
+        faces::AbstractVector{WallFace{FT}}
     ) where {FT <: AbstractFloat}
     RP.flags.ion_pinch || return nothing
     isempty(group.channels) && return nothing
@@ -633,15 +661,13 @@ function ion_pinch_divergence(
     ]
     D_RR, D_RZ, D_ZZ = total_tensor(cwd)
     W_R, W_Z = ion_pinch_velocity(RP, D_RR, D_RZ, D_ZZ)
-    if isempty(RP.operators.∇𝐮_pinch.matrix.nzval)
-        RP.operators.∇𝐮_pinch = construct_∇𝐮_operator(RP, W_R, W_Z)
-    else
-        update_∇𝐮_operator!(RP, W_R, W_Z; ∇𝐮 = RP.operators.∇𝐮_pinch)
-    end
+    P, v_out = convective_wall_operator(
+        RP.G, faces, W_R, W_Z, ion_wall_albedo(RP); upwind = RP.flags.upwind
+    )
     # `ion_pinch_velocity` read `plasma.ni`, which is species 1 by definition
     # (see `set_ion_species!`). That is the whole reason the driver is known here
     # and not decided at the consumer.
-    return (divergence = RP.operators.∇𝐮_pinch.matrix, driver = 1)
+    return (divergence = P, v_out = v_out, driver = 1)
 end
 
 """
@@ -684,18 +710,33 @@ function add_ion_pinch_source!(
     return S
 end
 
-"Book what the Robin condition took this step, per face, into the ion tracker."
+"""
+    book_ion_wall_loss!(RP, group, faces, v_absorb, N, n_prev, θ; pinch = nothing)
+
+Book what the wall took this step, per face, into the ion tracker: the implicit
+channels (Robin diffusion and convective outflow, one `v_absorb` per face) at the
+θ-weighted density the solve charged, and — for every species but the driver —
+the explicit pinch outflow `Z_z · pinch.v_out` at `nⁿ`, the density the source
+term was formed from.
+"""
 function book_ion_wall_loss!(
         RP::RAPID{FT}, group::IonTransportGroup{FT}, faces, v_absorb,
-        N::AbstractMatrix{FT}, n_prev::AbstractMatrix{FT}, θ
+        N::AbstractMatrix{FT}, n_prev::AbstractMatrix{FT}, θ; pinch = nothing
     ) where {FT <: AbstractFloat}
     isempty(faces) && return RP
     ledger = WallLedger{FT}(length(faces))
+    species = RP.transport.ion_species
     for (c, s) in enumerate(group.sids)
         accumulate_wall_absorption!(
             ledger, faces, v_absorb, view(N, :, s), RP.dt;
             n_prev = view(n_prev, :, c), θ = θ
         )
+        if !isnothing(pinch) && s != pinch.driver
+            # Explicit term: the source was formed from nⁿ, so it is booked at nⁿ —
+            # `n_prev` passed as the density, default θ = 1, no θ-weighting.
+            Z_z = FT(species[s].charge)
+            accumulate_wall_absorption!(ledger, faces, Z_z .* pinch.v_out, view(n_prev, :, c), RP.dt)
+        end
     end
     Ntracker = RP.diagnostics.Ntracker
     Ntracker.cum0D_Ni_loss += sum(ledger.absorbed)
@@ -711,13 +752,13 @@ end
 Declare which ion species the transport solve advances, and size the work
 buffers to match.
 
-**Exactly one species, for now.** Grouping, assembly and the batch solve are
-already written against a list, but three things outside them are not, and each
-is silently wrong rather than loudly missing:
+**Exactly one species, for now.** Grouping, assembly, the batch solve and the
+face ledger are written against a list (and never write outside the wall, so a
+second column cannot accumulate there), but three things outside them are not,
+and each is silently wrong rather than loudly missing:
 
-  - `treat_ion_outside_wall!` clears only column 1, so every other species
-    accumulates outside the wall without bound and unbooked;
-  - `γ_2nd_electron` is one number, so only column 1 yields secondary electrons;
+  - `γ_2nd_electron` is one number, so only column 1 could yield secondary electrons;
+  - `Ni_loss` does not split by species;
   - the ion charge density is `n·Z` from this species, and would have to become
     `Σ_s n_s Z_s` at every site that builds a current (see
     `internal/docs/src/notes/TODO/ion-inventory-multi-species.md`).
@@ -729,13 +770,12 @@ function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonSpecies{FT}}
     length(species) == 1 || throw(
         ArgumentError(
             "exactly one ion species is supported, got $(length(species)). " *
-                "A second one needs four things that do not exist yet: " *
-                "`treat_ion_outside_wall!` clears only the first column, so the others " *
-                "accumulate outside the wall unbooked; `γ_2nd_electron` is one number, so " *
-                "only the first yields secondary electrons; `Ni_loss` does not split by " *
-                "species; and every current builds its charge density as n·Z, which would " *
-                "have to become Σ_s n_s Z_s — as would `ν_ei`, `ν_ii` and `lnΛ_ii`, which " *
-                "take the bulk's charge and mass. `plasma.ni` also round-trips only column 1."
+                "A second one needs three things that do not exist yet: " *
+                "`γ_2nd_electron` is one number, so only the first could yield secondary " *
+                "electrons; `Ni_loss` does not split by species; and every current builds " *
+                "its charge density as n·Z, which would have to become Σ_s n_s Z_s — as " *
+                "would `ν_ei`, `ν_ii` and `lnΛ_ii`, which take the bulk's charge and mass. " *
+                "`plasma.ni` also round-trips only column 1."
         )
     )
     tp = RP.transport

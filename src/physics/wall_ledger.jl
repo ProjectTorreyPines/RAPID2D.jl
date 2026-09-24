@@ -109,9 +109,13 @@ converging at the expected second-order rate. Folding `Y` into the coefficient h
 no splitting at all: at `Y = 1` the assembled matrix is *bit-identical* to the
 reflective one, so the reflective result is reproduced exactly rather than nearly.
 
-Book the ledger with the **gross** `v_absorb`, not this net value: gross is what
-bombards the surface and what a sputtering or recycling yield multiplies, while
-net is only what the transport equation loses.
+What the ledger books today is the **net** speed: every channel — Robin diffusion,
+face-flux convection, the pinch — hands `accumulate_wall_absorption!` the
+`(1 − R)`-scaled coefficient the operator charged, so `cum*_N*_loss` is what the
+transport equation lost, and equals the gross impingement only at `R = 0`. A
+sputtering, recycling or secondary-emission yield multiplies the **gross** flux,
+so a consumer of yields must book absorbed (gross) and emitted (`Y`·gross) as two
+lines rather than read the yield off the net loss.
 
 `wall_emission_source` remains the route for **cross-species** return (H⁺→H⁰,
 H⁺→C⁰), where the material lands in a different equation and cannot be folded
@@ -147,12 +151,13 @@ the *wrong* face still conserves `Σ J·n` exactly, still writes nothing outside
 wall, still keeps the density positive and still balances the ledger, while
 changing the field by 13 %. Any test of this function has to compare the field.
 
-**Never deposit outside the wall.** `treat_ion_outside_wall!` does the opposite —
-it adds `γ_2nd·n_i` to cells *outside* and relies on diffusion to carry them back,
-but `treat_electron_outside_wall!` books that band as loss and zeroes it at the top
-of the next step. The measured yield reaching the interior is ≈ 0, controlled by
-`D⊥Δt/Δx²` rather than by `γ_2nd` (`secondary_electron_test.jl`). Returning
-material to the interior cell is that fix.
+**Never deposit outside the wall.** The retired secondary-electron injection did
+the opposite — it added `γ_2nd·n_i` to cells *outside* and relied on diffusion to
+carry them back, while `treat_electron_outside_wall!` booked that band as loss and
+zeroed it at the top of the next step. The measured yield reaching the interior
+was ≈ 0, controlled by `D⊥Δt/Δx²` rather than by `γ_2nd`; the INTENDED markers in
+`secondary_electron_test.jl` state what this function is to deliver instead.
+Returning material to the interior cell is that fix.
 
 For cross-species return (recycling, sputtering, secondary electrons) scale
 `emitted` by the yield before calling; this function only moves particles back

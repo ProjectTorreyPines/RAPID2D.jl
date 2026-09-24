@@ -41,9 +41,9 @@ end
     @test length(RP.transport.ion_species) == 1
     @test bulk_ion_charge(RP) == 1              # H₂⁺
 
-    # A second species is refused rather than half-supported. The wall pass clears
-    # one column, γ_2nd is not per species, `Ni_loss` does not split, and the
-    # charge density would need Σ n_z Z_z instead of n·Z — none of which exist yet.
+    # A second species is refused rather than half-supported. γ_2nd is not per
+    # species, `Ni_loss` does not split, and the charge density would need Σ n_z Z_z
+    # instead of n·Z — none of which exist yet.
     mi = RP.config.constants.mi
     err = try
         set_ion_species!(RP, [IonSpecies(:H2⁺, mi, 1), IonSpecies(:C⁶⁺, 6mi, 6)])
@@ -53,7 +53,7 @@ end
     end
     @test err isa ArgumentError
     @test occursin("one ion species", err.msg)
-    @test occursin("wall", err.msg)              # names what is missing, not just "no"
+    @test occursin("Ni_loss", err.msg)           # names what is missing, not just "no"
 
     # …and the refusal leaves the existing species untouched
     @test length(RP.transport.ion_species) == 1

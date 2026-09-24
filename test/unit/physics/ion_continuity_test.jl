@@ -489,3 +489,84 @@ end
         @test chs[3] === turb_ref               # handed through, not rebuilt
     end
 end
+
+@testitem "Both ion wall channels through the workflow: the face ledger closes and the band pass books nothing" setup = [IonRun] begin
+    using RAPID2D: face_outflow_speeds, wall_faces
+
+    # Robin diffusion and face-flux convection on, θ = 0.5, one hundred steps of the real
+    # step sequence — `treat_ion_outside_wall!` included. The per-face ledger is the ONLY
+    # ion bookkeeping left: Δ(Σ J·ni) over the plasma equals what it booked, to round-off,
+    # and the band outside the wall never receives anything to zero.
+    RP = ion_case(; ion_wall_albedo = 0.0)
+    RP.flags.src = false
+    RP.flags.Atomic_Collision = false
+    RP.flags.Coulomb_Collision = false
+    RP.flags.E_para_self_ES = false
+    RP.flags.E_para_self_EM = false
+    RP.flags.turb_ExB_mixing = false
+    RP.flags.ud_evolve = false
+    RP.flags.Te_evolve = false
+    RP.flags.Ti_evolve = false
+    RP.flags.Gas_evolve = false
+    RP.flags.secondary_electron = false
+    RP.flags.mean_ExB = true                    # a poloidal drift toward the outer wall, shared by ions
+    RP.plasma.mean_ExB_R .= 2.0e4
+    RP.plasma.mean_ExB_Z .= 0.0
+    outside = setdiff(1:(RP.G.NR * RP.G.NZ), RP.G.nodes.in_wall_nids)
+    vec(RP.plasma.ne)[outside] .= 0.0
+    vec(RP.plasma.ni)[outside] .= 0.0
+    update_transport_quantities!(RP)
+
+    start = inventory(RP, RP.plasma.ni)
+    RP.diagnostics.Ntracker.cum0D_Ni_loss = 0.0
+    run_simulation!(RP)
+    lost = start - inventory(RP, RP.plasma.ni)
+
+    @test any(>(0), face_outflow_speeds(RP.G, wall_faces(RP.G), RP.plasma.uiR, RP.plasma.uiZ))
+    @test RP.diagnostics.Ntracker.cum0D_Ni_loss > 0
+    @test RP.diagnostics.Ntracker.cum0D_Ni_loss ≈ 2π * lost * RP.G.dR * RP.G.dZ rtol = 1.0e-10
+    @test all(==(0.0), vec(RP.plasma.ni)[outside])
+end
+
+@testitem "Ionization feeds ions on in-wall rows only: the ion src/loss identity closes under the legacy electron wall" setup = [IonRun] begin
+    # Under `electron_wall = :zeroing` the whole-grid electron operators push `ne` onto
+    # the on/out-wall band inside the solve (≈ 5e12 m⁻³ here against 1e15 inside). The
+    # ion equation has no rows outside the wall, so a source deposited on the band would
+    # only sit there and be discarded, unbooked, by the band pass. It never is: the
+    # published ionization rates are zero on the band by construction (`update_RRCs!`
+    # clears ν_en_iz on `on_out_wall_nids`), so the count the ion source and `Ni_src`
+    # share is in-wall only — and Ni_src − Ni_loss accounts for ΔNi exactly.
+    RP = ion_case(; ion_wall_albedo = 0.0)
+    RP.flags.electron_wall = :zeroing
+    RP.flags.src = true
+    RP.flags.Atomic_Collision = false
+    RP.flags.Coulomb_Collision = false
+    RP.flags.E_para_self_ES = false
+    RP.flags.E_para_self_EM = false
+    RP.flags.turb_ExB_mixing = false
+    RP.flags.ud_evolve = false
+    RP.flags.Te_evolve = false
+    RP.flags.Ti_evolve = false
+    RP.flags.Gas_evolve = false
+    RP.flags.secondary_electron = false
+    RP.flags.mean_ExB = true
+    RP.plasma.mean_ExB_R .= 2.0e4
+    RP.plasma.mean_ExB_Z .= 0.0
+    outside = setdiff(1:(RP.G.NR * RP.G.NZ), RP.G.nodes.in_wall_nids)
+    vec(RP.plasma.ne)[outside] .= 0.0
+    vec(RP.plasma.ni)[outside] .= 0.0
+    update_transport_quantities!(RP)
+
+    start = inventory(RP, RP.plasma.ni)
+    RP.diagnostics.Ntracker.cum0D_Ni_src = 0.0
+    RP.diagnostics.Ntracker.cum0D_Ni_loss = 0.0
+    run_simulation!(RP)
+    ΔN = (inventory(RP, RP.plasma.ni) - start) * 2π * RP.G.dR * RP.G.dZ
+    src = RP.diagnostics.Ntracker.cum0D_Ni_src
+    loss = RP.diagnostics.Ntracker.cum0D_Ni_loss
+
+    @test src > 0
+    @test loss > 0
+    @test src - loss ≈ ΔN rtol = 1.0e-10
+    @test all(==(0.0), vec(RP.plasma.ni)[outside])
+end

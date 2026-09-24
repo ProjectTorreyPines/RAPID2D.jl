@@ -151,6 +151,105 @@ end
     @test all(iszero, W_R0) && all(iszero, W_Z0)
 end
 
+@testitem "The pinch divergence lives on in-wall rows and telescopes to the wall outflow" setup = [PinchRun] begin
+    using RAPID2D: ion_step_operators, ion_pinch_divergence
+    using RAPID2D.SparseArrays
+
+    # An inverted bulk profile — a trough at the box centre — so 𝐖 = 𝐃∇n_i/(Z_i n_i)
+    # points outward and reaches the wall faces as an outflow. The operator is the same
+    # face-flux divergence convection uses: rows on in-wall nodes only, interior faces
+    # telescoping, a wall face keeping the owner's outflow on the diagonal and returning
+    # the per-face speed the ledger will book.
+    RP = pinch_case(pinch = true)
+    R0, Z0 = 1.5, 0.0
+    @. RP.plasma.ni = 1.0e18 * (1 + ((RP.G.R2D - R0)^2 + (RP.G.Z2D - Z0)^2) / 0.02)
+    # zero outside, as every run has it: 𝐖 at the wall-adjacent cells must come from the
+    # in-wall profile alone (one-sided), not from the drop to the empty band
+    vec(RP.plasma.ni)[setdiff(1:(RP.G.NR * RP.G.NZ), RP.G.nodes.in_wall_nids)] .= 0.0
+    RP.plasma.ne .= RP.plasma.ni
+    update_transport_quantities!(RP)
+
+    groups, faces, dirs = ion_step_operators(RP)
+    P = ion_pinch_divergence(RP, groups[1][1], dirs, faces)
+    @test P.driver == 1
+    @test length(P.v_out) == length(faces)
+    @test any(>(0), P.v_out)
+
+    G = RP.G
+    inw = G.nodes.in_wall_nids
+    outside = setdiff(1:(G.NR * G.NZ), inw)
+    @test nnz(P.divergence[outside, :]) == 0
+
+    # for any in-wall field f, Σ V·(P f) over the plasma is exactly the wall-face outflow
+    f = zeros(G.NR * G.NZ)
+    f[inw] .= 1.0 .+ 0.3 .* vec(G.Z2D)[inw]
+    vol = vec(G.Jacob) .* (2π * G.dR * G.dZ)
+    lhs = sum(vol[inw] .* (P.divergence * f)[inw])
+    rhs = sum(fc.area * P.v_out[k] * f[fc.nid] for (k, fc) in enumerate(faces))
+    @test lhs ≈ rhs rtol = 1.0e-12 atol = 1.0e-12 * sum(abs, vol[inw] .* (P.divergence * f)[inw])
+end
+
+@testitem "A trace species pinched into the wall is booked at the face, at the density the explicit term used" setup = [PinchRun] begin
+    using RAPID2D: IonSpecies
+
+    # Two species written straight into the transport buffers. `set_ion_species!` still
+    # refuses a second species for reasons outside this solve (one γ_2nd, Ni_loss not
+    # split by species, Σ n_s Z_s in the currents); the grouping, the batch solve and the
+    # ledger are written against the list and are what this exercises.
+    function two_species(; pinch)
+        # per-species operators, so the bulk column is exactly independent of the trace
+        RP = pinch_case(pinch = pinch, policy = RAPID2D.PerSpeciesTransport())
+        R0, Z0 = 1.5, 0.0
+        @. RP.plasma.ni = 1.0e18 * (1 + ((RP.G.R2D - R0)^2 + (RP.G.Z2D - Z0)^2) / 0.02)   # trough: 𝐖 outward
+        vec(RP.plasma.ni)[setdiff(1:(RP.G.NR * RP.G.NZ), RP.G.nodes.in_wall_nids)] .= 0.0
+        RP.plasma.ne .= RP.plasma.ni
+        update_transport_quantities!(RP)
+        tp = RP.transport
+        Ng = RP.G.NR * RP.G.NZ
+        bulk = tp.ion_species[1]
+        tp.ion_species = [bulk, IonSpecies(:C6, 6 * bulk.mass, 6)]
+        tp.ion_N = zeros(Ng, 2)
+        tp.ion_S = zeros(Ng, 2)
+        tp.ion_N[RP.G.nodes.in_wall_nids, 2] .= 1.0e15          # a uniform trace inside the wall
+        empty!(tp.ion_solvers)
+        return RP
+    end
+    function advance(RP; nsteps = 10)
+        G = RP.G
+        inw = G.nodes.in_wall_nids
+        vol = vec(G.Jacob) .* (2π * G.dR * G.dZ)
+        RP.transport.ion_N[:, 1] .= vec(RP.plasma.ni)
+        inside(col) = sum(vol[inw] .* RP.transport.ion_N[inw, col])
+        N0 = inside(1) + inside(2)
+        trace0 = inside(2)
+        RP.diagnostics.Ntracker.cum0D_Ni_loss = 0.0
+        for _ in 1:nsteps
+            solve_ion_continuity_equation!(RP)
+        end
+        outside = setdiff(1:(G.NR * G.NZ), inw)
+        return (;
+            lost = N0 - inside(1) - inside(2), lost_trace = trace0 - inside(2),
+            booked = RP.diagnostics.Ntracker.cum0D_Ni_loss, N = RP.transport.ion_N, outside,
+        )
+    end
+
+    on = advance(two_species(pinch = true))
+    off = advance(two_species(pinch = false))
+
+    # the ledger closes over BOTH species with the pinch on: its explicit outflow is
+    # booked at nⁿ, the implicit channels at (1−θ)nⁿ + θnⁿ⁺¹
+    @test on.booked > 0
+    @test on.lost ≈ on.booked rtol = 1.0e-10
+    @test off.lost ≈ off.booked rtol = 1.0e-10
+
+    # the trace was pushed outward along the driver's inverted profile: more of it left
+    @test on.lost_trace > off.lost_trace
+    @test on.N[:, 2] != off.N[:, 2]
+    @test on.N[:, 1] == off.N[:, 1]                # the driver receives nothing
+    @test all(≥(0.0), on.N)
+    @test all(iszero, on.N[on.outside, :])         # neither column is ever written outside the wall
+end
+
 @testitem "The pinch stays out of the factorized operator" setup = [PinchRun] begin
     using RAPID2D: ion_step_operators
 
