@@ -44,8 +44,12 @@ jobs:
         include:
           # nworkers ≈ runner vCPUs. precompile_tasks lower on macOS (7 GB runner swap-storms).
           # Coverage on ubuntu only: concurrent codecov uploads race the merge and undercount.
+          # The coverage job runs sequentially (nworkers 0): a ReTestItems worker writes its
+          # .cov files inside exit(), after its pipes close, and the manager kills a worker
+          # with SIGTERM as soon as it sees the pipe close — so with workers, whichever
+          # worker loses that race uploads nothing for the files it ran (seen as 89 % → 69 %).
           - os: ubuntu-latest
-            nworkers: 4
+            nworkers: 0
             precompile_tasks: 4
             coverage: true
           - os: macos-latest
