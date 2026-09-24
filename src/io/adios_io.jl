@@ -68,13 +68,12 @@ function write_to_adiosBP!(Afile::AdiosFile, data; data_name::AbstractString = "
 end
 
 """
-    write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractString="")
+    write_to_adiosBP!(fileName::AbstractString, data; data_name="", mode=mode_write)
 
-Write a data object to a new ADIOS2 BP file, creating the file with the given filename.
-
-This is a convenience function that creates a new ADIOS2 file, writes the data object,
-and properly closes the file. Supports all data types: primitives (Number, String, Array),
-structs, and arrays of structs.
+Open `fileName`, write `data` and close it again: no writer outlives the call, even when
+the write throws. `mode = mode_write` starts the file over, `mode_append` adds the new
+step(s) after the existing ones (and behaves like `mode_write` on a file that does not
+exist yet). Supports primitives (Number, String, Array), structs, and arrays of structs.
 
 # Arguments
 - `fileName::AbstractString`: Output filename (must end with '.bp')
@@ -102,14 +101,23 @@ write_to_adiosBP!("output/mesh_data.bp", grid; data_name="computational_mesh")
 write_to_adiosBP!("output/snapshots.bp", snapshot_array; data_name="time_series")
 ```
 """
-function write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractString = "")
+function write_to_adiosBP!(
+        fileName::AbstractString, data;
+        data_name::AbstractString = "", mode::ADIOS2.Mode = mode_write
+    )
     @assert !isempty(fileName) "File name cannot be empty"
     @assert endswith(fileName, ".bp") "File name must end with '.bp'"
 
-    # Create new ADIOS2 file handle (overwriting if exists)
-    Afile = adios_open_serial(fileName, mode_write)
-    write_to_adiosBP!(Afile, data; data_name)
-    return close(Afile)
+    # Appending to a file that is not there yet is a first write.
+    mode = (mode === mode_append && !ispath(fileName)) ? mode_write : mode
+    # One open–write–close per call: no writer outlives this function, even on error.
+    Afile = adios_open_serial(fileName, mode)
+    try
+        write_to_adiosBP!(Afile, data; data_name)
+    finally
+        close(Afile)
+    end
+    return nothing
 end
 
 

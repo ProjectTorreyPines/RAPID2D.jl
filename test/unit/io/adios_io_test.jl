@@ -288,3 +288,25 @@
         end
     end
 end
+
+@testitem "write_to_adiosBP!: mode_append adds one step per call, in order" begin
+    if !Sys.iswindows()
+        using RAPID2D: mode_write, mode_append   # ADIOS2 is not a direct test dependency
+        tmp = mktempdir(; cleanup = false)
+        bp = joinpath(tmp, "steps.bp")
+        for k in 1:3
+            s = Snapshot0D{Float64}()
+            s.step = k
+            s.ne = 1.0e15 * k
+            write_to_adiosBP!(bp, [s]; mode = k == 1 ? mode_write : mode_append)
+        end
+        snaps = adiosBP_to_snap0D(bp)
+        @test length(snaps) == 3
+        @test [s.step for s in snaps] == [1, 2, 3]
+        @test [s.ne for s in snaps] ≈ [1.0e15, 2.0e15, 3.0e15]
+        # Appending to a path that is not there yet is a first write.
+        bp2 = joinpath(tmp, "fresh.bp")
+        write_to_adiosBP!(bp2, [snaps[1]]; mode = mode_append)
+        @test length(adiosBP_to_snap0D(bp2)) == 1
+    end
+end
