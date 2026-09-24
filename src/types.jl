@@ -593,12 +593,6 @@ Fields include various matrices for solving different parts of the model.
     # Ion convection has no cached operator: `ion_step_operators` builds the face-flux
     # divergence from `uiR`/`uiZ` every step (`convective_wall_operator`).
 
-    # Impurity pinch, ∇⋅(n 𝐖) with 𝐖 = 𝐃∇n_i/(Z_i n_i). ONE operator for every
-    # species: the species enters only as the scalar Z_z multiplying 𝐖, and since
-    # Z_z > 0 it cannot flip an upwind direction either, so the coefficients are
-    # shared exactly and each species costs one sparse matvec.
-    ∇𝐮_pinch::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
-
     # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
     # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
 

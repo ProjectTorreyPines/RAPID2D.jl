@@ -72,3 +72,23 @@ end
     @test d[deep] ≈ calculate_divergence(G, uR, uZ)[deep] rtol = 1.0e-10
     @test all(x -> isapprox(x, 5.0e3; rtol = 1.0e-8), d[inw])
 end
+
+@testitem "wall gradient: one-sided at the wall, reads nothing outside, exact for a linear field" begin
+    using RAPID2D: wall_gradient
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    inw = G.nodes.in_wall_nids
+    # linear inside the wall, poison outside: a stencil that touched the band would show it
+    f = @. 3.0 + 2.0e3 * G.R2D - 7.0e2 * G.Z2D
+    f[G.nodes.on_out_wall_nids] .= NaN
+    gR, gZ = wall_gradient(G, f)
+    @test all(iszero, gR[G.nodes.on_out_wall_nids])
+    @test all(iszero, gZ[G.nodes.on_out_wall_nids])
+    @test all(x -> isapprox(x, 2.0e3; rtol = 1.0e-10), gR[inw])
+    @test all(x -> isapprox(x, -7.0e2; rtol = 1.0e-10), gZ[inw])
+end

@@ -49,3 +49,29 @@ function wall_divergence(
     end
     return div
 end
+
+"""
+    wall_gradient(G, f) -> (∂f/∂R, ∂f/∂Z)
+
+`∇f` on in-wall nodes, central where both neighbours are in-wall and one-sided where one is
+not; zero on on/out-wall nodes. Never reads the band outside the wall — a central difference
+there sees the empty band as a wall-ward drop and turns any coefficient built from it (the
+ion pinch velocity) inward at every wall-adjacent cell.
+"""
+function wall_gradient(G::GridGeometry{FT}, f::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    NR, NZ = G.NR, G.NZ
+    gR = zeros(FT, NR, NZ)
+    gZ = zeros(FT, NR, NZ)
+    for j in 1:NZ, i in 1:NR
+        is_in_wall(G, i, j) || continue
+        ip = is_in_wall(G, i + 1, j) ? i + 1 : i
+        im = is_in_wall(G, i - 1, j) ? i - 1 : i
+        dR = (ip - im) * G.dR
+        gR[i, j] = dR > 0 ? (f[ip, j] - f[im, j]) / dR : zero(FT)
+        jp = is_in_wall(G, i, j + 1) ? j + 1 : j
+        jm = is_in_wall(G, i, j - 1) ? j - 1 : j
+        dZ = (jp - jm) * G.dZ
+        gZ[i, j] = dZ > 0 ? (f[i, jp] - f[i, jm]) / dZ : zero(FT)
+    end
+    return gR, gZ
+end
