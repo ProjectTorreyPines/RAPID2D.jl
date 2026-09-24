@@ -1,4 +1,4 @@
-# u∥ and Te transport under `primitive_advection = :mass_flux`.
+# u∥ and Te transport: the in-wall operators.
 #
 # Both are primitive (per-particle) variables: they are carried by the electrons that move,
 # so their advection is derived from the same face mass flux the continuity equation uses,
@@ -25,12 +25,6 @@ function electron_primitive_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     D_op = build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
     div_u = wall_divergence(G, pla.ueR, pla.ueZ)
     return (U_op = U_op, D_op = D_op, div_u = div_u)
-end
-
-function validate_primitive_advection_flag(flags)
-    flags.primitive_advection in (:nodal, :mass_flux) ||
-        throw(ArgumentError("primitive_advection must be :nodal or :mass_flux, got :$(flags.primitive_advection)"))
-    return nothing
 end
 
 "Apply `A` (a sparse matrix) to a 2-D field and return a 2-D field."

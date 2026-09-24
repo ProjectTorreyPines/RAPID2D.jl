@@ -29,7 +29,6 @@ export update_ue_para!,
     calculate_para_grad_of_scalar_F,
     calculate_grad_of_scalar_F,
     calculate_electron_acceleration_by_pressure,
-    calculate_electron_acceleration_by_convection,
     update_uMHD_by_global_JxB_force!,
     combine_Au_and_ΔGS_sparse_matrices,
     solve_combined_momentum_Ampere_equations_with_coils!
@@ -70,8 +69,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         θ_op = RP.flags.θ_imp.decay
         θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
 
-        mass_flux = RP.flags.primitive_advection === :mass_flux
-        pops = mass_flux ? electron_primitive_operators(RP) : nothing
+        # (u·∇)u∥ from the face mass flux and the reflective in-wall viscosity: rows on
+        # in-wall nodes only, nothing read outside the wall (`primitive_transport.jl`).
+        pops = electron_primitive_operators(RP)
 
         # Rue_ei, part 1 (uⁿ). A LEDGER of the exchange over the step, so it must use
         # the quadrature the update actually performed — θ(z) under ExpRB.
@@ -89,13 +89,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # #2: Advection term (1-θ_op)*[-(𝐮⋅∇)*ue_para]. θ_op, not θu: the fitted
             # weight belongs to the friction's eigenvalue, not to a nonlocal operator.
             if RP.flags.Include_ud_convec_term
-                if mass_flux
-                    accel_para_tilde .+= (one_FT - θ_op) * (-apply_op(pops.U_op, pla.ue_para))
-                    OP.A_LHS = OP.A_LHS + θ_op * dt * pops.U_op
-                else
-                    accel_para_tilde .+= (one_FT - θ_op) * (-OP.𝐮∇ * pla.ue_para)
-                    @. OP.A_LHS += θ_op * dt * OP.𝐮∇
-                end
+                accel_para_tilde .+= (one_FT - θ_op) * (-apply_op(pops.U_op, pla.ue_para))
+                OP.A_LHS = OP.A_LHS + θ_op * dt * pops.U_op
             end
 
             # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
@@ -117,13 +112,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
             if RP.flags.Include_ud_diffu_term
-                if mass_flux
-                    accel_para_tilde .+= (one_FT - θ_op) * apply_op(pops.D_op, pla.ue_para)
-                    OP.A_LHS = OP.A_LHS - θ_op * dt * pops.D_op
-                else
-                    accel_para_tilde .+= (one_FT - θ_op) * (OP.∇𝐃∇ * pla.ue_para)
-                    @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
-                end
+                accel_para_tilde .+= (one_FT - θ_op) * apply_op(pops.D_op, pla.ue_para)
+                OP.A_LHS = OP.A_LHS - θ_op * dt * pops.D_op
             end
 
             # bern(−z) formed as bern(z) + z, not the algebraically equal
@@ -158,8 +148,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
 
             if RP.flags.Include_ud_convec_term
-                accel_by_grad_ud = mass_flux ? -apply_op(pops.U_op, pla.ue_para) :
-                    calculate_electron_acceleration_by_convection(RP)
+                accel_by_grad_ud = -apply_op(pops.U_op, pla.ue_para)
                 @. pla.ue_para += inv_factor * dt * (accel_by_grad_ud)
             end
         end
@@ -321,60 +310,45 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # Apply time integration method based on flag
         if RP.flags.Implicit
-            if RP.flags.evolve_Te_inWall_only
-                @warn "Implicit method for Te_evolve_inWall_only not implemented yet" maxlog = 1
+            @. OP.A_LHS = OP.II
+
+            ePowers_tilde = copy(pla.ePowers.tot)
+
+            # Calculate RHS
+            # ePowers_tilde = ePowers already known at crruent time t
+            # Note: diffu and conv will have (1-θimp) contribution
+            # ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
+
+            # Calculate LHS from the in-wall operators (`primitive_transport.jl`)
+            pops = electron_primitive_operators(RP)
+            if RP.flags.Include_Te_diffu_term
+                # P_diffu = 1.5*∇·D∇Te
+                @. ePowers_tilde -= θimp * pla.ePowers.diffu
+                OP.A_LHS = OP.A_LHS - two_thirds_FT * FT(1.5) * (dt * θimp) * pops.D_op
+            end
+
+            if RP.flags.Include_Te_convec_term
+                @. ePowers_tilde -= θimp * pla.ePowers.conv
+                # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮)
+                OP.A_LHS = OP.A_LHS - two_thirds_FT * (dt * θimp) * (-FT(1.5) * pops.U_op - spdiagm(vec(pops.div_u)))
+            end
+
+            # LHS written as a deviation from the identity, so the sparsity
+            # pattern — and the cached symbolic factorization — is untouched.
+            # The source needs no bern: with S = (2/3e)P⁰ − λTₑⁿ, bern(−z) = bern(z) + z
+            # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by bern.
+            if atomic_is_exprb
+                OP.A_LHS += @views spdiagm((bern_atomic .- one(FT))[:])
+                OP.RHS .= bern_atomic .* pla.Te_eV +
+                    two_thirds_FT * (dt * ePowers_tilde / ee)
             else
-                @. OP.A_LHS = OP.II
+                OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
+            end
 
-                ePowers_tilde = copy(pla.ePowers.tot)
-
-                # Calculate RHS
-                # ePowers_tilde = ePowers already known at crruent time t
-                # Note: diffu and conv will have (1-θimp) contribution
-                # ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
-
-                # Calculate LHS
-                mass_flux = RP.flags.primitive_advection === :mass_flux
-                pops = mass_flux ? electron_primitive_operators(RP) : nothing
-                if RP.flags.Include_Te_diffu_term
-                    # P_diffu = 1.5*∇𝐃∇*Te
-                    @. ePowers_tilde -= θimp * pla.ePowers.diffu
-                    if mass_flux
-                        OP.A_LHS = OP.A_LHS - two_thirds_FT * FT(1.5) * (dt * θimp) * pops.D_op
-                    else
-                        @. OP.A_LHS -= two_thirds_FT * FT(1.5) * (dt * θimp * OP.∇𝐃∇)
-                    end
-                end
-
-                if RP.flags.Include_Te_convec_term
-                    @. ePowers_tilde -= θimp * pla.ePowers.conv
-                    if mass_flux
-                        # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮)
-                        OP.A_LHS = OP.A_LHS - two_thirds_FT * (dt * θimp) * (-FT(1.5) * pops.U_op - spdiagm(vec(pops.div_u)))
-                    else
-                        # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)
-                        div_u = calculate_divergence(RP.G, pla.ueR, pla.ueZ)
-                        OP.A_LHS .-= two_thirds_FT * (@views dt * θimp * (-FT(1.5) * OP.∇𝐮 + spdiagm(FT(0.5) * div_u[:])))
-                    end
-                end
-
-                # LHS written as a deviation from the identity, so the sparsity
-                # pattern — and the cached symbolic factorization — is untouched.
-                # The source needs no bern: with S = (2/3e)P⁰ − λTₑⁿ, bern(−z) = bern(z) + z
-                # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by bern.
-                if atomic_is_exprb
-                    OP.A_LHS += @views spdiagm((bern_atomic .- one(FT))[:])
-                    OP.RHS .= bern_atomic .* pla.Te_eV +
-                        two_thirds_FT * (dt * ePowers_tilde / ee)
-                else
-                    OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
-                end
-
-                # Solve the linear system (cached factorization; pattern is step-stable)
-                @timeit RAPID_TIMER "Te_eV LinearSolve" begin
-                    factorize!(OP.Te_solver, OP.A_LHS.matrix)
-                    solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
-                end
+            # Solve the linear system (cached factorization; pattern is step-stable)
+            @timeit RAPID_TIMER "Te_eV LinearSolve" begin
+                factorize!(OP.Te_solver, OP.A_LHS.matrix)
+                solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
             end
         elseif atomic_is_exprb
             # Forward Euler with bern as a divisor on the increment.
@@ -515,7 +489,6 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # The elastic recoil no longer needs a separate neutral mass here: `P_en_ela`
         # already carries 2mₑ/M internally (see the ela block).
         m_i = bulk_ion_mass(RP)
-        OP = RP.operators
 
         # Alias common objects for readability
         pla = RP.plasma
@@ -536,59 +509,32 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
 
-        mass_flux = RP.flags.primitive_advection === :mass_flux
-        pops = mass_flux ? electron_primitive_operators(RP) : nothing
+        # The in-wall operators (`primitive_transport.jl`): rows on in-wall nodes only, so the
+        # excluded band is never read.
+        pops = electron_primitive_operators(RP)
 
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
-            # P_diffu = 1.5*∇𝐃∇*Te
-            if mass_flux
-                ePowers.diffu .= ee * FT(1.5) * apply_op(pops.D_op, pla.Te_eV)
-            elseif RP.flags.Implicit
-                ePowers.diffu .= ee * FT(1.5) * (OP.∇𝐃∇ * pla.Te_eV)
-            else
-                ePowers.diffu .= ee * FT(1.5) * compute_∇𝐃∇f_directly(RP, RP.plasma.Te_eV)
-            end
+            # P_diffu = 1.5*∇·D∇Te
+            ePowers.diffu .= ee * FT(1.5) * apply_op(pops.D_op, pla.Te_eV)
         end
 
         # If convection term is included in temperature equation
         if RP.flags.Include_Te_convec_term
             # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)  =  -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)
-            if mass_flux
-                ePowers.conv .= ee * (-FT(1.5) * apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u)
-            elseif RP.flags.Implicit
-                ePowers.conv .= ee * (
-                    -FT(1.5) * (OP.∇𝐮 * pla.Te_eV)
-                        .+ FT(0.5) * pla.Te_eV .* calculate_divergence(RP.G, pla.ueR, pla.ueZ)
-                )
-            else
-                ePowers.conv .= ee * (
-                    -FT(1.5) * compute_∇f𝐮_directly(RP, pla.Te_eV)
-                        .+ FT(0.5) * pla.Te_eV .* calculate_divergence(RP.G, pla.ueR, pla.ueZ)
-                )
-            end
+            ePowers.conv .= ee * (-FT(1.5) * apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u)
         end
 
         if RP.flags.Include_heat_flux_term
             # NOTE: Assumption: 𝐪 ≈ p*𝐮 (heat flux is about in the order of pressure*velocity)
             # Pcond = Pheat = -∇⋅(Te * 𝐮) - Te*𝐮⋅∇(ln_n)
-            if mass_flux
-                # = −(𝐮⋅∇)Te − Te ∇⋅𝐮 − Te (𝐮⋅∇) ln n, every term from the in-wall operators, so the
-                # excluded band (where ne = 0 and log ne = −∞) is never read. The floor keeps
-                # log finite on empty rows; those rows contribute nothing anyway.
-                ln_n = log.(max.(pla.ne, one(FT)))
-                ePowers.heat .= ee * (
-                    -apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u
-                        .- pla.Te_eV .* apply_op(pops.U_op, ln_n)
-                )
-            else
-                # `.*`: this was a matrix product, which threw a DimensionMismatch on any
-                # non-square grid — the term had never been runnable on the nodal path.
-                ePowers.heat .= ee * (
-                    - compute_∇f𝐮_directly(RP, pla.Te_eV)
-                        .- pla.Te_eV .* compute_𝐮∇f_directly(RP, log.(pla.ne))
-                )
-            end
+            #       = −(𝐮⋅∇)Te − Te ∇⋅𝐮 − Te (𝐮⋅∇) ln n, every term from the in-wall operators.
+            # The floor keeps log finite on empty rows (ne = 0); those rows contribute nothing.
+            ln_n = log.(max.(pla.ne, one(FT)))
+            ePowers.heat .= ee * (
+                -apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u
+                    .- pla.Te_eV .* apply_op(pops.U_op, ln_n)
+            )
         end
 
 
@@ -1191,9 +1137,6 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
 
         # The wall-aware operator: rows on in-wall nodes only, a Robin debit on the diagonal,
         # and the loss booked per face from the same arithmetic the operator used.
-        # Validated here, on the path every step takes, so a misspelt symbol cannot fall
-        # through `=== :mass_flux` checks and silently run the nodal operators.
-        validate_primitive_advection_flag(RP.flags)
         faces_e = wall_faces(RP.G)
         # Diffusive Robin part only when diffusion is on; otherwise the ledger coefficient
         # starts at zero and only convection (below) can add to it.
@@ -1734,44 +1677,6 @@ end
 
 
 """
-    calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
-
-Calculate the electron acceleration due to convection
-
-This function computes the convection term [-(ud⋅∇)ud] in the electron momentum equation.
-It uses a smoothed parallel electron velocity field to improve numerical stability.
-
-# Arguments
-- `RP::RAPID{FT}`: RAPID simulation object containing plasma and grid data
-- `num_SM::Int=0`: Number of smoothing iterations to apply to the velocity field
-- `flag_upwind::Bool=RP.flags.upwind`: Whether to use upwind differencing for gradient calculation
-
-# Returns
-- Electron acceleration due to convection term
-
-# Implementation Details
-1. Smooths the parallel electron velocity field using the Jacobian-weighted smoothing
-2. Calculates the gradient of the smoothed velocity field
-3. Computes the convection term as -(ueR*∇ud_R + ueZ*∇ud_Z)
-"""
-function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int = 2, flag_upwind::Bool = RP.flags.upwind) where {FT <: AbstractFloat}
-
-    # Smooth the density field to reduce numerical noise (skip if num_SM is 0)
-    ue_para_SM = smooth_data_2D(RP.plasma.ue_para; num_SM, weighting = RP.G.Jacob)
-
-    ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, ue_para_SM; upwind = flag_upwind)
-    accel_by_convection = @. -(RP.plasma.ueR * ∇ud_R + RP.plasma.ueZ * ∇ud_Z)
-
-    if RP.flags.limit_acceleration.state
-        factor = RP.flags.limit_acceleration.factor
-        min_max_accel = factor .* extrema(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ./ RP.dt
-        clamp!(accel_by_convection, min_max_accel...)
-    end
-
-    return accel_by_convection
-end
-
-"""
     solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_self::Bool=true) where {FT<:AbstractFloat}
 
 Solve Ampère's equation (Grad-Shafranov equation) to update self-consistent magnetic fields.
@@ -1957,9 +1862,11 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
         accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
     end
 
-    # convection contribution:  (1-θimp)*[-(𝐮⋅∇)u∥]
-    if RP.flags.Include_ud_convec_term
-        accel_para_tilde .+= (one(FT) - θimp) * calculate_electron_acceleration_by_convection(RP)
+    # convection: (1-θimp)*[-(𝐮⋅∇)u∥] explicitly here, θimp*(𝐮⋅∇) inside Au below — both from
+    # the same in-wall operator (`primitive_transport.jl`)
+    U_op = flags.Include_ud_convec_term ? electron_primitive_operators(RP).U_op : nothing
+    if flags.Include_ud_convec_term
+        accel_para_tilde .+= (one(FT) - θimp) * (-apply_op(U_op, pla.ue_para))
     end
 
     # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
@@ -1984,11 +1891,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
     Au .= OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
     if flags.Include_ud_convec_term
-        if RP.flags.primitive_advection === :mass_flux
-            Au.matrix = Au.matrix + dt * θimp * electron_primitive_operators(RP).U_op
-        else
-            Au .+= dt * θimp * OP.𝐮∇
-        end
+        Au.matrix = Au.matrix + dt * θimp * U_op
     end
     Au_X_ui_para = Au * pla.ui_para
 
@@ -2312,9 +2215,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
         end
 
-        # convection contribution:  (1-θ)*[-(𝐮⋅∇)u∥]
-        if RP.flags.Include_ud_convec_term
-            accel_para_tilde .+= (one(FT) - θimp) * calculate_electron_acceleration_by_convection(RP)
+        # convection: (1-θ)*[-(𝐮⋅∇)u∥] explicitly here, θ*(𝐮⋅∇) inside A_u below — both from
+        # the same in-wall operator (`primitive_transport.jl`)
+        U_op = flags.Include_ud_convec_term ? electron_primitive_operators(RP).U_op : nothing
+        if flags.Include_ud_convec_term
+            accel_para_tilde .+= (one(FT) - θimp) * (-apply_op(U_op, pla.ue_para))
         end
 
         # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
@@ -2335,10 +2240,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         A_u = OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
         if flags.Include_ud_convec_term
-            A_u += dt * θimp * (
-                RP.flags.primitive_advection === :mass_flux ?
-                    electron_primitive_operators(RP).U_op : OP.𝐮∇.matrix
-            )
+            A_u += dt * θimp * U_op
         end
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)

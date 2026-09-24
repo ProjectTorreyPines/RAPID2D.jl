@@ -1095,10 +1095,6 @@ Contains boolean flags that control various aspects of the simulation.
     evolve_ud_inWall_only::Bool = false       # Only evolve drift velocity inside wall
     evolve_Te_inWall_only::Bool = false       # Only evolve Te inside wall
     Damp_Transp_outWall::Bool = true          # Damp transport outside wall
-    # How u∥ and Te are advected/diffused near the wall: :nodal = whole-grid nodal operators
-    # with the damped out-wall band (legacy); :mass_flux = (u·∇)f derived from the face mass
-    # flux + reflective in-wall diffusion, nothing read or damped outside the wall (PR2b).
-    primitive_advection::Symbol = :mass_flux
 
     # Artificial limiters to avoid numerical instabilities.
     #

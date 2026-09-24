@@ -1,10 +1,9 @@
-# u∥ and Te under `primitive_advection = :mass_flux`: advected by the mass flux, diffused by a
-# reflective in-wall operator, never damped through an out-wall band. A uniform state with no
-# drive must stay uniform through a step, wall cells included — the damped band used to pull
-# both down there. PLAN_wall-flux-channels.md PR2b Task 2b.2.
+# u∥ and Te at the wall: advected by the mass flux, diffused by a reflective in-wall operator,
+# never damped through an out-wall band. A uniform state with no drive must stay uniform
+# through a step, wall cells included. internal/docs/src/notes/design/wall-flux-channels.md §2.5–2.6.
 
 @testsnippet PrimitiveWallDriver begin
-    function primitive_one_step(; primitive_advection, Implicit = true, heat_flux = false, albedo = 0.0, convec = true)
+    function primitive_one_step(; Implicit = true, upwind = true, heat_flux = false, albedo = 0.0, convec = true)
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
             dt = 2.0e-6, t_end_s = 4.0e-6, snap0D_Δt_s = 4.0e-6, snap2D_Δt_s = 4.0e-6,
@@ -13,7 +12,7 @@
         config.Output_path = mktempdir()
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
-            primitive_advection = primitive_advection, Implicit = Implicit,
+            Implicit = Implicit, upwind = upwind,
             diffu = true, convec = convec, src = false, Atomic_Collision = false, Coulomb_Collision = false,
             mean_ExB = false, turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false,
             Ampere = false, Te_evolve = true, ud_evolve = true, Ti_evolve = false, Gas_evolve = false,
@@ -38,13 +37,21 @@
     end
 end
 
-@testitem "primitive_advection flag: :mass_flux default, :nodal accepted, anything else rejected" begin
-    @test SimulationFlags{Float64}().primitive_advection === :mass_flux
-    @test SimulationFlags{Float64}(primitive_advection = :nodal).primitive_advection === :nodal
+@testitem "primitive transport: one path, no flag; upwind = false keeps the interior central and the wall faces upwind" setup = [PrimitiveWallDriver] begin
+    @test !(:primitive_advection in fieldnames(SimulationFlags{Float64}))
+    @test_throws MethodError SimulationFlags{Float64}(primitive_advection = :nodal)
+    RP = primitive_one_step(; upwind = false)
+    @test all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.plasma.Te_eV)
+    # a uniform state stays uniform at the wall under the central interior scheme too
+    inw = RP.G.nodes.in_wall_nids
+    Te = RP.plasma.Te_eV[inw]
+    @test maximum(Te) - minimum(Te) < 1.0e-9 * maximum(Te)
+    u = RP.plasma.ue_para[inw]
+    @test (maximum(u) - minimum(u)) < 1.0e-9 * abs(minimum(u))
 end
 
-@testitem "u∥ and Te stay uniform through a step at the wall under :mass_flux" setup = [PrimitiveWallDriver] begin
-    RP = primitive_one_step(; primitive_advection = :mass_flux)
+@testitem "u∥ and Te stay uniform through a step at the wall" setup = [PrimitiveWallDriver] begin
+    RP = primitive_one_step()
     inw = RP.G.nodes.in_wall_nids
     @test all(iszero, RP.fields.E_para_tot[inw])
     # u∥ carries a uniform 2.5e-8 relative decay from the residual collision frequencies the
@@ -56,17 +63,9 @@ end
     @test all(isfinite, RP.plasma.Te_eV) && all(isfinite, RP.plasma.ue_para)
 end
 
-@testitem "the legacy :nodal path does NOT keep a uniform state uniform at the wall (documents the defect)" setup = [PrimitiveWallDriver] begin
-    RP = primitive_one_step(; primitive_advection = :nodal)
-    near = RP.G.nodes.inWall_but_nearWall_nids
-    # the damped out-wall band leaks in through the whole-grid operators
-    @test !all(x -> isapprox(x, 12.0; rtol = 1.0e-10), RP.plasma.Te_eV[near]) ||
-        !all(x -> isapprox(x, -1.0e6; rtol = 1.0e-10), RP.plasma.ue_para[near])
-end
-
-@testitem "Te diffusion is reflective under :mass_flux: Σ vol·(∇·D∇Te) over in-wall nodes vanishes" setup = [PrimitiveWallDriver] begin
+@testitem "Te diffusion is reflective: Σ vol·(∇·D∇Te) over in-wall nodes vanishes" setup = [PrimitiveWallDriver] begin
     using RAPID2D: electron_primitive_operators
-    RP = primitive_one_step(; primitive_advection = :mass_flux)
+    RP = primitive_one_step()
     G = RP.G
     inw = G.nodes.in_wall_nids
     # a non-uniform Te so the operator actually does something
@@ -79,18 +78,18 @@ end
     @test all(iszero, LTe[G.nodes.on_out_wall_nids])
 end
 
-@testitem "heat-flux term under :mass_flux reads nothing outside the wall" setup = [PrimitiveWallDriver] begin
-    # The legacy form differentiates log(ne) on the whole grid, and ne is zero on the excluded
+@testitem "the heat-flux term reads nothing outside the wall" setup = [PrimitiveWallDriver] begin
+    # The retired form differentiated log(ne) on the whole grid, and ne is zero on the excluded
     # band. Freeze the density (convec = false, mirror wall) so it stays uniform: then every
     # piece of −∇·(T u) − T u·∇ln n vanishes on the in-wall operators and Te must stay uniform.
     # Anything else is the band being read.
-    RP = primitive_one_step(; primitive_advection = :mass_flux, heat_flux = true, albedo = 1.0, convec = false)
+    RP = primitive_one_step(; heat_flux = true, albedo = 1.0, convec = false)
     inw = RP.G.nodes.in_wall_nids
     @test all(isfinite, RP.plasma.Te_eV[inw])
     @test all(x -> isapprox(x, 12.0; rtol = 1.0e-10), RP.plasma.Te_eV[inw])
     # With convection and an absorbing wall the density develops a gradient at the wall and the
     # term responds to it: a finite, small, physical response, not a NaN
-    RP0 = primitive_one_step(; primitive_advection = :mass_flux, heat_flux = true)
+    RP0 = primitive_one_step(; heat_flux = true)
     Te = RP0.plasma.Te_eV[RP0.G.nodes.in_wall_nids]
     @test all(isfinite, Te)
     @test all(x -> abs(x - 12.0) < 0.5, Te)
