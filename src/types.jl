@@ -1099,7 +1099,6 @@ Contains boolean flags that control various aspects of the simulation.
     # with the damped out-wall band (legacy); :mass_flux = (u·∇)f derived from the face mass
     # flux + reflective in-wall diffusion, nothing read or damped outside the wall (PR2b).
     primitive_advection::Symbol = :mass_flux
-    electron_wall::Symbol = :robin            # :robin (wall-aware operator, face ledger) | :zeroing (legacy: ne[on/out] = 0 each step)
 
     # Artificial limiters to avoid numerical instabilities.
     #

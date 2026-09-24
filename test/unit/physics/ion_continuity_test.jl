@@ -528,16 +528,13 @@ end
     @test all(==(0.0), vec(RP.plasma.ni)[outside])
 end
 
-@testitem "Ionization feeds ions on in-wall rows only: the ion src/loss identity closes under the legacy electron wall" setup = [IonRun] begin
-    # Under `electron_wall = :zeroing` the whole-grid electron operators push `ne` onto
-    # the on/out-wall band inside the solve (≈ 5e12 m⁻³ here against 1e15 inside). The
-    # ion equation has no rows outside the wall, so a source deposited on the band would
-    # only sit there and be discarded, unbooked, by the band pass. It never is: the
-    # published ionization rates are zero on the band by construction (`update_RRCs!`
-    # clears ν_en_iz on `on_out_wall_nids`), so the count the ion source and `Ni_src`
-    # share is in-wall only — and Ni_src − Ni_loss accounts for ΔNi exactly.
+@testitem "Ionization on: Ni_src − Ni_loss accounts for ΔNi through the workflow" setup = [IonRun] begin
+    # The ion equation has no rows outside the wall, so a source deposited on the band
+    # would only sit there, unbooked. It never is: the published ionization rates are zero
+    # on the band by construction (`update_RRCs!` clears ν_en_iz on `on_out_wall_nids`), so
+    # the count the ion source and `Ni_src` share is in-wall only — and Ni_src − Ni_loss
+    # accounts for ΔNi exactly.
     RP = ion_case(; ion_wall_albedo = 0.0)
-    RP.flags.electron_wall = :zeroing
     RP.flags.src = true
     RP.flags.Atomic_Collision = false
     RP.flags.Coulomb_Collision = false

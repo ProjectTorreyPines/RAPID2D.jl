@@ -1189,31 +1189,22 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # θ (`θ_imp.transport` vs `θ_imp.growth`) and so cannot share a sum.
         fill!(op.RHS, zero(FT))
 
-        # `:robin`: the wall-aware operator (rows on in-wall nodes only, Robin debit on the
-        # diagonal) replaces the whole-grid `∇𝐃∇`, and the loss is booked per face from the
-        # same arithmetic the operator used. `:zeroing` is the legacy path.
-        RP.flags.electron_wall in (:zeroing, :robin) ||
-            throw(ArgumentError("electron_wall must be :zeroing or :robin, got :$(RP.flags.electron_wall)"))
+        # The wall-aware operator: rows on in-wall nodes only, a Robin debit on the diagonal,
+        # and the loss booked per face from the same arithmetic the operator used.
         # Validated here, on the path every step takes, so a misspelt symbol cannot fall
         # through `=== :mass_flux` checks and silently run the nodal operators.
         validate_primitive_advection_flag(RP.flags)
-        robin = RP.flags.electron_wall === :robin
-        faces_e = robin ? wall_faces(RP.G) : nothing
+        faces_e = wall_faces(RP.G)
         # Diffusive Robin part only when diffusion is on; otherwise the ledger coefficient
         # starts at zero and only convection (below) can add to it.
-        A_e, v_e = if robin && RP.flags.diffu
-            electron_transport_operator(RP, faces_e)
-        elseif robin
+        A_e, v_e = RP.flags.diffu ? electron_transport_operator(RP, faces_e) :
             (nothing, zeros(FT, length(faces_e)))
-        else
-            (nothing, nothing)
-        end
-        # Under `:robin` convection is the face-flux operator on the same faces: its
-        # outflow term is a diagonal debit like the Robin one, so the two speeds add into
-        # one ledger coefficient per face. The albedo scales that outflow the same way it
-        # scales the Robin speed (`convective_wall_operator`).
+        # Convection is the face-flux operator on the same faces: its outflow term is a
+        # diagonal debit like the Robin one, so the two speeds add into one ledger
+        # coefficient per face. The albedo scales that outflow the same way it scales the
+        # Robin speed (`convective_wall_operator`).
         C_e = nothing
-        if robin && RP.flags.convec
+        if RP.flags.convec
             C_e, v_conv = convective_wall_operator(
                 RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP); upwind = RP.flags.upwind
             )
@@ -1230,19 +1221,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
 
         if RP.flags.diffu
             # ∇⋅𝐃⋅∇n
-            if robin
-                op.RHS .+= reshape(A_e * vec(pla.ne), size(pla.ne))
-            else
-                op.RHS .+= compute_∇𝐃∇f_directly(RP, pla.ne)
-            end
+            op.RHS .+= reshape(A_e * vec(pla.ne), size(pla.ne))
         end
         if RP.flags.convec
             # -∇⋅(n 𝐮)
-            if robin
-                op.RHS .-= reshape(C_e * vec(pla.ne), size(pla.ne))
-            else
-                op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
-            end
+            op.RHS .-= reshape(C_e * vec(pla.ne), size(pla.ne))
         end
 
         # A GROWTH eigenvalue, z = +ν_iz_tot·Δt (BOTH electron-producing channels —
@@ -1301,21 +1284,14 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # off mid-way kept ionizing through a stale ν_en_iz_tot. The ion path
             # honours the flags in full, which is how the mismatch showed up.
             #
-            # Gated by ZEROING the weight rather than by branching, so this stays
-            # the single fused broadcast it has always been. Four statements cost
-            # 26 extra Ng-sized sparse temporaries per step at 100×200; they also
-            # would have made the sparsity pattern flag-dependent, and the cached
-            # factorization wants it stable.
+            # Gated by ZEROING the weight rather than by branching, so the assembly is
+            # one expression; an operator that is off enters as an empty matrix.
             θ_d = RP.flags.diffu ? θ_tr : zero(FT)
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
             θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
-            if robin
-                diff_e = isnothing(A_e) ? spzeros(FT, size(op.II)...) : A_e
-                conv_e = isnothing(C_e) ? spzeros(FT, size(op.II)...) : C_e
-                op.A_LHS.matrix = op.II - dt * (θ_d * diff_e - θ_c * conv_e + θ_s * op.ν_en_iz_tot.matrix)
-            else
-                @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz_tot)
-            end
+            diff_e = isnothing(A_e) ? spzeros(FT, size(op.II)...) : A_e
+            conv_e = isnothing(C_e) ? spzeros(FT, size(op.II)...) : C_e
+            op.A_LHS.matrix = op.II - dt * (θ_d * diff_e - θ_c * conv_e + θ_s * op.ν_en_iz_tot.matrix)
             if fit_growth
                 # bern(z) on the diagonal, as a deviation from the identity so the
                 # pattern is untouched. This is the side that cancels on a growth
@@ -1329,19 +1305,19 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 factorize!(op.ne_solver, op.A_LHS.matrix)
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
-            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, θ_tr)
+            book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, θ_tr)
         elseif fit_growth
             # Same two coefficients as the assembled path: no matrix is not the same
             # as no fit. `op.RHS` still holds transport, which is not part of λ and
             # rides the increment like any other frozen source.
             @. pla.ne = ((bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / bern_growth
-            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
+            book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
         else
             if RP.flags.src
                 @. op.RHS += pla.ne * pla.ν_en_iz_tot
             end
             @. RP.plasma.ne += dt * op.RHS
-            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
+            book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
         end
 
         # Publish how many ionizations this step made, from the θ and the nⁿ/nⁿ⁺¹
@@ -1360,9 +1336,8 @@ Apply boundary conditions for electrons outside the wall and track particle sour
 
 This function performs three main operations:
 1. **Track ionization sources**: Calculates electrons generated by ionization and adds to cumulative tracking
-2. **Apply wall boundary conditions**:
-- Sets electron density to zero outside the wall
-- Sets electron temperature to room temperature outside the wall
+2. **Keep the band outside the wall at zero**, without booking: the face ledger already
+   holds what left
 3. **Correct negative densities**: Optionally removes negative densities and counts them as losses
 
 # Arguments
@@ -1385,11 +1360,6 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         Δn_e = net_electron_count(check_reaction_counts(RP))
         Ne_iz = @. Δn_e * RP.G.inVol2D
 
-        # Estimate electron loss outside the wall
-        # TODO: How to accurately define the volume outside/on the wall?
-        on_out_wall_nids = RP.G.nodes.on_out_wall_nids
-        Ne_loss = @. RP.plasma.ne[on_out_wall_nids] * FT(2.0 * pi) * RP.G.Jacob[on_out_wall_nids] * RP.G.dR * RP.G.dZ
-
         # Track changes in number of electrons
         Ntracker = RP.diagnostics.Ntracker
 
@@ -1407,24 +1377,10 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             @. Ntracker.cum2D_Ni_src += Ne_iz
         end
 
-        # `:zeroing` books what the whole-grid operators pushed into the on/out-wall band.
-        # Under `:robin` neither operator writes there (rows on in-wall nodes only) and the
-        # loss is already on the per-face ledger, so the band is zeroed WITHOUT booking —
-        # anything found there would be a second count.
-        if RP.flags.electron_wall === :zeroing
-            Ntracker.cum0D_Ne_loss += sum(Ne_loss)
-            @. Ntracker.cum2D_Ne_loss[on_out_wall_nids] += Ne_loss
-        end
-
-        # Set electron density to zero outside the wall
-        RP.plasma.ne[on_out_wall_nids] .= 0.0
-
-        # Damp out electron temperature outside the wall — legacy band only. Under
-        # :mass_flux no operator reads the band, so nothing there needs pulling down.
-        if RP.flags.primitive_advection === :nodal
-            out_wall_nids = RP.G.nodes.out_wall_nids
-            @. RP.plasma.Te_eV[out_wall_nids] *= RP.damping_func[out_wall_nids]
-        end
+        # Neither operator writes outside the wall (rows on in-wall nodes only) and the
+        # loss is already on the per-face ledger, so the band is kept at zero WITHOUT
+        # booking — anything found there would be a second count.
+        RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= 0.0
 
         # Correct negative densities if enabled
         if RP.flags.negative_n_correction
