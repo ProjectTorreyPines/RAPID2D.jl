@@ -219,3 +219,14 @@ end
     @test abs(r1.lost) <= 1.0e-12 * r1.N0
     @test r1.booked == 0.0
 end
+
+@testitem "an ion albedo outside [0, 1] is rejected even when only convection reaches the wall" setup = [IonDrift] begin
+    # The diffusive builder validates the albedo, but it does not run with `diffu = false`;
+    # an out-of-range value would otherwise turn the convective wall debit into a source.
+    for bad in (1.5, -0.1)
+        RP = drift_case(; ui = 3.0e4, ion_wall_albedo = bad)
+        RP.flags.src = false
+        RP.flags.diffu = false
+        @test_throws ArgumentError solve_ion_continuity_equation!(RP)
+    end
+end

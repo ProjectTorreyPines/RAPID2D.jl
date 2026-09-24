@@ -112,6 +112,9 @@ The albedo is a statement about the wall, not about how the particles arrived: t
 keeps `1 − R` of whatever hits it, thermal or directed, so the factor that scales the Robin
 diffusive speed scales the convective outflow too. Electron and ion continuity and the ion
 pinch velocity all come through here.
+
+`albedo` is a scalar in `[0, 1]`, validated by the callers (`electron_wall_albedo`,
+`ion_wall_albedo`); a value above 1 would turn the wall-face debit into a source.
 """
 function convective_wall_operator(
         G::GridGeometry{FT}, faces::AbstractVector{WallFace{FT}},

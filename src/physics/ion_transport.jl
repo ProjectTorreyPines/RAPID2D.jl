@@ -732,6 +732,8 @@ function book_ion_wall_loss!(
             n_prev = view(n_prev, :, c), θ = θ
         )
         if !isnothing(pinch) && s != pinch.driver
+            # Explicit term: the source was formed from nⁿ, so it is booked at nⁿ —
+            # `n_prev` passed as the density, default θ = 1, no θ-weighting.
             Z_z = FT(species[s].charge)
             accumulate_wall_absorption!(ledger, faces, Z_z .* pinch.v_out, view(n_prev, :, c), RP.dt)
         end
