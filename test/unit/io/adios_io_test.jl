@@ -288,3 +288,82 @@
         end
     end
 end
+
+@testitem "write_to_adiosBP!: append = true adds one step per call, in order" begin
+    if !Sys.iswindows()
+        tmp = mktempdir(; cleanup = false)
+        bp = joinpath(tmp, "steps.bp")
+        for k in 1:3
+            s = Snapshot0D{Float64}()
+            s.step = k
+            s.ne = 1.0e15 * k
+            write_to_adiosBP!(bp, [s]; append = k > 1)
+        end
+        snaps = adiosBP_to_snap0D(bp)
+        @test length(snaps) == 3
+        @test [s.step for s in snaps] == [1, 2, 3]
+        @test [s.ne for s in snaps] ≈ [1.0e15, 2.0e15, 3.0e15]
+        # Appending to a path that is not there yet is a first write.
+        bp2 = joinpath(tmp, "fresh.bp")
+        write_to_adiosBP!(bp2, [snaps[1]]; append = true)
+        @test length(adiosBP_to_snap0D(bp2)) == 1
+        # The default overwrites: the three-step file becomes a one-step file.
+        write_to_adiosBP!(bp, [snaps[1]])
+        @test length(adiosBP_to_snap0D(bp)) == 1
+    end
+end
+
+@testitem "Snapshots reopen per write: manual calls append, initialize! starts over, no handle stays open" begin
+    if !Sys.iswindows()
+        config = SimulationConfig{Float64}(
+            device_Name = "manual", NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 1.0e-7, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        # The parent does not exist yet: the writer must create it, as the eager open did.
+        config.Output_path = joinpath(mktempdir(; cleanup = false), "not_yet_there")
+        RP = RAPID{Float64}(config)
+        initialize!(RP)
+        @test !ispath(RP.snap2D_path)
+        push!(RP.diagnostics.snaps2D, RAPID2D.measure_snap2D(RP))
+        push!(RP.diagnostics.snaps0D, RAPID2D.measure_snap0D(RP))
+        for k in 1:3
+            RP.diagnostics.snaps2D[end].step = k
+            write_latest_snap2D!(RP)
+        end
+        # Readable while RP is alive: nothing holds the file between writes.
+        snaps = adiosBP_to_snap2D(RP.snap2D_path)
+        @test length(snaps) == 3
+        @test [s.step for s in snaps] == [1, 2, 3]
+        # initialize! starts the file over (and empties the in-memory snapshot lists): the
+        # previous run's files are moved aside under their last-write time right away, so
+        # a run that dies before its first snapshot cannot leave the old file under its own
+        # name, and nothing a rerun with the same path and prefix produces is ever deleted.
+        initialize!(RP)
+        @test !ispath(RP.snap2D_path)
+        @test !ispath(RP.snap0D_path)
+        outdir = dirname(RP.snap2D_path)
+        archived = filter(n -> occursin(r"snap2D_\d{8}-\d{6}(_\d+)?\.bp$", n), readdir(outdir))
+        @test length(archived) == 1
+        @test length(adiosBP_to_snap2D(joinpath(outdir, archived[1]))) == 3
+        @test count(n -> occursin(r"snap0D_\d{8}-\d{6}(_\d+)?\.bp$", n), readdir(outdir)) == 0  # never written
+        push!(RP.diagnostics.snaps2D, RAPID2D.measure_snap2D(RP))
+        push!(RP.diagnostics.snaps0D, RAPID2D.measure_snap0D(RP))
+        write_latest_snap2D!(RP)
+        @test length(adiosBP_to_snap2D(RP.snap2D_path)) == 1
+        # Same contract for 0D.
+        RP.diagnostics.snaps0D[end].step = 7
+        write_latest_snap0D!(RP)
+        write_latest_snap0D!(RP)
+        @test length(adiosBP_to_snap0D(RP.snap0D_path)) == 2
+        # No state beyond the path: a file that disappears mid-run is simply recreated.
+        rm(RP.snap2D_path; recursive = true)
+        write_latest_snap2D!(RP)
+        @test length(adiosBP_to_snap2D(RP.snap2D_path)) == 1
+        # A second initialize! archives again; the earlier archive is untouched.
+        initialize!(RP)
+        @test count(n -> occursin(r"snap2D_\d{8}-\d{6}(_\d+)?\.bp$", n), readdir(outdir)) == 2
+        @test count(n -> occursin(r"snap0D_\d{8}-\d{6}(_\d+)?\.bp$", n), readdir(outdir)) == 1
+        @test !(:AW_snap2D in fieldnames(typeof(RP)))
+        @test !(:snap2D_started in fieldnames(typeof(RP)))
+    end
+end

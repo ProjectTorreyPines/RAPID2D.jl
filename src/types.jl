@@ -7,7 +7,6 @@ import RAPID2D: PlasmaConstants
 
 
 include("diagnostics/types.jl")
-include("io/types.jl")
 include("utils/types.jl")
 include("coils/types.jl")
 
@@ -1423,9 +1422,10 @@ mutable struct RAPID{FT <: AbstractFloat}
     # Field-Line-Following analysis
     flf::FieldLineFollowingResult{FT}  # Results of field line following analysis
 
-    # File IO
-    AW_snap0D::AdiosFileWrapper    # Wrapped AdiosFile for 0D snapshots
-    AW_snap2D::AdiosFileWrapper    # Wrapped AdiosFile for 2D snapshots
+    # File IO: snapshot files are opened, appended and closed on every write, so only
+    # the paths are kept. initialize! moves a previous run's files at these paths aside.
+    snap0D_path::String
+    snap2D_path::String
 
     coil_system::CoilSystem{FT} # Placeholder for coil data, to be defined later
 
@@ -1461,16 +1461,11 @@ mutable struct RAPID{FT <: AbstractFloat}
 
         flf = FieldLineFollowingResult{FT}(NR, NZ)
 
-        # Create AdiosFileWrapper instances for snapshots.
-        # abspath: Output_path defaults to the RELATIVE "./output", but these handles are
-        # closed by a finalizer that may run under a DIFFERENT working directory than the
-        # one active at open time (TestItemRunner cd's into each testitem's directory and
-        # restores the cwd afterwards). A relative path then resolves elsewhere on close,
-        # giving "Bad file descriptor" and an intermittent SIGABRT. Resolving once, here,
-        # pins the handle to a fixed location for its whole lifetime.
+        # abspath: Output_path defaults to the RELATIVE "./output" and a snapshot may be
+        # written under a different working directory than the one active here.
         prefixName = joinpath(abspath(config.Output_path), config.Output_prefix)
-        AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
-        AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
+        snap0D_path = prefixName * "snap0D.bp"
+        snap2D_path = prefixName * "snap2D.bp"
 
         coil_system = CoilSystem{FT}()  # coil system placeholder
         coil_system.time_s = config.t_start_s  # Initialize time for coil system
@@ -1484,7 +1479,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
             prev_n, reactions, tElap, diagnostics,
             flf,
-            AW_snap0D, AW_snap2D,
+            snap0D_path, snap2D_path,
             coil_system
         )
     end

@@ -8,24 +8,52 @@ export write_to_adiosBP!,
 
 # Convinience dispatches
 """
+    archive_snapshot_files(paths...) -> Vector{String}
+
+Move every existing path aside as `<stem>_<yyyymmdd-HHMMSS><ext>`, the stamp being the
+latest last-write time among them (local time), so the files of one run stay paired.
+A stamp already taken gets `_2`, `_3`, … appended. Returns the new paths.
+"""
+function archive_snapshot_files(paths::AbstractString...)
+    existing = filter(ispath, collect(String, paths))
+    isempty(existing) && return String[]
+    stamp = Libc.strftime("%Y%m%d-%H%M%S", maximum(mtime, existing))
+    moved = String[]
+    for p in existing
+        stem, ext = splitext(p)
+        dst = stem * "_" * stamp * ext
+        k = 1
+        while ispath(dst)
+            k += 1
+            dst = stem * "_" * stamp * "_" * string(k) * ext
+        end
+        mv(p, dst)
+        push!(moved, dst)
+    end
+    return moved
+end
+
+"""
     write_latest_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Write the latest 0D snapshot data to ADIOS2 file.
+Append the latest 0D snapshot to `RP.snap0D_path`: opens, writes one step, closes. The
+file is created if it is not there (`initialize!` moves the previous run's file aside), so
+the function can be called by hand any number of times. Each completed call is durable.
 """
 function write_latest_snap0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    snap0D = RP.diagnostics.snaps0D[end]
-    write_to_adiosBP!(RP.AW_snap0D, snap0D)
+    write_to_adiosBP!(RP.snap0D_path, RP.diagnostics.snaps0D[end]; append = true)
     return RP
 end
 
 """
     write_latest_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Write the latest 2D snapshot data to ADIOS2 file.
+Append the latest 2D snapshot to `RP.snap2D_path`: opens, writes one step, closes. The
+file is created if it is not there (`initialize!` moves the previous run's file aside), so
+the function can be called by hand any number of times. Each completed call is durable.
 """
 function write_latest_snap2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    snap2D = RP.diagnostics.snaps2D[end]
-    write_to_adiosBP!(RP.AW_snap2D, snap2D)
+    write_to_adiosBP!(RP.snap2D_path, RP.diagnostics.snaps2D[end]; append = true)
     return RP
 end
 
@@ -68,22 +96,22 @@ function write_to_adiosBP!(Afile::AdiosFile, data; data_name::AbstractString = "
 end
 
 """
-    write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractString="")
+    write_to_adiosBP!(fileName::AbstractString, data; data_name="", append=false)
 
-Write a data object to a new ADIOS2 BP file, creating the file with the given filename.
-
-This is a convenience function that creates a new ADIOS2 file, writes the data object,
-and properly closes the file. Supports all data types: primitives (Number, String, Array),
-structs, and arrays of structs.
+Open `fileName`, write `data` and close it again: no writer outlives the call, even when
+the write throws. With `append = false` (default) an existing file is overwritten; with
+`append = true` the new step(s) go after the existing ones. A file that does not exist yet
+is created either way. Supports primitives (Number, String, Array), structs, and arrays
+of structs.
 
 # Arguments
 - `fileName::AbstractString`: Output filename (must end with '.bp')
 - `data`: Data object to write (Number, String, Array, or Struct)
 - `data_name::AbstractString=""`: Variable name (required for primitive types, optional prefix for structs)
+- `append::Bool=false`: add to an existing file instead of overwriting it
 
 # Requirements
 - Filename must end with '.bp' extension
-- Filename must not already exist as a file or directory
 - For primitive types, `data_name` must be provided
 
 
@@ -100,27 +128,28 @@ write_to_adiosBP!("output/mesh_data.bp", grid; data_name="computational_mesh")
 
 # Write time series data
 write_to_adiosBP!("output/snapshots.bp", snapshot_array; data_name="time_series")
+
+# Add one more step to an existing file
+write_to_adiosBP!("output/snapshots.bp", [snapshot]; data_name="time_series", append=true)
 ```
 """
-function write_to_adiosBP!(fileName::AbstractString, data; data_name::AbstractString = "")
+function write_to_adiosBP!(
+        fileName::AbstractString, data;
+        data_name::AbstractString = "", append::Bool = false
+    )
     @assert !isempty(fileName) "File name cannot be empty"
     @assert endswith(fileName, ".bp") "File name must end with '.bp'"
 
-    # Create new ADIOS2 file handle (overwriting if exists)
-    Afile = adios_open_serial(fileName, mode_write)
-    write_to_adiosBP!(Afile, data; data_name)
-    return close(Afile)
-end
-
-
-"""
-    write_to_adiosBP!(wrapper::AdiosFileWrapper, data; data_name::AbstractString="")
-
-Write a data object to an open ADIOS2 file through an AdiosFileWrapper.
-This method forwards the call to the underlying AdiosFile.
-"""
-function write_to_adiosBP!(wrapper::AdiosFileWrapper, data; data_name::AbstractString = "")
-    return write_to_adiosBP!(wrapper.file, data; data_name = data_name)
+    # Appending to a file that is not there yet is a first write.
+    mode = (append && ispath(fileName)) ? mode_append : mode_write
+    # One open–write–close per call: no writer outlives this function, even on error.
+    Afile = adios_open_serial(fileName, mode)
+    try
+        write_to_adiosBP!(Afile, data; data_name)
+    finally
+        close(Afile)
+    end
+    return nothing
 end
 
 
