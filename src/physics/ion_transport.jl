@@ -102,6 +102,21 @@ function wall_absorption_speeds(
 end
 
 """
+    ion_wall_albedo(RP) -> FT
+
+`config.ion_wall_albedo`, validated to lie in [0, 1]. Both ion wall channels read the
+albedo through this — the diffusive builder validates too, but it does not run with
+`diffu = false`, and an out-of-range value would otherwise turn the convective debit
+into a source.
+"""
+function ion_wall_albedo(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    a = FT(RP.config.ion_wall_albedo)
+    zero(FT) <= a <= one(FT) ||
+        throw(ArgumentError("ion_wall_albedo must lie in [0, 1], got $a"))
+    return a
+end
+
+"""
     ion_transport_operator(G, group, directions; faces, albedo, cross_terms) -> (A, v_absorb)
 
 Assemble the wall-aware `∇·(𝐃∇·)` a group of ion species will share, and the
@@ -439,17 +454,18 @@ because the wall-aware operator never writes outside the wall, so the older
 accounting — read whatever density is found on out-of-wall nodes — would report
 exactly zero loss for a wall that is in fact draining.
 
-Convection is `−∇·(n𝐮_i)` from `operators.∇𝐮_i`, built from the **ion**
-velocities. It is shared by every group: `ν_ii` couples the species into one
-fluid far faster than transport separates them, so a species-resolved `𝐮` would
-be modelling a drift friction forbids.
+Convection is `−∇·(n𝐮_i)` through the face-flux operator
+([`convective_wall_operator`](@ref)), built from the **ion** velocities and shared
+by every group: `ν_ii` couples the species into one fluid far faster than
+transport separates them, so a species-resolved `𝐮` would be modelling a drift
+friction forbids.
 
-The two wall treatments differ by channel, which is deliberate. Diffusion leaves
-through the Robin face term at `¼v̄_n(1−R)` and is booked there; convection uses
-the interior-sweeping operator, deposits on out-of-wall nodes, and is booked by
-`treat_ion_outside_wall!`. The paths do not overlap — the Robin debit never
-writes outside the wall — and a surface reached at `n𝐮·n̂` is not the same
-boundary condition as one reached at `¼v̄n`.
+Both channels leave through the wall faces and nowhere else. Diffusion is the
+Robin face term at `¼v̄_n(1−R)`, convection the outflow `max(𝐮_i·n̂, 0)(1−R)`
+— different mechanisms, one coefficient per face. The operator charges both on
+the diagonal of the owning in-wall row and never writes outside the wall, and
+`book_ion_wall_loss!` books the same products per face, so `Δ(Σ J·nᵢ)` equals
+the ledger to round-off and the band outside the wall stays identically zero.
 """
 function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return @timeit RAPID_TIMER "solve_ion_continuity_equation!" begin
@@ -516,27 +532,34 @@ only the convective term. There is no `𝐃` in that case either, hence no pinch
 the pinch is a friction correction to a diffusive flux, not a flux of its own.
 """
 function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    tp, G = RP.transport, RP.G
+    tp, G, pla = RP.transport, RP.G, RP.plasma
     ns = length(tp.ion_species)
-    convection = RP.flags.convec ? RP.operators.∇𝐮_i.matrix : nothing
+    faces = wall_faces(G)
+    albedo = ion_wall_albedo(RP)
+    # Convection is the face-flux operator on the same faces the Robin term uses: its
+    # wall-face outflow is a diagonal debit like the diffusive one, so the two speeds add
+    # into one ledger coefficient per face. Built from the ION velocities.
+    C, v_conv = if RP.flags.convec
+        convective_wall_operator(G, faces, pla.uiR, pla.uiZ, albedo; upwind = RP.flags.upwind)
+    else
+        (nothing, zeros(FT, length(faces)))
+    end
 
     if !RP.flags.diffu
         group = IonTransportGroup(collect(1:ns), DiffusionChannel{FT}[])
         Ng = G.NR * G.NZ
-        A = isnothing(convection) ? spzeros(FT, Ng, Ng) : -convection
-        return [(group, A, FT[])], WallFace{FT}[], ()
+        A = isnothing(C) ? spzeros(FT, Ng, Ng) : -C
+        return [(group, A, v_conv)], faces, ()
     end
 
     turb = shared_turbulent_channel(RP)
     per_species = [ion_transport_channels(RP, sp, turb) for sp in tp.ion_species]
     dirs = ion_channel_directions(RP)
     weights = [reshape(view(tp.ion_N, :, s), G.NR, G.NZ) for s in 1:ns]
-    faces = wall_faces(G)
-    albedo = FT(RP.config.ion_wall_albedo)
 
     ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
         A, v_absorb = ion_transport_operator(G, group, dirs; faces = faces, albedo = albedo)
-        return (group, isnothing(convection) ? A : A - convection, v_absorb)
+        return (group, isnothing(C) ? A : A - C, v_absorb .+ v_conv)
     end
     return ops, faces, dirs
 end

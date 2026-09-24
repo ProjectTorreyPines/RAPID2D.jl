@@ -1210,24 +1210,14 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         end
         # Under `:robin` convection is the face-flux operator on the same faces: its
         # outflow term is a diagonal debit like the Robin one, so the two speeds add into
-        # one ledger coefficient per face.
-        # The albedo is a statement about the wall, not about how the electrons arrived:
-        # the wall keeps (1 − R) of whatever hits it, thermal or directed. So the same
-        # factor scales the convective outflow — in the operator's wall-face debit and in
-        # the ledger speed — and R = 1 is a zero-net-flux wall for both channels.
+        # one ledger coefficient per face. The albedo scales that outflow the same way it
+        # scales the Robin speed (`convective_wall_operator`).
         C_e = nothing
         if robin && RP.flags.convec
-            C_e = build_face_flux_divergence(RP.G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
-            v_out = face_outflow_speeds(RP.G, faces_e, pla.ueR, pla.ueZ)
-            albedo_e = electron_wall_albedo(RP)
-            if albedo_e > zero(FT)
-                returned = zeros(FT, size(C_e, 1))
-                for (k, f) in enumerate(faces_e)
-                    returned[f.nid] += albedo_e * f.area_per_volume * v_out[k]
-                end
-                C_e -= spdiagm(returned)
-            end
-            v_e .+= (one(FT) - albedo_e) .* v_out
+            C_e, v_conv = convective_wall_operator(
+                RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP); upwind = RP.flags.upwind
+            )
+            v_e .+= v_conv
         end
         if RP.flags.src && RP.flags.Implicit
             # The implicit half of the ionization source needs ν_en_iz_tot (BOTH

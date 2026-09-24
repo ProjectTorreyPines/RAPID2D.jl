@@ -94,3 +94,40 @@ function face_outflow_speeds(
     end
     return v
 end
+
+"""
+    convective_wall_operator(G, faces, uR, uZ, albedo; upwind = true) -> (C, v_net)
+
+The face-flux divergence with the wall's albedo folded in, and the ledger speed that goes
+with it:
+
+- `C = build_face_flux_divergence(G, uR, uZ; upwind) − albedo · diag(A_f/V_i · max(u·n̂_f, 0))`:
+  a wall face returns the fraction `albedo` of what flows into it. At `albedo = 1` every
+  wall-face term cancels and the matrix is a zero-net-flux wall (pile-up, nothing lost).
+- `v_net = (1 − albedo) · face_outflow_speeds(G, faces, uR, uZ)`: the speed the per-face
+  ledger books. It is the same `A_f/V_i · max(u·n̂, 0)` product the diagonal charges, so
+  the operator and the ledger cannot drift apart.
+
+The albedo is a statement about the wall, not about how the particles arrived: the wall
+keeps `1 − R` of whatever hits it, thermal or directed, so the factor that scales the Robin
+diffusive speed scales the convective outflow too. Electron and ion continuity and the ion
+pinch velocity all come through here.
+"""
+function convective_wall_operator(
+        G::GridGeometry{FT}, faces::AbstractVector{WallFace{FT}},
+        uR::AbstractMatrix{FT}, uZ::AbstractMatrix{FT}, albedo;
+        upwind::Bool = true,
+    ) where {FT <: AbstractFloat}
+    C = build_face_flux_divergence(G, uR, uZ; upwind)
+    v_out = face_outflow_speeds(G, faces, uR, uZ)
+    a = FT(albedo)
+    if a > zero(FT)
+        returned = zeros(FT, size(C, 1))
+        for (k, f) in enumerate(faces)
+            returned[f.nid] += a * f.area_per_volume * v_out[k]
+        end
+        C -= spdiagm(returned)
+    end
+    v_out .*= one(FT) - a
+    return C, v_out
+end

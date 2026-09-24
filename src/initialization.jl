@@ -262,7 +262,6 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     if RP.flags.convec
         RP.operators.∇𝐮 = construct_∇𝐮_operator(RP)
-        RP.operators.∇𝐮_i = construct_∇𝐮_operator(RP, RP.plasma.uiR, RP.plasma.uiZ)
         RP.operators.𝐮∇ = construct_𝐮∇_operator(RP)
     end
     # `∇𝐮_pinch` is NOT allocated here. The pinch is a diffusive-friction term, so

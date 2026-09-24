@@ -590,11 +590,8 @@ Fields include various matrices for solving different parts of the model.
 
     𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
     ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
-    # The same operator built from the ION velocities. A separate instance rather
-    # than a rebuild, because electrons and ions are advanced in the same step and
-    # `update_∇𝐮_operator!` defaults to `ueR`/`ueZ` — an ion solve that forgot to
-    # pass its own velocities would drift the ions the wrong way and still run.
-    ∇𝐮_i::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    # Ion convection has no cached operator: `ion_step_operators` builds the face-flux
+    # divergence from `uiR`/`uiZ` every step (`convective_wall_operator`).
 
     # Impurity pinch, ∇⋅(n 𝐖) with 𝐖 = 𝐃∇n_i/(Z_i n_i). ONE operator for every
     # species: the species enters only as the scalar Z_z multiplying 𝐖, and since
