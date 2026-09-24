@@ -71,17 +71,21 @@ jobs:
 
       - uses: julia-actions/julia-buildpkg@v1
 
+      # Decided in the shell, not in an expression: 0 is falsy to GitHub, so both
+      # `input || matrix` and `input == '' && matrix || input` turn a 0 (an explicit
+      # sequential request, or the coverage entry's default) into an empty string.
+      - name: Worker count (dispatch input overrides the per-OS default; 0 = sequential)
+        run: echo "RETESTITEMS_NWORKERS=${INPUT:-$MATRIX}" >> "$GITHUB_ENV"
+        env:
+          INPUT: ${{ github.event.inputs.nworkers }}
+          MATRIX: ${{ matrix.nworkers }}
+
       - uses: julia-actions/julia-runtest@v1
         with:
           coverage: ${{ matrix.coverage }}
         env:
           GKSwstype: 100  # disable graphics output during tests
           RAPID_RUN_REGRESSION: 'true'  # also run the :regression testitems
-          # Blank test, not truthiness: '0' is falsy to GitHub, so `input || matrix` would
-          # drop an explicit request for the sequential path back to the default.
-          RETESTITEMS_NWORKERS: >-
-            ${{ github.event.inputs.nworkers == '' && matrix.nworkers
-                || github.event.inputs.nworkers }}
           RETESTITEMS_RETRIES: '0'  # fail fast; don't let a retry mask a flaky item
           JULIA_NUM_PRECOMPILE_TASKS: ${{ matrix.precompile_tasks }}
 
