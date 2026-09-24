@@ -261,6 +261,14 @@ function build_and_run(shadow, patterns, nworkers)
         ti_filter, setupfile, selected...;
         nworkers = nworkers,
         nworker_threads = 1,
+        # Each worker runs in its own scratch directory. SimulationConfig.Output_path
+        # defaults to the RELATIVE "./output", so testitems that keep the default would
+        # otherwise share one test/output/snap2D.bp across workers — and one worker's
+        # initialize! (which moves the previous files aside) or append lands in the
+        # middle of another worker's write, whose close then fails and takes the process
+        # down with an ADIOS2 abort (seen on macOS CI). The directory is purged when the
+        # worker exits; no writer is open by then.
+        worker_init_expr = :(cd(mktempdir())),
         # Known: coverage collected through workers is racy. A worker writes its .cov
         # files inside exit(), and ReTestItems terminates it (SIGTERM, escalating to
         # SIGKILL) as soon as its socket closes, which a GC finalizer can do before that
