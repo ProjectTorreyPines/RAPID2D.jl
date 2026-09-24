@@ -11,11 +11,11 @@ export write_to_adiosBP!,
     write_latest_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Append the latest 0D snapshot to `RP.snap0D_path`: opens, writes one step, closes. The
-first call after `initialize!` starts the file over. Each completed call is durable.
+file is created if it is not there (`initialize!` removes the previous run's file), so
+the function can be called by hand any number of times. Each completed call is durable.
 """
 function write_latest_snap0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    write_to_adiosBP!(RP.snap0D_path, RP.diagnostics.snaps0D[end]; append = RP.snap0D_started)
-    RP.snap0D_started = true
+    write_to_adiosBP!(RP.snap0D_path, RP.diagnostics.snaps0D[end]; append = true)
     return RP
 end
 
@@ -23,11 +23,11 @@ end
     write_latest_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Append the latest 2D snapshot to `RP.snap2D_path`: opens, writes one step, closes. The
-first call after `initialize!` starts the file over. Each completed call is durable.
+file is created if it is not there (`initialize!` removes the previous run's file), so
+the function can be called by hand any number of times. Each completed call is durable.
 """
 function write_latest_snap2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    write_to_adiosBP!(RP.snap2D_path, RP.diagnostics.snaps2D[end]; append = RP.snap2D_started)
-    RP.snap2D_started = true
+    write_to_adiosBP!(RP.snap2D_path, RP.diagnostics.snaps2D[end]; append = true)
     return RP
 end
 

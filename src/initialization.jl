@@ -795,12 +795,10 @@ function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # ADIOS2 creates the .bp directory itself, not its parents.
     mkpath(dirname(RP.snap0D_path))
     # Start the files over now, not at the first write: a run that dies before its first
-    # snapshot must not leave the previous run's files behind under its own name.
+    # snapshot must not leave the previous run's files behind under its own name. Every
+    # write from here on appends, creating the file if it is not there.
     rm(RP.snap0D_path; force = true, recursive = true)
     rm(RP.snap2D_path; force = true, recursive = true)
-    # The first write creates the file; every write after it appends.
-    RP.snap0D_started = false
-    RP.snap2D_started = false
     return RP
 end
 

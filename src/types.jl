@@ -1423,11 +1423,9 @@ mutable struct RAPID{FT <: AbstractFloat}
     flf::FieldLineFollowingResult{FT}  # Results of field line following analysis
 
     # File IO: snapshot files are opened, appended and closed on every write, so only
-    # the paths are kept, plus whether each file has been started since initialize!.
+    # the paths are kept. initialize! removes the previous run's files at these paths.
     snap0D_path::String
     snap2D_path::String
-    snap0D_started::Bool
-    snap2D_started::Bool
 
     coil_system::CoilSystem{FT} # Placeholder for coil data, to be defined later
 
@@ -1481,7 +1479,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
             prev_n, reactions, tElap, diagnostics,
             flf,
-            snap0D_path, snap2D_path, false, false,
+            snap0D_path, snap2D_path,
             coil_system
         )
     end

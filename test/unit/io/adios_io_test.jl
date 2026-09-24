@@ -323,14 +323,13 @@ end
         config.Output_path = joinpath(mktempdir(; cleanup = false), "not_yet_there")
         RP = RAPID{Float64}(config)
         initialize!(RP)
-        @test !RP.snap2D_started
+        @test !ispath(RP.snap2D_path)
         push!(RP.diagnostics.snaps2D, RAPID2D.measure_snap2D(RP))
         push!(RP.diagnostics.snaps0D, RAPID2D.measure_snap0D(RP))
         for k in 1:3
             RP.diagnostics.snaps2D[end].step = k
             write_latest_snap2D!(RP)
         end
-        @test RP.snap2D_started
         # Readable while RP is alive: nothing holds the file between writes.
         snaps = adiosBP_to_snap2D(RP.snap2D_path)
         @test length(snaps) == 3
@@ -339,7 +338,6 @@ end
         # stale file is removed right away, not only at the next write, so a run that dies
         # before its first snapshot cannot leave the previous run's file behind.
         initialize!(RP)
-        @test !RP.snap2D_started
         @test !ispath(RP.snap2D_path)
         @test !ispath(RP.snap0D_path)
         push!(RP.diagnostics.snaps2D, RAPID2D.measure_snap2D(RP))
@@ -351,6 +349,11 @@ end
         write_latest_snap0D!(RP)
         write_latest_snap0D!(RP)
         @test length(adiosBP_to_snap0D(RP.snap0D_path)) == 2
-        @test !hasproperty(RP, :AW_snap2D)
+        # No state beyond the path: a file that disappears mid-run is simply recreated.
+        rm(RP.snap2D_path; recursive = true)
+        write_latest_snap2D!(RP)
+        @test length(adiosBP_to_snap2D(RP.snap2D_path)) == 1
+        @test !(:AW_snap2D in fieldnames(typeof(RP)))
+        @test !(:snap2D_started in fieldnames(typeof(RP)))
     end
 end
