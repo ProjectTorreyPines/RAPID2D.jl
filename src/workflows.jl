@@ -171,7 +171,14 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         # predecessor's last refresh built for the state it hands over.
         # notes/issues/stale-rrcs-on-first-step.md
         if RP.step == 0
+            # The band outside the wall is not part of the problem: no operator has rows
+            # there and nothing books it, so an initial condition written over the whole
+            # grid is cleared there once, here, and never touched again.
+            RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+            RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= zero(FT)
             update_transport_quantities!(RP)
+            RP.flags.secondary_electron &&
+                @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
         end
 
         # Initial snapshots at t_start_s
@@ -195,10 +202,10 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
                 RP.time_s += dt
                 RP.step += 1
 
-                treat_electron_outside_wall!(RP)
-                if RP.flags.update_ni_independently
-                    treat_ion_outside_wall!(RP)
-                end
+                # Ledgers and floors after the step. Nothing zeroes the band outside the
+                # wall: no operator writes there.
+                book_ionization_sources!(RP)
+                correct_negative_densities!(RP)
 
                 if RP.step == 1 || mod(RP.step, RP.flags.FLF_nstep) == 0
                     @timeit RAPID_TIMER "field_line_following" begin

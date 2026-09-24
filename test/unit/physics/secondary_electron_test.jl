@@ -100,7 +100,7 @@ end
 
 @testitem "The wall-emission path returns particles the secondary path loses" begin
     using RAPID2D: wall_faces, WallLedger, accumulate_wall_absorption!,
-        wall_emission_source, treat_electron_outside_wall!, is_in_wall
+        wall_emission_source, book_ionization_sources!, correct_negative_densities!, is_in_wall
 
     # Positive control. Same geometry, same γ, same particles crossing the wall —
     # routed through `wall_emission_source` instead of a deposit outside.
@@ -143,10 +143,11 @@ end
     @test sum(ne[inw] .* V[inw]) ≈ N_returned rtol = 1.0e-12
     @test sum(ne[.!inw] .* V[.!inw]) == 0.0
 
-    # and the next step's boundary pass leaves them alone instead of booking them
+    # and the next step's ledgers leave them alone instead of booking them
     loss_before = RP.diagnostics.Ntracker.cum0D_Ne_loss
     RAPID2D.update_reaction_counts!(RP)
-    treat_electron_outside_wall!(RP)
+    book_ionization_sources!(RP)
+    correct_negative_densities!(RP)
     @test RP.diagnostics.Ntracker.cum0D_Ne_loss == loss_before
     @test sum(vec(RP.plasma.ne) .* V) ≈ N_returned rtol = 1.0e-12
 end

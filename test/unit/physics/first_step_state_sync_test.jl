@@ -40,8 +40,8 @@ end
     # out-wall damping, which multiplied `ue_para`, `ui_para` and `mean_ExB_R/Z` in place
     # on every entry; nothing is damped outside the wall any more.)
     #
-    # The wall sits strictly inside the domain and `ue_para` is nonzero outside it, so a
-    # band pass that touched the state would show.
+    # The wall sits strictly inside the domain and `ue_para` is nonzero outside it, so an
+    # entry that touched the state would show.
     FT = Float64
     function wall_geometry(t_end)
         config = SimulationConfig{FT}(

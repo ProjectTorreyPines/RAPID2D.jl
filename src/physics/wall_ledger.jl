@@ -4,11 +4,10 @@
 # catches a leak but cannot say where it came from, and it cannot answer the
 # question every surface process reduces to: how much did *this* tile absorb?
 #
-# Today electrons and ions are booked per NODE (`cum2D_Ne_loss[on_out_wall_nids]`
-# in `treat_electron_outside_wall!`), recording what an outside cell held at the
-# moment it was zeroed. Those are cells the Robin form removes entirely, and a
-# node is not a face: it cannot say which way the material went, nor which wall
-# segment it belongs to.
+# Electrons and ions used to be booked per NODE, recording what an outside cell
+# held at the moment the band pass zeroed it. Those are cells the Robin form
+# never writes, and a node is not a face: it cannot say which way the material
+# went, nor which wall segment it belongs to.
 
 """
     WallLedger{FT}(n_faces)
@@ -153,11 +152,13 @@ changing the field by 13 %. Any test of this function has to compare the field.
 
 **Never deposit outside the wall.** The retired secondary-electron injection did
 the opposite — it added `γ_2nd·n_i` to cells *outside* and relied on diffusion to
-carry them back, while `treat_electron_outside_wall!` booked that band as loss and
+carry them back, while the band pass of that time booked the band as loss and
 zeroed it at the top of the next step. The measured yield reaching the interior
-was ≈ 0, controlled by `D⊥Δt/Δx²` rather than by `γ_2nd`; the INTENDED markers in
-`secondary_electron_test.jl` state what this function is to deliver instead.
-Returning material to the interior cell is that fix.
+was ≈ 0, controlled by `D⊥Δt/Δx²` rather than by `γ_2nd`. Today no operator has
+rows outside the wall and nothing zeroes or books the band, so material deposited
+there would simply sit, unseen; the INTENDED markers in `secondary_electron_test.jl`
+state what this function is to deliver instead. Returning material to the interior
+cell is that fix.
 
 For cross-species return (recycling, sputtering, secondary electrons) scale
 `emitted` by the yield before calling; this function only moves particles back
