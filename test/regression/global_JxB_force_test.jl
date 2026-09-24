@@ -407,7 +407,6 @@ end
         Include_ud_pressure_term = true,
         Include_Te_convec_term = true,  # inert here (Te_evolve = false), kept at its original value
         convec = true,                  # density is advected — this is how the centroid moves
-        Damp_Transp_outWall = true,     # wall losses — the density drop this test measures
         Atomic_Collision = true,        # collisions with the 1 mPa prefill stay on
         Coulomb_Collision = true,
 

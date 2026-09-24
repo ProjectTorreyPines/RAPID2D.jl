@@ -148,13 +148,6 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Set up grid and wall information
     setup_grid_state_and_volumes_with_wall!(RP)
 
-    # calculate damping function using fitted_wall
-    RP.damping_func = cal_damping_function_outside_wall(
-        RP,
-        RP.G.R1D, RP.G.Z1D,
-        RP.fitted_wall.R, RP.fitted_wall.Z
-    )
-
     # Initialize reaction rate coefficients
     initialize_RRCs!(RP)
 
@@ -407,97 +400,6 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String = "") where {FT <
     end
 
     return RP
-end
-
-function cal_damping_function_outside_wall(
-        RP::RAPID{FT},
-        R1D::Vector{FT},
-        Z1D::Vector{FT},
-        Wall_R::Vector{FT},
-        Wall_Z::Vector{FT}
-    ) where {FT <: AbstractFloat}
-    # Create a 2D grid from R1D and Z1D coordinates
-    R2D, Z2D = meshgrid(R1D, Z1D)
-
-    # Determine which grid points are inside the wall using the existing is_inside_wall function
-    isInside = is_inside_wall(R2D, Z2D, Wall_R, Wall_Z)
-
-    # Calculate distance to wall for points outside the wall
-    distanceToWall = fill(FT(Inf), size(R2D))
-
-    # This is the most computationally intensive part - calculating distances to the wall
-    for i in eachindex(R2D)
-        if !isInside[i]
-            # For points outside the wall, find minimum distance to any wall segment
-            for j in 1:(length(Wall_R) - 1)
-                edge = [Wall_R[j] Wall_Z[j]; Wall_R[j + 1] Wall_Z[j + 1]]
-                distanceToWall[i] = min(
-                    distanceToWall[i],
-                    distance_point_edge([R2D[i], Z2D[i]], edge)
-                )
-            end
-        end
-    end
-
-    # Calculate grid parameters and simulation boundaries
-    R_min = minimum(R1D)
-    R_max = maximum(R1D)
-    Z_min = minimum(Z1D)
-    Z_max = maximum(Z1D)
-
-    dR = R1D[2] - R1D[1]
-    dZ = Z1D[2] - Z1D[1]
-
-    # Create damping characteristic length scale - use cell diagonal as in MATLAB version
-    sigma = sqrt(dR^2 + dZ^2)
-
-    # Calculate distance from boundaries for boundary damping
-    distanceToBoundary = min.(
-        min.(R2D .- R_min, R_max .- R2D),
-        min.(Z2D .- Z_min, Z_max .- Z2D)
-    )
-
-    # Create boundary damping function - 1 inside wall, decaying near boundaries
-    boundaryDamping = 1 .- exp.(-(distanceToBoundary .^ 2) ./ (2 * sigma^2))
-    boundaryDamping[isInside] .= 1
-
-    # Create wall damping function - 1 inside wall, exponentially decaying outside
-    wallDamping = exp.(-(distanceToWall .^ 2) ./ (2 * sigma^2))
-    wallDamping[isInside] .= 1  # No damping inside wall
-
-    # Combine damping functions (multiply boundary and wall damping)
-    Damping_Func = wallDamping .* boundaryDamping
-
-    return Damping_Func
-end
-
-"""
-    distance_point_edge(point::Vector{FT}, edge::Matrix{FT}) where {FT<:AbstractFloat}
-
-Calculate the minimum distance from a point to a line segment (edge).
-
-# Arguments
-- `point`: [x, y] coordinates of the point
-- `edge`: [x1 y1; x2 y2] coordinates of the line segment endpoints
-
-# Returns
-- The minimum distance from the point to the line segment
-"""
-function distance_point_edge(point::Vector{FT}, edge::Matrix{FT}) where {FT <: AbstractFloat}
-    # Create vectors for calculation
-    a = [edge[2, 1] - edge[1, 1], edge[2, 2] - edge[1, 2], FT(0)]  # Vector along edge
-    b = [point[1] - edge[1, 1], point[2] - edge[1, 2], FT(0)]     # Vector from edge start to point
-    c = [point[1] - edge[2, 1], point[2] - edge[2, 2], FT(0)]     # Vector from edge end to point
-
-    # Check if closest point is one of the endpoints
-    if dot(a, b) < 0
-        return norm(b)
-    elseif dot(-a, c) < 0
-        return norm(c)
-    else
-        # Closest point is on the line segment - use cross product to find distance
-        return norm(cross(a, b)) / norm(a)
-    end
 end
 
 function load_electron_RRCs()

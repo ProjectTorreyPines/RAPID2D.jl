@@ -1384,10 +1384,6 @@ function treat_ion_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
         RP.plasma.ni[on_out_wall_nids] .= 0.0
 
-        # Legacy band damping of Ti. The ion energy equation has no transport operator,
-        # so nothing reads the band; kept until that equation gets its own wall treatment.
-        out_wall_nids = RP.G.nodes.out_wall_nids
-        @. RP.plasma.Ti_eV[out_wall_nids] *= RP.damping_func[out_wall_nids]
 
         # Correct negative densities if enabled
         if RP.flags.negative_n_correction

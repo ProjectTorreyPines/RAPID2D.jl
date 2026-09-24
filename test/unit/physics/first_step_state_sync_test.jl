@@ -23,14 +23,6 @@
     lib = atomic_only(; dt, Te0, resync = false)
     hand = atomic_only(; dt, Te0, resync = true)
 
-    # Premise: `damping_func` is identically 1 here, so the extra
-    # `update_transport_quantities!` in `hand` cannot differ through the one part of that
-    # function which is not idempotent (`ue_para *= damping_func`). Note it is built from
-    # `fitted_wall`, NOT the `wall_R/Z` that defines `in_wall_nids` — and at this
-    # resolution the fitted wall spans the whole grid, so every node reads as inside.
-    # If a fixture change breaks that, `==` below starts measuring damping instead.
-    @test all(isone, hand.damping_func)
-
     run_simulation!(lib)
     run_simulation!(hand)
 
@@ -40,27 +32,18 @@
 end
 
 @testitem "splitting a run in two does not change the answer" begin
-    # The re-sync above must not re-dose the out-wall damping. `ue_para`, `ui_para` and
-    # `mean_ExB_R/Z` are multiplied by `damping_func` IN PLACE (`transport.jl:198-205`)
-    # — the one part of `update_transport_quantities!` that accumulates rather than
-    # recomputes, `Dpara`/`Dperp` being rebuilt from scratch first. Damping expresses a
-    # suppression profile, applied once per state production; a re-derivation that
-    # applies it again squares it.
-    #
     # Stated as the user-visible invariant rather than as a property of the call:
     # `RP.t_end_s = …; run_simulation!(RP)` is the documented resume idiom (see the
-    # SEQUENTIAL blocks in `physics_test.jl`), and a resumed run is handed a state its
-    # predecessor already damped. Two half-runs must therefore equal one whole run, bit
-    # for bit.
+    # SEQUENTIAL blocks in `physics_test.jl`). Entering the loop establishes the
+    # coefficient invariant from the state it is handed and changes nothing else, so two
+    # half-runs must equal one whole run, bit for bit. (This used to fail through the
+    # out-wall damping, which multiplied `ue_para`, `ui_para` and `mean_ExB_R/Z` in place
+    # on every entry; nothing is damped outside the wall any more.)
     #
-    # The geometry matters: the atomic fixture above has `damping_func ≡ 1` and cannot
-    # see any of this. Here the wall sits strictly inside the domain, so a band of nodes
-    # carries 0 < damping_func < 1, and `ue_para` is nonzero there. Out-wall velocities
-    # reach in-wall nodes through the convection/diffusion stencil before
-    # `treat_electron_outside_wall!` clears the band, so "outside the wall" is not the
-    # same as "cannot matter".
+    # The wall sits strictly inside the domain and `ue_para` is nonzero outside it, so a
+    # band pass that touched the state would show.
     FT = Float64
-    function damped_geometry(t_end)
+    function wall_geometry(t_end)
         config = SimulationConfig{FT}(
             NR = 20, NZ = 28, R_min = 0.1, R_max = 0.5, Z_min = -0.4, Z_max = 0.4,
             dt = 1.0e-6, t_end_s = t_end, R0B0 = 1.0,
@@ -88,30 +71,23 @@ end
         return RP
     end
 
-    whole = damped_geometry(6.0e-6)
-    split = damped_geometry(3.0e-6)
-
-    # Premise: this geometry really does damp, partially, on a real band of nodes.
-    # Without it the assertions below are vacuous — which is how the defect they pin
-    # stayed invisible to the fixture above.
-    d = whole.damping_func
-    @test count(x -> 1.0e-3 < x < 0.999, d) > 0
-    @test all(isone, d[whole.G.nodes.in_wall_nids])
+    whole = wall_geometry(6.0e-6)
+    split = wall_geometry(3.0e-6)
 
     run_simulation!(whole)
 
     run_simulation!(split)
     split.t_end_s = 6.0e-6
-    run_simulation!(split)                  # resumes; must not re-damp what it inherits
+    run_simulation!(split)                  # resumes from the state it inherits
 
     @test whole.step == split.step
     @test whole.plasma.ne == split.plasma.ne
     @test whole.plasma.ue_para == split.plasma.ue_para
 
-    # The other half of the same rule, isolated: entering the loop must not itself be a
-    # damping event. `t_end_s = 0` runs the entry and no step at all, so anything that
-    # moves here moved before any physics did.
-    entry = damped_geometry(6.0e-6)
+    # The other half of the same rule, isolated: entering the loop must not itself
+    # change the state. `t_end_s = 0` runs the entry and no step at all, so anything
+    # that moves here moved before any physics did.
+    entry = wall_geometry(6.0e-6)
     entry.t_end_s = 0.0
     u_before = copy(entry.plasma.ue_para)
     ui_before = copy(entry.plasma.ui_para)
@@ -122,6 +98,20 @@ end
     @test entry.step == 0
     @test entry.plasma.ue_para == u_before
     @test entry.plasma.ui_para == ui_before
+end
+
+@testitem "nothing is damped outside the wall: no damping_func, no Damp_Transp_outWall" begin
+    # The out-wall damping was a stand-in for wall boundary conditions: it pulled D, the
+    # drifts, the loop voltage and the temperatures down over a band of nodes outside the
+    # wall so that whole-grid operators reading that band saw something tame. No operator
+    # reads the band any more (every transport operator lives on in-wall rows), so the
+    # device is gone: no field on `RAPID`, no flag, and the two evolve-inside-only stubs
+    # that never had an implementation go with it.
+    @test !(:damping_func in fieldnames(RAPID{Float64}))
+    @test !(:Damp_Transp_outWall in fieldnames(SimulationFlags{Float64}))
+    @test !(:evolve_ud_inWall_only in fieldnames(SimulationFlags{Float64}))
+    @test !(:evolve_Te_inWall_only in fieldnames(SimulationFlags{Float64}))
+    @test !isdefined(RAPID2D, :cal_damping_function_outside_wall)
 end
 
 @testitem "5 eV electrons cool and ionize on the first step" setup = [AtomicOnlyOneStep] begin

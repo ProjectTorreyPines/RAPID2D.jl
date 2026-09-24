@@ -1085,9 +1085,6 @@ Contains boolean flags that control various aspects of the simulation.
     Include_ud_diffu_term::Bool = true        # Include diffusion term in drift velocity equation
     Include_Te_convec_term::Bool = true       # Include convection term in Te equation
     Include_Te_diffu_term::Bool = true        # Include diffusion term in Te equation
-    evolve_ud_inWall_only::Bool = false       # Only evolve drift velocity inside wall
-    evolve_Te_inWall_only::Bool = false       # Only evolve Te inside wall
-    Damp_Transp_outWall::Bool = true          # Damp transport outside wall
 
     # Artificial limiters to avoid numerical instabilities.
     #
@@ -1366,7 +1363,6 @@ mutable struct RAPID{FT <: AbstractFloat}
     G::GridGeometry{FT}               # Grid geometry
     wall::WallGeometry{FT}            # Wall geometry data
     fitted_wall::WallGeometry{FT}     # Wall geometry fitted to the grid
-    damping_func::Matrix{FT}          # Damping function outside wall
 
     # External field source
     external_field::Union{Nothing, AbstractExternalField{FT}}  # External EM field source
@@ -1424,7 +1420,6 @@ mutable struct RAPID{FT <: AbstractFloat}
         flags = SimulationFlags{FT}()
 
         # Initialize matrices
-        damping_func = zeros(FT, dims)
         prev_n = zeros(FT, dims)
         reactions = ReactionState{FT}(dims = dims)
 
@@ -1451,7 +1446,7 @@ mutable struct RAPID{FT <: AbstractFloat}
 
         # Create and return new instance
         return new{FT}(
-            G, wall, WallGeometry{FT}(), damping_func,
+            G, wall, WallGeometry{FT}(),
             nothing,  # external_field
             eRRC, iRRC,
             config, flags, plasma, fields, transport, operators,
