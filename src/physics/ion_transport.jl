@@ -750,13 +750,13 @@ end
 Declare which ion species the transport solve advances, and size the work
 buffers to match.
 
-**Exactly one species, for now.** Grouping, assembly and the batch solve are
-already written against a list, but three things outside them are not, and each
-is silently wrong rather than loudly missing:
+**Exactly one species, for now.** Grouping, assembly, the batch solve and the
+face ledger are written against a list (and never write outside the wall, so a
+second column cannot accumulate there), but three things outside them are not,
+and each is silently wrong rather than loudly missing:
 
-  - `treat_ion_outside_wall!` clears only column 1, so every other species
-    accumulates outside the wall without bound and unbooked;
-  - `γ_2nd_electron` is one number, so only column 1 yields secondary electrons;
+  - `γ_2nd_electron` is one number, so only column 1 could yield secondary electrons;
+  - `Ni_loss` does not split by species;
   - the ion charge density is `n·Z` from this species, and would have to become
     `Σ_s n_s Z_s` at every site that builds a current (see
     `internal/docs/src/notes/TODO/ion-inventory-multi-species.md`).
@@ -768,13 +768,12 @@ function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonSpecies{FT}}
     length(species) == 1 || throw(
         ArgumentError(
             "exactly one ion species is supported, got $(length(species)). " *
-                "A second one needs four things that do not exist yet: " *
-                "`treat_ion_outside_wall!` clears only the first column, so the others " *
-                "accumulate outside the wall unbooked; `γ_2nd_electron` is one number, so " *
-                "only the first yields secondary electrons; `Ni_loss` does not split by " *
-                "species; and every current builds its charge density as n·Z, which would " *
-                "have to become Σ_s n_s Z_s — as would `ν_ei`, `ν_ii` and `lnΛ_ii`, which " *
-                "take the bulk's charge and mass. `plasma.ni` also round-trips only column 1."
+                "A second one needs three things that do not exist yet: " *
+                "`γ_2nd_electron` is one number, so only the first could yield secondary " *
+                "electrons; `Ni_loss` does not split by species; and every current builds " *
+                "its charge density as n·Z, which would have to become Σ_s n_s Z_s — as " *
+                "would `ν_ei`, `ν_ii` and `lnΛ_ii`, which take the bulk's charge and mass. " *
+                "`plasma.ni` also round-trips only column 1."
         )
     )
     tp = RP.transport

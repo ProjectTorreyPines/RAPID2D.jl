@@ -1,107 +1,25 @@
-# Does the existing secondary-electron source actually put electrons in the plasma?
+# Secondary electrons: what the flag does today, and what it is meant to do.
 #
-# `treat_ion_outside_wall!` adds `γ_2nd · n_i` to the cells the wall mask calls
-# OUTSIDE, and hopes diffusion carries them back in. The source already flags the
-# intent: *"needs to improve this part (somehow this should generate them inside
-# wall)"*. These tests measure what it does instead, so the defect is pinned in
-# the suite rather than only in a design note, and so the replacement path
-# (`wall_emission_source`) has something concrete to beat.
+# The legacy source added `γ_2nd · n_i` to the cells OUTSIDE the wall and hoped
+# diffusion carried them back in; the electron band pass booked and zeroed them
+# first, so the yield that reached the plasma was ≈ 0 (set by D⊥Δt/Δx², not by γ).
+# Since ion transport stopped writing outside the wall — Robin diffusion and
+# face-flux convection are both diagonal debits on in-wall rows — that band holds
+# nothing to multiply and the injection has been removed. `secondary_electron`
+# is inert under BOTH electron wall modes until secondaries are emitted through
+# the wall faces from the ion ledger (`wall_emission_source`, plan PR3).
 #
 # Every `@test_broken` here states the INTENDED behaviour. Julia turns an
-# unexpected pass into an error, so whoever fixes the source is told to come back
-# and delete the marker rather than discovering it silently drifted.
+# unexpected pass into an error, so whoever lands the source is told to come
+# back and delete the marker rather than discovering it silently drifted.
 
-@testitem "Secondary electrons are deposited where the plasma is not" begin
-    using RAPID2D: treat_ion_outside_wall!, is_in_wall
-
-    config = SimulationConfig{Float64}(
-        device_Name = "manual", NR = 41, NZ = 41,
-        R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
-        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
-        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-7,
-        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
-    )
-    RP = RAPID{Float64}(config)
-    initialize!(RP)
-    RP.flags.update_ni_independently = true
-    RP.flags.electron_wall = :zeroing  # legacy band injection under test
-    RP.flags.secondary_electron = true
-    RP.flags.γ_2nd_electron = 0.1
-
-    G = RP.G
-    band = G.nodes.on_out_wall_nids
-    V = vec(2π .* G.Jacob .* G.dR .* G.dZ)
-    inw = [is_in_wall(G, G.nodes.rid[k], G.nodes.zid[k]) for k in 1:(G.NR * G.NZ)]
-
-    RP.plasma.ne .= 0.0
-    RP.plasma.ni .= 0.0
-    RP.plasma.ni[band] .= 1.0e16
-    N_impact = sum(1.0e16 .* V[band])
-
-    treat_ion_outside_wall!(RP)
-    ne = vec(RP.plasma.ne)
-    N_made = sum(ne .* V)
-    N_inside = sum(ne[inw] .* V[inw])
-
-    # the count is right — γ · (what hit the wall) electrons are created
-    @test N_made ≈ 0.1 * N_impact rtol = 1.0e-12
-
-    # …but not one of them is in the plasma. A source that lands entirely on
-    # nodes the transport operator does not own is not a source.
-    @test N_inside == 0.0
-    @test_broken N_inside / N_made > 0.5          # INTENDED: they belong inside
-
-    # every single one sits on a node the wall mask excludes
-    @test sum(ne[.!inw] .* V[.!inw]) ≈ N_made rtol = 1.0e-12
-end
-
-@testitem "Secondary electrons are booked as electron loss on the next step" begin
-    using RAPID2D: treat_ion_outside_wall!, treat_electron_outside_wall!
-
-    config = SimulationConfig{Float64}(
-        device_Name = "manual", NR = 41, NZ = 41,
-        R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
-        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
-        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-7,
-        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
-    )
-    RP = RAPID{Float64}(config)
-    initialize!(RP)
-    RP.flags.update_ni_independently = true
-    RP.flags.electron_wall = :zeroing  # legacy band injection under test
-    RP.flags.secondary_electron = true
-    RP.flags.γ_2nd_electron = 0.1
-
-    G = RP.G
-    V = vec(2π .* G.Jacob .* G.dR .* G.dZ)
-    RP.plasma.ne .= 0.0
-    RP.plasma.ni .= 0.0
-    RP.plasma.ni[G.nodes.on_out_wall_nids] .= 1.0e16
-
-    treat_ion_outside_wall!(RP)
-    N_made = sum(vec(RP.plasma.ne) .* V)
-    loss_before = RP.diagnostics.Ntracker.cum0D_Ne_loss
-
-    # the top of the very next step, with no transport in between. The pass books
-    # ionization from the published rates, so stand the producer up — nothing is
-    # ionizing here, which is what this test wants.
-    RAPID2D.update_reaction_counts!(RP)
-    treat_electron_outside_wall!(RP)
-    Δloss = RP.diagnostics.Ntracker.cum0D_Ne_loss - loss_before
-
-    # they are gone, and — worse than a no-op — the particle balance now records
-    # them as electrons the wall TOOK. Creating a particle inflates the loss.
-    @test sum(vec(RP.plasma.ne) .* V) == 0.0
-    @test Δloss ≈ N_made rtol = 1.0e-12
-    @test_broken Δloss < 0.01 * N_made            # INTENDED: creation is not loss
-end
-
-@testitem "Turning secondary electrons on moves the loss diagnostic, not the plasma" begin
+@testitem "Secondary electrons are inert under either electron wall until the wall-face source lands" begin
     using RAPID2D: is_in_wall
 
-    # The integration statement. Two identical runs differing only in
-    # `secondary_electron`; whatever γ does must show up in one of these.
-    function run_with(sec::Bool; γ = 0.5)
+    # Two identical runs differing only in `secondary_electron`, both wall channels on,
+    # under each electron wall. Ions reach the wall and are booked on the face ledger;
+    # nothing turns that into electrons yet, so the runs are bit-identical.
+    function run_with(sec::Bool, wall::Symbol; γ = 0.5)
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = 31, NZ = 31,
             R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
@@ -112,7 +30,7 @@ end
         RP = RAPID{Float64}(config)
         initialize!(RP)
         RP.flags.update_ni_independently = true
-        RP.flags.electron_wall = :zeroing  # legacy band injection under test
+        RP.flags.electron_wall = wall
         RP.flags.secondary_electron = sec
         RP.flags.γ_2nd_electron = γ
         RP.plasma.ne .= 1.0e15
@@ -131,111 +49,27 @@ end
     end
 
     γ = 0.5
-    off = run_with(false; γ = γ)
-    on = run_with(true; γ = γ)
-    intended = γ * on.ni_loss              # electrons γ was asked to return
+    for wall in (:zeroing, :robin)
+        off = run_with(false, wall; γ = γ)
+        on = run_with(true, wall; γ = γ)
 
-    # `intended` is essentially the same target in both runs. Not to machine
-    # precision any more: the ion continuity equation takes `ne·ν_iz` as its
-    # source, so a flag that changes `ne` now reaches `ni` too — 1.7e-8 of it.
-    # When `ni` was frozen this was exactly zero, which is what the old rtol of
-    # 1e-12 was really measuring.
-    @test on.ni_loss ≈ off.ni_loss rtol = 1.0e-6
+        # the premise: ions really did reach the wall and were booked
+        @test on.ni_loss > 0.0
+        # …and γ changed nothing, bit for bit
+        @test on.ni_loss == off.ni_loss
+        @test on.inside == off.inside
+        @test on.ne_loss == off.ne_loss
 
-    # what γ actually bought: the electron LOSS grew by essentially the whole
-    # intended amount. Measured shortfall 0.39 %, which is the defect's own
-    # bookkeeping and not the yield — `treat_ion_outside_wall!` deposits on
-    # out-of-wall nodes while `treat_electron_outside_wall!` books the on-or-out
-    # set, and the two do not coincide.
-    @test (on.ne_loss - off.ne_loss) ≈ intended rtol = 0.01
-
-    # and the plasma gained 0.014 % of it — the effective yield is not γ = 0.5
-    # but ≈ 7e-5, set by D⊥Δt/Δx² rather than by any surface property
-    @test (on.inside - off.inside) / intended < 1.0e-3
-    @test_broken (on.inside - off.inside) ≈ intended rtol = 0.5     # INTENDED
-end
-
-@testitem "The Robin wall emits nothing: its impacts never reach the γ source" begin
-    using RAPID2D: is_in_wall
-
-    # Ions now leave through TWO wall channels, and only one of them can emit.
-    #
-    #   diffusion  → the Robin face term, `¼v̄_n(1−R)`, booked in `book_ion_wall_loss!`
-    #   convection → deposits on out-of-wall nodes, booked in `treat_ion_outside_wall!`
-    #
-    # `treat_ion_outside_wall!` is the ONLY γ source, and it reads `ni` on
-    # out-of-wall nodes. The Robin term never writes there — deliberately, it
-    # removes the ions inside the matrix — so its impacts are invisible to it.
-    # At the conditions measured in `ion_species.jl` (nₑ = 1e15, Ti = 1 eV) the
-    # diffusive channels carry 88 % of the ion flux that reaches the wall, so this
-    # is the dominant path, not an edge case.
-    #
-    # Convection is off here so the Robin channel is the only one running: any
-    # γ effect at all would have to come from it.
-    function run_robin_only(sec::Bool; γ = 0.5)
-        config = SimulationConfig{Float64}(
-            device_Name = "manual", NR = 31, NZ = 31,
-            R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
-            wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
-            prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-7,
-            t_end_s = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
-        )
-        RP = RAPID{Float64}(config)
-        initialize!(RP)
-        RP.flags.update_ni_independently = true
-        RP.flags.convec = false                 # leave only the Robin channel
-        RP.flags.electron_wall = :zeroing  # legacy band injection under test
-        RP.flags.secondary_electron = sec
-        RP.flags.γ_2nd_electron = γ
-        RP.plasma.ne .= 1.0e15
-        RP.plasma.ni .= 1.0e15
-        RP.plasma.Te_eV .= 5.0
-
-        # Start with the out-of-wall band EMPTY. Seeding it uniformly hands
-        # `treat_ion_outside_wall!` a slab it never had to transport, and the γ it
-        # then yields measures the initial condition rather than the wall.
-        G = RP.G
-        inw = [is_in_wall(G, G.nodes.rid[k], G.nodes.zid[k]) for k in 1:(G.NR * G.NZ)]
-        vec(RP.plasma.ne)[.!inw] .= 0.0
-        vec(RP.plasma.ni)[.!inw] .= 0.0
-
-        run_simulation!(RP)
-
-        V = vec(2π .* G.Jacob .* G.dR .* G.dZ)
-        return (
-            ni_loss = RP.diagnostics.Ntracker.cum0D_Ni_loss,
-            ne_loss = RP.diagnostics.Ntracker.cum0D_Ne_loss,
-            inside = sum(vec(RP.plasma.ne)[inw] .* V[inw]),
-        )
+        # INTENDED: γ·(what hit the wall) electrons, returned to the wall-adjacent
+        # INTERIOR cells through `wall_emission_source` from the ion face ledger
+        @test_broken (on.inside - off.inside) ≈ γ * on.ni_loss rtol = 0.5
     end
-
-    γ = 0.5
-    off = run_robin_only(false; γ = γ)
-    on = run_robin_only(true; γ = γ)
-
-    # The premise: ions really did reach the wall this way, and were booked. Without
-    # this the rest of the test would pass vacuously on a run where nothing happened.
-    @test on.ni_loss > 0.0
-    @test on.ni_loss ≈ off.ni_loss rtol = 1.0e-12
-
-    # …and γ is inert. Bit-identical, because the impacts it would act on were
-    # removed by the operator rather than deposited anywhere it can see.
-    @test on.inside == off.inside
-    @test on.ne_loss == off.ne_loss
-
-    # INTENDED: γ·(what hit the wall) electrons, returned to the wall-adjacent
-    # INTERIOR cells through `wall_emission_source` — not deposited outside, which
-    # is what the other channel does and why its measured yield is ≈ 7e-5 instead
-    # of γ. Both channels have to move together; fixing only this one would leave
-    # the same surface emitting into two different places.
-    @test_broken (on.inside - off.inside) ≈ γ * on.ni_loss rtol = 0.5
 end
 
 @testitem "Secondary electrons are unreachable when ions are slaved to electrons" begin
-    # `workflows.jl` gates the ONLY secondary-electron code behind an unrelated
-    # flag: `if RP.flags.update_ni_independently  treat_ion_outside_wall!(RP)`.
-    # So `secondary_electron = true` is silently inert for slaved ions, and the
-    # ion wall loss is not booked either.
+    # With slaved ions there is no ion solve, so nothing reaches the ion face
+    # ledger and nothing is booked as ion loss — the source PR3 adds, fed by that
+    # ledger, will have nothing to emit in this configuration either.
     function run_slaved(sec::Bool)
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = 31, NZ = 31,
@@ -247,7 +81,6 @@ end
         RP = RAPID{Float64}(config)
         initialize!(RP)
         RP.flags.update_ni_independently = false
-        RP.flags.electron_wall = :zeroing  # legacy band injection under test
         RP.flags.secondary_electron = sec
         RP.flags.γ_2nd_electron = 0.5
         RP.plasma.ne .= 1.0e15

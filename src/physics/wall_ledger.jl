@@ -147,12 +147,13 @@ the *wrong* face still conserves `Σ J·n` exactly, still writes nothing outside
 wall, still keeps the density positive and still balances the ledger, while
 changing the field by 13 %. Any test of this function has to compare the field.
 
-**Never deposit outside the wall.** `treat_ion_outside_wall!` does the opposite —
-it adds `γ_2nd·n_i` to cells *outside* and relies on diffusion to carry them back,
-but `treat_electron_outside_wall!` books that band as loss and zeroes it at the top
-of the next step. The measured yield reaching the interior is ≈ 0, controlled by
-`D⊥Δt/Δx²` rather than by `γ_2nd` (`secondary_electron_test.jl`). Returning
-material to the interior cell is that fix.
+**Never deposit outside the wall.** The retired secondary-electron injection did
+the opposite — it added `γ_2nd·n_i` to cells *outside* and relied on diffusion to
+carry them back, while `treat_electron_outside_wall!` booked that band as loss and
+zeroed it at the top of the next step. The measured yield reaching the interior
+was ≈ 0, controlled by `D⊥Δt/Δx²` rather than by `γ_2nd`; the INTENDED markers in
+`secondary_electron_test.jl` state what this function is to deliver instead.
+Returning material to the interior cell is that fix.
 
 For cross-species return (recycling, sputtering, secondary electrons) scale
 `emitted` by the yield before calling; this function only moves particles back
