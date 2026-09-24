@@ -10,22 +10,26 @@ export write_to_adiosBP!,
 """
     write_latest_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Write the latest 0D snapshot data to ADIOS2 file.
+Append the latest 0D snapshot to `RP.snap0D_path`: opens, writes one step, closes. The
+first call after `initialize!` starts the file over. Each completed call is durable.
 """
 function write_latest_snap0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    snap0D = RP.diagnostics.snaps0D[end]
-    write_to_adiosBP!(RP.AW_snap0D, snap0D)
+    mode = RP.snap0D_started ? mode_append : mode_write
+    write_to_adiosBP!(RP.snap0D_path, RP.diagnostics.snaps0D[end]; mode)
+    RP.snap0D_started = true
     return RP
 end
 
 """
     write_latest_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Write the latest 2D snapshot data to ADIOS2 file.
+Append the latest 2D snapshot to `RP.snap2D_path`: opens, writes one step, closes. The
+first call after `initialize!` starts the file over. Each completed call is durable.
 """
 function write_latest_snap2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    snap2D = RP.diagnostics.snaps2D[end]
-    write_to_adiosBP!(RP.AW_snap2D, snap2D)
+    mode = RP.snap2D_started ? mode_append : mode_write
+    write_to_adiosBP!(RP.snap2D_path, RP.diagnostics.snaps2D[end]; mode)
+    RP.snap2D_started = true
     return RP
 end
 
@@ -118,17 +122,6 @@ function write_to_adiosBP!(
         close(Afile)
     end
     return nothing
-end
-
-
-"""
-    write_to_adiosBP!(wrapper::AdiosFileWrapper, data; data_name::AbstractString="")
-
-Write a data object to an open ADIOS2 file through an AdiosFileWrapper.
-This method forwards the call to the underlying AdiosFile.
-"""
-function write_to_adiosBP!(wrapper::AdiosFileWrapper, data; data_name::AbstractString = "")
-    return write_to_adiosBP!(wrapper.file, data; data_name = data_name)
 end
 
 

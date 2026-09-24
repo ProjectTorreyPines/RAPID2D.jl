@@ -789,17 +789,14 @@ function initialize_diagnostics!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    # abspath for the same reason as in the RAPID constructor (see types.jl): these handles
-    # outlive this call and are closed by a finalizer that may run under a different cwd.
     prefixName = joinpath(abspath(RP.config.Output_path), RP.config.Output_prefix)
-
-    # Check and close existing files if they are already open
-    close_wrapper!(RP.AW_snap0D)
-    close_wrapper!(RP.AW_snap2D)
-
-    RP.AW_snap0D = AdiosFileWrapper(adios_open_serial(prefixName * "snap0D.bp", mode_write))
-    RP.AW_snap2D = AdiosFileWrapper(adios_open_serial(prefixName * "snap2D.bp", mode_write))
-
+    RP.snap0D_path = prefixName * "snap0D.bp"
+    RP.snap2D_path = prefixName * "snap2D.bp"
+    # ADIOS2 creates the .bp directory itself, not its parents.
+    mkpath(dirname(RP.snap0D_path))
+    # The next write truncates; every write after it appends.
+    RP.snap0D_started = false
+    RP.snap2D_started = false
     return RP
 end
 

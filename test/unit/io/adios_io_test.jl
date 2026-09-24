@@ -310,3 +310,41 @@ end
         @test length(adiosBP_to_snap0D(bp2)) == 1
     end
 end
+
+@testitem "Snapshots reopen per write: manual calls append, initialize! starts over, no handle stays open" begin
+    if !Sys.iswindows()
+        config = SimulationConfig{Float64}(
+            device_Name = "manual", NR = 8, NZ = 8, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+            dt = 1.0e-7, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        # The parent does not exist yet: the writer must create it, as the eager open did.
+        config.Output_path = joinpath(mktempdir(; cleanup = false), "not_yet_there")
+        RP = RAPID{Float64}(config)
+        initialize!(RP)
+        @test !RP.snap2D_started
+        push!(RP.diagnostics.snaps2D, RAPID2D.measure_snap2D(RP))
+        push!(RP.diagnostics.snaps0D, RAPID2D.measure_snap0D(RP))
+        for k in 1:3
+            RP.diagnostics.snaps2D[end].step = k
+            write_latest_snap2D!(RP)
+        end
+        @test RP.snap2D_started
+        # Readable while RP is alive: nothing holds the file between writes.
+        snaps = adiosBP_to_snap2D(RP.snap2D_path)
+        @test length(snaps) == 3
+        @test [s.step for s in snaps] == [1, 2, 3]
+        # initialize! starts the file over (and empties the in-memory snapshot lists).
+        initialize!(RP)
+        @test !RP.snap2D_started
+        push!(RP.diagnostics.snaps2D, RAPID2D.measure_snap2D(RP))
+        push!(RP.diagnostics.snaps0D, RAPID2D.measure_snap0D(RP))
+        write_latest_snap2D!(RP)
+        @test length(adiosBP_to_snap2D(RP.snap2D_path)) == 1
+        # Same contract for 0D.
+        RP.diagnostics.snaps0D[end].step = 7
+        write_latest_snap0D!(RP)
+        write_latest_snap0D!(RP)
+        @test length(adiosBP_to_snap0D(RP.snap0D_path)) == 2
+        @test !hasproperty(RP, :AW_snap2D)
+    end
+end
