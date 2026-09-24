@@ -261,6 +261,18 @@ function build_and_run(shadow, patterns, nworkers)
         ti_filter, setupfile, selected...;
         nworkers = nworkers,
         nworker_threads = 1,
+        # ReTestItems ends a worker with SIGTERM, then SIGINT, then SIGKILL 0.1 s apart,
+        # as soon as the worker's pipes close during its exit — while Julia may still be
+        # writing that worker's .cov files (seen on CI: a worker killed inside
+        # write_log_data, and every file it ran reported as uncovered). Ignoring the
+        # first two signals leaves the write those 0.2 s; SIGKILL still ends a stuck one.
+        worker_init_expr = quote
+            if !Sys.iswindows()
+                SIG_IGN = Ptr{Cvoid}(1)
+                ccall(:signal, Ptr{Cvoid}, (Cint, Ptr{Cvoid}), Cint(15), SIG_IGN)  # SIGTERM
+                ccall(:signal, Ptr{Cvoid}, (Cint, Ptr{Cvoid}), Cint(2), SIG_IGN)   # SIGINT
+            end
+        end,
         retries = parse(Int, get(ENV, "RETESTITEMS_RETRIES", "0")),
         verbose_results = false,
         report = false,

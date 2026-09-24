@@ -42,18 +42,16 @@ jobs:
           - macos-latest    # arm64 runner; free for public repos
           # No windows-latest: ADIOS2_jll ships no Windows binary, so RAPID2D can't precompile.
         include:
-          # nworkers ≈ runner vCPUs. precompile_tasks lower on macOS (7 GB runner swap-storms).
-          # Coverage on ubuntu only: concurrent codecov uploads race the merge and undercount.
-          # The coverage job runs sequentially (nworkers 0): a ReTestItems worker writes its
-          # .cov files inside exit(), after its pipes close, and the manager kills a worker
-          # with SIGTERM as soon as it sees the pipe close — so with workers, whichever
-          # worker loses that race uploads nothing for the files it ran (seen as 89 % → 69 %).
+          # nworkers below the runner's vCPUs: one worker per core ran the 4-core ubuntu
+          # runner at 93 % memory and was not faster. precompile_tasks lower on macOS
+          # (7 GB runner swap-storms). Coverage on ubuntu only: concurrent codecov uploads
+          # race the merge and undercount.
           - os: ubuntu-latest
-            nworkers: 0
+            nworkers: 3
             precompile_tasks: 4
             coverage: true
           - os: macos-latest
-            nworkers: 3
+            nworkers: 2
             precompile_tasks: 2
             coverage: false
 
