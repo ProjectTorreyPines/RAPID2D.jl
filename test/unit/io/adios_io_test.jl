@@ -289,16 +289,15 @@
     end
 end
 
-@testitem "write_to_adiosBP!: mode_append adds one step per call, in order" begin
+@testitem "write_to_adiosBP!: append = true adds one step per call, in order" begin
     if !Sys.iswindows()
-        using RAPID2D: mode_write, mode_append   # ADIOS2 is not a direct test dependency
         tmp = mktempdir(; cleanup = false)
         bp = joinpath(tmp, "steps.bp")
         for k in 1:3
             s = Snapshot0D{Float64}()
             s.step = k
             s.ne = 1.0e15 * k
-            write_to_adiosBP!(bp, [s]; mode = k == 1 ? mode_write : mode_append)
+            write_to_adiosBP!(bp, [s]; append = k > 1)
         end
         snaps = adiosBP_to_snap0D(bp)
         @test length(snaps) == 3
@@ -306,8 +305,11 @@ end
         @test [s.ne for s in snaps] ≈ [1.0e15, 2.0e15, 3.0e15]
         # Appending to a path that is not there yet is a first write.
         bp2 = joinpath(tmp, "fresh.bp")
-        write_to_adiosBP!(bp2, [snaps[1]]; mode = mode_append)
+        write_to_adiosBP!(bp2, [snaps[1]]; append = true)
         @test length(adiosBP_to_snap0D(bp2)) == 1
+        # The default overwrites: the three-step file becomes a one-step file.
+        write_to_adiosBP!(bp, [snaps[1]])
+        @test length(adiosBP_to_snap0D(bp)) == 1
     end
 end
 
@@ -333,9 +335,13 @@ end
         snaps = adiosBP_to_snap2D(RP.snap2D_path)
         @test length(snaps) == 3
         @test [s.step for s in snaps] == [1, 2, 3]
-        # initialize! starts the file over (and empties the in-memory snapshot lists).
+        # initialize! starts the file over (and empties the in-memory snapshot lists): the
+        # stale file is removed right away, not only at the next write, so a run that dies
+        # before its first snapshot cannot leave the previous run's file behind.
         initialize!(RP)
         @test !RP.snap2D_started
+        @test !ispath(RP.snap2D_path)
+        @test !ispath(RP.snap0D_path)
         push!(RP.diagnostics.snaps2D, RAPID2D.measure_snap2D(RP))
         push!(RP.diagnostics.snaps0D, RAPID2D.measure_snap0D(RP))
         write_latest_snap2D!(RP)

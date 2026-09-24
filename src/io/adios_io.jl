@@ -14,8 +14,7 @@ Append the latest 0D snapshot to `RP.snap0D_path`: opens, writes one step, close
 first call after `initialize!` starts the file over. Each completed call is durable.
 """
 function write_latest_snap0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    mode = RP.snap0D_started ? mode_append : mode_write
-    write_to_adiosBP!(RP.snap0D_path, RP.diagnostics.snaps0D[end]; mode)
+    write_to_adiosBP!(RP.snap0D_path, RP.diagnostics.snaps0D[end]; append = RP.snap0D_started)
     RP.snap0D_started = true
     return RP
 end
@@ -27,8 +26,7 @@ Append the latest 2D snapshot to `RP.snap2D_path`: opens, writes one step, close
 first call after `initialize!` starts the file over. Each completed call is durable.
 """
 function write_latest_snap2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    mode = RP.snap2D_started ? mode_append : mode_write
-    write_to_adiosBP!(RP.snap2D_path, RP.diagnostics.snaps2D[end]; mode)
+    write_to_adiosBP!(RP.snap2D_path, RP.diagnostics.snaps2D[end]; append = RP.snap2D_started)
     RP.snap2D_started = true
     return RP
 end
@@ -72,21 +70,22 @@ function write_to_adiosBP!(Afile::AdiosFile, data; data_name::AbstractString = "
 end
 
 """
-    write_to_adiosBP!(fileName::AbstractString, data; data_name="", mode=mode_write)
+    write_to_adiosBP!(fileName::AbstractString, data; data_name="", append=false)
 
 Open `fileName`, write `data` and close it again: no writer outlives the call, even when
-the write throws. `mode = mode_write` starts the file over, `mode_append` adds the new
-step(s) after the existing ones (and behaves like `mode_write` on a file that does not
-exist yet). Supports primitives (Number, String, Array), structs, and arrays of structs.
+the write throws. With `append = false` (default) an existing file is overwritten; with
+`append = true` the new step(s) go after the existing ones. A file that does not exist yet
+is created either way. Supports primitives (Number, String, Array), structs, and arrays
+of structs.
 
 # Arguments
 - `fileName::AbstractString`: Output filename (must end with '.bp')
 - `data`: Data object to write (Number, String, Array, or Struct)
 - `data_name::AbstractString=""`: Variable name (required for primitive types, optional prefix for structs)
+- `append::Bool=false`: add to an existing file instead of overwriting it
 
 # Requirements
 - Filename must end with '.bp' extension
-- Filename must not already exist as a file or directory
 - For primitive types, `data_name` must be provided
 
 
@@ -103,17 +102,20 @@ write_to_adiosBP!("output/mesh_data.bp", grid; data_name="computational_mesh")
 
 # Write time series data
 write_to_adiosBP!("output/snapshots.bp", snapshot_array; data_name="time_series")
+
+# Add one more step to an existing file
+write_to_adiosBP!("output/snapshots.bp", [snapshot]; data_name="time_series", append=true)
 ```
 """
 function write_to_adiosBP!(
         fileName::AbstractString, data;
-        data_name::AbstractString = "", mode::ADIOS2.Mode = mode_write
+        data_name::AbstractString = "", append::Bool = false
     )
     @assert !isempty(fileName) "File name cannot be empty"
     @assert endswith(fileName, ".bp") "File name must end with '.bp'"
 
     # Appending to a file that is not there yet is a first write.
-    mode = (mode === mode_append && !ispath(fileName)) ? mode_write : mode
+    mode = (append && ispath(fileName)) ? mode_append : mode_write
     # One open–write–close per call: no writer outlives this function, even on error.
     Afile = adios_open_serial(fileName, mode)
     try
