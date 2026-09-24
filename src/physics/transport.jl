@@ -117,7 +117,7 @@ function update_transport_quantities!(
     # point the product form is `(Ti·0·Di)/(Ti·0 + 0·Di)` and the `NaN → typemax(FT)`
     # patch that used to follow turned "cold electrons, so no electron diffusion"
     # into `D_a = Inf`. That is the same inverted sign the flux limiter's old `Lₙ`
-    # guard had, and it made `∇𝐃∇` singular one step later.
+    # guard had, and it made the diffusion operator singular one step later.
 
     # ── how D∥ᵉ is assembled ──────────────────────────────────────────────────
     #
@@ -280,8 +280,6 @@ function update_transport_quantities!(
     # update diffusion tensor (DRR,DRZ,DZZ) & (CTRR,CTRZ,CTZZ)
     update_diffusion_tensor!(RP)
 
-    update_transport_related_operators!(RP)
-
     return RP
 end
 
@@ -322,31 +320,6 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @. tp.CTRR = RP.G.Jacob * tp.DRR / (dR * dR)
     @. tp.CTRZ = RP.G.Jacob * tp.DRZ / (dR * dZ)
     @. tp.CTZZ = RP.G.Jacob * tp.DZZ / (dZ * dZ)
-
-    return RP
-end
-
-
-"""
-    update_transport_related_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-
-Update transport-related sparse matrix operators (𝐮∇, ∇𝐮, ∇𝐃∇) based on current transport coefficients and velocity fields.
-"""
-function update_transport_related_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-
-    OP = RP.operators
-
-    if !isempty(OP.𝐮∇.k2csc)
-        update_𝐮∇_operator!(RP)
-    end
-
-    if !isempty(OP.∇𝐮.k2csc)
-        update_∇𝐮_operator!(RP)
-    end
-
-    if !isempty(OP.∇𝐃∇.k2csc)
-        update_∇𝐃∇_operator!(RP)
-    end
 
     return RP
 end

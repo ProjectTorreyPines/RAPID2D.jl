@@ -257,14 +257,6 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.operators.𝐽⁻¹∂R_𝐽 = construct_𝐽⁻¹∂R_𝐽_operator(RP.G)
     RP.operators.∂Z = construct_∂Z_operator(RP.G)
 
-    if RP.flags.diffu
-        RP.operators.∇𝐃∇ = construct_∇𝐃∇_operator(RP)
-    end
-    if RP.flags.convec
-        RP.operators.∇𝐮 = construct_∇𝐮_operator(RP)
-        RP.operators.𝐮∇ = construct_𝐮∇_operator(RP)
-    end
-
     # Initialize specific operators based on flags
     if RP.flags.Ampere
         RP.operators.ΔGS = construct_ΔGS_operator(RP.G)
@@ -277,22 +269,6 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # Placeholder for the Green's function calculation
         RP.G.Green_inWall2bdy = calculate_ψ_by_green_function(Rdest, Zdest, Rsrc, Zsrc, one(FT))
-    end
-
-    # Create the diffusion operator if needed
-    if RP.flags.diffu && RP.flags.Implicit
-        # Update the diffusion tensor components
-        RP.transport.DRR .= RP.transport.Dperp .+
-            (RP.transport.Dpara .- RP.transport.Dperp) .*
-            (RP.fields.bR) .^ 2
-        RP.transport.DRZ .= (RP.transport.Dpara .- RP.transport.Dperp) .*
-            RP.fields.bR .* RP.fields.bZ
-        RP.transport.DZZ .= RP.transport.Dperp .+
-            (RP.transport.Dpara .- RP.transport.Dperp) .*
-            (RP.fields.bZ) .^ 2
-
-        # Construct diffusion operator
-        # RP.operators.∇𝐃∇ = construct_∇𝐃∇(RP, ...)
     end
 
     return RP

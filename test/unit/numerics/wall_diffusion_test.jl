@@ -1,9 +1,9 @@
 # Wall-aware anisotropic diffusion operator.
 #
-# The shared ∇𝐃∇ builder sweeps 2:N-1 with no wall awareness, so material
-# diffuses past the wall and is mopped up afterwards. The reflective neutral-gas
-# builder knows about the wall but is 5-point and isotropic. This operator is
-# both: a 9-point tensor stencil that stops at the wall.
+# A whole-grid tensor builder that sweeps 2:N-1 with no wall awareness lets material
+# diffuse past the wall to be mopped up afterwards (the retired `∇𝐃∇`). The reflective
+# neutral-gas builder knows about the wall but is 5-point and isotropic. This operator
+# is both: a 9-point tensor stencil that stops at the wall.
 #
 # **The hard part is the cross term.** Each of the four D_RZ groups decomposes
 # into two centred-difference PAIRS:

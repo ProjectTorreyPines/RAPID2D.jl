@@ -4,7 +4,7 @@
 #     (∇·(u f))_i = [R_{i+½} F_{i+½} − R_{i−½} F_{i−½}] / (R_i ΔR)  +  [F_{j+½} − F_{j−½}] / ΔZ
 #
 # Every interior face is shared by exactly two rows with opposite signs, so Σ_i V_i (∇·(u f))_i
-# telescopes to the wall faces alone — the property the nodal upwind `∇𝐮` lacks (no rows on
+# telescopes to the wall faces alone — the property a nodal upwind operator lacks (no rows on
 # the grid frame; a central-difference branch at |u| < eps that receives half of an upwind
 # neighbour's outflow). A wall face — the neighbour across it is not in-wall — keeps only the
 # owner's outflow term u⁺ f_i: nothing is read from outside, and the outflow sits on the

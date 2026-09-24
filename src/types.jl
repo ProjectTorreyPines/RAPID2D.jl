@@ -581,20 +581,13 @@ Fields include various matrices for solving different parts of the model.
     𝐽⁻¹∂R_𝐽::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
     ∂Z::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Vertical derivative operator ∂Z
 
-    # Operators for solving continuity equations
-    ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
+    # The transport operators (wall-aware diffusion, face-flux convection, primitive
+    # advection) are not cached here: they are built from the current state where they
+    # are used, on in-wall rows only.
     # Named `_tot`, not `ν_en_iz`, because it is built from `pla.ν_en_iz_tot`: under the
     # INTERIM(diz-ion-species) (`REACTION_STOICHIOMETRY.diz`) every ion is booked as H₂⁺, so the continuity
     # assembly needs both ionization channels, not the H₂⁺-only rate.
     ν_en_iz_tot::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization (both channels) [1/s]
-
-    𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
-    ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
-    # Ion convection has no cached operator: `ion_step_operators` builds the face-flux
-    # divergence from `uiR`/`uiZ` every step (`convective_wall_operator`).
-
-    # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
-    # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
 
     # Operator for magnetic field solver
     ΔGS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Grad-Shafranov operator

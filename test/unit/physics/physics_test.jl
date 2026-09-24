@@ -127,6 +127,7 @@ end
 @testitem "Physics: density transport RHS terms" begin
     using RAPID2D.Statistics
     using RAPID2D.LinearAlgebra: opnorm
+    using RAPID2D: build_wall_diffusion_matrix
 
     # Explicit scheme with diffusion, convection and ionization all ON — this checks the
     # individual RHS operators rather than an end-to-end evolution.
@@ -166,17 +167,17 @@ end
     # momentum-randomizing channel pulls the drift down slightly further.
     @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -430695.500813412
 
-    op = RP.operators
     update_RRCs!(RP)
 
     # Ionization source is non-zero inside the wall and zero outside it
     @test !all(RP.plasma.ν_en_iz .== 0.0)
     @test all(RP.plasma.ν_en_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)
 
-    # ne is still uniform inside the wall, so the diffusion term must vanish there —
-    # checked both via the direct evaluation and via the assembled operator.
-    @test all(compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.inWall_deepInWall_nids] .== 0.0)
-    RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
+    # ne is still uniform inside the wall, so the wall-aware diffusion operator (rows on
+    # in-wall nodes, reflective without faces) must annihilate it on every in-wall row.
+    tp = RP.transport
+    A_diffu = build_wall_diffusion_matrix(RP.G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    RHS_diffu = reshape(A_diffu * vec(RP.plasma.ne), size(RP.plasma.ne))
     mean_inside_ne = mean(RP.plasma.ne[RP.G.nodes.in_wall_nids])
     # The assembled operator annihilates a constant only up to cancellation, and
     # that residual is bounded by ‖A‖∞·‖n‖∞·eps — so the tolerance has to carry the
@@ -184,8 +185,8 @@ end
     # whatever D the RRC tables happened to give, and moves when they are corrected.
     @test all(
         isapprox.(
-            RHS_diffu[RP.G.nodes.inWall_deepInWall_nids], 0.0,
-            atol = 1.0e-12 * mean_inside_ne * opnorm(op.∇𝐃∇.matrix, Inf)
+            RHS_diffu[RP.G.nodes.in_wall_nids], 0.0,
+            atol = 1.0e-12 * mean_inside_ne * opnorm(A_diffu, Inf)
         )
     )
 
@@ -197,7 +198,7 @@ end
         dist = sqrt((r - center[1])^2 + (z - center[2])^2)
         RP.plasma.ne[i] = 1.0e6 * exp(-dist^2 / 20.0)
     end
-    RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
+    RHS_diffu = reshape(A_diffu * vec(RP.plasma.ne), size(RP.plasma.ne))
     @test !all(RHS_diffu[RP.G.nodes.in_wall_nids] .== 0.0)
 end
 

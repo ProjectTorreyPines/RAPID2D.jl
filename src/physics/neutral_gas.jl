@@ -190,7 +190,7 @@ outside the wall are left empty, so those nodes never evolve.
 **Reflective, not absorbing.** A neighbour contributes only when it is itself
 in-wall; otherwise the term is *omitted*, not zeroed. That distinction is the
 whole boundary condition. Zeroing `D` outside instead — the natural thing to try
-with the shared `∇𝐃∇` builder, which sweeps every interior node without wall
+with a whole-grid builder that sweeps every interior node without wall
 awareness — still leaves the coefficient `(1/J)·½·CT_inside` on the outward face,
 and the gas drains into nodes nothing solves for. The fill gas is not consumed by
 the wall; it bounces.

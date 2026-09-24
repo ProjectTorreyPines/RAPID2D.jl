@@ -16,12 +16,9 @@
 # mechanisms (`¼v̄n` and `n𝐮·n̂`) and add into one coefficient per face.
 
 @testsnippet IonDrift begin
-    # Only what `drift_case` itself calls. A name imported here reaches the SNIPPET
-    # module, and `using ..IonDrift` re-exports what the snippet DEFINES, not what
-    # it imported — so a testitem that calls an unexported function has to import it
-    # in its own body. Under TestItemRunner the two scopes happen to coincide; under
-    # ReTestItems, which is what CI runs, they do not.
-    using RAPID2D: update_transport_related_operators!
+    # Testitems import what they call in their own bodies: a name imported here reaches
+    # the SNIPPET module only (`using ..IonDrift` re-exports what the snippet DEFINES).
+    # Under TestItemRunner the two scopes happen to coincide; under ReTestItems (CI) not.
 
     "A case with prescribed, uniform parallel velocities and no field solve."
     function drift_case(; ui = 3.0e4, ue = -3.0e4, NR = 25, NZ = 25, kw...)
@@ -50,7 +47,6 @@
         RP.plasma.uiZ .= ui
         RP.plasma.ueR .= 0.0
         RP.plasma.ueZ .= ue
-        update_transport_related_operators!(RP)
         return RP
     end
 
