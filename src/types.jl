@@ -1423,7 +1423,7 @@ mutable struct RAPID{FT <: AbstractFloat}
     flf::FieldLineFollowingResult{FT}  # Results of field line following analysis
 
     # File IO: snapshot files are opened, appended and closed on every write, so only
-    # the paths are kept. initialize! removes the previous run's files at these paths.
+    # the paths are kept. initialize! moves a previous run's files at these paths aside.
     snap0D_path::String
     snap2D_path::String
 

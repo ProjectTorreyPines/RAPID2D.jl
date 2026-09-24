@@ -8,10 +8,36 @@ export write_to_adiosBP!,
 
 # Convinience dispatches
 """
+    archive_snapshot_files(paths...) -> Vector{String}
+
+Move every existing path aside as `<stem>_<yyyymmdd-HHMMSS><ext>`, the stamp being the
+latest last-write time among them (local time), so the files of one run stay paired.
+A stamp already taken gets `_2`, `_3`, … appended. Returns the new paths.
+"""
+function archive_snapshot_files(paths::AbstractString...)
+    existing = filter(ispath, collect(String, paths))
+    isempty(existing) && return String[]
+    stamp = Libc.strftime("%Y%m%d-%H%M%S", maximum(mtime, existing))
+    moved = String[]
+    for p in existing
+        stem, ext = splitext(p)
+        dst = stem * "_" * stamp * ext
+        k = 1
+        while ispath(dst)
+            k += 1
+            dst = stem * "_" * stamp * "_" * string(k) * ext
+        end
+        mv(p, dst)
+        push!(moved, dst)
+    end
+    return moved
+end
+
+"""
     write_latest_snap0D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Append the latest 0D snapshot to `RP.snap0D_path`: opens, writes one step, closes. The
-file is created if it is not there (`initialize!` removes the previous run's file), so
+file is created if it is not there (`initialize!` moves the previous run's file aside), so
 the function can be called by hand any number of times. Each completed call is durable.
 """
 function write_latest_snap0D!(RP::RAPID{FT}) where {FT <: AbstractFloat}
@@ -23,7 +49,7 @@ end
     write_latest_snap2D!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Append the latest 2D snapshot to `RP.snap2D_path`: opens, writes one step, closes. The
-file is created if it is not there (`initialize!` removes the previous run's file), so
+file is created if it is not there (`initialize!` moves the previous run's file aside), so
 the function can be called by hand any number of times. Each completed call is durable.
 """
 function write_latest_snap2D!(RP::RAPID{FT}) where {FT <: AbstractFloat}

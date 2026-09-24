@@ -335,11 +335,17 @@ end
         @test length(snaps) == 3
         @test [s.step for s in snaps] == [1, 2, 3]
         # initialize! starts the file over (and empties the in-memory snapshot lists): the
-        # stale file is removed right away, not only at the next write, so a run that dies
-        # before its first snapshot cannot leave the previous run's file behind.
+        # previous run's files are moved aside under their last-write time right away, so
+        # a run that dies before its first snapshot cannot leave the old file under its own
+        # name, and nothing a rerun with the same path and prefix produces is ever deleted.
         initialize!(RP)
         @test !ispath(RP.snap2D_path)
         @test !ispath(RP.snap0D_path)
+        outdir = dirname(RP.snap2D_path)
+        archived = filter(n -> occursin(r"snap2D_\d{8}-\d{6}(_\d+)?\.bp$", n), readdir(outdir))
+        @test length(archived) == 1
+        @test length(adiosBP_to_snap2D(joinpath(outdir, archived[1]))) == 3
+        @test count(n -> occursin(r"snap0D_\d{8}-\d{6}(_\d+)?\.bp$", n), readdir(outdir)) == 0  # never written
         push!(RP.diagnostics.snaps2D, RAPID2D.measure_snap2D(RP))
         push!(RP.diagnostics.snaps0D, RAPID2D.measure_snap0D(RP))
         write_latest_snap2D!(RP)
@@ -353,6 +359,10 @@ end
         rm(RP.snap2D_path; recursive = true)
         write_latest_snap2D!(RP)
         @test length(adiosBP_to_snap2D(RP.snap2D_path)) == 1
+        # A second initialize! archives again; the earlier archive is untouched.
+        initialize!(RP)
+        @test count(n -> occursin(r"snap2D_\d{8}-\d{6}(_\d+)?\.bp$", n), readdir(outdir)) == 2
+        @test count(n -> occursin(r"snap0D_\d{8}-\d{6}(_\d+)?\.bp$", n), readdir(outdir)) == 1
         @test !(:AW_snap2D in fieldnames(typeof(RP)))
         @test !(:snap2D_started in fieldnames(typeof(RP)))
     end
