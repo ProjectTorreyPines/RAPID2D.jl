@@ -71,7 +71,7 @@ end
     # a non-uniform Te so the operator actually does something
     Te = 10.0 .+ 5.0 .* sin.(3 .* G.R2D) .* cos.(2 .* G.Z2D)
     ops = electron_primitive_operators(RP)
-    LTe = ops.D_op * vec(Te)
+    LTe = ops.A_diffu * vec(Te)
     vol = vec(G.inVol2D)
     @test sum(abs.(LTe[inw]) .* vol[inw]) > 0
     @test abs(sum(LTe[inw] .* vol[inw])) < 1.0e-10 * sum(abs.(LTe[inw]) .* vol[inw])
@@ -100,13 +100,13 @@ end
     RP = primitive_one_step()
     tp, G, pla = RP.transport, RP.G, RP.plasma
     @test tp.wall_faces == wall_faces(G)
-    @test tp.C_e == build_face_flux_divergence(G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
-    @test tp.D_op_e == build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    @test tp.A_conv_e == build_face_flux_divergence(G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
+    @test tp.A_diffu_e == build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
     @test tp.div_ue == wall_divergence(G, pla.ueR, pla.ueZ)
 end
 
 @testitem "electron operators cached for the other interior scheme are refused at the point of use" begin
-    # A consumer cannot tell a central `C_e` from an upwind one by looking at it, so the
+    # A consumer cannot tell a central `A_conv_e` from an upwind one by looking at it, so the
     # cache records the `flags.upwind` it was built with and every consumer checks it: a
     # flag changed since the refresh is refused, not silently applied to the old operators.
     using RAPID2D: electron_primitive_operators, solve_electron_continuity_equation!,
@@ -117,13 +117,13 @@ end
     )
     RP = RAPID{Float64}(config)
     initialize!(RP)
-    @test RP.transport.C_e_upwind == RP.flags.upwind
+    @test RP.transport.A_conv_e_upwind == RP.flags.upwind
     RP.flags.upwind = !RP.flags.upwind                  # changed after the cache was built
     @test_throws ArgumentError electron_primitive_operators(RP)
     @test_throws ArgumentError solve_electron_continuity_equation!(RP)
     @test_throws ArgumentError update_electron_heating_powers!(RP)
     cache_electron_operators!(RP)                       # the refresh records the scheme it used
-    @test RP.transport.C_e_upwind == RP.flags.upwind
+    @test RP.transport.A_conv_e_upwind == RP.flags.upwind
     electron_primitive_operators(RP)
     solve_electron_continuity_equation!(RP)
     update_electron_heating_powers!(RP)

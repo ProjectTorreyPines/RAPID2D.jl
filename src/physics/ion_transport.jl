@@ -544,7 +544,7 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Convection is the face-flux operator on the same faces the Robin term uses: its
     # wall-face outflow is a diagonal debit like the diffusive one, so the two speeds add
     # into one ledger coefficient per face. Built from the ION velocities.
-    C, v_conv = if RP.flags.convec
+    A_conv, v_conv = if RP.flags.convec
         convective_wall_operator(G, faces, pla.uiR, pla.uiZ, albedo; upwind = RP.flags.upwind)
     else
         (nothing, zeros(FT, length(faces)))
@@ -553,7 +553,7 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     if !RP.flags.diffu
         group = IonTransportGroup(collect(1:ns), DiffusionChannel{FT}[])
         Ng = G.NR * G.NZ
-        A = isnothing(C) ? spzeros(FT, Ng, Ng) : -C
+        A = isnothing(A_conv) ? spzeros(FT, Ng, Ng) : -A_conv
         return [(group, A, v_conv)], faces, ()
     end
 
@@ -564,7 +564,7 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
         A, v_absorb = ion_transport_operator(G, group, dirs; faces = faces, albedo = albedo)
-        return (group, isnothing(C) ? A : A - C, v_absorb .+ v_conv)
+        return (group, isnothing(A_conv) ? A : A - A_conv, v_absorb .+ v_conv)
     end
     return ops, faces, dirs
 end

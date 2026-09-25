@@ -9,33 +9,33 @@
 # internal/docs/src/notes/design/wall-flux-channels.md §2.5–2.6.
 
 """
-    primitive_advection_operator(C, n; n_floor) -> SparseMatrixCSC
+    primitive_advection_operator(A_conv, n; n_floor) -> SparseMatrixCSC
 
-`(u·∇f)_i = [(C·diag(n)·f)_i − f_i·(C·n)_i] / n_i` from the face-flux divergence `C`
+`(u·∇f)_i = [(A_conv·diag(n)·f)_i − f_i·(A_conv·n)_i] / n_i` from the face-flux divergence `A_conv`
 (`build_face_flux_divergence`) and the density vector `n`. Rows with `n_i ≤ n_floor` are zero.
 Annihilates constants exactly; reduces to the nodal upwind `u·∇` for uniform `n` and `u`.
 """
 function primitive_advection_operator(
-        C::SparseMatrixCSC{FT, Int}, n::AbstractVector{FT}; n_floor::FT,
+        A_conv::SparseMatrixCSC{FT, Int}, n::AbstractVector{FT}; n_floor::FT,
     ) where {FT <: AbstractFloat}
-    Cn = C * n
+    An = A_conv * n
     inv_n = [ni > n_floor ? one(FT) / ni : zero(FT) for ni in n]
-    return spdiagm(inv_n) * (C * spdiagm(n) - spdiagm(Cn))
+    return spdiagm(inv_n) * (A_conv * spdiagm(n) - spdiagm(An))
 end
 
 """
-    apply_primitive_advection(C, n, f; n_floor) -> Vector
+    apply_primitive_advection(A_conv, n, f; n_floor) -> Vector
 
-`(u·∇f)_i = [(C·(n∘f))_i − f_i·(C·n)_i] / n_i` without assembling the operator: two matvecs
+`(u·∇f)_i = [(A_conv·(n∘f))_i − f_i·(A_conv·n)_i] / n_i` without assembling the operator: two matvecs
 instead of two sparse products. Rows with `n_i ≤ n_floor` are zero, exactly as in
 [`primitive_advection_operator`](@ref); the two agree to rounding.
 """
 function apply_primitive_advection(
-        C::SparseMatrixCSC{FT, Int}, n::AbstractVector{FT}, f::AbstractVector{FT}; n_floor::FT,
+        A_conv::SparseMatrixCSC{FT, Int}, n::AbstractVector{FT}, f::AbstractVector{FT}; n_floor::FT,
     ) where {FT <: AbstractFloat}
-    Cnf = C * (n .* f)
-    Cn = C * n
-    return [n[i] > n_floor ? (Cnf[i] - f[i] * Cn[i]) / n[i] : zero(FT) for i in eachindex(n)]
+    Anf = A_conv * (n .* f)
+    An = A_conv * n
+    return [n[i] > n_floor ? (Anf[i] - f[i] * An[i]) / n[i] : zero(FT) for i in eachindex(n)]
 end
 
 """

@@ -17,10 +17,10 @@
     inw = G.nodes.in_wall_nids
     uR = @. 1.0e5 * (1 + 0.3 * sin(G.Z2D))
     uZ = @. -4.0e4 * cos(G.R2D)
-    C = build_face_flux_divergence(G, uR, uZ)
+    A_conv = build_face_flux_divergence(G, uR, uZ)
     n = zeros(G.NR, G.NZ)
     n[inw] .= 1.0e14 .* (1 .+ 0.5 .* sin.(4 .* G.R2D[inw]))
-    U = primitive_advection_operator(C, vec(n); n_floor = 1.0)
+    U = primitive_advection_operator(A_conv, vec(n); n_floor = 1.0)
     # 1. (u·∇)const = 0 exactly (to rounding of the two cancelling terms)
     @test all(x -> abs(x) < 1.0e-9 * 1.0e5 / G.dR, (U * fill(3.0, G.NR * G.NZ))[inw])
     # 2. uniform n and uniform u: the donor-cell difference, weighted on the R faces by the
@@ -111,13 +111,13 @@ end
     inw = G.nodes.in_wall_nids
     uR = @. 1.0e5 * (1 + 0.3 * sin(G.Z2D))
     uZ = @. -4.0e4 * cos(G.R2D)
-    C = build_face_flux_divergence(G, uR, uZ)
+    A_conv = build_face_flux_divergence(G, uR, uZ)
     n = zeros(G.NR, G.NZ)
     n[inw] .= 1.0e14 .* (1 .+ 0.5 .* sin.(4 .* G.R2D[inw]))
     n[inw[1:5]] .= 0.5                                   # below the floor: empty rows
     f = @. 3.0 + sin(3 * G.R2D) * cos(2 * G.Z2D)
-    U = primitive_advection_operator(C, vec(n); n_floor = 1.0)
-    direct = apply_primitive_advection(C, vec(n), vec(f); n_floor = 1.0)
+    U = primitive_advection_operator(A_conv, vec(n); n_floor = 1.0)
+    direct = apply_primitive_advection(A_conv, vec(n), vec(f); n_floor = 1.0)
     @test direct ≈ U * vec(f) rtol = 1.0e-12
     @test all(iszero, direct[inw[1:5]])
     @test all(iszero, direct[G.nodes.on_out_wall_nids])

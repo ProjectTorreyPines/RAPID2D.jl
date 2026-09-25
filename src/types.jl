@@ -585,15 +585,15 @@ Fields include diffusion coefficients in different directions.
     # the face-flux divergence of the electron velocity (`build_face_flux_divergence`), the
     # reflective diffusion operator (`build_wall_diffusion_matrix` without faces) and ∇·u_e
     # (`wall_divergence`). `wall_faces` is geometry, built once at `initialize!`. Consumers
-    # derive the rest: `(u·∇)` from `C_e` and the current `ne`, the Robin operator from the
+    # derive the rest: `(u·∇)` from `A_conv_e` and the current `ne`, the Robin operator from the
     # faces and its own coefficients.
     wall_faces::Vector{WallFace{FT}} = WallFace{FT}[]
-    C_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
-    # The `flags.upwind` `C_e` was built with. A consumer cannot tell a central divergence
+    A_conv_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
+    # The `flags.upwind` `A_conv_e` was built with. A consumer cannot tell a central divergence
     # from an upwind one by looking at it, so it checks this against the current flag
     # (`electron_operator_cache`) instead of applying a cache built for the other scheme.
-    C_e_upwind::Bool = true
-    D_op_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
+    A_conv_e_upwind::Bool = true
+    A_diffu_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
     div_ue::Matrix{FT} = zeros(FT, dims)
 end
 

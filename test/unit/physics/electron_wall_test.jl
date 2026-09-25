@@ -375,7 +375,7 @@ end
     uR = fill(1.0e5, G.NR, G.NZ)
     uZ = zeros(G.NR, G.NZ)
     # a supplied divergence that is empty while faces see outflow is an inconsistent cache
-    @test_throws ArgumentError convective_wall_operator(G, faces, uR, uZ, 0.0; C = spzeros(G.NR * G.NZ, G.NR * G.NZ))
+    @test_throws ArgumentError convective_wall_operator(G, faces, uR, uZ, 0.0; A_conv = spzeros(G.NR * G.NZ, G.NR * G.NZ))
     RP.transport = RAPID2D.Transport{Float64}(G.NR, G.NZ)
     @test isempty(RP.transport.wall_faces)
     @test_throws ArgumentError solve_electron_continuity_equation!(RP)

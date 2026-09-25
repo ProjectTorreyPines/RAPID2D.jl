@@ -123,7 +123,7 @@ end
     run_simulation!(hand)
     @test lib.plasma.ne == hand.plasma.ne
     @test lib.plasma.ue_para == hand.plasma.ue_para
-    @test lib.transport.C_e_upwind == false
+    @test lib.transport.A_conv_e_upwind == false
 
     # and the flag did reach the step: the upwind continuation is a different answer
     up = wall_geometry(3.0e-6)

@@ -141,13 +141,13 @@ end
         inw = G.nodes.in_wall_nids
         uR = fill(uR0, G.NR, G.NZ)
         uZ = fill(uZ0, G.NR, G.NZ)
-        C = build_face_flux_divergence(G, uR, uZ)
+        A_conv = build_face_flux_divergence(G, uR, uZ)
         faces = wall_faces(G)
         v_out = face_outflow_speeds(G, faces, uR, uZ)
         n = zeros(G.NR * G.NZ)
         n[inw] .= 1.0e14
         vol = vec(G.Jacob) .* (2π * G.dR * G.dZ)
-        A = I + dt * C                     # backward Euler: (I + dt C) n¹ = n⁰
+        A = I + dt * A_conv                # backward Euler: (I + dt A_conv) n¹ = n⁰
         N0 = sum(vol[inw] .* n[inw])
         booked = 0.0
         nmin, nmax = Inf, -Inf
