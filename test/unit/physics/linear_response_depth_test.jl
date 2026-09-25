@@ -36,6 +36,7 @@
         RP.plasma.ueR .= u_para .* RP.fields.bR
         RP.plasma.ueϕ .= u_para .* RP.fields.bϕ
         RP.plasma.ueZ .= u_para .* RP.fields.bZ
+        RAPID2D.cache_electron_operators!(RP)   # the cached in-wall operators must see this drift
         ee = RP.config.constants.ee
         @. RP.fields.E_para_tot = -EoverP * RP.plasma.n_H2_gas * RP.plasma.T_gas_eV * ee
         if !coulomb

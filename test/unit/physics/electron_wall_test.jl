@@ -1,13 +1,10 @@
-# Electron wall: the Robin path for the electron continuity equation.
-#
-# PR1 of internal/docs/src/notes/plans/PLAN_wall-flux-channels.md. `:robin` is the
-# default; the legacy path (`ne[on/out_wall] = 0` each step, loss booked from the zeroed
-# band) stays selectable as `:zeroing` for comparison with old runs.
+# Electron wall: the Robin path for the electron continuity equation — the only path.
+# Rows on in-wall nodes, a Robin debit on the diagonal, the loss booked per wall face.
+# internal/docs/src/notes/design/wall-flux-channels.md §2.1, §3.
 
-@testitem "electron_wall flag: two spellings, :robin is the default" begin
-    f = SimulationFlags{Float64}()
-    @test f.electron_wall === :robin
-    @test SimulationFlags{Float64}(electron_wall = :zeroing).electron_wall === :zeroing
+@testitem "electron wall: one path, no flag" begin
+    @test !(:electron_wall in fieldnames(SimulationFlags{Float64}))
+    @test_throws MethodError SimulationFlags{Float64}(electron_wall = :zeroing)
     c = SimulationConfig{Float64}(NR = 6, NZ = 6)
     @test c.electron_wall_albedo == 0.0
 end
@@ -29,10 +26,9 @@ end
     RP.config.electron_wall_albedo = 1.0
     @test all(==(0), electron_wall_absorption_speeds(RP, faces))
     RP.config.electron_wall_albedo = 0.0
-    # tensor consistency: with Dperp0 = 0 the channel sum reproduces the legacy tensor on
-    # every in-wall node. Outside the wall the legacy path damps Dpara/Dperp
-    # (`Damp_Transp_outWall`) and zeroes the grid frame; the wall-aware operator never reads
-    # the tensor there, so those nodes are not part of the contract.
+    # tensor consistency: with Dperp0 = 0 the channel sum reproduces the transport tensor on
+    # every in-wall node. The wall-aware operator never reads the tensor outside the wall,
+    # so those nodes are not part of the contract.
     D_RR, D_RZ, D_ZZ = total_tensor(electron_wall_channels(RP))
     tp = RP.transport
     inw = RP.G.nodes.in_wall_nids
@@ -54,7 +50,7 @@ end
         config.Output_path = mktempdir()
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
-            electron_wall = :robin, diffu = true, convec = false, src = false,
+            diffu = true, convec = false, src = false,
             Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false,
             turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
             Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
@@ -91,7 +87,7 @@ end
     config.Output_path = mktempdir()
     RP = RAPID{Float64}(config)
     RP.flags = SimulationFlags{Float64}(
-        electron_wall = :robin, diffu = true, convec = false, src = false,
+        diffu = true, convec = false, src = false,
         Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false, turb_ExB_mixing = false,
         E_para_self_ES = false, E_para_self_EM = false, Ampere = false, Te_evolve = false,
         ud_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
@@ -120,7 +116,7 @@ end
     config.Output_path = mktempdir()
     RP = RAPID{Float64}(config)
     RP.flags = SimulationFlags{Float64}(
-        electron_wall = :robin, diffu = true, convec = true, src = false,
+        diffu = true, convec = true, src = false,
         Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = true,
         turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
         Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
@@ -161,7 +157,7 @@ end
         config.Output_path = mktempdir()
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
-            electron_wall = :robin, diffu = diffu, convec = convec, Implicit = implicit, src = false,
+            diffu = diffu, convec = convec, Implicit = implicit, src = false,
             Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = convec,
             turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
             Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
@@ -206,9 +202,9 @@ end
 end
 
 @testitem "electron Robin wall: secondary electrons cannot enter the loss ledger without a source" setup = [RobinLedgerDriver] begin
-    # The legacy injection puts γ·ni on out-wall nodes; under :robin those rows are never
-    # solved, so it would sit for one step and be zeroed. Until the face-source path (PR3)
-    # lands the injection is skipped under :robin, and the ledger must still close.
+    # The retired injection put γ·ni on out-wall nodes, rows the operator never solves.
+    # Until secondaries are emitted through the wall faces from the ion ledger the flag is
+    # inert, and the ledger must still close.
     r = robin_one_step(diffu = true, convec = true, secondary = true, independent_ions = true)
     @test r.booked > 0
     @test (r.N0 - r.N1) ≈ r.booked rtol = 1.0e-10
@@ -230,7 +226,7 @@ end
         config.Output_path = mktempdir()
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
-            electron_wall = :robin, diffu = true, convec = false, src = false,
+            diffu = true, convec = false, src = false,
             Atomic_Collision = true, Coulomb_Collision = false, mean_ExB = false, turb_ExB_mixing = false,
             E_para_self_ES = false, E_para_self_EM = false, Ampere = false, Te_evolve = false,
             ud_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
@@ -273,7 +269,7 @@ end
         config.Output_path = mktempdir()
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
-            electron_wall = :robin, diffu = diffu, convec = convec, Implicit = true, src = false,
+            diffu = diffu, convec = convec, Implicit = true, src = false,
             Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false,
             turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
             Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
@@ -359,4 +355,29 @@ end
     # convective path must validate it itself: 1.5 would turn the wall into a source.
     @test_throws ArgumentError uniform_wall_run(diffu = false, convec = true, albedo = 1.5, nsteps = 1)
     @test_throws ArgumentError uniform_wall_run(diffu = false, convec = true, albedo = -0.1, nsteps = 1)
+end
+
+@testitem "an empty wall-face cache is refused rather than dropping the wall silently" begin
+    # The faces and the electron operators live on `Transport` from `initialize!`. A Transport
+    # that has not been through it (or was replaced afterwards) has no faces and an empty
+    # divergence: solving with it would apply no wall loss and no convection while still
+    # booking the outflow speeds, so operator and ledger would diverge without a word.
+    using RAPID2D: convective_wall_operator, wall_faces
+    using RAPID2D.SparseArrays: spzeros
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    faces = wall_faces(G)
+    uR = fill(1.0e5, G.NR, G.NZ)
+    uZ = zeros(G.NR, G.NZ)
+    # a supplied divergence that is empty while faces see outflow is an inconsistent cache
+    @test_throws ArgumentError convective_wall_operator(G, faces, uR, uZ, 0.0; A_conv = spzeros(G.NR * G.NZ, G.NR * G.NZ))
+    RP.transport = RAPID2D.Transport{Float64}(G.NR, G.NZ)
+    @test isempty(RP.transport.wall_faces)
+    @test_throws ArgumentError solve_electron_continuity_equation!(RP)
+    @test_throws ArgumentError RAPID2D.ion_step_operators(RP)
 end

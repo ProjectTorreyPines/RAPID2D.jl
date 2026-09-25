@@ -1,4 +1,4 @@
-# u∥ and Te transport under `primitive_advection = :mass_flux`.
+# u∥ and Te transport: the in-wall operators.
 #
 # Both are primitive (per-particle) variables: they are carried by the electrons that move,
 # so their advection is derived from the same face mass flux the continuity equation uses,
@@ -7,30 +7,68 @@
 # internal/docs/src/notes/design/wall-flux-channels.md §2.5–2.6.
 
 """
-    electron_primitive_operators(RP) -> (U_op, D_op, div_u)
+    cache_electron_operators!(RP)
 
-- `U_op`: `(u·∇)f` from the face flux of `(ueR, ueZ)` and the current `ne`
-  (`primitive_advection_operator`; rows with `ne ≤ 1 m⁻³` are empty).
-- `D_op`: reflective in-wall `∇·D∇` from `(DRR, DRZ, DZZ)` (`build_wall_diffusion_matrix`
-  without faces: zero flux through every wall face).
-- `div_u`: `∇·u` on in-wall nodes, one-sided at the wall (`wall_divergence`).
-
-Rebuilt on every call; `ue_para`, `Te` and the heating powers each build their own copy
-within a step (cost measured later, see PLAN_wall-flux-channels.md PR2b).
+Rebuild the per-step cache of the electron in-wall operators from the current `ueR`, `ueZ`,
+tensor and `flags.upwind`: `transport.A_conv_e` (face-flux divergence of the electron
+velocity, with the scheme it was built with recorded in `A_conv_e_upwind`), `A_diffu_e`
+(reflective `∇·D∇`)
+and `div_ue` (`∇·u_e`). `update_transport_quantities!` calls this last — at the end of every
+step and at every `run_simulation!` entry; a caller that overwrites the velocities or the
+flag by hand and then steps by hand must call it again, or the step reads the operators of
+the state it replaced ([`electron_operator_cache`](@ref) refuses a changed flag).
 """
-function electron_primitive_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, tp, G = RP.plasma, RP.transport, RP.G
-    C = build_face_flux_divergence(G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
-    U_op = primitive_advection_operator(C, vec(pla.ne); n_floor = FT(1.0))
-    D_op = build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
-    div_u = wall_divergence(G, pla.ueR, pla.ueZ)
-    return (U_op = U_op, D_op = D_op, div_u = div_u)
+    tp.A_conv_e = build_face_flux_divergence(G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
+    tp.A_conv_e_upwind = RP.flags.upwind
+    tp.A_diffu_e = build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    tp.div_ue = wall_divergence(G, pla.ueR, pla.ueZ)
+    return RP
 end
 
-function validate_primitive_advection_flag(flags)
-    flags.primitive_advection in (:nodal, :mass_flux) ||
-        throw(ArgumentError("primitive_advection must be :nodal or :mass_flux, got :$(flags.primitive_advection)"))
-    return nothing
+"""
+    electron_operator_cache(RP) -> Transport
+
+`RP.transport`, checked to hold electron operators a consumer may use: built by `initialize!`
+(the wall faces exist) and by a refresh that saw the current `flags.upwind`. A flag changed
+since the refresh is refused rather than silently applied to the old operators; the refresh
+(`update_transport_quantities!`, or `cache_electron_operators!` alone) clears it.
+"""
+function electron_operator_cache(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    tp = RP.transport
+    isempty(tp.wall_faces) && throw(
+        ArgumentError(
+            "transport.wall_faces is empty: this Transport was not built by initialize!, " *
+                "so no wall-aware operator can be assembled"
+        )
+    )
+    tp.A_conv_e_upwind == RP.flags.upwind || throw(
+        ArgumentError(
+            "transport.A_conv_e was cached with upwind = $(tp.A_conv_e_upwind) but flags.upwind is now " *
+                "$(RP.flags.upwind): run update_transport_quantities! (or cache_electron_operators!) " *
+                "after changing the scheme"
+        )
+    )
+    return tp
+end
+
+"""
+    electron_primitive_operators(RP) -> (A_adv, A_diffu, div_u)
+
+- `A_adv`: `(u·∇)f` from the cached face flux of `(ueR, ueZ)` (`transport.A_conv_e`) and the
+  CURRENT `ne` (`primitive_advection_operator`; rows with `ne ≤ 1 m⁻³` are empty). Assembled
+  on every call because `ne` moves within the step; the matrix is what the implicit solves
+  need. A right-hand side only wants [`apply_primitive_advection`](@ref) on `transport.A_conv_e`.
+- `A_diffu`: the cached reflective in-wall `∇·D∇` (`transport.A_diffu_e`).
+- `div_u`: the cached `∇·u` on in-wall nodes (`transport.div_ue`).
+
+The cache is refreshed once per step by `update_transport_quantities!`.
+"""
+function electron_primitive_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla, tp = RP.plasma, electron_operator_cache(RP)
+    A_adv = primitive_advection_operator(tp.A_conv_e, vec(pla.ne); n_floor = FT(1.0))
+    return (A_adv = A_adv, A_diffu = tp.A_diffu_e, div_u = tp.div_ue)
 end
 
 "Apply `A` (a sparse matrix) to a 2-D field and return a 2-D field."

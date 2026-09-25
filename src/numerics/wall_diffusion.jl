@@ -1,8 +1,7 @@
 # Wall-aware anisotropic diffusion operator.
 #
-# Neither existing builder does this job. `compute_∇𝐃∇f_directly` and the assembled
-# `∇𝐃∇` carry the full tensor but sweep 2:N-1 with no wall awareness, so material
-# diffuses past the wall and is removed afterwards. `build_reflective_diffusion_matrix`
+# A whole-grid tensor builder that sweeps 2:N-1 with no wall awareness (the retired `∇𝐃∇`)
+# lets material diffuse past the wall to be removed afterwards; `build_reflective_diffusion_matrix`
 # knows about the wall but is 5-point and isotropic. This one is both.
 
 """
@@ -46,9 +45,9 @@ fast at production resolution and grows without bound as `Δx → 0`.
 
 ## The stencil, and what happens at the wall
 
-Same conservative, `J`-weighted, face-averaged discretisation as
-`compute_∇𝐃∇f_directly` (`CT_RR = J·D_RR/ΔR²`, `CT_RZ = J·D_RZ/(ΔR·ΔZ)`,
-`CT_ZZ = J·D_ZZ/ΔZ²`). The cardinal part is the usual five-point operator; the
+Conservative, `J`-weighted, face-averaged discretisation with the coefficients
+`CT_RR = J·D_RR/ΔR²`, `CT_RZ = J·D_RZ/(ΔR·ΔZ)`, `CT_ZZ = J·D_ZZ/ΔZ²` and
+`inv_J[i,j]` on the row. The cardinal part is the usual five-point operator; the
 cross-derivative part adds four groups, one per cardinal **face**, reaching
 diagonal neighbours. Two rules handle them:
 

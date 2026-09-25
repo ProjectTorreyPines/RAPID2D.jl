@@ -36,6 +36,7 @@
         RP.plasma.ueR .= u_para .* RP.fields.bR
         RP.plasma.ueϕ .= u_para .* RP.fields.bϕ
         RP.plasma.ueZ .= u_para .* RP.fields.bZ
+        RAPID2D.cache_electron_operators!(RP)   # the cached in-wall operators must see this drift
         # See exprb_te_test.jl: drag's Coulomb half is not gated on the flag.
         RP.plasma.sptz_fac .= 0.0
         RP.plasma.ν_ei .= 0.0

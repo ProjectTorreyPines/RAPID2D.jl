@@ -1,10 +1,10 @@
 # ∇·(u f) as a flux across cell faces, rows on in-wall nodes only.
 #
-# The nodal upwind `∇𝐮` cannot close a wall ledger: it has no rows on the grid frame, so
+# A nodal upwind operator cannot close a wall ledger: it has no rows on the grid frame, so
 # whatever the out-wall band convects into the frame leaves unbooked, and where |u| < eps it
-# switches to central differencing and receives half of what an upwind neighbour sent. The
-# face form telescopes exactly over interior faces, so the only flux left in Σ V·∇·(u f) is
-# the outflow through wall faces — which is what the ledger books.
+# switches to central differencing and receives half of what an upwind neighbour sent (the
+# retired `∇𝐮`). The face form telescopes exactly over interior faces, so the only flux left
+# in Σ V·∇·(u f) is the outflow through wall faces — which is what the ledger books.
 # internal/docs/src/notes/design/wall-flux-channels.md §2.6, §3.
 
 @testitem "face flux: divergence sums to the wall outflow, including where u changes sign" begin
@@ -58,8 +58,8 @@ end
     end
 end
 
-@testitem "face flux: uniform u reproduces the nodal upwind operator deep inside the plasma" begin
-    using RAPID2D: build_face_flux_divergence, update_∇𝐮_operator!, is_in_wall
+@testitem "face flux: uniform u is the donor-cell difference, with R_{i±½} on the R-faces" begin
+    using RAPID2D: build_face_flux_divergence, is_in_wall
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
         dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
@@ -67,31 +67,33 @@ end
     RP = RAPID{Float64}(config)
     initialize!(RP)
     G = RP.G
-    # nodes two cells away from anything that is not in-wall: both stencils see only
-    # in-wall values there
+    # nodes whose whole 5×5 footprint is in-wall: every face there is an interior face
     deep = [
         (j - 1) * G.NR + i for j in 1:G.NZ, i in 1:G.NR
             if all(is_in_wall(G, i + di, j + dj) for di in -2:2, dj in -2:2)
     ]
     @test !isempty(deep)
     n = @. 1.0e14 * (1 + 0.1 * sin(3 * G.R2D) * cos(2 * G.Z2D))
-    # Z direction carries no Jacobian: with uniform u the face velocity equals the node
-    # velocity and the two operators are the same arithmetic.
-    uR = zeros(G.NR, G.NZ)
-    uZ = fill(-7.0e4, G.NR, G.NZ)
-    update_∇𝐮_operator!(RP, uR, uZ)
-    dZ_old = RP.operators.∇𝐮.matrix * vec(n)
-    dZ_new = build_face_flux_divergence(G, uR, uZ) * vec(n)
-    @test dZ_new[deep] ≈ dZ_old[deep] rtol = 1.0e-12
-    # R direction: the nodal form puts the donor cell's J on the face, the face form puts
-    # ½(J_i + J_{i+1}) there. Both telescope; they differ by O(ΔR/R).
-    uR = fill(2.0e5, G.NR, G.NZ)
-    uZ = zeros(G.NR, G.NZ)
-    update_∇𝐮_operator!(RP, uR, uZ)
-    dR_old = RP.operators.∇𝐮.matrix * vec(n)
-    dR_new = build_face_flux_divergence(G, uR, uZ) * vec(n)
-    @test dR_new[deep] ≈ dR_old[deep] rtol = G.dR / minimum(G.R1D)
-    @test !isapprox(dR_new[deep], dR_old[deep]; rtol = 1.0e-12)   # and they are not the same arithmetic
+    # `atol` on the scale of one face flux: on the row symmetric about Z = 0 the expected
+    # difference is exactly zero and the matvec leaves FMA-level round-off there.
+    # along +Z: (∇·(u n))_j = u (n_j − n_{j−1})/ΔZ exactly — the Z faces carry no metric
+    uZ0 = 3.0e4
+    r = build_face_flux_divergence(G, zeros(G.NR, G.NZ), fill(uZ0, G.NR, G.NZ)) * vec(n)
+    tol = 1.0e-12 * uZ0 * maximum(n) / G.dZ
+    for nid in deep
+        i, j = G.nodes.rid[nid], G.nodes.zid[nid]
+        @test isapprox(r[nid], uZ0 * (n[i, j] - n[i, j - 1]) / G.dZ; rtol = 1.0e-12, atol = tol)
+    end
+    # along +R: the donor-cell flux carries the face radius R_{i±½} = R_i ± ΔR/2
+    uR0 = 2.0e4
+    r = build_face_flux_divergence(G, fill(uR0, G.NR, G.NZ), zeros(G.NR, G.NZ)) * vec(n)
+    tol = 1.0e-12 * uR0 * maximum(n) / G.dR
+    for nid in deep
+        i, j = G.nodes.rid[nid], G.nodes.zid[nid]
+        Rp, Rm = G.R2D[i, j] + G.dR / 2, G.R2D[i, j] - G.dR / 2
+        expected = uR0 * (Rp * n[i, j] - Rm * n[i - 1, j]) / (G.R2D[i, j] * G.dR)
+        @test isapprox(r[nid], expected; rtol = 1.0e-12, atol = tol)
+    end
 end
 
 @testitem "face flux: central interior faces (upwind = false) still telescope to the wall outflow" begin
@@ -139,13 +141,13 @@ end
         inw = G.nodes.in_wall_nids
         uR = fill(uR0, G.NR, G.NZ)
         uZ = fill(uZ0, G.NR, G.NZ)
-        C = build_face_flux_divergence(G, uR, uZ)
+        A_conv = build_face_flux_divergence(G, uR, uZ)
         faces = wall_faces(G)
         v_out = face_outflow_speeds(G, faces, uR, uZ)
         n = zeros(G.NR * G.NZ)
         n[inw] .= 1.0e14
         vol = vec(G.Jacob) .* (2π * G.dR * G.dZ)
-        A = I + dt * C                     # backward Euler: (I + dt C) n¹ = n⁰
+        A = I + dt * A_conv                # backward Euler: (I + dt A_conv) n¹ = n⁰
         N0 = sum(vol[inw] .* n[inw])
         booked = 0.0
         nmin, nmax = Inf, -Inf

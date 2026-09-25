@@ -493,6 +493,37 @@ function Fields{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
 end
 
 """
+    WallFace{FT}
+
+One outward face of an in-wall cell — the interface across which that cell
+exchanges particles with the wall.
+
+- `rid`, `zid`, `nid`  the **in-wall** cell that owns the face (grid indices and
+  linear index). A face always belongs to the cell on the plasma side.
+- `outward`  index step `(ΔR, ΔZ)` from that cell across the face, one of
+  `(±1, 0)` or `(0, ±1)`. The cell it points at is on or outside the wall, and
+  may be off-grid entirely when the wall coincides with the grid frame.
+- `area`  `A_f` [m²], the true area of the surface of revolution.
+- `area_per_volume`  `A_f/V_i` [1/m], the factor a boundary flux is multiplied by
+  to become a rate in the owning cell: `∂n_i/∂t = −(A_f/V_i)·Γ_f`.
+
+Both `area` and `area_per_volume` are stored because they answer different
+questions. `area` converts a flux density into particles per second (a
+diagnostic, and the wall ledger); `area_per_volume` is the coefficient a Robin
+condition subtracts from the diagonal. Deriving one from the other at each call
+site is how they drift apart, and they must not — absorption and re-emission are
+only exactly reciprocal across a face if both use the same pair.
+"""
+struct WallFace{FT <: AbstractFloat}
+    rid::Int
+    zid::Int
+    nid::Int
+    outward::Tuple{Int, Int}
+    area::FT
+    area_per_volume::FT
+end
+
+"""
     Transport{FT<:AbstractFloat}
 
 Contains the transport coefficients for the plasma.
@@ -548,6 +579,22 @@ Fields include diffusion coefficients in different directions.
     CTRR::Matrix{FT} = zeros(FT, dims)    # R-R component of coefficient tensor
     CTRZ::Matrix{FT} = zeros(FT, dims)    # R-Z component of coefficient tensor
     CTZZ::Matrix{FT} = zeros(FT, dims)    # Z-Z component of coefficient tensor
+
+    # Per-step cache of the electron in-wall operators, rebuilt at the end of
+    # `update_transport_quantities!` from the velocities and the tensor it just finalised:
+    # the face-flux divergence of the electron velocity (`build_face_flux_divergence`), the
+    # reflective diffusion operator (`build_wall_diffusion_matrix` without faces) and ∇·u_e
+    # (`wall_divergence`). `wall_faces` is geometry, built once at `initialize!`. Consumers
+    # derive the rest: `(u·∇)` from `A_conv_e` and the current `ne`, the Robin operator from the
+    # faces and its own coefficients.
+    wall_faces::Vector{WallFace{FT}} = WallFace{FT}[]
+    A_conv_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
+    # The `flags.upwind` `A_conv_e` was built with. A consumer cannot tell a central divergence
+    # from an upwind one by looking at it, so it checks this against the current flag
+    # (`electron_operator_cache`) instead of applying a cache built for the other scheme.
+    A_conv_e_upwind::Bool = true
+    A_diffu_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
+    div_ue::Matrix{FT} = zeros(FT, dims)
 end
 
 # Constructor with separate dimensions
@@ -581,20 +628,13 @@ Fields include various matrices for solving different parts of the model.
     𝐽⁻¹∂R_𝐽::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
     ∂Z::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Vertical derivative operator ∂Z
 
-    # Operators for solving continuity equations
-    ∇𝐃∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Diffusion operator
+    # The transport operators (wall-aware diffusion, face-flux convection, primitive
+    # advection) are not cached here: they are built from the current state where they
+    # are used, on in-wall rows only.
     # Named `_tot`, not `ν_en_iz`, because it is built from `pla.ν_en_iz_tot`: under the
     # INTERIM(diz-ion-species) (`REACTION_STOICHIOMETRY.diz`) every ion is booked as H₂⁺, so the continuity
     # assembly needs both ionization channels, not the H₂⁺-only rate.
     ν_en_iz_tot::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization (both channels) [1/s]
-
-    𝐮∇::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # advection operator (𝐮·∇)f
-    ∇𝐮::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # convective-flux divergence [ ∇⋅(𝐮 * f) ]
-    # Ion convection has no cached operator: `ion_step_operators` builds the face-flux
-    # divergence from `uiR`/`uiZ` every step (`convective_wall_operator`).
-
-    # Mapping from k-index to CSC index (for more efficient update of non-zero elements of CSC matrix)
-    # map_diffu_k2csc::Vector{Int} = zeros(Int, prod(dims)) # Mapping from k-index to CSC index
 
     # Operator for magnetic field solver
     ΔGS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Grad-Shafranov operator
@@ -1092,14 +1132,6 @@ Contains boolean flags that control various aspects of the simulation.
     Include_ud_diffu_term::Bool = true        # Include diffusion term in drift velocity equation
     Include_Te_convec_term::Bool = true       # Include convection term in Te equation
     Include_Te_diffu_term::Bool = true        # Include diffusion term in Te equation
-    evolve_ud_inWall_only::Bool = false       # Only evolve drift velocity inside wall
-    evolve_Te_inWall_only::Bool = false       # Only evolve Te inside wall
-    Damp_Transp_outWall::Bool = true          # Damp transport outside wall
-    # How u∥ and Te are advected/diffused near the wall: :nodal = whole-grid nodal operators
-    # with the damped out-wall band (legacy); :mass_flux = (u·∇)f derived from the face mass
-    # flux + reflective in-wall diffusion, nothing read or damped outside the wall (PR2b).
-    primitive_advection::Symbol = :mass_flux
-    electron_wall::Symbol = :robin            # :robin (wall-aware operator, face ledger) | :zeroing (legacy: ne[on/out] = 0 each step)
 
     # Artificial limiters to avoid numerical instabilities.
     #
@@ -1378,7 +1410,6 @@ mutable struct RAPID{FT <: AbstractFloat}
     G::GridGeometry{FT}               # Grid geometry
     wall::WallGeometry{FT}            # Wall geometry data
     fitted_wall::WallGeometry{FT}     # Wall geometry fitted to the grid
-    damping_func::Matrix{FT}          # Damping function outside wall
 
     # External field source
     external_field::Union{Nothing, AbstractExternalField{FT}}  # External EM field source
@@ -1436,7 +1467,6 @@ mutable struct RAPID{FT <: AbstractFloat}
         flags = SimulationFlags{FT}()
 
         # Initialize matrices
-        damping_func = zeros(FT, dims)
         prev_n = zeros(FT, dims)
         reactions = ReactionState{FT}(dims = dims)
 
@@ -1463,7 +1493,7 @@ mutable struct RAPID{FT <: AbstractFloat}
 
         # Create and return new instance
         return new{FT}(
-            G, wall, WallGeometry{FT}(), damping_func,
+            G, wall, WallGeometry{FT}(),
             nothing,  # external_field
             eRRC, iRRC,
             config, flags, plasma, fields, transport, operators,

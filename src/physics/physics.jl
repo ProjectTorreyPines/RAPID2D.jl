@@ -29,7 +29,6 @@ export update_ue_para!,
     calculate_para_grad_of_scalar_F,
     calculate_grad_of_scalar_F,
     calculate_electron_acceleration_by_pressure,
-    calculate_electron_acceleration_by_convection,
     update_uMHD_by_global_JxB_force!,
     combine_Au_and_ΔGS_sparse_matrices,
     solve_combined_momentum_Ampere_equations_with_coils!
@@ -70,8 +69,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         θ_op = RP.flags.θ_imp.decay
         θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
 
-        mass_flux = RP.flags.primitive_advection === :mass_flux
-        pops = mass_flux ? electron_primitive_operators(RP) : nothing
+        # (u·∇)u∥ from the face mass flux and the reflective in-wall viscosity: rows on
+        # in-wall nodes only, nothing read outside the wall (`primitive_transport.jl`).
+        pops = electron_primitive_operators(RP)
 
         # Rue_ei, part 1 (uⁿ). A LEDGER of the exchange over the step, so it must use
         # the quadrature the update actually performed — θ(z) under ExpRB.
@@ -89,13 +89,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # #2: Advection term (1-θ_op)*[-(𝐮⋅∇)*ue_para]. θ_op, not θu: the fitted
             # weight belongs to the friction's eigenvalue, not to a nonlocal operator.
             if RP.flags.Include_ud_convec_term
-                if mass_flux
-                    accel_para_tilde .+= (one_FT - θ_op) * (-apply_op(pops.U_op, pla.ue_para))
-                    OP.A_LHS = OP.A_LHS + θ_op * dt * pops.U_op
-                else
-                    accel_para_tilde .+= (one_FT - θ_op) * (-OP.𝐮∇ * pla.ue_para)
-                    @. OP.A_LHS += θ_op * dt * OP.𝐮∇
-                end
+                accel_para_tilde .+= (one_FT - θ_op) * (-apply_op(pops.A_adv, pla.ue_para))
+                OP.A_LHS = OP.A_LHS + θ_op * dt * pops.A_adv
             end
 
             # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
@@ -117,13 +112,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
             if RP.flags.Include_ud_diffu_term
-                if mass_flux
-                    accel_para_tilde .+= (one_FT - θ_op) * apply_op(pops.D_op, pla.ue_para)
-                    OP.A_LHS = OP.A_LHS - θ_op * dt * pops.D_op
-                else
-                    accel_para_tilde .+= (one_FT - θ_op) * (OP.∇𝐃∇ * pla.ue_para)
-                    @. OP.A_LHS -= θ_op * dt * OP.∇𝐃∇
-                end
+                accel_para_tilde .+= (one_FT - θ_op) * apply_op(pops.A_diffu, pla.ue_para)
+                OP.A_LHS = OP.A_LHS - θ_op * dt * pops.A_diffu
             end
 
             # bern(−z) formed as bern(z) + z, not the algebraically equal
@@ -158,8 +148,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
 
             if RP.flags.Include_ud_convec_term
-                accel_by_grad_ud = mass_flux ? -apply_op(pops.U_op, pla.ue_para) :
-                    calculate_electron_acceleration_by_convection(RP)
+                accel_by_grad_ud = -apply_op(pops.A_adv, pla.ue_para)
                 @. pla.ue_para += inv_factor * dt * (accel_by_grad_ud)
             end
         end
@@ -321,60 +310,45 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # Apply time integration method based on flag
         if RP.flags.Implicit
-            if RP.flags.evolve_Te_inWall_only
-                @warn "Implicit method for Te_evolve_inWall_only not implemented yet" maxlog = 1
+            @. OP.A_LHS = OP.II
+
+            ePowers_tilde = copy(pla.ePowers.tot)
+
+            # Calculate RHS
+            # ePowers_tilde = ePowers already known at crruent time t
+            # Note: diffu and conv will have (1-θimp) contribution
+            # ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
+
+            # Calculate LHS from the in-wall operators (`primitive_transport.jl`)
+            pops = electron_primitive_operators(RP)
+            if RP.flags.Include_Te_diffu_term
+                # P_diffu = 1.5*∇·D∇Te
+                @. ePowers_tilde -= θimp * pla.ePowers.diffu
+                OP.A_LHS = OP.A_LHS - two_thirds_FT * FT(1.5) * (dt * θimp) * pops.A_diffu
+            end
+
+            if RP.flags.Include_Te_convec_term
+                @. ePowers_tilde -= θimp * pla.ePowers.conv
+                # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮)
+                OP.A_LHS = OP.A_LHS - two_thirds_FT * (dt * θimp) * (-FT(1.5) * pops.A_adv - spdiagm(vec(pops.div_u)))
+            end
+
+            # LHS written as a deviation from the identity, so the sparsity
+            # pattern — and the cached symbolic factorization — is untouched.
+            # The source needs no bern: with S = (2/3e)P⁰ − λTₑⁿ, bern(−z) = bern(z) + z
+            # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by bern.
+            if atomic_is_exprb
+                OP.A_LHS += @views spdiagm((bern_atomic .- one(FT))[:])
+                OP.RHS .= bern_atomic .* pla.Te_eV +
+                    two_thirds_FT * (dt * ePowers_tilde / ee)
             else
-                @. OP.A_LHS = OP.II
+                OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
+            end
 
-                ePowers_tilde = copy(pla.ePowers.tot)
-
-                # Calculate RHS
-                # ePowers_tilde = ePowers already known at crruent time t
-                # Note: diffu and conv will have (1-θimp) contribution
-                # ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
-
-                # Calculate LHS
-                mass_flux = RP.flags.primitive_advection === :mass_flux
-                pops = mass_flux ? electron_primitive_operators(RP) : nothing
-                if RP.flags.Include_Te_diffu_term
-                    # P_diffu = 1.5*∇𝐃∇*Te
-                    @. ePowers_tilde -= θimp * pla.ePowers.diffu
-                    if mass_flux
-                        OP.A_LHS = OP.A_LHS - two_thirds_FT * FT(1.5) * (dt * θimp) * pops.D_op
-                    else
-                        @. OP.A_LHS -= two_thirds_FT * FT(1.5) * (dt * θimp * OP.∇𝐃∇)
-                    end
-                end
-
-                if RP.flags.Include_Te_convec_term
-                    @. ePowers_tilde -= θimp * pla.ePowers.conv
-                    if mass_flux
-                        # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮)
-                        OP.A_LHS = OP.A_LHS - two_thirds_FT * (dt * θimp) * (-FT(1.5) * pops.U_op - spdiagm(vec(pops.div_u)))
-                    else
-                        # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)
-                        div_u = calculate_divergence(RP.G, pla.ueR, pla.ueZ)
-                        OP.A_LHS .-= two_thirds_FT * (@views dt * θimp * (-FT(1.5) * OP.∇𝐮 + spdiagm(FT(0.5) * div_u[:])))
-                    end
-                end
-
-                # LHS written as a deviation from the identity, so the sparsity
-                # pattern — and the cached symbolic factorization — is untouched.
-                # The source needs no bern: with S = (2/3e)P⁰ − λTₑⁿ, bern(−z) = bern(z) + z
-                # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by bern.
-                if atomic_is_exprb
-                    OP.A_LHS += @views spdiagm((bern_atomic .- one(FT))[:])
-                    OP.RHS .= bern_atomic .* pla.Te_eV +
-                        two_thirds_FT * (dt * ePowers_tilde / ee)
-                else
-                    OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
-                end
-
-                # Solve the linear system (cached factorization; pattern is step-stable)
-                @timeit RAPID_TIMER "Te_eV LinearSolve" begin
-                    factorize!(OP.Te_solver, OP.A_LHS.matrix)
-                    solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
-                end
+            # Solve the linear system (cached factorization; pattern is step-stable)
+            @timeit RAPID_TIMER "Te_eV LinearSolve" begin
+                factorize!(OP.Te_solver, OP.A_LHS.matrix)
+                solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
             end
         elseif atomic_is_exprb
             # Forward Euler with bern as a divisor on the increment.
@@ -515,7 +489,6 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # The elastic recoil no longer needs a separate neutral mass here: `P_en_ela`
         # already carries 2mₑ/M internally (see the ela block).
         m_i = bulk_ion_mass(RP)
-        OP = RP.operators
 
         # Alias common objects for readability
         pla = RP.plasma
@@ -536,59 +509,35 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
 
-        mass_flux = RP.flags.primitive_advection === :mass_flux
-        pops = mass_flux ? electron_primitive_operators(RP) : nothing
+        # The electron in-wall operators, cached once per step (`transport.A_conv_e`, `A_diffu_e`,
+        # `div_ue`; rows on in-wall nodes only, so the excluded band is never read) and
+        # checked to carry the current `upwind` scheme. These are right-hand sides, so (u·∇)
+        # is applied matrix-free from the current `ne` rather than assembled — the assembly
+        # is what the implicit solves pay for.
+        tp = electron_operator_cache(RP)
+        n_e = vec(pla.ne)
+        n_floor = one(FT)
+        u∇(f) = reshape(apply_primitive_advection(tp.A_conv_e, n_e, vec(f); n_floor), size(f))
 
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
-            # P_diffu = 1.5*∇𝐃∇*Te
-            if mass_flux
-                ePowers.diffu .= ee * FT(1.5) * apply_op(pops.D_op, pla.Te_eV)
-            elseif RP.flags.Implicit
-                ePowers.diffu .= ee * FT(1.5) * (OP.∇𝐃∇ * pla.Te_eV)
-            else
-                ePowers.diffu .= ee * FT(1.5) * compute_∇𝐃∇f_directly(RP, RP.plasma.Te_eV)
-            end
+            # P_diffu = 1.5*∇·D∇Te
+            ePowers.diffu .= ee * FT(1.5) * apply_op(tp.A_diffu_e, pla.Te_eV)
         end
 
         # If convection term is included in temperature equation
         if RP.flags.Include_Te_convec_term
             # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)  =  -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)
-            if mass_flux
-                ePowers.conv .= ee * (-FT(1.5) * apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u)
-            elseif RP.flags.Implicit
-                ePowers.conv .= ee * (
-                    -FT(1.5) * (OP.∇𝐮 * pla.Te_eV)
-                        .+ FT(0.5) * pla.Te_eV .* calculate_divergence(RP.G, pla.ueR, pla.ueZ)
-                )
-            else
-                ePowers.conv .= ee * (
-                    -FT(1.5) * compute_∇f𝐮_directly(RP, pla.Te_eV)
-                        .+ FT(0.5) * pla.Te_eV .* calculate_divergence(RP.G, pla.ueR, pla.ueZ)
-                )
-            end
+            ePowers.conv .= ee * (-FT(1.5) * u∇(pla.Te_eV) .- pla.Te_eV .* tp.div_ue)
         end
 
         if RP.flags.Include_heat_flux_term
             # NOTE: Assumption: 𝐪 ≈ p*𝐮 (heat flux is about in the order of pressure*velocity)
             # Pcond = Pheat = -∇⋅(Te * 𝐮) - Te*𝐮⋅∇(ln_n)
-            if mass_flux
-                # = −(𝐮⋅∇)Te − Te ∇⋅𝐮 − Te (𝐮⋅∇) ln n, every term from the in-wall operators, so the
-                # excluded band (where ne = 0 and log ne = −∞) is never read. The floor keeps
-                # log finite on empty rows; those rows contribute nothing anyway.
-                ln_n = log.(max.(pla.ne, one(FT)))
-                ePowers.heat .= ee * (
-                    -apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u
-                        .- pla.Te_eV .* apply_op(pops.U_op, ln_n)
-                )
-            else
-                # `.*`: this was a matrix product, which threw a DimensionMismatch on any
-                # non-square grid — the term had never been runnable on the nodal path.
-                ePowers.heat .= ee * (
-                    - compute_∇f𝐮_directly(RP, pla.Te_eV)
-                        .- pla.Te_eV .* compute_𝐮∇f_directly(RP, log.(pla.ne))
-                )
-            end
+            #       = −(𝐮⋅∇)Te − Te ∇⋅𝐮 − Te (𝐮⋅∇) ln n, every term from the in-wall operators.
+            # The floor keeps log finite on empty rows (ne = 0); those rows contribute nothing.
+            ln_n = log.(max.(pla.ne, one(FT)))
+            ePowers.heat .= ee * (-u∇(pla.Te_eV) .- pla.Te_eV .* tp.div_ue .- pla.Te_eV .* u∇(ln_n))
         end
 
 
@@ -1189,33 +1138,24 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # θ (`θ_imp.transport` vs `θ_imp.growth`) and so cannot share a sum.
         fill!(op.RHS, zero(FT))
 
-        # `:robin`: the wall-aware operator (rows on in-wall nodes only, Robin debit on the
-        # diagonal) replaces the whole-grid `∇𝐃∇`, and the loss is booked per face from the
-        # same arithmetic the operator used. `:zeroing` is the legacy path.
-        RP.flags.electron_wall in (:zeroing, :robin) ||
-            throw(ArgumentError("electron_wall must be :zeroing or :robin, got :$(RP.flags.electron_wall)"))
-        # Validated here, on the path every step takes, so a misspelt symbol cannot fall
-        # through `=== :mass_flux` checks and silently run the nodal operators.
-        validate_primitive_advection_flag(RP.flags)
-        robin = RP.flags.electron_wall === :robin
-        faces_e = robin ? wall_faces(RP.G) : nothing
+        # The wall-aware operator: rows on in-wall nodes only, a Robin debit on the diagonal,
+        # and the loss booked per face from the same arithmetic the operator used. The cache
+        # is checked to exist and to carry the current `upwind` scheme.
+        tp = electron_operator_cache(RP)
+        faces_e = tp.wall_faces
         # Diffusive Robin part only when diffusion is on; otherwise the ledger coefficient
         # starts at zero and only convection (below) can add to it.
-        A_e, v_e = if robin && RP.flags.diffu
-            electron_transport_operator(RP, faces_e)
-        elseif robin
+        A_diffu_wall_e, v_e = RP.flags.diffu ? electron_transport_operator(RP, faces_e) :
             (nothing, zeros(FT, length(faces_e)))
-        else
-            (nothing, nothing)
-        end
-        # Under `:robin` convection is the face-flux operator on the same faces: its
-        # outflow term is a diagonal debit like the Robin one, so the two speeds add into
-        # one ledger coefficient per face. The albedo scales that outflow the same way it
-        # scales the Robin speed (`convective_wall_operator`).
-        C_e = nothing
-        if robin && RP.flags.convec
-            C_e, v_conv = convective_wall_operator(
-                RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP); upwind = RP.flags.upwind
+        # Convection is the face-flux operator on the same faces: its outflow term is a
+        # diagonal debit like the Robin one, so the two speeds add into one ledger
+        # coefficient per face. The albedo scales that outflow the same way it scales the
+        # Robin speed (`convective_wall_operator`). The cached divergence carries its own
+        # scheme, so no `upwind` is passed here.
+        A_conv_wall_e = nothing
+        if RP.flags.convec
+            A_conv_wall_e, v_conv = convective_wall_operator(
+                RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP); A_conv = tp.A_conv_e
             )
             v_e .+= v_conv
         end
@@ -1230,19 +1170,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
 
         if RP.flags.diffu
             # ∇⋅𝐃⋅∇n
-            if robin
-                op.RHS .+= reshape(A_e * vec(pla.ne), size(pla.ne))
-            else
-                op.RHS .+= compute_∇𝐃∇f_directly(RP, pla.ne)
-            end
+            op.RHS .+= reshape(A_diffu_wall_e * vec(pla.ne), size(pla.ne))
         end
         if RP.flags.convec
             # -∇⋅(n 𝐮)
-            if robin
-                op.RHS .-= reshape(C_e * vec(pla.ne), size(pla.ne))
-            else
-                op.RHS .+= -compute_∇f𝐮_directly(RP, pla.ne)
-            end
+            op.RHS .-= reshape(A_conv_wall_e * vec(pla.ne), size(pla.ne))
         end
 
         # A GROWTH eigenvalue, z = +ν_iz_tot·Δt (BOTH electron-producing channels —
@@ -1301,21 +1233,14 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             # off mid-way kept ionizing through a stale ν_en_iz_tot. The ion path
             # honours the flags in full, which is how the mismatch showed up.
             #
-            # Gated by ZEROING the weight rather than by branching, so this stays
-            # the single fused broadcast it has always been. Four statements cost
-            # 26 extra Ng-sized sparse temporaries per step at 100×200; they also
-            # would have made the sparsity pattern flag-dependent, and the cached
-            # factorization wants it stable.
+            # Gated by ZEROING the weight rather than by branching, so the assembly is
+            # one expression; an operator that is off enters as an empty matrix.
             θ_d = RP.flags.diffu ? θ_tr : zero(FT)
             θ_c = RP.flags.convec ? θ_tr : zero(FT)
             θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
-            if robin
-                diff_e = isnothing(A_e) ? spzeros(FT, size(op.II)...) : A_e
-                conv_e = isnothing(C_e) ? spzeros(FT, size(op.II)...) : C_e
-                op.A_LHS.matrix = op.II - dt * (θ_d * diff_e - θ_c * conv_e + θ_s * op.ν_en_iz_tot.matrix)
-            else
-                @. op.A_LHS = op.II - dt * (θ_d * op.∇𝐃∇ - θ_c * op.∇𝐮 + θ_s * op.ν_en_iz_tot)
-            end
+            diff_e = isnothing(A_diffu_wall_e) ? spzeros(FT, size(op.II)...) : A_diffu_wall_e
+            conv_e = isnothing(A_conv_wall_e) ? spzeros(FT, size(op.II)...) : A_conv_wall_e
+            op.A_LHS.matrix = op.II - dt * (θ_d * diff_e - θ_c * conv_e + θ_s * op.ν_en_iz_tot.matrix)
             if fit_growth
                 # bern(z) on the diagonal, as a deviation from the identity so the
                 # pattern is untouched. This is the side that cancels on a growth
@@ -1329,19 +1254,19 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 factorize!(op.ne_solver, op.A_LHS.matrix)
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
-            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, θ_tr)
+            book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, θ_tr)
         elseif fit_growth
             # Same two coefficients as the assembled path: no matrix is not the same
             # as no fit. `op.RHS` still holds transport, which is not part of λ and
             # rides the increment like any other frozen source.
             @. pla.ne = ((bern_growth + pla.exprb.z_growth) * pla.ne + dt * op.RHS) / bern_growth
-            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
+            book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
         else
             if RP.flags.src
                 @. op.RHS += pla.ne * pla.ν_en_iz_tot
             end
             @. RP.plasma.ne += dt * op.RHS
-            robin && book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
+            book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, zero(FT))
         end
 
         # Publish how many ionizations this step made, from the θ and the nⁿ/nⁿ⁺¹
@@ -1354,95 +1279,81 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
 end
 
 """
-    treat_electron_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
+    book_ionization_sources!(RP::RAPID{FT}) where FT<:AbstractFloat
 
-Apply boundary conditions for electrons outside the wall and track particle sources/losses.
+Add this step's ionization count to the particle ledgers: `Ne_src`, and `Ni_src` when the
+ions are evolved independently, in both the 0-D and the 2-D cumulative trackers.
 
-This function performs three main operations:
-1. **Track ionization sources**: Calculates electrons generated by ionization and adds to cumulative tracking
-2. **Apply wall boundary conditions**:
-- Sets electron density to zero outside the wall
-- Sets electron temperature to room temperature outside the wall
-3. **Correct negative densities**: Optionally removes negative densities and counts them as losses
-
-# Arguments
-- `RP::RAPID{FT}`: RAPID simulation object containing plasma state and geometry
-
-# Details
-- Uses implicit weighting when `RP.flags.Implicit = true` for ionization source calculation
-- Tracks cumulative particle numbers in both 1D (volume-integrated) and 2D (spatially-resolved) formats
-- Applies negative density correction when `RP.flags.negative_n_correction = true`
-- Updates particle number tracker (`Ntracker`) for diagnostic purposes
-
-# Returns
-- `RP`: Modified RAPID object with updated electron density and particle tracking
+The count is the one `update_reaction_counts!` published for the solve that just ran — a
+per-step number, already weighted with the θ the solve used, so nothing is recomputed here —
+times the in-wall cell volumes. One ionization event makes one electron AND one ion, so the
+ion ledger is fed the same number. The published rates are zero on the band outside the
+wall, so nothing is ever booked there.
 """
-function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    @timeit RAPID_TIMER "treat_electron_outside_wall!" begin
-        # The number of electrons ionization made this step, from the one array
-        # that says so — already a per-step count, hence no Δt here. Bound outside
-        # the `@.`, which would otherwise broadcast the calls themselves over `RP`.
+function book_ionization_sources!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "book_ionization_sources!" begin
+        # Bound outside the `@.`, which would otherwise broadcast the calls over `RP`.
         Δn_e = net_electron_count(check_reaction_counts(RP))
         Ne_iz = @. Δn_e * RP.G.inVol2D
 
-        # Estimate electron loss outside the wall
-        # TODO: How to accurately define the volume outside/on the wall?
-        on_out_wall_nids = RP.G.nodes.on_out_wall_nids
-        Ne_loss = @. RP.plasma.ne[on_out_wall_nids] * FT(2.0 * pi) * RP.G.Jacob[on_out_wall_nids] * RP.G.dR * RP.G.dZ
-
-        # Track changes in number of electrons
         Ntracker = RP.diagnostics.Ntracker
-
         Ntracker.cum0D_Ne_src += sum(Ne_iz)
         @. Ntracker.cum2D_Ne_src += Ne_iz
-
-        # One ionization event makes one electron AND one ion, so the ion ledger is
-        # fed the SAME number rather than recomputing it. `treat_ion_outside_wall!`
-        # used to, and by then `plasma.ne` had already been zeroed outside the wall
-        # a few lines below — so ionization in that band was booked for electrons
-        # and lost for ions. Guarded by the flag that decides whether the ion pass
-        # runs at all, so the pairing of writers is unchanged.
         if RP.flags.update_ni_independently
             Ntracker.cum0D_Ni_src += sum(Ne_iz)
             @. Ntracker.cum2D_Ni_src += Ne_iz
         end
+        return RP
+    end # @timeit
+end
 
-        # `:zeroing` books what the whole-grid operators pushed into the on/out-wall band.
-        # Under `:robin` neither operator writes there (rows on in-wall nodes only) and the
-        # loss is already on the per-face ledger, so the band is zeroed WITHOUT booking —
-        # anything found there would be a second count.
-        if RP.flags.electron_wall === :zeroing
-            Ntracker.cum0D_Ne_loss += sum(Ne_loss)
-            @. Ntracker.cum2D_Ne_loss[on_out_wall_nids] += Ne_loss
-        end
+"""
+    correct_negative_densities!(RP::RAPID{FT}) where FT<:AbstractFloat
 
-        # Set electron density to zero outside the wall
-        RP.plasma.ne[on_out_wall_nids] .= 0.0
+After the step: floor negative densities and book what the floor ADDED as a negative loss,
+so `Δ(Σ V·n) = src − loss` keeps holding; then re-slave the ions to the electrons when they
+are not evolved independently.
 
-        # Damp out electron temperature outside the wall — legacy band only. Under
-        # :mass_flux no operator reads the band, so nothing there needs pulling down.
-        if RP.flags.primitive_advection === :nodal
-            out_wall_nids = RP.G.nodes.out_wall_nids
-            @. RP.plasma.Te_eV[out_wall_nids] *= RP.damping_func[out_wall_nids]
-        end
+- Electrons (`negative_n_correction`): a negative cell is raised to
+  `min(0.1·|n|, 0.01·mean|n_neighbours|)`, and the particles that creates, `(n_new − n_old)·V`,
+  are taken OFF `Ne_loss`. (They used to be added to it, which double-counted them.)
+- Ions, when independent: a negative cell is set to zero and `n_old·V` (negative) is added
+  to `Ni_loss` — the same sign convention.
 
-        # Correct negative densities if enabled
+Nothing outside the wall is touched. No transport operator has rows there, and the
+ionization rates are zero there, so the band keeps the value the initial condition gave it;
+`initialize_density!` sets it to zero. There is no zeroing pass any more, and nothing found
+on the band is ever booked — the per-face ledgers already hold everything that left.
+"""
+function correct_negative_densities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "correct_negative_densities!" begin
+        Ntracker = RP.diagnostics.Ntracker
+        G = RP.G
+        cell_volume(nid) = FT(2π) * G.Jacob[nid] * G.dR * G.dZ
+
         if RP.flags.negative_n_correction
-            neg_n_idx = findall(RP.plasma.ne .< 0)
-            if !isempty(neg_n_idx)
-                ori_ne = copy(RP.plasma.ne)
-                @inbounds for nid in neg_n_idx
-                    rid = RP.G.nodes.rid[nid]
-                    zid = RP.G.nodes.zid[nid]
+            ne = RP.plasma.ne
+            neg_e = findall(<(zero(FT)), ne)
+            if !isempty(neg_e)
+                ori_ne = copy(ne)
+                @inbounds for nid in neg_e
+                    rid, zid = G.nodes.rid[nid], G.nodes.zid[nid]
+                    ngh_rids = max(1, rid - 1):min(G.NR, rid + 1)
+                    ngh_zids = max(1, zid - 1):min(G.NZ, zid + 1)
+                    ne[nid] = min(FT(0.1) * abs(ori_ne[nid]), FT(0.01) * mean(abs.(ori_ne[ngh_rids, ngh_zids])))
+                    added = (ne[nid] - ori_ne[nid]) * cell_volume(nid)    # > 0: what the floor created
+                    Ntracker.cum0D_Ne_loss -= added
+                    Ntracker.cum2D_Ne_loss[nid] -= added
+                end
+            end
 
-                    ngh_rids = max(1, rid - 1):min(RP.G.NR, rid + 1)
-                    ngh_zids = max(1, zid - 1):min(RP.G.NZ, zid + 1)
-
-                    RP.plasma.ne[nid] = min(0.1 * abs(ori_ne[nid]), 0.01 * mean(abs.(ori_ne[ngh_rids, ngh_zids])))
-
-                    Ne_loss = (RP.plasma.ne[nid] - ori_ne[nid]) * FT(2.0 * pi) * RP.G.Jacob[nid] * RP.G.dR * RP.G.dZ
-                    Ntracker.cum0D_Ne_loss += Ne_loss
-                    Ntracker.cum2D_Ne_loss[nid] += Ne_loss
+            if RP.flags.update_ni_independently
+                ni = RP.plasma.ni
+                @inbounds for nid in findall(<(zero(FT)), ni)
+                    removed = ni[nid] * cell_volume(nid)                  # < 0: a negative loss
+                    Ntracker.cum0D_Ni_loss += removed
+                    Ntracker.cum2D_Ni_loss[nid] += removed
+                    ni[nid] = zero(FT)
                 end
             end
         end
@@ -1451,56 +1362,6 @@ function treat_electron_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Same definition the step uses; they disagreed before (ne/Zeff vs ne).
             slave_ions_to_electrons!(RP)
         end
-
-        return RP
-    end # @timeit
-end
-
-
-"""
-    treat_ion_outside_wall!(RP::RAPID{FT}) where FT<:AbstractFloat
-
-The ion band pass, after the step. Ion transport never writes outside the wall — Robin
-diffusion and face-flux convection are diagonal debits on in-wall rows, booked per face —
-so the band holds nothing to book: it is kept at zero without booking (anything found
-there would be a second count of what the face ledger already has), `Ti` is damped there
-as before, and negative densities are optionally corrected and booked.
-
-Secondary electrons: the legacy injection `ne += γ·ni` on the band went with the material
-it multiplied. `secondary_electron` warns once and is inert until secondaries are emitted
-through the wall faces from the ion ledger (`wall_emission_source`).
-"""
-function treat_ion_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    @timeit RAPID_TIMER "treat_ion_outside_wall!" begin
-        # The ion SOURCE is not booked here. Ne_iz = Ni_iz by construction — one
-        # ionization makes one of each — so `treat_electron_outside_wall!` books
-        # both from one number, before it zeroes `ne` outside the wall.
-        Ntracker = RP.diagnostics.Ntracker
-
-        if RP.flags.secondary_electron
-            @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
-        end
-
-        # Kept at zero, not booked: the face ledger already holds everything that left.
-        on_out_wall_nids = RP.G.nodes.on_out_wall_nids
-        RP.plasma.ni[on_out_wall_nids] .= 0.0
-
-        # Legacy band damping of Ti. The ion energy equation has no transport operator,
-        # so nothing reads the band; kept until that equation gets its own wall treatment.
-        out_wall_nids = RP.G.nodes.out_wall_nids
-        @. RP.plasma.Ti_eV[out_wall_nids] *= RP.damping_func[out_wall_nids]
-
-        # Correct negative densities if enabled
-        if RP.flags.negative_n_correction
-            neg_n_idx = findall(RP.plasma.ni .< 0)
-            if !isempty(neg_n_idx)
-                Ni_loss = @. RP.plasma.ni[neg_n_idx] * FT(2.0 * pi) * RP.G.Jacob[neg_n_idx] * RP.G.dR * RP.G.dZ
-                Ntracker.cum0D_Ni_loss += sum(Ni_loss)
-                @. @views Ntracker.cum2D_Ni_loss[neg_n_idx] += Ni_loss
-                RP.plasma.ni[neg_n_idx] .= 0.0
-            end
-        end
-
         return RP
     end # @timeit
 end
@@ -1778,44 +1639,6 @@ end
 
 
 """
-    calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int=2) where {FT<:AbstractFloat}
-
-Calculate the electron acceleration due to convection
-
-This function computes the convection term [-(ud⋅∇)ud] in the electron momentum equation.
-It uses a smoothed parallel electron velocity field to improve numerical stability.
-
-# Arguments
-- `RP::RAPID{FT}`: RAPID simulation object containing plasma and grid data
-- `num_SM::Int=0`: Number of smoothing iterations to apply to the velocity field
-- `flag_upwind::Bool=RP.flags.upwind`: Whether to use upwind differencing for gradient calculation
-
-# Returns
-- Electron acceleration due to convection term
-
-# Implementation Details
-1. Smooths the parallel electron velocity field using the Jacobian-weighted smoothing
-2. Calculates the gradient of the smoothed velocity field
-3. Computes the convection term as -(ueR*∇ud_R + ueZ*∇ud_Z)
-"""
-function calculate_electron_acceleration_by_convection(RP::RAPID{FT}; num_SM::Int = 2, flag_upwind::Bool = RP.flags.upwind) where {FT <: AbstractFloat}
-
-    # Smooth the density field to reduce numerical noise (skip if num_SM is 0)
-    ue_para_SM = smooth_data_2D(RP.plasma.ue_para; num_SM, weighting = RP.G.Jacob)
-
-    ∇ud_R, ∇ud_Z = calculate_grad_of_scalar_F(RP, ue_para_SM; upwind = flag_upwind)
-    accel_by_convection = @. -(RP.plasma.ueR * ∇ud_R + RP.plasma.ueZ * ∇ud_Z)
-
-    if RP.flags.limit_acceleration.state
-        factor = RP.flags.limit_acceleration.factor
-        min_max_accel = factor .* extrema(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ./ RP.dt
-        clamp!(accel_by_convection, min_max_accel...)
-    end
-
-    return accel_by_convection
-end
-
-"""
     solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_self::Bool=true) where {FT<:AbstractFloat}
 
 Solve Ampère's equation (Grad-Shafranov equation) to update self-consistent magnetic fields.
@@ -2001,9 +1824,11 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
         accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
     end
 
-    # convection contribution:  (1-θimp)*[-(𝐮⋅∇)u∥]
-    if RP.flags.Include_ud_convec_term
-        accel_para_tilde .+= (one(FT) - θimp) * calculate_electron_acceleration_by_convection(RP)
+    # convection: (1-θimp)*[-(𝐮⋅∇)u∥] explicitly here, θimp*(𝐮⋅∇) inside Au below — both from
+    # the same in-wall operator (`primitive_transport.jl`)
+    A_adv = flags.Include_ud_convec_term ? electron_primitive_operators(RP).A_adv : nothing
+    if flags.Include_ud_convec_term
+        accel_para_tilde .+= (one(FT) - θimp) * (-apply_op(A_adv, pla.ue_para))
     end
 
     # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
@@ -2028,11 +1853,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
     Au .= OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
     if flags.Include_ud_convec_term
-        if RP.flags.primitive_advection === :mass_flux
-            Au.matrix = Au.matrix + dt * θimp * electron_primitive_operators(RP).U_op
-        else
-            Au .+= dt * θimp * OP.𝐮∇
-        end
+        Au.matrix = Au.matrix + dt * θimp * A_adv
     end
     Au_X_ui_para = Au * pla.ui_para
 
@@ -2356,9 +2177,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
         end
 
-        # convection contribution:  (1-θ)*[-(𝐮⋅∇)u∥]
-        if RP.flags.Include_ud_convec_term
-            accel_para_tilde .+= (one(FT) - θimp) * calculate_electron_acceleration_by_convection(RP)
+        # convection: (1-θ)*[-(𝐮⋅∇)u∥] explicitly here, θ*(𝐮⋅∇) inside A_u below — both from
+        # the same in-wall operator (`primitive_transport.jl`)
+        A_adv = flags.Include_ud_convec_term ? electron_primitive_operators(RP).A_adv : nothing
+        if flags.Include_ud_convec_term
+            accel_para_tilde .+= (one(FT) - θimp) * (-apply_op(A_adv, pla.ue_para))
         end
 
         # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
@@ -2379,10 +2202,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         A_u = OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
         if flags.Include_ud_convec_term
-            A_u += dt * θimp * (
-                RP.flags.primitive_advection === :mass_flux ?
-                    electron_primitive_operators(RP).U_op : OP.𝐮∇.matrix
-            )
+            A_u += dt * θimp * A_adv
         end
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)

@@ -56,8 +56,8 @@ end
     # branch must keep behaving exactly as it did, or the whole suite moves.
     #
     # It used to be ambiguous which behaviour that was. Two places slaved ions and
-    # they disagreed: the step wrote `ni .= ne ./ Zeff`, then
-    # `treat_electron_outside_wall!` overwrote it with `ni .= ne`, so the
+    # they disagreed: the step wrote `ni .= ne ./ Zeff`, then the post-step band
+    # pass overwrote it with `ni .= ne`, so the
     # Zeff-aware line was dead code in `run_simulation!`. Both now call
     # `slave_ions_to_electrons!`, which is `ne/Z` for the declared species — and
     # H₂⁺ has Z = 1, so what actually runs is still `ni = ne`, bitwise.
@@ -189,9 +189,9 @@ end
 end
 
 @testitem "Ions absorbed at the wall are booked as ion loss" setup = [IonRun] begin
-    # The wall-aware operator never writes outside the wall, so the old
-    # `treat_ion_outside_wall!` accounting -- which reads the density it finds on
-    # out-of-wall nodes -- would silently report zero loss. The Robin debit has
+    # The wall-aware operator never writes outside the wall, so an accounting that
+    # reads the density it finds on out-of-wall nodes (the retired band pass)
+    # would silently report zero loss. The Robin debit has
     # to be booked where it is taken: at the face.
     RP = ion_case(; ion_wall_albedo = 0.0)
     RP.flags.src = false
@@ -494,7 +494,7 @@ end
     using RAPID2D: face_outflow_speeds, wall_faces
 
     # Robin diffusion and face-flux convection on, θ = 0.5, one hundred steps of the real
-    # step sequence — `treat_ion_outside_wall!` included. The per-face ledger is the ONLY
+    # step sequence — the post-step ledgers included. The per-face ledger is the ONLY
     # ion bookkeeping left: Δ(Σ J·ni) over the plasma equals what it booked, to round-off,
     # and the band outside the wall never receives anything to zero.
     RP = ion_case(; ion_wall_albedo = 0.0)
@@ -528,16 +528,13 @@ end
     @test all(==(0.0), vec(RP.plasma.ni)[outside])
 end
 
-@testitem "Ionization feeds ions on in-wall rows only: the ion src/loss identity closes under the legacy electron wall" setup = [IonRun] begin
-    # Under `electron_wall = :zeroing` the whole-grid electron operators push `ne` onto
-    # the on/out-wall band inside the solve (≈ 5e12 m⁻³ here against 1e15 inside). The
-    # ion equation has no rows outside the wall, so a source deposited on the band would
-    # only sit there and be discarded, unbooked, by the band pass. It never is: the
-    # published ionization rates are zero on the band by construction (`update_RRCs!`
-    # clears ν_en_iz on `on_out_wall_nids`), so the count the ion source and `Ni_src`
-    # share is in-wall only — and Ni_src − Ni_loss accounts for ΔNi exactly.
+@testitem "Ionization on: Ni_src − Ni_loss accounts for ΔNi through the workflow" setup = [IonRun] begin
+    # The ion equation has no rows outside the wall, so a source deposited on the band
+    # would only sit there, unbooked. It never is: the published ionization rates are zero
+    # on the band by construction (`update_RRCs!` clears ν_en_iz on `on_out_wall_nids`), so
+    # the count the ion source and `Ni_src` share is in-wall only — and Ni_src − Ni_loss
+    # accounts for ΔNi exactly.
     RP = ion_case(; ion_wall_albedo = 0.0)
-    RP.flags.electron_wall = :zeroing
     RP.flags.src = true
     RP.flags.Atomic_Collision = false
     RP.flags.Coulomb_Collision = false
@@ -569,4 +566,43 @@ end
     @test loss > 0
     @test src - loss ≈ ΔN rtol = 1.0e-10
     @test all(==(0.0), vec(RP.plasma.ni)[outside])
+end
+
+@testitem "the band outside the wall is never written: exactly zero through a full run, no zeroing pass" setup = [IonRun] begin
+    # Sources, Robin diffusion and face-flux convection on, ions independent, the real step
+    # sequence for a hundred steps. No operator has rows outside the wall and the published
+    # ionization rates are zero there, so the band stays at the exact zero the initial
+    # condition put there — there is no pass that zeroes it, and nothing to book from it.
+    RP = ion_case(; ion_wall_albedo = 0.0)
+    RP.flags.src = true
+    RP.flags.diffu = true
+    RP.flags.convec = true
+    RP.flags.Atomic_Collision = false
+    RP.flags.Coulomb_Collision = false
+    RP.flags.E_para_self_ES = false
+    RP.flags.E_para_self_EM = false
+    RP.flags.turb_ExB_mixing = false
+    RP.flags.ud_evolve = false
+    RP.flags.Te_evolve = false
+    RP.flags.Ti_evolve = false
+    RP.flags.Gas_evolve = false
+    RP.flags.secondary_electron = false
+    RP.flags.mean_ExB = true
+    RP.plasma.mean_ExB_R .= 2.0e4
+    RP.plasma.mean_ExB_Z .= 0.0
+    # An initial condition written over the whole grid is cleared on the band ONCE, at
+    # loop entry — the one place the band is written — so nothing the solve never touches
+    # sits in the moments afterwards.
+    outside = setdiff(1:(RP.G.NR * RP.G.NZ), RP.G.nodes.in_wall_nids)
+    vec(RP.plasma.ne)[outside] .= 3.0
+    vec(RP.plasma.ni)[outside] .= 3.0
+    update_transport_quantities!(RP)
+
+    run_simulation!(RP)
+
+    @test RP.step == 100
+    @test all(==(0.0), vec(RP.plasma.ne)[outside])
+    @test all(==(0.0), vec(RP.plasma.ni)[outside])
+    @test !isdefined(RAPID2D, :treat_electron_outside_wall!)
+    @test !isdefined(RAPID2D, :treat_ion_outside_wall!)
 end

@@ -23,14 +23,6 @@
     lib = atomic_only(; dt, Te0, resync = false)
     hand = atomic_only(; dt, Te0, resync = true)
 
-    # Premise: `damping_func` is identically 1 here, so the extra
-    # `update_transport_quantities!` in `hand` cannot differ through the one part of that
-    # function which is not idempotent (`ue_para *= damping_func`). Note it is built from
-    # `fitted_wall`, NOT the `wall_R/Z` that defines `in_wall_nids` — and at this
-    # resolution the fitted wall spans the whole grid, so every node reads as inside.
-    # If a fixture change breaks that, `==` below starts measuring damping instead.
-    @test all(isone, hand.damping_func)
-
     run_simulation!(lib)
     run_simulation!(hand)
 
@@ -39,28 +31,12 @@
     @test lib.plasma.ue_para == hand.plasma.ue_para
 end
 
-@testitem "splitting a run in two does not change the answer" begin
-    # The re-sync above must not re-dose the out-wall damping. `ue_para`, `ui_para` and
-    # `mean_ExB_R/Z` are multiplied by `damping_func` IN PLACE (`transport.jl:198-205`)
-    # — the one part of `update_transport_quantities!` that accumulates rather than
-    # recomputes, `Dpara`/`Dperp` being rebuilt from scratch first. Damping expresses a
-    # suppression profile, applied once per state production; a re-derivation that
-    # applies it again squares it.
-    #
-    # Stated as the user-visible invariant rather than as a property of the call:
-    # `RP.t_end_s = …; run_simulation!(RP)` is the documented resume idiom (see the
-    # SEQUENTIAL blocks in `physics_test.jl`), and a resumed run is handed a state its
-    # predecessor already damped. Two half-runs must therefore equal one whole run, bit
-    # for bit.
-    #
-    # The geometry matters: the atomic fixture above has `damping_func ≡ 1` and cannot
-    # see any of this. Here the wall sits strictly inside the domain, so a band of nodes
-    # carries 0 < damping_func < 1, and `ue_para` is nonzero there. Out-wall velocities
-    # reach in-wall nodes through the convection/diffusion stencil before
-    # `treat_electron_outside_wall!` clears the band, so "outside the wall" is not the
-    # same as "cannot matter".
-    FT = Float64
-    function damped_geometry(t_end)
+@testsnippet ResumeFixtures begin
+    # A wall strictly inside the domain, a nonzero drift everywhere (outside the wall too),
+    # convection and diffusion on, nothing else: the shape every resume test needs, since an
+    # entry that touched the state, or a step that read the wrong operator, would show.
+    function wall_geometry(t_end)
+        FT = Float64
         config = SimulationConfig{FT}(
             NR = 20, NZ = 28, R_min = 0.1, R_max = 0.5, Z_min = -0.4, Z_max = 0.4,
             dt = 1.0e-6, t_end_s = t_end, R0B0 = 1.0,
@@ -87,31 +63,35 @@ end
         RAPID2D.combine_external_and_self_fields!(RP)
         return RP
     end
+end
 
-    whole = damped_geometry(6.0e-6)
-    split = damped_geometry(3.0e-6)
-
-    # Premise: this geometry really does damp, partially, on a real band of nodes.
-    # Without it the assertions below are vacuous — which is how the defect they pin
-    # stayed invisible to the fixture above.
-    d = whole.damping_func
-    @test count(x -> 1.0e-3 < x < 0.999, d) > 0
-    @test all(isone, d[whole.G.nodes.in_wall_nids])
+@testitem "splitting a run in two does not change the answer" setup = [ResumeFixtures] begin
+    # Stated as the user-visible invariant rather than as a property of the call:
+    # `RP.t_end_s = …; run_simulation!(RP)` is the documented resume idiom (see the
+    # SEQUENTIAL blocks in `physics_test.jl`). Entering the loop re-derives the
+    # coefficients and the operator cache from the state it is handed — on every entry, a
+    # resumed run included — and since that refresh rebuilds everything from the current
+    # state, re-deriving on an untouched state changes nothing: two half-runs must equal one
+    # whole run, bit for bit. (This used to fail through the out-wall damping, which
+    # multiplied `ue_para`, `ui_para` and `mean_ExB_R/Z` in place on every entry; nothing is
+    # damped outside the wall any more.)
+    whole = wall_geometry(6.0e-6)
+    split = wall_geometry(3.0e-6)
 
     run_simulation!(whole)
 
     run_simulation!(split)
     split.t_end_s = 6.0e-6
-    run_simulation!(split)                  # resumes; must not re-damp what it inherits
+    run_simulation!(split)                  # resumes from the state it inherits
 
     @test whole.step == split.step
     @test whole.plasma.ne == split.plasma.ne
     @test whole.plasma.ue_para == split.plasma.ue_para
 
-    # The other half of the same rule, isolated: entering the loop must not itself be a
-    # damping event. `t_end_s = 0` runs the entry and no step at all, so anything that
-    # moves here moved before any physics did.
-    entry = damped_geometry(6.0e-6)
+    # The other half of the same rule, isolated: entering the loop must not itself
+    # change the state. `t_end_s = 0` runs the entry and no step at all, so anything
+    # that moves here moved before any physics did.
+    entry = wall_geometry(6.0e-6)
     entry.t_end_s = 0.0
     u_before = copy(entry.plasma.ue_para)
     ui_before = copy(entry.plasma.ui_para)
@@ -124,81 +104,47 @@ end
     @test entry.plasma.ui_para == ui_before
 end
 
-@testitem "DEFECT: a hand re-sync and the library's disagree where the wall damping bites" begin
-    using RAPID2D: update_transport_quantities!
-
-    # issues/stale-rrcs-on-first-step.md §0.3
-    #
-    # The two ways of establishing the invariant are not interchangeable on a geometry
-    # that damps. `update_transport_quantities!` queries the rate tables at the TOP of
-    # the function and damps `ue_para` at the BOTTOM, so a driver calling it by hand
-    # gets rates at the undamped velocity and a damped state, while the library's entry
-    # call (`damp_state = false`) gets rates at whatever velocity it is handed. Measured
-    # 2.0 % on `ν_en_mom_tot` at out-wall nodes.
-    #
-    # Fixing it needs either the ordering repaired inside that function or a marker
-    # recording whether a state carries its damping — both larger than the defect they
-    # would close, and both tangled with out-wall damping being a stand-in for wall
-    # boundary conditions that is meant to disappear (plans/PLAN_wall-robin-numerics.md).
-    # Pinned rather than fixed, so it is visible and cannot rot into a silent pass.
-    #
-    # The damping only runs under the legacy `primitive_advection = :nodal`, so the
-    # defect is pinned on that path; under the default `:mass_flux` nothing is damped and
-    # the two paths must agree exactly (asserted at the end).
-    FT = Float64
-    function damped(t_end; primitive_advection = :nodal)
-        config = SimulationConfig{FT}(
-            NR = 20, NZ = 28, R_min = 0.1, R_max = 0.5, Z_min = -0.4, Z_max = 0.4,
-            dt = 1.0e-6, t_end_s = t_end, R0B0 = 1.0,
-            Dpara0 = 10.0, Dperp0 = 0.1, prefilled_gas_pressure = 5.0e-3,
-            wall_R = [0.15, 0.45, 0.45, 0.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
-            snap0D_Δt_s = 3.0e-6, snap2D_Δt_s = 3.0e-6,
-        )
-        config.Output_path = mktempdir(; cleanup = false)
-        RP = RAPID{FT}(config)
-        RP.flags = SimulationFlags{FT}(
-            convec = true, diffu = true, ud_evolve = true, src = false,
-            Te_evolve = false, Ti_evolve = false, Ampere = false,
-            E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
-            update_ni_independently = false, Include_ud_convec_term = false,
-            Coulomb_Collision = false, negative_n_correction = false,
-            primitive_advection = primitive_advection,
-        )
-        initialize!(RP)
-        G = RP.G
-        @. RP.plasma.ne = 1.0e6 * exp(-((G.R2D - 0.3)^2 / 5.0e-4 + G.Z2D^2 / 2.0e-3))
-        RP.plasma.ne[G.nodes.on_out_wall_nids] .= 0.0
-        RP.plasma.ue_para .= 1.0e6
-        RP.fields.BR_ext .= 10.0e-4
-        RP.fields.BZ_ext .= 20.0e-4
-        RAPID2D.combine_external_and_self_fields!(RP)
-        return RP
-    end
-
-    lib = damped(3.0e-6)
-    hand = damped(3.0e-6)
-    update_transport_quantities!(hand)      # the documented workaround
-
-    # The premise: this geometry damps, so the two paths CAN diverge here.
-    @test count(x -> 1.0e-3 < x < 0.999, lib.damping_func) > 0
-
+@testitem "a flag changed between two runs reaches the first resumed step" setup = [ResumeFixtures] begin
+    # `flags.upwind` selects the interior scheme of the cached convection operator. The cache
+    # is refreshed at the END of every step, so a flag changed between two runs would leave
+    # the first resumed step on the old scheme if the entry re-derived only for a fresh run
+    # (Copilot's review of #23). It re-derives on every entry, so a hand re-sync before the
+    # resume must be a no-op — the same statement the fresh-run test above makes.
+    lib = wall_geometry(3.0e-6)
+    hand = wall_geometry(3.0e-6)
     run_simulation!(lib)
     run_simulation!(hand)
+    for RP in (lib, hand)
+        RP.flags.upwind = false
+        RP.t_end_s = 6.0e-6
+    end
+    RAPID2D.update_transport_quantities!(hand)          # the hand re-sync
+    run_simulation!(lib)
+    run_simulation!(hand)
+    @test lib.plasma.ne == hand.plasma.ne
+    @test lib.plasma.ue_para == hand.plasma.ue_para
+    @test lib.transport.A_conv_e_upwind == false
 
-    # INTENDED: the workaround is redundant, so it cannot change the answer.
-    @test_broken lib.plasma.ue_para == hand.plasma.ue_para
-    # Pinned from the other side so this cannot start recording some unrelated drift:
-    # in-wall density stays together to round-off even while the out-wall states differ.
-    inw = lib.G.nodes.in_wall_nids
-    @test isapprox(lib.plasma.ne[inw], hand.plasma.ne[inw]; rtol = 1.0e-10)
+    # and the flag did reach the step: the upwind continuation is a different answer
+    up = wall_geometry(3.0e-6)
+    run_simulation!(up)
+    up.t_end_s = 6.0e-6
+    run_simulation!(up)
+    @test up.plasma.ne != lib.plasma.ne
+end
 
-    # Default path: no damping, so the hand re-sync is exactly redundant.
-    lib_mf = damped(3.0e-6; primitive_advection = :mass_flux)
-    hand_mf = damped(3.0e-6; primitive_advection = :mass_flux)
-    update_transport_quantities!(hand_mf)
-    run_simulation!(lib_mf)
-    run_simulation!(hand_mf)
-    @test lib_mf.plasma.ue_para == hand_mf.plasma.ue_para
+@testitem "nothing is damped outside the wall: no damping_func, no Damp_Transp_outWall" begin
+    # The out-wall damping was a stand-in for wall boundary conditions: it pulled D, the
+    # drifts, the loop voltage and the temperatures down over a band of nodes outside the
+    # wall so that whole-grid operators reading that band saw something tame. No operator
+    # reads the band any more (every transport operator lives on in-wall rows), so the
+    # device is gone: no field on `RAPID`, no flag, and the two evolve-inside-only stubs
+    # that never had an implementation go with it.
+    @test !(:damping_func in fieldnames(RAPID{Float64}))
+    @test !(:Damp_Transp_outWall in fieldnames(SimulationFlags{Float64}))
+    @test !(:evolve_ud_inWall_only in fieldnames(SimulationFlags{Float64}))
+    @test !(:evolve_Te_inWall_only in fieldnames(SimulationFlags{Float64}))
+    @test !isdefined(RAPID2D, :cal_damping_function_outside_wall)
 end
 
 @testitem "5 eV electrons cool and ionize on the first step" setup = [AtomicOnlyOneStep] begin

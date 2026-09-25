@@ -4,7 +4,7 @@
 #     (∇·(u f))_i = [R_{i+½} F_{i+½} − R_{i−½} F_{i−½}] / (R_i ΔR)  +  [F_{j+½} − F_{j−½}] / ΔZ
 #
 # Every interior face is shared by exactly two rows with opposite signs, so Σ_i V_i (∇·(u f))_i
-# telescopes to the wall faces alone — the property the nodal upwind `∇𝐮` lacks (no rows on
+# telescopes to the wall faces alone — the property a nodal upwind operator lacks (no rows on
 # the grid frame; a central-difference branch at |u| < eps that receives half of an upwind
 # neighbour's outflow). A wall face — the neighbour across it is not in-wall — keeps only the
 # owner's outflow term u⁺ f_i: nothing is read from outside, and the outflow sits on the
@@ -96,12 +96,12 @@ function face_outflow_speeds(
 end
 
 """
-    convective_wall_operator(G, faces, uR, uZ, albedo; upwind = true) -> (C, v_net)
+    convective_wall_operator(G, faces, uR, uZ, albedo; upwind = true) -> (A, v_net)
 
 The face-flux divergence with the wall's albedo folded in, and the ledger speed that goes
 with it:
 
-- `C = build_face_flux_divergence(G, uR, uZ; upwind) − albedo · diag(A_f/V_i · max(u·n̂_f, 0))`:
+- `A = build_face_flux_divergence(G, uR, uZ; upwind) − albedo · diag(A_f/V_i · max(u·n̂_f, 0))`:
   a wall face returns the fraction `albedo` of what flows into it. At `albedo = 1` every
   wall-face term cancels and the matrix is a zero-net-flux wall (pile-up, nothing lost).
 - `v_net = (1 − albedo) · face_outflow_speeds(G, faces, uR, uZ)`: the speed the per-face
@@ -115,22 +115,37 @@ pinch velocity all come through here.
 
 `albedo` is a scalar in `[0, 1]`, validated by the callers (`electron_wall_albedo`,
 `ion_wall_albedo`); a value above 1 would turn the wall-face debit into a source.
+
+`A_conv` may be handed in when the caller already holds `build_face_flux_divergence(G, uR,
+uZ)` for these velocities (the per-step cache); it is read, never mutated, and `upwind` then
+plays no part: the scheme is the one `A_conv` was built with, which the cache records
+(`Transport.A_conv_e_upwind`) and its consumers check (`electron_operator_cache`).
 """
 function convective_wall_operator(
         G::GridGeometry{FT}, faces::AbstractVector{WallFace{FT}},
         uR::AbstractMatrix{FT}, uZ::AbstractMatrix{FT}, albedo;
-        upwind::Bool = true,
+        upwind::Bool = true, A_conv::Union{Nothing, SparseMatrixCSC{FT, Int}} = nothing,
     ) where {FT <: AbstractFloat}
-    C = build_face_flux_divergence(G, uR, uZ; upwind)
+    supplied = !isnothing(A_conv)
+    A = supplied ? A_conv : build_face_flux_divergence(G, uR, uZ; upwind)
     v_out = face_outflow_speeds(G, faces, uR, uZ)
+    # A supplied divergence that is empty while the faces see outflow is a cache that was
+    # never refreshed for these velocities: refused, or the operator would apply nothing
+    # while the ledger books the outflow.
+    supplied && nnz(A) == 0 && any(>(zero(FT)), v_out) && throw(
+        ArgumentError(
+            "the supplied face-flux divergence is empty while wall faces see outflow: " *
+                "cache_electron_operators! has not run for these velocities"
+        )
+    )
     a = FT(albedo)
     if a > zero(FT)
-        returned = zeros(FT, size(C, 1))
+        returned = zeros(FT, size(A, 1))
         for (k, f) in enumerate(faces)
             returned[f.nid] += a * f.area_per_volume * v_out[k]
         end
-        C -= spdiagm(returned)
+        A -= spdiagm(returned)
     end
     v_out .*= one(FT) - a
-    return C, v_out
+    return A, v_out
 end

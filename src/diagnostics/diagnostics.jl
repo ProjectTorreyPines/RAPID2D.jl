@@ -388,14 +388,36 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     ν_eff = @. pla.ν_ei_eff + pla.ν_en_mom_tot + pla.ν_en_iz_tot
     @. snap2D.η_resistivity = (me * ν_eff) / (pla.ne * ee^2)
 
-    # Handle near-zero density regions
-    # near_zero_density_mask = pla.ne .< 1.0  # Find indices where density is effectively zero
-    # snap2D.Te_eV[near_zero_density_mask] .= NaN
-    # snap2D.ue_para[near_zero_density_mask] .= NaN
-    # snap2D.Ke_eV[near_zero_density_mask] .= NaN
-
+    # The band outside the wall holds no plasma and no solve reaches it: the copies above
+    # carry whatever the initial condition left there (zero density, room temperature, a
+    # velocity nothing evolves). Masked, so a plot or a moment never reads the band as
+    # plasma. Fields, fluxes and rates are not plasma state and stay as they are.
+    band = RP.G.nodes.on_out_wall_nids
+    for field in (
+            snap2D.ne, snap2D.ni, snap2D.Te_eV, snap2D.Ti_eV, snap2D.ue_para, snap2D.ui_para,
+            snap2D.Ke_eV, snap2D.Ki_eV,
+        )
+        field[band] .= FT(NaN)
+    end
 
     return RP
+end
+
+"""
+    finite_extrema(arrays) -> (lo, hi)
+
+Extrema over every finite entry of every array in `arrays`, for colour limits: the 2D
+snapshots carry NaN on the band outside the wall, and a plain `minimum`/`maximum` over
+them returns NaN. `(NaN, NaN)` when nothing is finite.
+"""
+function finite_extrema(arrays)
+    lo, hi = Inf, -Inf
+    for a in arrays, x in a
+        isfinite(x) || continue
+        lo = min(lo, x)
+        hi = max(hi, x)
+    end
+    return lo <= hi ? (lo, hi) : (NaN, NaN)
 end
 
 """
