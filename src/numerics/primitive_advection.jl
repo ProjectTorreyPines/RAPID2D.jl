@@ -42,7 +42,7 @@ end
     wall_divergence(G, uR, uZ) -> Matrix
 
 `∇·u = (1/R)∂(R u_R)/∂R + ∂u_Z/∂Z` on in-wall nodes, central where both neighbours are in-wall
-and one-sided where one is not; zero on on/out-wall nodes. Never reads the damped band.
+and one-sided where one is not; zero on on/out-wall nodes. Never reads the band outside the wall.
 """
 function wall_divergence(
         G::GridGeometry{FT}, uR::AbstractMatrix{FT}, uZ::AbstractMatrix{FT},

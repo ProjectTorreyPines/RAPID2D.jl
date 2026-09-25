@@ -110,7 +110,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     #
     # Identical to the product form to 4e-16 relative wherever that form is finite,
     # and finite where it is not. The 0/0 this removes was not hypothetical:
-    # `treat_electron_outside_wall!` sets `Te = 0` on every out-wall node, at which
+    # the old band pass set `Te = 0` on every out-wall node, at which
     # point the product form is `(Ti·0·Di)/(Ti·0 + 0·Di)` and the `NaN → typemax(FT)`
     # patch that used to follow turned "cold electrons, so no electron diffusion"
     # into `D_a = Inf`. That is the same inverted sign the flux limiter's old `Lₙ`
