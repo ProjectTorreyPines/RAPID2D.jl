@@ -459,3 +459,34 @@ end
         @test_throws MethodError isapprox(snap0D, snap2D)
     end
 end
+
+@testitem "a 2D snapshot masks the band outside the wall as NaN and keeps the plasma" begin
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 25,
+        R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-8,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    inw, band = G.nodes.in_wall_nids, G.nodes.on_out_wall_nids
+    RP.plasma.ne .= 0.0
+    RP.plasma.ne[inw] .= 1.0e15
+    RP.plasma.Te_eV .= 5.0
+    snap = RAPID2D.measure_snap2D(RP)
+    for f in (snap.ne, snap.ni, snap.Te_eV, snap.Ti_eV, snap.ue_para, snap.ui_para, snap.Ke_eV, snap.Ki_eV)
+        @test all(isnan, f[band])
+        @test all(isfinite, f[inw])
+    end
+    @test snap.ne[inw] == RP.plasma.ne[inw]
+    @test snap.Te_eV[inw] == RP.plasma.Te_eV[inw]
+    # fields are not plasma state and are not masked
+    @test all(isfinite, snap.BR)
+    @test all(isfinite, snap.LV_ext)
+    # the 0D moments are taken over the in-wall volume from the plasma itself, not from
+    # the masked copy
+    s0 = RAPID2D.measure_snap0D(RP)
+    @test isfinite(s0.ne) && isfinite(s0.Te_eV)
+end
