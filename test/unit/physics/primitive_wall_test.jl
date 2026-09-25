@@ -94,3 +94,13 @@ end
     @test all(isfinite, Te)
     @test all(x -> abs(x - 12.0) < 0.5, Te)
 end
+
+@testitem "the electron in-wall operators are cached once per step and equal a fresh build" setup = [PrimitiveWallDriver] begin
+    using RAPID2D: build_face_flux_divergence, build_wall_diffusion_matrix, wall_divergence, wall_faces
+    RP = primitive_one_step()
+    tp, G, pla = RP.transport, RP.G, RP.plasma
+    @test tp.wall_faces == wall_faces(G)
+    @test tp.C_e == build_face_flux_divergence(G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
+    @test tp.D_op_e == build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    @test tp.div_ue == wall_divergence(G, pla.ueR, pla.ueZ)
+end

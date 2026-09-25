@@ -24,6 +24,21 @@ function primitive_advection_operator(
 end
 
 """
+    apply_primitive_advection(C, n, f; n_floor) -> Vector
+
+`(u·∇f)_i = [(C·(n∘f))_i − f_i·(C·n)_i] / n_i` without assembling the operator: two matvecs
+instead of two sparse products. Rows with `n_i ≤ n_floor` are zero, exactly as in
+[`primitive_advection_operator`](@ref); the two agree to rounding.
+"""
+function apply_primitive_advection(
+        C::SparseMatrixCSC{FT, Int}, n::AbstractVector{FT}, f::AbstractVector{FT}; n_floor::FT,
+    ) where {FT <: AbstractFloat}
+    Cnf = C * (n .* f)
+    Cn = C * n
+    return [n[i] > n_floor ? (Cnf[i] - f[i] * Cn[i]) / n[i] : zero(FT) for i in eachindex(n)]
+end
+
+"""
     wall_divergence(G, uR, uZ) -> Matrix
 
 `∇·u = (1/R)∂(R u_R)/∂R + ∂u_Z/∂Z` on in-wall nodes, central where both neighbours are in-wall

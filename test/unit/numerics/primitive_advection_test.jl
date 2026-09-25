@@ -98,3 +98,27 @@ end
     @test all(x -> isapprox(x, 2.0e3; rtol = 1.0e-10), gR[inw])
     @test all(x -> isapprox(x, -7.0e2; rtol = 1.0e-10), gZ[inw])
 end
+
+@testitem "primitive advection: matrix-free application equals the assembled operator" begin
+    using RAPID2D: build_face_flux_divergence, primitive_advection_operator, apply_primitive_advection
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    inw = G.nodes.in_wall_nids
+    uR = @. 1.0e5 * (1 + 0.3 * sin(G.Z2D))
+    uZ = @. -4.0e4 * cos(G.R2D)
+    C = build_face_flux_divergence(G, uR, uZ)
+    n = zeros(G.NR, G.NZ)
+    n[inw] .= 1.0e14 .* (1 .+ 0.5 .* sin.(4 .* G.R2D[inw]))
+    n[inw[1:5]] .= 0.5                                   # below the floor: empty rows
+    f = @. 3.0 + sin(3 * G.R2D) * cos(2 * G.Z2D)
+    U = primitive_advection_operator(C, vec(n); n_floor = 1.0)
+    direct = apply_primitive_advection(C, vec(n), vec(f); n_floor = 1.0)
+    @test direct ≈ U * vec(f) rtol = 1.0e-12
+    @test all(iszero, direct[inw[1:5]])
+    @test all(iszero, direct[G.nodes.on_out_wall_nids])
+end

@@ -509,20 +509,25 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
 
-        # The in-wall operators (`primitive_transport.jl`): rows on in-wall nodes only, so the
-        # excluded band is never read.
-        pops = electron_primitive_operators(RP)
+        # The electron in-wall operators, cached once per step (`transport.C_e`, `D_op_e`,
+        # `div_ue`; rows on in-wall nodes only, so the excluded band is never read). These
+        # are right-hand sides, so (u·∇) is applied matrix-free from the current `ne`
+        # rather than assembled — the assembly is what the implicit solves pay for.
+        tp = RP.transport
+        n_e = vec(pla.ne)
+        n_floor = one(FT)
+        u∇(f) = reshape(apply_primitive_advection(tp.C_e, n_e, vec(f); n_floor), size(f))
 
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
             # P_diffu = 1.5*∇·D∇Te
-            ePowers.diffu .= ee * FT(1.5) * apply_op(pops.D_op, pla.Te_eV)
+            ePowers.diffu .= ee * FT(1.5) * apply_op(tp.D_op_e, pla.Te_eV)
         end
 
         # If convection term is included in temperature equation
         if RP.flags.Include_Te_convec_term
             # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)  =  -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)
-            ePowers.conv .= ee * (-FT(1.5) * apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u)
+            ePowers.conv .= ee * (-FT(1.5) * u∇(pla.Te_eV) .- pla.Te_eV .* tp.div_ue)
         end
 
         if RP.flags.Include_heat_flux_term
@@ -531,10 +536,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             #       = −(𝐮⋅∇)Te − Te ∇⋅𝐮 − Te (𝐮⋅∇) ln n, every term from the in-wall operators.
             # The floor keeps log finite on empty rows (ne = 0); those rows contribute nothing.
             ln_n = log.(max.(pla.ne, one(FT)))
-            ePowers.heat .= ee * (
-                -apply_op(pops.U_op, pla.Te_eV) .- pla.Te_eV .* pops.div_u
-                    .- pla.Te_eV .* apply_op(pops.U_op, ln_n)
-            )
+            ePowers.heat .= ee * (-u∇(pla.Te_eV) .- pla.Te_eV .* tp.div_ue .- pla.Te_eV .* u∇(ln_n))
         end
 
 
@@ -1137,7 +1139,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
 
         # The wall-aware operator: rows on in-wall nodes only, a Robin debit on the diagonal,
         # and the loss booked per face from the same arithmetic the operator used.
-        faces_e = wall_faces(RP.G)
+        faces_e = RP.transport.wall_faces
         # Diffusive Robin part only when diffusion is on; otherwise the ledger coefficient
         # starts at zero and only convection (below) can add to it.
         A_e, v_e = RP.flags.diffu ? electron_transport_operator(RP, faces_e) :
@@ -1149,7 +1151,8 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         C_e = nothing
         if RP.flags.convec
             C_e, v_conv = convective_wall_operator(
-                RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP); upwind = RP.flags.upwind
+                RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP);
+                upwind = RP.flags.upwind, C = RP.transport.C_e
             )
             v_e .+= v_conv
         end

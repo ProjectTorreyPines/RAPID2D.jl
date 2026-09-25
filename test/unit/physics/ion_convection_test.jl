@@ -47,6 +47,9 @@
         RP.plasma.uiZ .= ui
         RP.plasma.ueR .= 0.0
         RP.plasma.ueZ .= ue
+        # the per-step cache was built from the velocities the transport update projected;
+        # a drift prescribed by hand needs the operators rebuilt from it
+        RAPID2D.cache_electron_operators!(RP)
         return RP
     end
 

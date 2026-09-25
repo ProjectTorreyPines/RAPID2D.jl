@@ -262,6 +262,10 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # update diffusion tensor (DRR,DRZ,DZZ) & (CTRR,CTRZ,CTZZ)
     update_diffusion_tensor!(RP)
 
+    # The electron in-wall operators, once per step: nothing else writes `ueR`/`ueZ` or the
+    # tensor before the next call, so every consumer within the step reads these.
+    cache_electron_operators!(RP)
+
     return RP
 end
 

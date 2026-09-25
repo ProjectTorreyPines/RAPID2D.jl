@@ -37,6 +37,7 @@
         RP.plasma.ueR .= u_para .* RP.fields.bR
         RP.plasma.ueϕ .= u_para .* RP.fields.bϕ
         RP.plasma.ueZ .= u_para .* RP.fields.bZ
+        RAPID2D.cache_electron_operators!(RP)   # the cached in-wall operators must see this drift
         RP.fields.E_para_tot .= E_para
         if !coulomb
             # `ePowers.drag`'s Coulomb half is charged inside `Atomic_Collision`,
@@ -533,14 +534,15 @@ end
     # residual gap is the function's fixed overhead spread over more nodes.
     @test isapprox(small, large; rtol = 0.1)
 
-    # Fewer than 15 whole-grid arrays per call. Baselines sat at 10-11 while the transport
-    # operators were cached per step; today the in-wall operators are assembled inside this
-    # call (measured 142.5 and 148.6 grid arrays per node on 24×24 and 48×48), so the
-    # ceiling is BROKEN until they are cached once per step, when these two lines go back
-    # to `@test`. A fusion failure — where each `@.` stops fusing and materialises its
-    # operands — would land well past the ceiling either way.
-    @test_broken small / unit_small < 15.0
-    @test_broken large / unit_large < 15.0
+    # Fewer than 15 whole-grid arrays per call. The in-wall operators are cached once per
+    # step and (u·∇) is applied matrix-free here, so the call costs its broadcasts plus a
+    # few matvecs (measured 11.1 and 11.0 grid arrays per node on 24×24 and
+    # 48×48; assembling the operators inside the call cost 142.5 and 148.6). A fusion
+    # failure — where each `@.` stops fusing and materialises its operands — lands well
+    # past the ceiling.
+    @info "heating powers allocation per node, in grid arrays" small / unit_small large / unit_large
+    @test small / unit_small < 15.0
+    @test large / unit_large < 15.0
 end
 
 @testitem "eig_Te: PartialLinearResponse is exact once the surfaces stop responding" setup = [PowerJacobianFixtures] begin

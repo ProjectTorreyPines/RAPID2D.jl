@@ -493,6 +493,37 @@ function Fields{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat}
 end
 
 """
+    WallFace{FT}
+
+One outward face of an in-wall cell — the interface across which that cell
+exchanges particles with the wall.
+
+- `rid`, `zid`, `nid`  the **in-wall** cell that owns the face (grid indices and
+  linear index). A face always belongs to the cell on the plasma side.
+- `outward`  index step `(ΔR, ΔZ)` from that cell across the face, one of
+  `(±1, 0)` or `(0, ±1)`. The cell it points at is on or outside the wall, and
+  may be off-grid entirely when the wall coincides with the grid frame.
+- `area`  `A_f` [m²], the true area of the surface of revolution.
+- `area_per_volume`  `A_f/V_i` [1/m], the factor a boundary flux is multiplied by
+  to become a rate in the owning cell: `∂n_i/∂t = −(A_f/V_i)·Γ_f`.
+
+Both `area` and `area_per_volume` are stored because they answer different
+questions. `area` converts a flux density into particles per second (a
+diagnostic, and the wall ledger); `area_per_volume` is the coefficient a Robin
+condition subtracts from the diagonal. Deriving one from the other at each call
+site is how they drift apart, and they must not — absorption and re-emission are
+only exactly reciprocal across a face if both use the same pair.
+"""
+struct WallFace{FT <: AbstractFloat}
+    rid::Int
+    zid::Int
+    nid::Int
+    outward::Tuple{Int, Int}
+    area::FT
+    area_per_volume::FT
+end
+
+"""
     Transport{FT<:AbstractFloat}
 
 Contains the transport coefficients for the plasma.
@@ -548,6 +579,18 @@ Fields include diffusion coefficients in different directions.
     CTRR::Matrix{FT} = zeros(FT, dims)    # R-R component of coefficient tensor
     CTRZ::Matrix{FT} = zeros(FT, dims)    # R-Z component of coefficient tensor
     CTZZ::Matrix{FT} = zeros(FT, dims)    # Z-Z component of coefficient tensor
+
+    # Per-step cache of the electron in-wall operators, rebuilt at the end of
+    # `update_transport_quantities!` from the velocities and the tensor it just finalised:
+    # the face-flux divergence of the electron velocity (`build_face_flux_divergence`), the
+    # reflective diffusion operator (`build_wall_diffusion_matrix` without faces) and ∇·u_e
+    # (`wall_divergence`). `wall_faces` is geometry, built once at `initialize!`. Consumers
+    # derive the rest: `(u·∇)` from `C_e` and the current `ne`, the Robin operator from the
+    # faces and its own coefficients.
+    wall_faces::Vector{WallFace{FT}} = WallFace{FT}[]
+    C_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
+    D_op_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
+    div_ue::Matrix{FT} = zeros(FT, dims)
 end
 
 # Constructor with separate dimensions
