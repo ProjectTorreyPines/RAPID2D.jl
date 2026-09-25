@@ -116,8 +116,10 @@ pinch velocity all come through here.
 `albedo` is a scalar in `[0, 1]`, validated by the callers (`electron_wall_albedo`,
 `ion_wall_albedo`); a value above 1 would turn the wall-face debit into a source.
 
-`C` may be handed in when the caller already holds `build_face_flux_divergence(G, uR, uZ;
-upwind)` for these velocities (the per-step cache); it is read, never mutated.
+`C` may be handed in when the caller already holds `build_face_flux_divergence(G, uR, uZ)`
+for these velocities (the per-step cache); it is read, never mutated, and `upwind` then plays
+no part: the scheme is the one `C` was built with, which the cache records
+(`Transport.C_e_upwind`) and its consumers check (`electron_operator_cache`).
 """
 function convective_wall_operator(
         G::GridGeometry{FT}, faces::AbstractVector{WallFace{FT}},

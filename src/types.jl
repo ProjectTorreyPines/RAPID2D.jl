@@ -589,6 +589,10 @@ Fields include diffusion coefficients in different directions.
     # faces and its own coefficients.
     wall_faces::Vector{WallFace{FT}} = WallFace{FT}[]
     C_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
+    # The `flags.upwind` `C_e` was built with. A consumer cannot tell a central divergence
+    # from an upwind one by looking at it, so it checks this against the current flag
+    # (`electron_operator_cache`) instead of applying a cache built for the other scheme.
+    C_e_upwind::Bool = true
     D_op_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
     div_ue::Matrix{FT} = zeros(FT, dims)
 end

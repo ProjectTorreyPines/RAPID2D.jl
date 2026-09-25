@@ -104,3 +104,28 @@ end
     @test tp.D_op_e == build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
     @test tp.div_ue == wall_divergence(G, pla.ueR, pla.ueZ)
 end
+
+@testitem "electron operators cached for the other interior scheme are refused at the point of use" begin
+    # A consumer cannot tell a central `C_e` from an upwind one by looking at it, so the
+    # cache records the `flags.upwind` it was built with and every consumer checks it: a
+    # flag changed since the refresh is refused, not silently applied to the old operators.
+    using RAPID2D: electron_primitive_operators, solve_electron_continuity_equation!,
+        update_electron_heating_powers!, cache_electron_operators!
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 2.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    @test RP.transport.C_e_upwind == RP.flags.upwind
+    RP.flags.upwind = !RP.flags.upwind                  # changed after the cache was built
+    @test_throws ArgumentError electron_primitive_operators(RP)
+    @test_throws ArgumentError solve_electron_continuity_equation!(RP)
+    @test_throws ArgumentError update_electron_heating_powers!(RP)
+    cache_electron_operators!(RP)                       # the refresh records the scheme it used
+    @test RP.transport.C_e_upwind == RP.flags.upwind
+    electron_primitive_operators(RP)
+    solve_electron_continuity_equation!(RP)
+    update_electron_heating_powers!(RP)
+    @test all(isfinite, RP.plasma.ne)
+end

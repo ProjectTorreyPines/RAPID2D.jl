@@ -510,10 +510,11 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.equi .= zero_FT
 
         # The electron in-wall operators, cached once per step (`transport.C_e`, `D_op_e`,
-        # `div_ue`; rows on in-wall nodes only, so the excluded band is never read). These
-        # are right-hand sides, so (u·∇) is applied matrix-free from the current `ne`
-        # rather than assembled — the assembly is what the implicit solves pay for.
-        tp = RP.transport
+        # `div_ue`; rows on in-wall nodes only, so the excluded band is never read) and
+        # checked to carry the current `upwind` scheme. These are right-hand sides, so (u·∇)
+        # is applied matrix-free from the current `ne` rather than assembled — the assembly
+        # is what the implicit solves pay for.
+        tp = electron_operator_cache(RP)
         n_e = vec(pla.ne)
         n_floor = one(FT)
         u∇(f) = reshape(apply_primitive_advection(tp.C_e, n_e, vec(f); n_floor), size(f))
@@ -1138,14 +1139,10 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         fill!(op.RHS, zero(FT))
 
         # The wall-aware operator: rows on in-wall nodes only, a Robin debit on the diagonal,
-        # and the loss booked per face from the same arithmetic the operator used.
-        faces_e = RP.transport.wall_faces
-        isempty(faces_e) && throw(
-            ArgumentError(
-                "transport.wall_faces is empty: this Transport was not built by initialize!, " *
-                    "so no wall-aware operator can be assembled"
-            )
-        )
+        # and the loss booked per face from the same arithmetic the operator used. The cache
+        # is checked to exist and to carry the current `upwind` scheme.
+        tp = electron_operator_cache(RP)
+        faces_e = tp.wall_faces
         # Diffusive Robin part only when diffusion is on; otherwise the ledger coefficient
         # starts at zero and only convection (below) can add to it.
         A_e, v_e = RP.flags.diffu ? electron_transport_operator(RP, faces_e) :
@@ -1153,12 +1150,12 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # Convection is the face-flux operator on the same faces: its outflow term is a
         # diagonal debit like the Robin one, so the two speeds add into one ledger
         # coefficient per face. The albedo scales that outflow the same way it scales the
-        # Robin speed (`convective_wall_operator`).
+        # Robin speed (`convective_wall_operator`). The cached divergence carries its own
+        # scheme, so no `upwind` is passed here.
         C_e = nothing
         if RP.flags.convec
             C_e, v_conv = convective_wall_operator(
-                RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP);
-                upwind = RP.flags.upwind, C = RP.transport.C_e
+                RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP); C = tp.C_e
             )
             v_e .+= v_conv
         end

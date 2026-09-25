@@ -31,19 +31,12 @@
     @test lib.plasma.ue_para == hand.plasma.ue_para
 end
 
-@testitem "splitting a run in two does not change the answer" begin
-    # Stated as the user-visible invariant rather than as a property of the call:
-    # `RP.t_end_s = …; run_simulation!(RP)` is the documented resume idiom (see the
-    # SEQUENTIAL blocks in `physics_test.jl`). Entering the loop establishes the
-    # coefficient invariant from the state it is handed and changes nothing else, so two
-    # half-runs must equal one whole run, bit for bit. (This used to fail through the
-    # out-wall damping, which multiplied `ue_para`, `ui_para` and `mean_ExB_R/Z` in place
-    # on every entry; nothing is damped outside the wall any more.)
-    #
-    # The wall sits strictly inside the domain and `ue_para` is nonzero outside it, so an
-    # entry that touched the state would show.
-    FT = Float64
+@testsnippet ResumeFixtures begin
+    # A wall strictly inside the domain, a nonzero drift everywhere (outside the wall too),
+    # convection and diffusion on, nothing else: the shape every resume test needs, since an
+    # entry that touched the state, or a step that read the wrong operator, would show.
     function wall_geometry(t_end)
+        FT = Float64
         config = SimulationConfig{FT}(
             NR = 20, NZ = 28, R_min = 0.1, R_max = 0.5, Z_min = -0.4, Z_max = 0.4,
             dt = 1.0e-6, t_end_s = t_end, R0B0 = 1.0,
@@ -70,7 +63,18 @@ end
         RAPID2D.combine_external_and_self_fields!(RP)
         return RP
     end
+end
 
+@testitem "splitting a run in two does not change the answer" setup = [ResumeFixtures] begin
+    # Stated as the user-visible invariant rather than as a property of the call:
+    # `RP.t_end_s = …; run_simulation!(RP)` is the documented resume idiom (see the
+    # SEQUENTIAL blocks in `physics_test.jl`). Entering the loop re-derives the
+    # coefficients and the operator cache from the state it is handed — on every entry, a
+    # resumed run included — and since that refresh rebuilds everything from the current
+    # state, re-deriving on an untouched state changes nothing: two half-runs must equal one
+    # whole run, bit for bit. (This used to fail through the out-wall damping, which
+    # multiplied `ue_para`, `ui_para` and `mean_ExB_R/Z` in place on every entry; nothing is
+    # damped outside the wall any more.)
     whole = wall_geometry(6.0e-6)
     split = wall_geometry(3.0e-6)
 
@@ -98,6 +102,35 @@ end
     @test entry.step == 0
     @test entry.plasma.ue_para == u_before
     @test entry.plasma.ui_para == ui_before
+end
+
+@testitem "a flag changed between two runs reaches the first resumed step" setup = [ResumeFixtures] begin
+    # `flags.upwind` selects the interior scheme of the cached convection operator. The cache
+    # is refreshed at the END of every step, so a flag changed between two runs would leave
+    # the first resumed step on the old scheme if the entry re-derived only for a fresh run
+    # (Copilot's review of #23). It re-derives on every entry, so a hand re-sync before the
+    # resume must be a no-op — the same statement the fresh-run test above makes.
+    lib = wall_geometry(3.0e-6)
+    hand = wall_geometry(3.0e-6)
+    run_simulation!(lib)
+    run_simulation!(hand)
+    for RP in (lib, hand)
+        RP.flags.upwind = false
+        RP.t_end_s = 6.0e-6
+    end
+    RAPID2D.update_transport_quantities!(hand)          # the hand re-sync
+    run_simulation!(lib)
+    run_simulation!(hand)
+    @test lib.plasma.ne == hand.plasma.ne
+    @test lib.plasma.ue_para == hand.plasma.ue_para
+    @test lib.transport.C_e_upwind == false
+
+    # and the flag did reach the step: the upwind continuation is a different answer
+    up = wall_geometry(3.0e-6)
+    run_simulation!(up)
+    up.t_end_s = 6.0e-6
+    run_simulation!(up)
+    @test up.plasma.ne != lib.plasma.ne
 end
 
 @testitem "nothing is damped outside the wall: no damping_func, no Damp_Transp_outWall" begin

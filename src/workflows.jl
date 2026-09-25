@@ -164,22 +164,25 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         dt = RP.dt
         t_end = RP.t_end_s
 
-        # Establish the invariant the loop only maintains: its refresh runs at the END of
-        # the body, so step 1 would otherwise consume the rates `initialize!` built rather
-        # than the initial condition assigned since. Ahead of the snapshots, which report
-        # those rates too. Fresh runs only: a resumed run already carries the rates its
-        # predecessor's last refresh built for the state it hands over.
-        # notes/issues/stale-rrcs-on-first-step.md
         if RP.step == 0
             # The band outside the wall is not part of the problem: no operator has rows
             # there and nothing books it, so an initial condition written over the whole
             # grid is cleared there once, here, and never touched again.
             RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= zero(FT)
             RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= zero(FT)
-            update_transport_quantities!(RP)
             RP.flags.secondary_electron && RP.flags.update_ni_independently &&
                 @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
         end
+
+        # Establish the invariant the loop only maintains: its refresh runs at the END of
+        # the body, so the first step would otherwise consume the rates and the operator
+        # cache of the state the last refresh saw — `initialize!`'s for a fresh run, the
+        # predecessor's final step for a resumed one — rather than the state and flags
+        # handed over since (an initial condition, a changed `flags.upwind`). The refresh
+        # rebuilds everything from the current state, so on an untouched resume it changes
+        # nothing and splitting a run in two stays bit for bit. Ahead of the snapshots,
+        # which report those rates too. notes/issues/stale-rrcs-on-first-step.md
+        update_transport_quantities!(RP)
 
         # Initial snapshots at t_start_s
         @timeit RAPID_TIMER "initial_snapshots" begin
