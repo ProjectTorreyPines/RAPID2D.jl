@@ -1140,6 +1140,12 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # The wall-aware operator: rows on in-wall nodes only, a Robin debit on the diagonal,
         # and the loss booked per face from the same arithmetic the operator used.
         faces_e = RP.transport.wall_faces
+        isempty(faces_e) && throw(
+            ArgumentError(
+                "transport.wall_faces is empty: this Transport was not built by initialize!, " *
+                    "so no wall-aware operator can be assembled"
+            )
+        )
         # Diffusive Robin part only when diffusion is on; otherwise the ledger coefficient
         # starts at zero and only convection (below) can add to it.
         A_e, v_e = RP.flags.diffu ? electron_transport_operator(RP, faces_e) :

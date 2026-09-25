@@ -490,3 +490,28 @@ end
     s0 = RAPID2D.measure_snap0D(RP)
     @test isfinite(s0.ne) && isfinite(s0.Te_eV)
 end
+
+@testitem "finite_extrema ignores the NaN band, so colour limits stay finite" begin
+    using RAPID2D: finite_extrema
+    a = [1.0 NaN; 2.0 3.0]
+    b = [NaN 0.5; -1.0 NaN]
+    @test finite_extrema([a, b]) == (-1.0, 3.0)
+    @test finite_extrema([a]) == (1.0, 3.0)
+    @test all(isnan, finite_extrema([fill(NaN, 2, 2)]))     # nothing finite: NaN, not an error
+    # a masked snapshot's plotting limits are the in-wall limits
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 25,
+        R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-8,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    inw = RP.G.nodes.in_wall_nids
+    RP.plasma.ne .= 0.0
+    RP.plasma.ne[inw] .= 1.0e15
+    snap = RAPID2D.measure_snap2D(RP)
+    @test any(isnan, snap.ne)
+    @test finite_extrema([snap.ne]) == (1.0e15, 1.0e15)
+end

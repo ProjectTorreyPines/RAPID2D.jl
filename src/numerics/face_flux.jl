@@ -124,8 +124,18 @@ function convective_wall_operator(
         uR::AbstractMatrix{FT}, uZ::AbstractMatrix{FT}, albedo;
         upwind::Bool = true, C::Union{Nothing, SparseMatrixCSC{FT, Int}} = nothing,
     ) where {FT <: AbstractFloat}
-    C = isnothing(C) ? build_face_flux_divergence(G, uR, uZ; upwind) : C
+    supplied = !isnothing(C)
+    C = supplied ? C : build_face_flux_divergence(G, uR, uZ; upwind)
     v_out = face_outflow_speeds(G, faces, uR, uZ)
+    # A supplied divergence that is empty while the faces see outflow is a cache that was
+    # never refreshed for these velocities: refused, or the operator would apply nothing
+    # while the ledger books the outflow.
+    supplied && nnz(C) == 0 && any(>(zero(FT)), v_out) && throw(
+        ArgumentError(
+            "the supplied face-flux divergence is empty while wall faces see outflow: " *
+                "cache_electron_operators! has not run for these velocities"
+        )
+    )
     a = FT(albedo)
     if a > zero(FT)
         returned = zeros(FT, size(C, 1))

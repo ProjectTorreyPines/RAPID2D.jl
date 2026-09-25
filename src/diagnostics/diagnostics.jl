@@ -404,6 +404,23 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 end
 
 """
+    finite_extrema(arrays) -> (lo, hi)
+
+Extrema over every finite entry of every array in `arrays`, for colour limits: the 2D
+snapshots carry NaN on the band outside the wall, and a plain `minimum`/`maximum` over
+them returns NaN. `(NaN, NaN)` when nothing is finite.
+"""
+function finite_extrema(arrays)
+    lo, hi = Inf, -Inf
+    for a in arrays, x in a
+        isfinite(x) || continue
+        lo = min(lo, x)
+        hi = max(hi, x)
+    end
+    return lo <= hi ? (lo, hi) : (NaN, NaN)
+end
+
+"""
     measure_snap2D(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Measure 2D diagnostics and return a new Snapshot2D object.

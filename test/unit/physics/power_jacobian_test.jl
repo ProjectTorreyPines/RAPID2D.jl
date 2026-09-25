@@ -540,7 +540,6 @@ end
     # 48×48; assembling the operators inside the call cost 142.5 and 148.6). A fusion
     # failure — where each `@.` stops fusing and materialises its operands — lands well
     # past the ceiling.
-    @info "heating powers allocation per node, in grid arrays" small / unit_small large / unit_large
     @test small / unit_small < 15.0
     @test large / unit_large < 15.0
 end

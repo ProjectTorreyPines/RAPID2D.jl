@@ -1641,7 +1641,9 @@ end
             Ampere_Itor_threshold = threshold,
             E_para_self_ES = false, E_para_self_EM = true,
             update_ni_independently = false,
-            Include_ud_convec_term = false,
+            # ON, so both routings assemble the in-wall (u·∇)u∥ operator; with a uniform u∥
+            # it contributes nothing, so the force balance below is unchanged
+            Include_ud_convec_term = true,
             Include_ud_pressure_term = false,
             Include_ud_diffu_term = false,
         )
@@ -1657,7 +1659,7 @@ end
     routings = [
         ("Ampere off", false, 1.0),
         ("below threshold", true, 1.0e9),
-        ("coupled solver", true, 0.0),
+        ("combined solver", true, 0.0),
     ]
 
     for coulomb in (true, false)

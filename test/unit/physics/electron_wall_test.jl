@@ -356,3 +356,28 @@ end
     @test_throws ArgumentError uniform_wall_run(diffu = false, convec = true, albedo = 1.5, nsteps = 1)
     @test_throws ArgumentError uniform_wall_run(diffu = false, convec = true, albedo = -0.1, nsteps = 1)
 end
+
+@testitem "an empty wall-face cache is refused rather than dropping the wall silently" begin
+    # The faces and the electron operators live on `Transport` from `initialize!`. A Transport
+    # that has not been through it (or was replaced afterwards) has no faces and an empty
+    # divergence: solving with it would apply no wall loss and no convection while still
+    # booking the outflow speeds, so operator and ledger would diverge without a word.
+    using RAPID2D: convective_wall_operator, wall_faces
+    using RAPID2D.SparseArrays: spzeros
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    faces = wall_faces(G)
+    uR = fill(1.0e5, G.NR, G.NZ)
+    uZ = zeros(G.NR, G.NZ)
+    # a supplied divergence that is empty while faces see outflow is an inconsistent cache
+    @test_throws ArgumentError convective_wall_operator(G, faces, uR, uZ, 0.0; C = spzeros(G.NR * G.NZ, G.NR * G.NZ))
+    RP.transport = RAPID2D.Transport{Float64}(G.NR, G.NZ)
+    @test isempty(RP.transport.wall_faces)
+    @test_throws ArgumentError solve_electron_continuity_equation!(RP)
+    @test_throws ArgumentError RAPID2D.ion_step_operators(RP)
+end

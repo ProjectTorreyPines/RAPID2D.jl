@@ -534,6 +534,12 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp, G, pla = RP.transport, RP.G, RP.plasma
     ns = length(tp.ion_species)
     faces = tp.wall_faces
+    isempty(faces) && throw(
+        ArgumentError(
+            "transport.wall_faces is empty: this Transport was not built by initialize!, " *
+                "so no wall-aware operator can be assembled"
+        )
+    )
     albedo = ion_wall_albedo(RP)
     # Convection is the face-flux operator on the same faces the Robin term uses: its
     # wall-face outflow is a diagonal debit like the diffusive one, so the two speeds add

@@ -177,7 +177,7 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
             RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= zero(FT)
             RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= zero(FT)
             update_transport_quantities!(RP)
-            RP.flags.secondary_electron &&
+            RP.flags.secondary_electron && RP.flags.update_ni_independently &&
                 @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
         end
 
