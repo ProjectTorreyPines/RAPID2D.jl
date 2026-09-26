@@ -6,20 +6,20 @@
 # Since ion transport stopped writing outside the wall — Robin diffusion and
 # face-flux convection are both diagonal debits on in-wall rows — that band holds
 # nothing to multiply and the injection has been removed. `secondary_electron`
-# is inert under BOTH electron wall modes until secondaries are emitted through
-# the wall faces from the ion ledger (`wall_emission_source`, plan PR3).
+# is inert until secondaries are emitted through the wall faces from the ion
+# ledger (`wall_emission_source`).
 #
 # Every `@test_broken` here states the INTENDED behaviour. Julia turns an
 # unexpected pass into an error, so whoever lands the source is told to come
 # back and delete the marker rather than discovering it silently drifted.
 
-@testitem "Secondary electrons are inert under either electron wall until the wall-face source lands" begin
+@testitem "Secondary electrons are inert until the wall-face source lands" begin
     using RAPID2D: is_in_wall
 
-    # Two identical runs differing only in `secondary_electron`, both wall channels on,
-    # under each electron wall. Ions reach the wall and are booked on the face ledger;
-    # nothing turns that into electrons yet, so the runs are bit-identical.
-    function run_with(sec::Bool, wall::Symbol; γ = 0.5)
+    # Two identical runs differing only in `secondary_electron`, both wall channels on.
+    # Ions reach the wall and are booked on the face ledger; nothing turns that into
+    # electrons yet, so the runs are bit-identical.
+    function run_with(sec::Bool; γ = 0.5)
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = 31, NZ = 31,
             R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
@@ -30,7 +30,6 @@
         RP = RAPID{Float64}(config)
         initialize!(RP)
         RP.flags.update_ni_independently = true
-        RP.flags.electron_wall = wall
         RP.flags.secondary_electron = sec
         RP.flags.γ_2nd_electron = γ
         RP.plasma.ne .= 1.0e15
@@ -49,21 +48,19 @@
     end
 
     γ = 0.5
-    for wall in (:zeroing, :robin)
-        off = run_with(false, wall; γ = γ)
-        on = run_with(true, wall; γ = γ)
+    off = run_with(false; γ = γ)
+    on = run_with(true; γ = γ)
 
-        # the premise: ions really did reach the wall and were booked
-        @test on.ni_loss > 0.0
-        # …and γ changed nothing, bit for bit
-        @test on.ni_loss == off.ni_loss
-        @test on.inside == off.inside
-        @test on.ne_loss == off.ne_loss
+    # the premise: ions really did reach the wall and were booked
+    @test on.ni_loss > 0.0
+    # …and γ changed nothing, bit for bit
+    @test on.ni_loss == off.ni_loss
+    @test on.inside == off.inside
+    @test on.ne_loss == off.ne_loss
 
-        # INTENDED: γ·(what hit the wall) electrons, returned to the wall-adjacent
-        # INTERIOR cells through `wall_emission_source` from the ion face ledger
-        @test_broken (on.inside - off.inside) ≈ γ * on.ni_loss rtol = 0.5
-    end
+    # INTENDED: γ·(what hit the wall) electrons, returned to the wall-adjacent
+    # INTERIOR cells through `wall_emission_source` from the ion face ledger
+    @test_broken (on.inside - off.inside) ≈ γ * on.ni_loss rtol = 0.5
 end
 
 @testitem "Secondary electrons are unreachable when ions are slaved to electrons" begin
@@ -103,7 +100,7 @@ end
 
 @testitem "The wall-emission path returns particles the secondary path loses" begin
     using RAPID2D: wall_faces, WallLedger, accumulate_wall_absorption!,
-        wall_emission_source, treat_electron_outside_wall!, is_in_wall
+        wall_emission_source, book_ionization_sources!, correct_negative_densities!, is_in_wall
 
     # Positive control. Same geometry, same γ, same particles crossing the wall —
     # routed through `wall_emission_source` instead of a deposit outside.
@@ -146,10 +143,11 @@ end
     @test sum(ne[inw] .* V[inw]) ≈ N_returned rtol = 1.0e-12
     @test sum(ne[.!inw] .* V[.!inw]) == 0.0
 
-    # and the next step's boundary pass leaves them alone instead of booking them
+    # and the next step's ledgers leave them alone instead of booking them
     loss_before = RP.diagnostics.Ntracker.cum0D_Ne_loss
     RAPID2D.update_reaction_counts!(RP)
-    treat_electron_outside_wall!(RP)
+    book_ionization_sources!(RP)
+    correct_negative_densities!(RP)
     @test RP.diagnostics.Ntracker.cum0D_Ne_loss == loss_before
     @test sum(vec(RP.plasma.ne) .* V) ≈ N_returned rtol = 1.0e-12
 end

@@ -124,11 +124,6 @@ function update_external_fields!(RP::RAPID{FT}, time_s::FT = RP.time_s) where {F
     # Calculate toroidal electric field
     F.Eϕ_ext .= F.LV_ext ./ (2π * RP.G.R2D)
 
-    if RP.flags.Damp_Transp_outWall
-        @. F.LV_ext *= RP.damping_func
-        @. F.Eϕ_ext *= RP.damping_func
-    end
-
     return RP
 end
 

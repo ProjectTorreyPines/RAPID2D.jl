@@ -214,7 +214,7 @@ end
         config.Output_path = mktempdir(; cleanup = false)   # the writer outlives an auto-cleaned dir
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
-            Ampere = false, Gas_evolve = false, Damp_Transp_outWall = false,
+            Ampere = false, Gas_evolve = false,
             limit_flux = (state = limit_flux, factor = 0.25),
         )
         initialize!(RP)

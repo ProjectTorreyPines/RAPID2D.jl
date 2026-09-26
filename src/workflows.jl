@@ -164,15 +164,25 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         dt = RP.dt
         t_end = RP.t_end_s
 
-        # Establish the invariant the loop only maintains: its refresh runs at the END of
-        # the body, so step 1 would otherwise consume the rates `initialize!` built rather
-        # than the initial condition assigned since. Ahead of the snapshots, which report
-        # those rates too. Fresh runs only and without re-damping — this function is not
-        # idempotent in either respect, so a resume must not re-enter it.
-        # notes/issues/stale-rrcs-on-first-step.md
         if RP.step == 0
-            update_transport_quantities!(RP; damp_state = false)
+            # The band outside the wall is not part of the problem: no operator has rows
+            # there and nothing books it, so an initial condition written over the whole
+            # grid is cleared there once, here, and never touched again.
+            RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+            RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+            RP.flags.secondary_electron && RP.flags.update_ni_independently &&
+                @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
         end
+
+        # Establish the invariant the loop only maintains: its refresh runs at the END of
+        # the body, so the first step would otherwise consume the rates and the operator
+        # cache of the state the last refresh saw — `initialize!`'s for a fresh run, the
+        # predecessor's final step for a resumed one — rather than the state and flags
+        # handed over since (an initial condition, a changed `flags.upwind`). The refresh
+        # rebuilds everything from the current state, so on an untouched resume it changes
+        # nothing and splitting a run in two stays bit for bit. Ahead of the snapshots,
+        # which report those rates too. notes/issues/stale-rrcs-on-first-step.md
+        update_transport_quantities!(RP)
 
         # Initial snapshots at t_start_s
         @timeit RAPID_TIMER "initial_snapshots" begin
@@ -195,10 +205,10 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
                 RP.time_s += dt
                 RP.step += 1
 
-                treat_electron_outside_wall!(RP)
-                if RP.flags.update_ni_independently
-                    treat_ion_outside_wall!(RP)
-                end
+                # Ledgers and floors after the step. Nothing zeroes the band outside the
+                # wall: no operator writes there.
+                book_ionization_sources!(RP)
+                correct_negative_densities!(RP)
 
                 if RP.step == 1 || mod(RP.step, RP.flags.FLF_nstep) == 0
                     @timeit RAPID_TIMER "field_line_following" begin

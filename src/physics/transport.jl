@@ -13,17 +13,14 @@ export update_transport_quantities!,
     calculate_particle_fluxes!
 
 """
-    update_transport_quantities!(RP::RAPID{FT}; damp_state = true) where {FT<:AbstractFloat}
+    update_transport_quantities!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update all transport-related quantities including diffusion coefficients, velocities, and collision frequencies.
 
-`damp_state = false` skips the out-wall damping of `ue_para`, `ui_para`, `mean_ExB_R/Z` —
-the only part that accumulates rather than recomputes. For re-deriving from a state that
-already carries its damping. Dies with `Damp_Transp_outWall`.
+Everything here is rebuilt from the current state, so a second call on the same state
+changes nothing; nothing is damped or accumulated in place.
 """
-function update_transport_quantities!(
-        RP::RAPID{FT}; damp_state::Bool = true
-    ) where {FT <: AbstractFloat}
+function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     tp = RP.transport
     # The module-level `EE`, not `constants.ee`: the Maxwellian speed helpers convert
@@ -113,11 +110,11 @@ function update_transport_quantities!(
     #
     # Identical to the product form to 4e-16 relative wherever that form is finite,
     # and finite where it is not. The 0/0 this removes was not hypothetical:
-    # `treat_electron_outside_wall!` sets `Te = 0` on every out-wall node, at which
+    # the old band pass set `Te = 0` on every out-wall node, at which
     # point the product form is `(Ti·0·Di)/(Ti·0 + 0·Di)` and the `NaN → typemax(FT)`
     # patch that used to follow turned "cold electrons, so no electron diffusion"
     # into `D_a = Inf`. That is the same inverted sign the flux limiter's old `Lₙ`
-    # guard had, and it made `∇𝐃∇` singular one step later.
+    # guard had, and it made the diffusion operator singular one step later.
 
     # ── how D∥ᵉ is assembled ──────────────────────────────────────────────────
     #
@@ -194,24 +191,6 @@ function update_transport_quantities!(
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dperp)
 
-    # Damping outside the wall. `Dpara`/`Dperp` are rebuilt above, so damping them is a
-    # projection and must run every call. The state below is NOT rebuilt — `*=`
-    # accumulates — so re-deriving from an already-damped state opts out.
-    if RP.flags.Damp_Transp_outWall
-        @. tp.Dpara *= RP.damping_func
-        @. tp.Dperp *= RP.damping_func
-
-        if damp_state
-            # u∥ keeps its legacy damping only while the nodal operators read the band.
-            RP.flags.primitive_advection === :nodal && (@. pla.ue_para *= RP.damping_func)
-
-            @. pla.mean_ExB_R *= RP.damping_func
-            @. pla.mean_ExB_Z *= RP.damping_func
-
-            @. pla.ui_para *= RP.damping_func
-        end
-    end
-
     # Project the parallel speeds onto (R, ϕ, Z). `"upara"` is the only representation
     # implemented: a `"uRphiZ"` mode would evolve the components directly and skip this.
     if RP.flags.upara_or_uRphiZ == "upara"
@@ -283,7 +262,9 @@ function update_transport_quantities!(
     # update diffusion tensor (DRR,DRZ,DZZ) & (CTRR,CTRZ,CTZZ)
     update_diffusion_tensor!(RP)
 
-    update_transport_related_operators!(RP)
+    # The electron in-wall operators, once per step: nothing else writes `ueR`/`ueZ` or the
+    # tensor before the next call, so every consumer within the step reads these.
+    cache_electron_operators!(RP)
 
     return RP
 end
@@ -325,31 +306,6 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @. tp.CTRR = RP.G.Jacob * tp.DRR / (dR * dR)
     @. tp.CTRZ = RP.G.Jacob * tp.DRZ / (dR * dZ)
     @. tp.CTZZ = RP.G.Jacob * tp.DZZ / (dZ * dZ)
-
-    return RP
-end
-
-
-"""
-    update_transport_related_operators!(RP::RAPID{FT}) where {FT<:AbstractFloat}
-
-Update transport-related sparse matrix operators (𝐮∇, ∇𝐮, ∇𝐃∇) based on current transport coefficients and velocity fields.
-"""
-function update_transport_related_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-
-    OP = RP.operators
-
-    if !isempty(OP.𝐮∇.k2csc)
-        update_𝐮∇_operator!(RP)
-    end
-
-    if !isempty(OP.∇𝐮.k2csc)
-        update_∇𝐮_operator!(RP)
-    end
-
-    if !isempty(OP.∇𝐃∇.k2csc)
-        update_∇𝐃∇_operator!(RP)
-    end
 
     return RP
 end

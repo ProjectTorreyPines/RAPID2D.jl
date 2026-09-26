@@ -359,10 +359,10 @@ end
 #      solution being solved for
 #   3. D arithmetically averaged to faces, `½(Dᵢ + Dᵢ₊₁)`
 #
-# Those three are what make this the 1-D reduction of `update_∇𝐃∇_operator!` for the
-# purpose of pinning the limiter. It is NOT a full reduction of that operator: the
-# real one carries the cylindrical Jacobian (`operators.jl:606-611` weights the face
-# average by `inv_Jacob[i,j]·Jacob[i±1,j]`, i.e. by R), and this slab-geometry solver
+# Those three are what make this the 1-D reduction of `build_wall_diffusion_matrix` for
+# the purpose of pinning the limiter. It is NOT a full reduction of that operator: the
+# real one carries the cylindrical Jacobian (the face average is weighted by
+# `J[i±1,j]/J[i,j]`, i.e. by R), and this slab-geometry solver
 # does not. That is deliberate — these tests pin the closure, not the geometry — but
 # the distinction matters if anyone tries to reuse this solver for a geometric claim.
 #

@@ -141,7 +141,6 @@ end
     # only non-trivial when at least one transport term is on
     @test RP.flags.Implicit
     @test RP.flags.Include_Te_diffu_term || RP.flags.Include_Te_convec_term
-    @test !RP.flags.evolve_Te_inWall_only        # the other branch is a stub
 
     Rc = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
     Zc = (RP.G.Z1D[1] + RP.G.Z1D[end]) / 2

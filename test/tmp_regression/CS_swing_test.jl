@@ -111,7 +111,6 @@ function setup_flags!(RP::RAPID)
     RP.flags.Ampere_Itor_threshold = 0.0
     RP.flags.FLF_nstep = 10
     RP.flags.Implicit = true
-    RP.flags.Damp_Transp_outWall = true
     return RP.flags.Global_JxB_Force = false
 end
 

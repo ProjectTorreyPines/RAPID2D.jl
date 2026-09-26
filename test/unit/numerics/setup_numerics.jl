@@ -25,8 +25,7 @@
     end
 
     # The wall-free, prefilled-gas config used by the operator-construction tests.
-    # NR=50/NZ=100 are the SimulationConfig struct defaults; the ∇𝐃∇ and ∇⋅(𝐮 f)
-    # testitems pass NR=15, NZ=30.
+    # NR=50/NZ=100 are the SimulationConfig struct defaults.
     function gas_filled_config(
             ::Type{FT} = Float64;
             NR::Int = 50, NZ::Int = 100

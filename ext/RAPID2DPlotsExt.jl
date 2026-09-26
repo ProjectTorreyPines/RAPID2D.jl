@@ -326,8 +326,8 @@ module RAPID2DPlotsExt
         try
             # Determine global color limits for consistency
             all_data = [getfield(snap, field) for snap in snaps2D]
-            global_min = minimum(minimum.(all_data))
-            global_max = maximum(maximum.(all_data))
+            # the plasma-state fields are NaN on the band outside the wall
+            global_min, global_max = RAPID2D.finite_extrema(all_data)
 
             if field in [:ne, :ni] && global_min > 0
                 clims = (global_max * 1.0e-3, global_max)

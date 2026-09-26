@@ -49,6 +49,7 @@
         RP.plasma.ueR .= u_para .* RP.fields.bR
         RP.plasma.ueϕ .= u_para .* RP.fields.bϕ
         RP.plasma.ueZ .= u_para .* RP.fields.bZ
+        RAPID2D.cache_electron_operators!(RP)   # the cached in-wall operators must see this drift
         RP.fields.E_para_tot .= E_para
         # `ePowers.drag` charges its Coulomb half unconditionally — it sits inside
         # `Atomic_Collision`, not inside `Coulomb_Collision` — so initialization's

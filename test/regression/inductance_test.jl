@@ -315,7 +315,6 @@ end
     RP.flags.Ampere_Itor_threshold = 0.0      # apply Ampère from the very first amp
     RP.flags.FLF_nstep = 100
     RP.flags.Implicit = true
-    RP.flags.Damp_Transp_outWall = true
     RP.flags.Global_JxB_Force = false         # not needed for basic inductance test
 
     initialize!(RP)

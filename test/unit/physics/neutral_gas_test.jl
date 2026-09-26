@@ -117,10 +117,10 @@ end
 end
 
 # ── reflective diffusion operator ───────────────────────────────────────────
-# The shared ∇𝐃∇ builder is not reusable here: it sweeps every interior node
-# without wall awareness, so zeroing D outside the wall still leaves a coupling
-# coefficient inv_J·½·CT_in to the outside neighbour and the gas leaks out. A
-# reflective wall must OMIT the outside neighbour, which is a different stencil.
+# A whole-grid builder is not reusable here: sweeping every interior node without
+# wall awareness, zeroing D outside the wall still leaves a coupling coefficient
+# inv_J·½·CT_in to the outside neighbour and the gas leaks out. A reflective wall
+# must OMIT the outside neighbour, which is a different stencil.
 
 @testitem "Reflective diffusion operator: rows sum to zero" begin
     using RAPID2D: build_reflective_diffusion_matrix

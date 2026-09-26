@@ -127,6 +127,7 @@ end
 @testitem "Physics: density transport RHS terms" begin
     using RAPID2D.Statistics
     using RAPID2D.LinearAlgebra: opnorm
+    using RAPID2D: build_wall_diffusion_matrix
 
     # Explicit scheme with diffusion, convection and ionization all ON — this checks the
     # individual RHS operators rather than an end-to-end evolution.
@@ -166,17 +167,17 @@ end
     # momentum-randomizing channel pulls the drift down slightly further.
     @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -430695.500813412
 
-    op = RP.operators
     update_RRCs!(RP)
 
     # Ionization source is non-zero inside the wall and zero outside it
     @test !all(RP.plasma.ν_en_iz .== 0.0)
     @test all(RP.plasma.ν_en_iz[RP.G.nodes.on_out_wall_nids] .== 0.0)
 
-    # ne is still uniform inside the wall, so the diffusion term must vanish there —
-    # checked both via the direct evaluation and via the assembled operator.
-    @test all(compute_∇𝐃∇f_directly(RP, RP.plasma.ne)[RP.G.nodes.inWall_deepInWall_nids] .== 0.0)
-    RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
+    # ne is still uniform inside the wall, so the wall-aware diffusion operator (rows on
+    # in-wall nodes, reflective without faces) must annihilate it on every in-wall row.
+    tp = RP.transport
+    A_diffu = build_wall_diffusion_matrix(RP.G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    RHS_diffu = reshape(A_diffu * vec(RP.plasma.ne), size(RP.plasma.ne))
     mean_inside_ne = mean(RP.plasma.ne[RP.G.nodes.in_wall_nids])
     # The assembled operator annihilates a constant only up to cancellation, and
     # that residual is bounded by ‖A‖∞·‖n‖∞·eps — so the tolerance has to carry the
@@ -184,8 +185,8 @@ end
     # whatever D the RRC tables happened to give, and moves when they are corrected.
     @test all(
         isapprox.(
-            RHS_diffu[RP.G.nodes.inWall_deepInWall_nids], 0.0,
-            atol = 1.0e-12 * mean_inside_ne * opnorm(op.∇𝐃∇.matrix, Inf)
+            RHS_diffu[RP.G.nodes.in_wall_nids], 0.0,
+            atol = 1.0e-12 * mean_inside_ne * opnorm(A_diffu, Inf)
         )
     )
 
@@ -197,7 +198,7 @@ end
         dist = sqrt((r - center[1])^2 + (z - center[2])^2)
         RP.plasma.ne[i] = 1.0e6 * exp(-dist^2 / 20.0)
     end
-    RHS_diffu = (op.∇𝐃∇ * RP.plasma.ne)
+    RHS_diffu = reshape(A_diffu * vec(RP.plasma.ne), size(RP.plasma.ne))
     @test !all(RHS_diffu[RP.G.nodes.in_wall_nids] .== 0.0)
 end
 
@@ -265,12 +266,9 @@ end
         RAPID2D.combine_external_and_self_fields!(RP)
     end
 
-    # Both convection operators: the legacy nodal one (`:zeroing`/`:nodal`) and the
-    # face-flux one the defaults now use (`:robin`/`:mass_flux`).
-    for wall in (:zeroing, :robin), implicit in (false, true), upwind in (false, true)
-        @testset "wall=$wall, Implicit=$implicit, upwind=$upwind" begin
-            RP.flags.electron_wall = wall
-            RP.flags.primitive_advection = wall === :robin ? :mass_flux : :nodal
+    # The face-flux convection operator, every (implicit × upwind) combination.
+    for implicit in (false, true), upwind in (false, true)
+        @testset "Implicit=$implicit, upwind=$upwind" begin
             RP.flags.Implicit = implicit
             RP.flags.upwind = upwind
             initialize!(RP)
@@ -290,36 +288,28 @@ end
             actual_Z = sum(RP.plasma.ne .* RP.G.Z2D) / sum(RP.plasma.ne) - Z0
 
             # Upwind is positivity-preserving; the central scheme may undershoot slightly
-            # (nodal: −9.6e-4 absolute on a 1e6 peak; face-flux: −4.8e-3, still 5e-9 relative).
+            # (−4.8e-3 absolute on a 1e6 peak, 5e-9 relative).
             if upwind
                 @test all(RP.plasma.ne .>= 0.0)
             else
-                @test all(RP.plasma.ne .>= (wall === :robin ? -1.0e-8 : -1.0e-9) * maximum(ini_ne))
+                @test all(RP.plasma.ne .>= -1.0e-8 * maximum(ini_ne))
             end
 
             # The tolerance bounds a SYSTEMATIC forward bias of the discrete centroid,
             # not round-off. Measured on this grid, (R, Z) error against the analytic
-            # displacement, all four combinations, nodal operator (`:zeroing`):
-            #
-            #   central  explicit  (+5.29, +5.23) %   min(ne) = -9.5e-4
-            #   upwind   explicit  (+2.26, +5.08) %   min(ne) =  0
-            #   central  implicit  (+5.23, +5.17) %   min(ne) = -9.7e-4
-            #   upwind   implicit  (+2.19, +5.02) %   min(ne) =  0
-            #
-            # and face-flux operator (`:robin`):
+            # displacement, all four combinations:
             #
             #   central  explicit  (+5.22, +5.23) %   min(ne) = -4.8e-3
             #   upwind   explicit  (+5.08, +5.22) %   min(ne) =  0
             #   central  implicit  (+5.16, +5.17) %   min(ne) = -4.6e-3
             #   upwind   implicit  (+4.99, +5.16) %   min(ne) =  0
             #
-            # Central-scheme undershoot explains the nodal central-vs-upwind gap in R and
-            # nothing else: upwind is positivity-preserving and still runs +5 % in Z.
-            # That common ~5 % is undiagnosed and predates this assertion; it is NOT a
-            # property of the scheme under test, since every scheme shows it. The face
-            # form carries the cylindrical metric exactly, so its R bias equals its Z
-            # bias; the nodal upwind's smaller R bias was the O(ΔR/R) node error partly
-            # cancelling the common bias, not a better scheme.
+            # Upwind is positivity-preserving and still runs +5 % in Z, so the common
+            # ~5 % is not a property of the scheme under test; it is undiagnosed and
+            # predates this assertion. The face form carries the cylindrical metric
+            # exactly, so its R bias equals its Z bias. (The retired nodal upwind operator
+            # showed a smaller R bias — its O(ΔR/R) node error partly cancelling the
+            # common bias, not a better scheme.)
             #
             # One percentage point of the above appeared when `run_simulation!` began
             # establishing the coefficient invariant before its loop: the blob now
@@ -336,15 +326,11 @@ end
             # percentage points: two orders tighter than the band, and loose enough not
             # to trip on a different BLAS.
             bias = Dict(
-                (:zeroing, false, false) => (0.05288, 0.052292),
-                (:zeroing, false, true) => (0.02261, 0.050766),
-                (:zeroing, true, false) => (0.052295, 0.051733),
-                (:zeroing, true, true) => (0.021852, 0.05018),
-                (:robin, false, false) => (0.052233, 0.052257),
-                (:robin, false, true) => (0.050776, 0.052171),
-                (:robin, true, false) => (0.051638, 0.051696),
-                (:robin, true, true) => (0.049948, 0.051565),
-            )[(wall, implicit, upwind)]
+                (false, false) => (0.052233, 0.052257),
+                (false, true) => (0.050776, 0.052171),
+                (true, false) => (0.051638, 0.051696),
+                (true, true) => (0.049948, 0.051565),
+            )[(implicit, upwind)]
             @test isapprox(actual_R / expected_R - 1, bias[1]; atol = 5.0e-3)
             @test isapprox(actual_Z / expected_Z - 1, bias[2]; atol = 5.0e-3)
         end
@@ -1655,7 +1641,9 @@ end
             Ampere_Itor_threshold = threshold,
             E_para_self_ES = false, E_para_self_EM = true,
             update_ni_independently = false,
-            Include_ud_convec_term = false,
+            # ON, so both routings assemble the in-wall (u·∇)u∥ operator; with a uniform u∥
+            # it contributes nothing, so the force balance below is unchanged
+            Include_ud_convec_term = true,
             Include_ud_pressure_term = false,
             Include_ud_diffu_term = false,
         )
@@ -1671,7 +1659,7 @@ end
     routings = [
         ("Ampere off", false, 1.0),
         ("below threshold", true, 1.0e9),
-        ("coupled solver", true, 0.0),
+        ("combined solver", true, 0.0),
     ]
 
     for coulomb in (true, false)

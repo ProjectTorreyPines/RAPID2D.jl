@@ -588,7 +588,6 @@ end
         # ── Numerics ───────────────────────────────────────────────────────────
         Implicit = true,
         FLF_nstep = 50,
-        Damp_Transp_outWall = true,
         negative_n_correction = true,
     )
 
