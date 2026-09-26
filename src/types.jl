@@ -628,9 +628,9 @@ Fields include various matrices for solving different parts of the model.
     𝐽⁻¹∂R_𝐽::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
     ∂Z::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Vertical derivative operator ∂Z
 
-    # The transport operators (wall-aware diffusion, face-flux convection, primitive
-    # advection) are not cached here: they are built from the current state where they
-    # are used, on in-wall rows only.
+    # The transport operators (wall-aware diffusion, face-flux convection, advection) are
+    # not cached here: they live on `Transport`, built from the current state once per step,
+    # on in-wall rows only.
     # Named `_tot`, not `ν_en_iz`, because it is built from `pla.ν_en_iz_tot`: under the
     # INTERIM(diz-ion-species) (`REACTION_STOICHIOMETRY.diz`) every ion is booked as H₂⁺, so the continuity
     # assembly needs both ionization channels, not the H₂⁺-only rate.

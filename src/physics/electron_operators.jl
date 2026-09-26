@@ -1,6 +1,6 @@
-# u∥ and Te transport: the in-wall operators.
+# The electron in-wall operators: cached once per step, and what u∥ and Te solve with.
 #
-# Both are primitive (per-particle) variables: they are carried by the electrons that move,
+# u∥ and Te are per-particle variables: they are carried by the electrons that move,
 # so their advection is derived from the same face mass flux the continuity equation uses,
 # and their diffusion (turbulent viscosity / conduction) is a reflective in-wall operator —
 # a wall neither reads nor damps a per-particle quantity. Nothing outside the wall is read.
@@ -54,20 +54,20 @@ function electron_operator_cache(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    electron_primitive_operators(RP) -> (A_adv, A_diffu, div_u)
+    ue_Te_operators(RP) -> (A_adv, A_diffu, div_u)
 
 - `A_adv`: `(u·∇)f` from the cached face flux of `(ueR, ueZ)` (`transport.A_conv_e`) and the
-  CURRENT `ne` (`primitive_advection_operator`; rows with `ne ≤ 1 m⁻³` are empty). Assembled
+  CURRENT `ne` (`advection_operator`; rows with `ne ≤ 1 m⁻³` are empty). Assembled
   on every call because `ne` moves within the step; the matrix is what the implicit solves
-  need. A right-hand side only wants [`apply_primitive_advection`](@ref) on `transport.A_conv_e`.
+  need. A right-hand side only wants [`apply_advection`](@ref) on `transport.A_conv_e`.
 - `A_diffu`: the cached reflective in-wall `∇·D∇` (`transport.A_diffu_e`).
 - `div_u`: the cached `∇·u` on in-wall nodes (`transport.div_ue`).
 
 The cache is refreshed once per step by `update_transport_quantities!`.
 """
-function electron_primitive_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, tp = RP.plasma, electron_operator_cache(RP)
-    A_adv = primitive_advection_operator(tp.A_conv_e, vec(pla.ne); n_floor = FT(1.0))
+    A_adv = advection_operator(tp.A_conv_e, vec(pla.ne); n_floor = FT(1.0))
     return (A_adv = A_adv, A_diffu = tp.A_diffu_e, div_u = tp.div_ue)
 end
 

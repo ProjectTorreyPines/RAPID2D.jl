@@ -70,8 +70,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
 
         # (u·∇)u∥ from the face mass flux and the reflective in-wall viscosity: rows on
-        # in-wall nodes only, nothing read outside the wall (`primitive_transport.jl`).
-        pops = electron_primitive_operators(RP)
+        # in-wall nodes only, nothing read outside the wall (`electron_operators.jl`).
+        pops = ue_Te_operators(RP)
 
         # Rue_ei, part 1 (uⁿ). A LEDGER of the exchange over the step, so it must use
         # the quadrature the update actually performed — θ(z) under ExpRB.
@@ -319,8 +319,8 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Note: diffu and conv will have (1-θimp) contribution
             # ePowers_tilde = pla.ePowers.tot - θimp * (pla.ePowers.diffu + pla.ePowers.conv)
 
-            # Calculate LHS from the in-wall operators (`primitive_transport.jl`)
-            pops = electron_primitive_operators(RP)
+            # Calculate LHS from the in-wall operators (`electron_operators.jl`)
+            pops = ue_Te_operators(RP)
             if RP.flags.Include_Te_diffu_term
                 # P_diffu = 1.5*∇·D∇Te
                 @. ePowers_tilde -= θimp * pla.ePowers.diffu
@@ -517,7 +517,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         tp = electron_operator_cache(RP)
         n_e = vec(pla.ne)
         n_floor = one(FT)
-        u∇(f) = reshape(apply_primitive_advection(tp.A_conv_e, n_e, vec(f); n_floor), size(f))
+        u∇(f) = reshape(apply_advection(tp.A_conv_e, n_e, vec(f); n_floor), size(f))
 
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
@@ -1825,8 +1825,8 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     end
 
     # convection: (1-θimp)*[-(𝐮⋅∇)u∥] explicitly here, θimp*(𝐮⋅∇) inside Au below — both from
-    # the same in-wall operator (`primitive_transport.jl`)
-    A_adv = flags.Include_ud_convec_term ? electron_primitive_operators(RP).A_adv : nothing
+    # the same in-wall operator (`electron_operators.jl`)
+    A_adv = flags.Include_ud_convec_term ? ue_Te_operators(RP).A_adv : nothing
     if flags.Include_ud_convec_term
         accel_para_tilde .+= (one(FT) - θimp) * (-apply_op(A_adv, pla.ue_para))
     end
@@ -2178,8 +2178,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
 
         # convection: (1-θ)*[-(𝐮⋅∇)u∥] explicitly here, θ*(𝐮⋅∇) inside A_u below — both from
-        # the same in-wall operator (`primitive_transport.jl`)
-        A_adv = flags.Include_ud_convec_term ? electron_primitive_operators(RP).A_adv : nothing
+        # the same in-wall operator (`electron_operators.jl`)
+        A_adv = flags.Include_ud_convec_term ? ue_Te_operators(RP).A_adv : nothing
         if flags.Include_ud_convec_term
             accel_para_tilde .+= (one(FT) - θimp) * (-apply_op(A_adv, pla.ue_para))
         end

@@ -1,4 +1,5 @@
-# (u·∇)f for a primitive variable, derived from the SAME mass flux the continuity equation uses:
+# (u·∇)f for a per-particle variable (u∥, Te), derived from the SAME mass flux the continuity
+# equation uses:
 #
 #     u·∇f ≡ [ ∇·(n u f) − f ∇·(n u) ] / n
 #
@@ -9,13 +10,13 @@
 # internal/docs/src/notes/design/wall-flux-channels.md §2.5–2.6.
 
 """
-    primitive_advection_operator(A_conv, n; n_floor) -> SparseMatrixCSC
+    advection_operator(A_conv, n; n_floor) -> SparseMatrixCSC
 
 `(u·∇f)_i = [(A_conv·diag(n)·f)_i − f_i·(A_conv·n)_i] / n_i` from the face-flux divergence `A_conv`
 (`build_face_flux_divergence`) and the density vector `n`. Rows with `n_i ≤ n_floor` are zero.
 Annihilates constants exactly; reduces to the nodal upwind `u·∇` for uniform `n` and `u`.
 """
-function primitive_advection_operator(
+function advection_operator(
         A_conv::SparseMatrixCSC{FT, Int}, n::AbstractVector{FT}; n_floor::FT,
     ) where {FT <: AbstractFloat}
     An = A_conv * n
@@ -24,13 +25,13 @@ function primitive_advection_operator(
 end
 
 """
-    apply_primitive_advection(A_conv, n, f; n_floor) -> Vector
+    apply_advection(A_conv, n, f; n_floor) -> Vector
 
 `(u·∇f)_i = [(A_conv·(n∘f))_i − f_i·(A_conv·n)_i] / n_i` without assembling the operator: two matvecs
 instead of two sparse products. Rows with `n_i ≤ n_floor` are zero, exactly as in
-[`primitive_advection_operator`](@ref); the two agree to rounding.
+[`advection_operator`](@ref); the two agree to rounding.
 """
-function apply_primitive_advection(
+function apply_advection(
         A_conv::SparseMatrixCSC{FT, Int}, n::AbstractVector{FT}, f::AbstractVector{FT}; n_floor::FT,
     ) where {FT <: AbstractFloat}
     Anf = A_conv * (n .* f)

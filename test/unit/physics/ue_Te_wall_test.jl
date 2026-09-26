@@ -2,8 +2,8 @@
 # never damped through an out-wall band. A uniform state with no drive must stay uniform
 # through a step, wall cells included. internal/docs/src/notes/design/wall-flux-channels.md §2.5–2.6.
 
-@testsnippet PrimitiveWallDriver begin
-    function primitive_one_step(; Implicit = true, upwind = true, heat_flux = false, albedo = 0.0, convec = true)
+@testsnippet UeTeWallDriver begin
+    function ue_Te_one_step(; Implicit = true, upwind = true, heat_flux = false, albedo = 0.0, convec = true)
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
             dt = 2.0e-6, t_end_s = 4.0e-6, snap0D_Δt_s = 4.0e-6, snap2D_Δt_s = 4.0e-6,
@@ -37,10 +37,16 @@
     end
 end
 
-@testitem "primitive transport: one path, no flag; upwind = false keeps the interior central and the wall faces upwind" setup = [PrimitiveWallDriver] begin
+@testitem "u∥ and Te transport: one path, no flag; upwind = false keeps the interior central and the wall faces upwind" setup = [UeTeWallDriver] begin
     @test !(:primitive_advection in fieldnames(SimulationFlags{Float64}))
     @test_throws MethodError SimulationFlags{Float64}(primitive_advection = :nodal)
-    RP = primitive_one_step(; upwind = false)
+    # u∥ and Te are solved as themselves — that is RAPID2D's default, not a variant that
+    # needs a label — so no `primitive_*` name survives either
+    for name in (:electron_primitive_operators, :primitive_advection_operator, :apply_primitive_advection)
+        @test !isdefined(RAPID2D, name)
+    end
+    using RAPID2D: ue_Te_operators, advection_operator, apply_advection
+    RP = ue_Te_one_step(; upwind = false)
     @test all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.plasma.Te_eV)
     # a uniform state stays uniform at the wall under the central interior scheme too
     inw = RP.G.nodes.in_wall_nids
@@ -50,8 +56,8 @@ end
     @test (maximum(u) - minimum(u)) < 1.0e-9 * abs(minimum(u))
 end
 
-@testitem "u∥ and Te stay uniform through a step at the wall" setup = [PrimitiveWallDriver] begin
-    RP = primitive_one_step()
+@testitem "u∥ and Te stay uniform through a step at the wall" setup = [UeTeWallDriver] begin
+    RP = ue_Te_one_step()
     inw = RP.G.nodes.in_wall_nids
     @test all(iszero, RP.fields.E_para_tot[inw])
     # u∥ carries a uniform 2.5e-8 relative decay from the residual collision frequencies the
@@ -63,14 +69,14 @@ end
     @test all(isfinite, RP.plasma.Te_eV) && all(isfinite, RP.plasma.ue_para)
 end
 
-@testitem "Te diffusion is reflective: Σ vol·(∇·D∇Te) over in-wall nodes vanishes" setup = [PrimitiveWallDriver] begin
-    using RAPID2D: electron_primitive_operators
-    RP = primitive_one_step()
+@testitem "Te diffusion is reflective: Σ vol·(∇·D∇Te) over in-wall nodes vanishes" setup = [UeTeWallDriver] begin
+    using RAPID2D: ue_Te_operators
+    RP = ue_Te_one_step()
     G = RP.G
     inw = G.nodes.in_wall_nids
     # a non-uniform Te so the operator actually does something
     Te = 10.0 .+ 5.0 .* sin.(3 .* G.R2D) .* cos.(2 .* G.Z2D)
-    ops = electron_primitive_operators(RP)
+    ops = ue_Te_operators(RP)
     LTe = ops.A_diffu * vec(Te)
     vol = vec(G.inVol2D)
     @test sum(abs.(LTe[inw]) .* vol[inw]) > 0
@@ -78,26 +84,26 @@ end
     @test all(iszero, LTe[G.nodes.on_out_wall_nids])
 end
 
-@testitem "the heat-flux term reads nothing outside the wall" setup = [PrimitiveWallDriver] begin
+@testitem "the heat-flux term reads nothing outside the wall" setup = [UeTeWallDriver] begin
     # The retired form differentiated log(ne) on the whole grid, and ne is zero on the excluded
     # band. Freeze the density (convec = false, mirror wall) so it stays uniform: then every
     # piece of −∇·(T u) − T u·∇ln n vanishes on the in-wall operators and Te must stay uniform.
     # Anything else is the band being read.
-    RP = primitive_one_step(; heat_flux = true, albedo = 1.0, convec = false)
+    RP = ue_Te_one_step(; heat_flux = true, albedo = 1.0, convec = false)
     inw = RP.G.nodes.in_wall_nids
     @test all(isfinite, RP.plasma.Te_eV[inw])
     @test all(x -> isapprox(x, 12.0; rtol = 1.0e-10), RP.plasma.Te_eV[inw])
     # With convection and an absorbing wall the density develops a gradient at the wall and the
     # term responds to it: a finite, small, physical response, not a NaN
-    RP0 = primitive_one_step(; heat_flux = true)
+    RP0 = ue_Te_one_step(; heat_flux = true)
     Te = RP0.plasma.Te_eV[RP0.G.nodes.in_wall_nids]
     @test all(isfinite, Te)
     @test all(x -> abs(x - 12.0) < 0.5, Te)
 end
 
-@testitem "the electron in-wall operators are cached once per step and equal a fresh build" setup = [PrimitiveWallDriver] begin
+@testitem "the electron in-wall operators are cached once per step and equal a fresh build" setup = [UeTeWallDriver] begin
     using RAPID2D: build_face_flux_divergence, build_wall_diffusion_matrix, wall_divergence, wall_faces
-    RP = primitive_one_step()
+    RP = ue_Te_one_step()
     tp, G, pla = RP.transport, RP.G, RP.plasma
     @test tp.wall_faces == wall_faces(G)
     @test tp.A_conv_e == build_face_flux_divergence(G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
@@ -109,7 +115,7 @@ end
     # A consumer cannot tell a central `A_conv_e` from an upwind one by looking at it, so the
     # cache records the `flags.upwind` it was built with and every consumer checks it: a
     # flag changed since the refresh is refused, not silently applied to the old operators.
-    using RAPID2D: electron_primitive_operators, solve_electron_continuity_equation!,
+    using RAPID2D: ue_Te_operators, solve_electron_continuity_equation!,
         update_electron_heating_powers!, cache_electron_operators!
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
@@ -119,12 +125,12 @@ end
     initialize!(RP)
     @test RP.transport.A_conv_e_upwind == RP.flags.upwind
     RP.flags.upwind = !RP.flags.upwind                  # changed after the cache was built
-    @test_throws ArgumentError electron_primitive_operators(RP)
+    @test_throws ArgumentError ue_Te_operators(RP)
     @test_throws ArgumentError solve_electron_continuity_equation!(RP)
     @test_throws ArgumentError update_electron_heating_powers!(RP)
     cache_electron_operators!(RP)                       # the refresh records the scheme it used
     @test RP.transport.A_conv_e_upwind == RP.flags.upwind
-    electron_primitive_operators(RP)
+    ue_Te_operators(RP)
     solve_electron_continuity_equation!(RP)
     update_electron_heating_powers!(RP)
     @test all(isfinite, RP.plasma.ne)
