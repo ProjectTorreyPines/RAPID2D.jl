@@ -81,7 +81,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         if RP.flags.Implicit
             OP = RP.operators
-            @. OP.A_LHS = OP.II
+            # The shared LHS buffer on the wall pattern: values only, so the cached solver
+            # keeps its symbolic analysis from step to step.
+            A = OP.A_LHS
+            set_identity!(A)
 
             # #1: Electric acceleration term [qe*E_para_tot/me]
             accel_para_tilde = qe * F.E_para_tot / me
@@ -90,7 +93,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # weight belongs to the friction's eigenvalue, not to a nonlocal operator.
             if RP.flags.Include_ud_convec_term
                 accel_para_tilde .+= (one_FT - θ_op) * (-apply_op(pops.A_adv, pla.ue_para))
-                OP.A_LHS = OP.A_LHS + θ_op * dt * pops.A_adv
+                add_scaled!(A, θ_op * dt, pops.A_adv)
             end
 
             # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
@@ -101,10 +104,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]
             if decay_is_exprb
                 # uⁿ carries bern(−z), applied to the RHS below rather than here.
-                OP.A_LHS += @views spdiagm((bern_decay .- one_FT)[:])
+                add_diagonal!(A, vec(bern_decay) .- one_FT)
             else
                 @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
-                OP.A_LHS += @views spdiagm(θu * dt * ν_sum_mom_iz_ei[:])
+                add_diagonal!(A, vec(ν_sum_mom_iz_ei); scale = θu * dt)
             end
 
             # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
@@ -113,7 +116,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
             if RP.flags.Include_ud_diffu_term
                 accel_para_tilde .+= (one_FT - θ_op) * apply_op(pops.A_diffu, pla.ue_para)
-                OP.A_LHS = OP.A_LHS - θ_op * dt * pops.A_diffu
+                add_scaled!(A, -θ_op * dt, pops.A_diffu)
             end
 
             # bern(−z) formed as bern(z) + z, not the algebraically equal
@@ -126,7 +129,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
 
             @timeit RAPID_TIMER "ue_para LinearSolve" begin
-                pla.ue_para .= OP.A_LHS \ OP.RHS
+                factorize!(OP.ue_solver, A)
+                solve!(view(pla.ue_para, :), OP.ue_solver, view(OP.RHS, :))
             end
         else
             # Same two coefficients as the assembled path: 1/bern(z) divides the
@@ -310,7 +314,8 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # Apply time integration method based on flag
         if RP.flags.Implicit
-            @. OP.A_LHS = OP.II
+            A = OP.A_LHS   # the shared LHS buffer on the wall pattern: values only
+            set_identity!(A)
 
             ePowers_tilde = copy(pla.ePowers.tot)
 
@@ -324,13 +329,16 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             if RP.flags.Include_Te_diffu_term
                 # P_diffu = 1.5*∇·D∇Te
                 @. ePowers_tilde -= θimp * pla.ePowers.diffu
-                OP.A_LHS = OP.A_LHS - two_thirds_FT * FT(1.5) * (dt * θimp) * pops.A_diffu
+                add_scaled!(A, -two_thirds_FT * FT(1.5) * (dt * θimp), pops.A_diffu)
             end
 
             if RP.flags.Include_Te_convec_term
                 @. ePowers_tilde -= θimp * pla.ePowers.conv
-                # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮)
-                OP.A_LHS = OP.A_LHS - two_thirds_FT * (dt * θimp) * (-FT(1.5) * pops.A_adv - spdiagm(vec(pops.div_u)))
+                # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮): on the LHS
+                # +1.5·c·A_adv and +c·diag(∇⋅𝐮), with c = (2/3)·Δt·θ
+                c_conv = two_thirds_FT * (dt * θimp)
+                add_scaled!(A, c_conv * FT(1.5), pops.A_adv)
+                add_diagonal!(A, vec(pops.div_u); scale = c_conv)
             end
 
             # LHS written as a deviation from the identity, so the sparsity
@@ -338,7 +346,7 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # The source needs no bern: with S = (2/3e)P⁰ − λTₑⁿ, bern(−z) = bern(z) + z
             # cancels the λTₑⁿ pieces, leaving today's RHS with Tₑⁿ scaled by bern.
             if atomic_is_exprb
-                OP.A_LHS += @views spdiagm((bern_atomic .- one(FT))[:])
+                add_diagonal!(A, vec(bern_atomic) .- one(FT))
                 OP.RHS .= bern_atomic .* pla.Te_eV +
                     two_thirds_FT * (dt * ePowers_tilde / ee)
             else
@@ -347,7 +355,7 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # Solve the linear system (cached factorization; pattern is step-stable)
             @timeit RAPID_TIMER "Te_eV LinearSolve" begin
-                factorize!(OP.Te_solver, OP.A_LHS.matrix)
+                factorize!(OP.Te_solver, A)
                 solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
             end
         elseif atomic_is_exprb
@@ -509,26 +517,26 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
 
-        # The electron in-wall operators, cached once per step (`transport.A_conv_e`, `A_diffu_e`,
+        # The electron in-wall operators, cached once per step (`operators.A_conv_e`, `A_diffu_e`,
         # `div_ue`; rows on in-wall nodes only, so the excluded band is never read) and
         # checked to carry the current `upwind` scheme. These are right-hand sides, so (u·∇)
         # is applied matrix-free from the current `ne` rather than assembled — the assembly
         # is what the implicit solves pay for.
-        tp = electron_operator_cache(RP)
+        op_e = electron_operator_cache(RP)
         n_e = vec(pla.ne)
         n_floor = one(FT)
-        u∇(f) = reshape(apply_advection(tp.A_conv_e, n_e, vec(f); n_floor), size(f))
+        u∇(f) = reshape(apply_advection(op_e.A_conv_e, n_e, vec(f); n_floor), size(f))
 
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
             # P_diffu = 1.5*∇·D∇Te
-            ePowers.diffu .= ee * FT(1.5) * apply_op(tp.A_diffu_e, pla.Te_eV)
+            ePowers.diffu .= ee * FT(1.5) * apply_op(op_e.A_diffu_e, pla.Te_eV)
         end
 
         # If convection term is included in temperature equation
         if RP.flags.Include_Te_convec_term
             # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)  =  -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)
-            ePowers.conv .= ee * (-FT(1.5) * u∇(pla.Te_eV) .- pla.Te_eV .* tp.div_ue)
+            ePowers.conv .= ee * (-FT(1.5) * u∇(pla.Te_eV) .- pla.Te_eV .* op_e.div_ue)
         end
 
         if RP.flags.Include_heat_flux_term
@@ -537,7 +545,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             #       = −(𝐮⋅∇)Te − Te ∇⋅𝐮 − Te (𝐮⋅∇) ln n, every term from the in-wall operators.
             # The floor keeps log finite on empty rows (ne = 0); those rows contribute nothing.
             ln_n = log.(max.(pla.ne, one(FT)))
-            ePowers.heat .= ee * (-u∇(pla.Te_eV) .- pla.Te_eV .* tp.div_ue .- pla.Te_eV .* u∇(ln_n))
+            ePowers.heat .= ee * (-u∇(pla.Te_eV) .- pla.Te_eV .* op_e.div_ue .- pla.Te_eV .* u∇(ln_n))
         end
 
 
@@ -1138,43 +1146,38 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # θ (`θ_imp.transport` vs `θ_imp.growth`) and so cannot share a sum.
         fill!(op.RHS, zero(FT))
 
-        # The wall-aware operator: rows on in-wall nodes only, a Robin debit on the diagonal,
-        # and the loss booked per face from the same arithmetic the operator used. The cache
-        # is checked to exist and to carry the current `upwind` scheme.
-        tp = electron_operator_cache(RP)
-        faces_e = tp.wall_faces
-        # Diffusive Robin part only when diffusion is on; otherwise the ledger coefficient
-        # starts at zero and only convection (below) can add to it.
-        A_diffu_wall_e, v_e = RP.flags.diffu ? electron_transport_operator(RP, faces_e) :
-            (nothing, zeros(FT, length(faces_e)))
-        # Convection is the face-flux operator on the same faces: its outflow term is a
-        # diagonal debit like the Robin one, so the two speeds add into one ledger
-        # coefficient per face. The albedo scales that outflow the same way it scales the
-        # Robin speed (`convective_wall_operator`). The cached divergence carries its own
-        # scheme, so no `upwind` is passed here.
-        A_conv_wall_e = nothing
-        if RP.flags.convec
-            A_conv_wall_e, v_conv = convective_wall_operator(
-                RP.G, faces_e, pla.ueR, pla.ueZ, electron_wall_albedo(RP); A_conv = tp.A_conv_e
-            )
-            v_e .+= v_conv
+        # The wall-aware operators: rows on in-wall nodes only, the cached reflective
+        # A_diffu_e and face-flux A_conv_e (checked to carry the current `upwind` scheme), and
+        # the wall as two diagonal rates per owning cell built from per-face speeds — the Robin
+        # debit Σ_f (A_f/V_i)·v_absorb_f, and the albedo's return of the convective outflow
+        # a·Σ_f (A_f/V_i)·max(u·n̂_f, 0). The ledger books each face with the same speeds, so
+        # operator and ledger are one arithmetic. Each channel enters only with its flag.
+        op_e = electron_operator_cache(RP)
+        faces_e = RP.transport.wall_faces
+        Ng = length(pla.ne)
+        v_e = zeros(FT, length(faces_e))
+        robin_e = zeros(FT, Ng)
+        returned_e = zeros(FT, Ng)
+        if RP.flags.diffu
+            v_absorb = electron_wall_absorption_speeds(RP, faces_e)
+            robin_e .= wall_face_debit(FT, Ng, faces_e, v_absorb)
+            v_e .+= v_absorb
         end
-        if RP.flags.src && RP.flags.Implicit
-            # The implicit half of the ionization source needs ν_en_iz_tot (BOTH
-            # electron-producing channels) as a diagonal operator. Assembled here
-            # rather than in update_RRCs! so that a run with `src` off never builds
-            # one. ν_en_iz_tot itself was materialized by update_RRCs! at the
-            # step-entry state — do not re-query the table here.
-            op.ν_en_iz_tot .= @views spdiagm(pla.ν_en_iz_tot[:])
+        if RP.flags.convec
+            a_e = electron_wall_albedo(RP)
+            v_out = face_outflow_speeds(RP.G, faces_e, pla.ueR, pla.ueZ)
+            returned_e .= wall_face_debit(FT, Ng, faces_e, a_e .* v_out)
+            v_e .+= (one(FT) - a_e) .* v_out
         end
 
+        n_vec, rhs_vec = vec(pla.ne), vec(op.RHS)
         if RP.flags.diffu
-            # ∇⋅𝐃⋅∇n
-            op.RHS .+= reshape(A_diffu_wall_e * vec(pla.ne), size(pla.ne))
+            # ∇⋅𝐃⋅∇n with the Robin wall
+            rhs_vec .+= op_e.A_diffu_e.matrix * n_vec .- robin_e .* n_vec
         end
         if RP.flags.convec
-            # -∇⋅(n 𝐮)
-            op.RHS .-= reshape(A_conv_wall_e * vec(pla.ne), size(pla.ne))
+            # -∇⋅(n 𝐮), the albedo returning its share of the wall outflow
+            rhs_vec .-= op_e.A_conv_e.matrix * n_vec .- returned_e .* n_vec
         end
 
         # A GROWTH eigenvalue, z = +ν_iz_tot·Δt (BOTH electron-producing channels —
@@ -1226,32 +1229,36 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                 @. op.RHS = pla.ne + dt * op.RHS
             end
 
-            # Build LHS operator. Every term is gated by the SAME flag that gated
-            # its explicit half above: all three used to be added unconditionally,
-            # so `flags.diffu = false` removed only the explicit half and left θ·Δt
-            # of the diffusion still acting implicitly, and a run that turned `src`
-            # off mid-way kept ionizing through a stale ν_en_iz_tot. The ion path
-            # honours the flags in full, which is how the mismatch showed up.
-            #
-            # Gated by ZEROING the weight rather than by branching, so the assembly is
-            # one expression; an operator that is off enters as an empty matrix.
-            θ_d = RP.flags.diffu ? θ_tr : zero(FT)
-            θ_c = RP.flags.convec ? θ_tr : zero(FT)
-            θ_s = (RP.flags.src && !fit_growth) ? θ_gr : zero(FT)
-            diff_e = isnothing(A_diffu_wall_e) ? spzeros(FT, size(op.II)...) : A_diffu_wall_e
-            conv_e = isnothing(A_conv_wall_e) ? spzeros(FT, size(op.II)...) : A_conv_wall_e
-            op.A_LHS.matrix = op.II - dt * (θ_d * diff_e - θ_c * conv_e + θ_s * op.ν_en_iz_tot.matrix)
+            # Build the LHS on the wall pattern, values only:
+            #   I − Δt·[θ_tr·(A_diffu_e − diag(robin) − A_conv_e + diag(returned)) + θ_gr·diag(ν_iz_tot)]
+            # Every term is gated by the SAME flag that gated its explicit half above: all
+            # three used to be added unconditionally, so `flags.diffu = false` removed only the
+            # explicit half and left θ·Δt of the diffusion still acting implicitly, and a run
+            # that turned `src` off mid-way kept ionizing through a stale ν_en_iz_tot (BOTH
+            # electron-producing channels, materialized by update_RRCs! at the step-entry
+            # state — not re-queried here). The ion path honours the flags in full, which is
+            # how the mismatch showed up.
+            A = op.A_LHS
+            set_identity!(A)
+            if RP.flags.diffu
+                add_scaled!(A, -dt * θ_tr, op_e.A_diffu_e)
+                add_diagonal!(A, robin_e; scale = dt * θ_tr)
+            end
+            if RP.flags.convec
+                add_scaled!(A, dt * θ_tr, op_e.A_conv_e)
+                add_diagonal!(A, returned_e; scale = -dt * θ_tr)
+            end
+            (RP.flags.src && !fit_growth) && add_diagonal!(A, vec(pla.ν_en_iz_tot); scale = -dt * θ_gr)
             if fit_growth
-                # bern(z) on the diagonal, as a deviation from the identity so the
-                # pattern is untouched. This is the side that cancels on a growth
-                # branch — the θ form's 1 − θνΔt passes through zero at the poles —
-                # and bern(z) > 0 at every z keeps the matrix an M-matrix.
-                op.A_LHS += @views spdiagm((bern_growth .- one(FT))[:])
+                # bern(z) on the diagonal, as a deviation from the identity. This is the side
+                # that cancels on a growth branch — the θ form's 1 − θνΔt passes through zero
+                # at the poles — and bern(z) > 0 at every z keeps the matrix an M-matrix.
+                add_diagonal!(A, vec(bern_growth) .- one(FT))
             end
 
-            # Solve the linear system (cached factorization; pattern is step-stable)
+            # Solve the linear system (cached factorization; the pattern never changes)
             @timeit RAPID_TIMER "ne LinearSolve`" begin
-                factorize!(op.ne_solver, op.A_LHS.matrix)
+                factorize!(op.ne_solver, A)
                 solve!(view(pla.ne, :), op.ne_solver, view(op.RHS, :))
             end
             book_electron_wall_loss!(RP, faces_e, v_e, pla.ne, RP.prev_n, θ_tr)
@@ -1853,7 +1860,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     Au = DiscretizedOperator{FT}(dims_rz = (G.NR, G.NZ))
     Au .= OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
     if flags.Include_ud_convec_term
-        Au.matrix = Au.matrix + dt * θimp * A_adv
+        Au.matrix = Au.matrix + dt * θimp * sparse(A_adv)
     end
     Au_X_ui_para = Au * pla.ui_para
 
@@ -2202,7 +2209,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         A_u = OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
         if flags.Include_ud_convec_term
-            A_u += dt * θimp * A_adv
+            A_u += dt * θimp * sparse(A_adv)
         end
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)

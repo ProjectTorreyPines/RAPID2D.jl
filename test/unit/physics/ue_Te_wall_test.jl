@@ -101,14 +101,110 @@ end
     @test all(x -> abs(x - 12.0) < 0.5, Te)
 end
 
-@testitem "the electron in-wall operators are cached once per step and equal a fresh build" setup = [UeTeWallDriver] begin
-    using RAPID2D: build_face_flux_divergence, build_wall_diffusion_matrix, wall_divergence, wall_faces
+@testitem "the electron in-wall operators live on the wall pattern in RP.operators and equal a fresh build" setup = [UeTeWallDriver] begin
+    using RAPID2D: build_face_flux_divergence, build_wall_diffusion_matrix, wall_divergence, wall_faces,
+        build_wall_pattern
     RP = ue_Te_one_step()
-    tp, G, pla = RP.transport, RP.G, RP.plasma
+    op, tp, G, pla = RP.operators, RP.transport, RP.G, RP.plasma
     @test tp.wall_faces == wall_faces(G)
-    @test tp.A_conv_e == build_face_flux_divergence(G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
-    @test tp.A_diffu_e == build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
-    @test tp.div_ue == wall_divergence(G, pla.ueR, pla.ueZ)
+    @test op.A_conv_e.matrix == build_face_flux_divergence(G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
+    @test op.A_diffu_e.matrix == build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    @test op.div_ue == wall_divergence(G, pla.ueR, pla.ueZ)
+    # every reused operator, and the LHS buffer, sits on the one pattern: values only change
+    P = build_wall_pattern(G)
+    for A in (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_LHS)
+        @test A.matrix.colptr == P.matrix.colptr && A.matrix.rowval == P.matrix.rowval && A.k2csc == P.k2csc
+    end
+end
+
+@testitem "in-wall operators: one symbolic analysis per electron solver over a run with reversing flow" begin
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 25, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-7, t_end_s = 2.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    config.Output_path = mktempdir()
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags{Float64}(
+        src = true, diffu = true, convec = true, Atomic_Collision = true, Coulomb_Collision = true,
+        ud_evolve = true, Te_evolve = true, Ti_evolve = true, update_ni_independently = true,
+        Gas_evolve = false, E_para_self_ES = true, mean_ExB = true, turb_ExB_mixing = true,
+        negative_n_correction = true, Ampere = false, E_para_self_EM = false,
+    )
+    initialize!(RP)
+    G = RP.G
+    n = @. 1.0e15 * exp(-((G.R2D - 1.5)^2 + G.Z2D^2) / (2 * 0.15^2))
+    n[G.nodes.on_out_wall_nids] .= 0.0
+    RP.plasma.ne .= n
+    RP.plasma.ni .= n
+    RP.plasma.Te_eV .= 5.0
+    run_simulation!(RP)
+    # reverse the drift: every face's upwind side flips, and the pattern must not care
+    RP.plasma.ue_para .*= -1
+    RP.t_end_s = 4.0e-6
+    run_simulation!(RP)
+    op = RP.operators
+    nsteps = RP.step
+    @test nsteps == 40
+    for s in (op.ne_solver, op.Te_solver, op.ue_solver)
+        @test s.nsymbolic == 1                  # analysed once for the whole run
+        @test s.nfactor == nsteps               # refactorized numerically every step
+    end
+    @test all(iszero, RP.plasma.ne[G.nodes.on_out_wall_nids])
+    @test all(isfinite, RP.plasma.ne) && all(isfinite, RP.plasma.Te_eV) && all(isfinite, RP.plasma.ue_para)
+end
+
+@testitem "operators not allocated on the wall pattern are refused before any update" begin
+    using RAPID2D: cache_electron_operators!, ue_Te_operators, Operators
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.operators = Operators{Float64}(RP.G.NR, RP.G.NZ)       # built by hand, not by initialize!
+    @test_throws ArgumentError cache_electron_operators!(RP)
+    @test_throws ArgumentError ue_Te_operators(RP)
+    @test_throws ArgumentError solve_electron_continuity_equation!(RP)
+end
+
+@testitem "continuity with the wall as diagonal terms equals the fresh Robin and albedo operators" begin
+    # The step folds the Robin debit and the convective albedo into the LHS and RHS as diagonal
+    # vectors on the cached A_diffu_e and A_conv_e. The reference assembles the fresh wall
+    # operators (the Robin 9-point matrix, the albedo-folded face flux) and solves with `\`.
+    using RAPID2D: electron_transport_operator, convective_wall_operator, electron_wall_albedo,
+        cache_electron_operators!
+    using RAPID2D.LinearAlgebra, RAPID2D.SparseArrays
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 25, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        electron_wall_albedo = 0.3,
+    )
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags{Float64}(src = false, diffu = true, convec = true, Atomic_Collision = false)
+    initialize!(RP)
+    G, pla = RP.G, RP.plasma
+    n0 = @. 1.0e15 * exp(-((G.R2D - 1.55)^2 + (G.Z2D - 0.05)^2) / (2 * 0.12^2))
+    n0[G.nodes.on_out_wall_nids] .= 0.0
+    pla.ne .= n0
+    pla.ueR .= @. 2.0e4 * (G.R2D - 1.5)
+    pla.ueZ .= @. -1.5e4 * G.Z2D
+    update_transport_quantities!(RP)
+    pla.ueR .= @. 2.0e4 * (G.R2D - 1.5)                  # prescribed after the transport update
+    pla.ueZ .= @. -1.5e4 * G.Z2D
+    cache_electron_operators!(RP)
+    faces = RP.transport.wall_faces
+    A_d, _ = electron_transport_operator(RP, faces)
+    A_c, _ = convective_wall_operator(G, faces, pla.ueR, pla.ueZ, electron_wall_albedo(RP); upwind = RP.flags.upwind)
+    θ, dt = RP.flags.θ_imp.transport, RP.dt
+    n = vec(copy(pla.ne))
+    L = sparse(1.0I, length(n), length(n)) - dt * θ * (A_d - A_c)
+    n_ref = L \ (n + dt * (1 - θ) * (A_d * n - A_c * n))
+    solve_electron_continuity_equation!(RP)
+    @test vec(pla.ne) ≈ n_ref rtol = 1.0e-12
+    @test maximum(abs, vec(pla.ne) .- n) > 1.0e-6 * maximum(n)   # the step did move the density
 end
 
 @testitem "electron operators cached for the other interior scheme are refused at the point of use" begin
@@ -123,13 +219,13 @@ end
     )
     RP = RAPID{Float64}(config)
     initialize!(RP)
-    @test RP.transport.A_conv_e_upwind == RP.flags.upwind
+    @test RP.operators.A_conv_e_upwind == RP.flags.upwind
     RP.flags.upwind = !RP.flags.upwind                  # changed after the cache was built
     @test_throws ArgumentError ue_Te_operators(RP)
     @test_throws ArgumentError solve_electron_continuity_equation!(RP)
     @test_throws ArgumentError update_electron_heating_powers!(RP)
     cache_electron_operators!(RP)                       # the refresh records the scheme it used
-    @test RP.transport.A_conv_e_upwind == RP.flags.upwind
+    @test RP.operators.A_conv_e_upwind == RP.flags.upwind
     ue_Te_operators(RP)
     solve_electron_continuity_equation!(RP)
     update_electron_heating_powers!(RP)

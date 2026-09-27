@@ -155,6 +155,9 @@ function Base.similar(op::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
     return DiscretizedOperator{FT}(dims_rz = op.dims_rz, matrix = S, k2csc = copy(op.k2csc))
 end
 
+"A plain sparse copy of the operator's matrix, for code that combines it with other sparse matrices."
+SparseArrays.sparse(op::DiscretizedOperator) = copy(op.matrix)
+
 function copyto!(dest::DiscretizedOperator{FT}, src::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
     @assert dest.dims_rz == src.dims_rz "Dimensions of dest=$(dest.dims_rz) and src=$(src.dims_rz) do not match"
     copyto!(dest.matrix, src.matrix)
