@@ -320,3 +320,31 @@ end
         end
     end
 end
+
+@testitem "wall diffusion in place: rewritten on the wall pattern, both cross-term rules, Robin debit included" begin
+    using RAPID2D: build_wall_diffusion_matrix, build_wall_diffusion_matrix!, build_wall_pattern, wall_faces
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    faces = wall_faces(G)
+    Dpara, Dperp = 1000.0, 1.0
+    bR, bZ = cos(0.6), sin(0.6)
+    D_RR = [Dperp + (Dpara - Dperp) * bR^2 * (1 + 0.1 * sin(3 * G.R1D[i])) for i in 1:G.NR, j in 1:G.NZ]
+    D_RZ = [(Dpara - Dperp) * bR * bZ * (1 + 0.1 * cos(2 * G.Z1D[j])) for i in 1:G.NR, j in 1:G.NZ]
+    D_ZZ = [Dperp + (Dpara - Dperp) * bZ^2 for i in 1:G.NR, j in 1:G.NZ]
+    v = [50.0 + 10.0 * k for k in 1:length(faces)]
+    A = build_wall_pattern(G)
+    for rule in (:drop, :reflect)
+        build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms = rule, faces, v_absorb = v)
+        @test A.matrix == build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms = rule, faces, v_absorb = v)
+        build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms = rule)
+        @test A.matrix == build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms = rule)
+    end
+    build_wall_diffusion_matrix!(A, G, D_ZZ, zero(D_RZ), D_ZZ)     # isotropic after anisotropic: cross slots rewritten
+    @test A.matrix == build_wall_diffusion_matrix(G, D_ZZ, zero(D_RZ), D_ZZ)
+    @test_throws ArgumentError build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; faces)   # faces without v_absorb
+end

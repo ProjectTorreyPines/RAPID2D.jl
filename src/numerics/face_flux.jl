@@ -13,49 +13,45 @@
 # internal/docs/src/notes/design/wall-flux-channels.md §2.6, §3.
 
 """
+    build_face_flux_divergence!(A, G, uR, uZ; upwind = true) -> A
     build_face_flux_divergence(G, uR, uZ; upwind = true) -> SparseMatrixCSC
 
-Matrix `A` with `(A f)_i = ∇·(u f)` at every in-wall node `i` and empty rows elsewhere,
-built from face velocities. Interior faces average the two cell velocities; a wall face
-uses the owner cell's velocity and drops the inflow term.
+`(A f)_i = ∇·(u f)` at every in-wall node `i`, empty rows elsewhere, from face velocities:
+interior faces average the two cell velocities; a wall face uses the owner cell's velocity and
+drops the inflow term. The `!` form writes the values into `A`, an operator on the wall pattern
+(`build_wall_pattern`); both upwind sides of every face are in that pattern, so the structure
+is the same for any flow. The allocating form fills a fresh pattern and drops its stored zeros.
 """
-function build_face_flux_divergence(
-        G::GridGeometry{FT}, uR::AbstractMatrix{FT}, uZ::AbstractMatrix{FT};
+function build_face_flux_divergence!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT}, uR::AbstractMatrix{FT}, uZ::AbstractMatrix{FT};
         upwind::Bool = true,
     ) where {FT <: AbstractFloat}
+    check_wall_pattern(A)
     NR, NZ = G.NR, G.NZ
-    Ng = NR * NZ
     R = G.R2D
     inv_dR, inv_dZ = one(FT) / G.dR, one(FT) / G.dZ
     half = FT(0.5)
-    I = Int[]
-    Jc = Int[]
-    V = FT[]
-    nid(i, j) = (j - 1) * NR + i
-    @inline function push_entry!(r, c, v)
-        push!(I, r)
-        push!(Jc, c)
-        push!(V, v)
-        return nothing
-    end
+    nz, k2c = nonzeros(A.matrix), A.k2csc
+    fill!(nz, zero(FT))
+    nid = G.nodes.nid
     # One face of cell (i, j): `coef` carries the sign of the outward normal and the
     # face-area / cell-volume ratio; `un` is the velocity component leaving the cell.
-    function add_face!(r, c_nb, neighbour_in, u_face, coef)
+    @inline function add_face!(r, s_nb, neighbour_in, u_face, coef)
         un = coef * u_face   # sign(coef) = outward normal direction
         if neighbour_in && !upwind
-            push_entry!(r, r, coef * u_face * half)
-            push_entry!(r, c_nb, coef * u_face * half)
+            nz[slot_position(k2c, r, SLOT_C)] += coef * u_face * half
+            nz[slot_position(k2c, r, s_nb)] += coef * u_face * half
         elseif un > 0
-            push_entry!(r, r, coef * u_face)          # outflow: the owner's value leaves
+            nz[slot_position(k2c, r, SLOT_C)] += coef * u_face     # outflow: the owner's value leaves
         elseif neighbour_in
-            push_entry!(r, c_nb, coef * u_face)       # inflow from an interior neighbour
-        end                                            # inflow through a wall face: nothing
+            nz[slot_position(k2c, r, s_nb)] += coef * u_face       # inflow from an interior neighbour
+        end                                                         # inflow through a wall face: nothing
         return nothing
     end
-    for j in 1:NZ, i in 1:NR
+    @inbounds for j in 1:NZ, i in 1:NR
         is_in_wall(G, i, j) || continue
-        r = nid(i, j)
-        for (di, sgn) in ((1, one(FT)), (-1, -one(FT)))
+        r = nid[i, j]
+        for (di, sgn, s_nb) in ((1, one(FT), SLOT_E), (-1, -one(FT), SLOT_W))
             ii = i + di
             nb_in = is_in_wall(G, ii, j)
             u_face = nb_in ? half * (uR[i, j] + uR[ii, j]) : uR[i, j]
@@ -63,16 +59,22 @@ function build_face_flux_divergence(
             # A_f/V_i = R_face/(R_i ΔR) that `wall_faces` books, so the diagonal outflow
             # term and the ledger are one arithmetic
             R_face = R[i, j] + di * G.dR / 2
-            add_face!(r, nb_in ? nid(ii, j) : 0, nb_in, u_face, sgn * R_face / R[i, j] * inv_dR)
+            add_face!(r, s_nb, nb_in, u_face, sgn * R_face / R[i, j] * inv_dR)
         end
-        for (dj, sgn) in ((1, one(FT)), (-1, -one(FT)))
+        for (dj, sgn, s_nb) in ((1, one(FT), SLOT_N), (-1, -one(FT), SLOT_S))
             jj = j + dj
             nb_in = is_in_wall(G, i, jj)
             u_face = nb_in ? half * (uZ[i, j] + uZ[i, jj]) : uZ[i, j]
-            add_face!(r, nb_in ? nid(i, jj) : 0, nb_in, u_face, sgn * inv_dZ)
+            add_face!(r, s_nb, nb_in, u_face, sgn * inv_dZ)
         end
     end
-    return sparse(I, Jc, V, Ng, Ng)
+    return A
+end
+
+function build_face_flux_divergence(
+        G::GridGeometry{FT}, uR::AbstractMatrix{FT}, uZ::AbstractMatrix{FT}; upwind::Bool = true,
+    ) where {FT <: AbstractFloat}
+    return dropzeros!(build_face_flux_divergence!(build_wall_pattern(G), G, uR, uZ; upwind).matrix)
 end
 
 """
@@ -117,9 +119,8 @@ pinch velocity all come through here.
 `ion_wall_albedo`); a value above 1 would turn the wall-face debit into a source.
 
 `A_conv` may be handed in when the caller already holds `build_face_flux_divergence(G, uR,
-uZ)` for these velocities (the per-step cache); it is read, never mutated, and `upwind` then
-plays no part: the scheme is the one `A_conv` was built with, which the cache records
-(`Transport.A_conv_e_upwind`) and its consumers check (`electron_operator_cache`).
+uZ)` for these velocities; it is read, never mutated, and `upwind` then plays no part: the
+scheme is the one `A_conv` was built with.
 """
 function convective_wall_operator(
         G::GridGeometry{FT}, faces::AbstractVector{WallFace{FT}},
@@ -135,7 +136,7 @@ function convective_wall_operator(
     supplied && nnz(A) == 0 && any(>(zero(FT)), v_out) && throw(
         ArgumentError(
             "the supplied face-flux divergence is empty while wall faces see outflow: " *
-                "cache_electron_operators! has not run for these velocities"
+                "the operator was never built for these velocities"
         )
     )
     a = FT(albedo)

@@ -203,3 +203,27 @@ end
     imax = maximum(G.nodes.rid[inw]); jmax = maximum(G.nodes.zid[inw])
     @test r.n[imax, jmax] ≈ maximum(r.n[inw]) rtol = 1.0e-9
 end
+
+@testitem "face flux in place: values rewritten on the wall pattern for any flow, no stale entry" begin
+    using RAPID2D: build_face_flux_divergence, build_face_flux_divergence!, build_wall_pattern, DiscretizedOperator
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    Rc = 0.5 * (G.R1D[1] + G.R1D[end])
+    uR = @. 1.0e5 * sign(Rc - G.R2D)          # converging: both upwind sides occur
+    uZ = @. 3.0e4 * sin(G.Z2D)
+    A = build_wall_pattern(G)
+    colptr, rowval = copy(A.matrix.colptr), copy(A.matrix.rowval)
+    for upwind in (true, false)
+        build_face_flux_divergence!(A, G, uR, uZ; upwind)
+        @test A.matrix == build_face_flux_divergence(G, uR, uZ; upwind)
+    end
+    build_face_flux_divergence!(A, G, -uR, -uZ)            # reversed flow into the same operator
+    @test A.matrix == build_face_flux_divergence(G, -uR, -uZ)
+    @test A.matrix.colptr == colptr && A.matrix.rowval == rowval   # values only, never the structure
+    @test_throws ArgumentError build_face_flux_divergence!(DiscretizedOperator{Float64}((G.NR, G.NZ)), G, uR, uZ)
+end
