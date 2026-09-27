@@ -1693,8 +1693,12 @@ function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT} = RP.fields; plasma
 
         old_ψ_self = copy(F.ψ_self)
 
-        # solve Ampere's equation
-        F.ψ_self = OP.ΔGS \ OP.RHS
+        # solve Ampere's equation. ΔGS is built once by `initialize_operators!` and never
+        # changes, so it is factorized on the first solve and only back-substituted after.
+        OP.ΔGS_solver.F === nothing && factorize!(OP.ΔGS_solver, OP.ΔGS)
+        ψ = similar(OP.RHS)
+        solve!(vec(ψ), OP.ΔGS_solver, vec(OP.RHS))
+        F.ψ_self = ψ
 
         # % calculate the magnetic field from the self-consistent ψ
         calculate_B_from_ψ!(RP.G, F.ψ_self, F.BR_self, F.BZ_self)
@@ -2253,6 +2257,10 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
 
         A_u_ψ = combine_Au_and_ΔGS_sparse_matrices(RP, A_u, OP.ΔGS.matrix)
+        # A_u_ψ does not change inside the Picard loop below: factorized once per step here,
+        # and every iteration only back-substitutes.
+        factorize!(OP.uψ_solver, A_u_ψ)
+        sol = Vector{FT}(undef, size(A_u_ψ, 1))
         @. RHS_u = pla.ue_para + dt * accel_para_tilde - facEM * new_ψ_self_k
         @views ue_para_k[:] .= A_u \ RHS_u[:] # Solve for ue_para at (k)-th step
 
@@ -2316,7 +2324,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
             # Step #4: Solve the implicit Ampere equation
             @views RHS_u_ψ = vcat(RHS_u[:], RHS_ψ[:])
-            sol = A_u_ψ \ RHS_u_ψ
+            solve!(sol, OP.uψ_solver, RHS_u_ψ)
 
             @views ue_para_kp1[:] .= sol[1:(G.NR * G.NZ)]
             @views new_ψ_self_kp1[:] .= sol[(G.NR * G.NZ + 1):end]

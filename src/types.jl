@@ -634,6 +634,11 @@ Fields include various matrices for solving different parts of the model.
 
     # Operator for magnetic field solver
     ΔGS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Grad-Shafranov operator
+    # ΔGS never changes during a run, so it is factorized once, on its first solve.
+    ΔGS_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+    # The combined momentum–Ampère system: fixed inside a step's Picard loop, so it is
+    # factorized once per step and every iteration only back-substitutes.
+    uψ_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
 
     # Cached linear solvers (numerics/linear_solvers.jl) — one per equation, so each
     # sees a step-stable sparsity pattern and the lu! symbolic-reuse path stays valid

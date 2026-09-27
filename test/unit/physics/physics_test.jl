@@ -1801,3 +1801,55 @@ end
     frac = sum(pla.ν_en_diss_iz) / sum(pla.ν_en_iz)
     @test 0.01 < frac < 0.2
 end
+
+@testitem "Ampère: the Grad–Shafranov matrix is factorized once, however often it is solved" begin
+    using RAPID2D: solve_Ampere_equation!
+    FT = Float64
+    config = SimulationConfig{FT}(
+        device_Name = "manual", NR = 12, NZ = 12, prefilled_gas_pressure = 5.0e-3, R0B0 = 1.0, dt = 1.0e-6,
+    )
+    config.Output_path = mktempdir()
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(Ampere = true, E_para_self_EM = true)
+    initialize!(RP)
+    G = RP.G
+    RP.plasma.Jϕ .= 0.0
+    RP.plasma.Jϕ[G.nodes.in_wall_nids] .= 1.0e4 .* exp.(-(vec(G.Z2D)[G.nodes.in_wall_nids] ./ 0.3) .^ 2)
+    for _ in 1:3
+        RP.plasma.Jϕ .*= 1.1                          # a new right-hand side each time
+        solve_Ampere_equation!(RP)
+    end
+    s = RP.operators.ΔGS_solver
+    @test s.nfactor == 1 && s.nsymbolic == 1         # the matrix never changes: one LU for the run
+    @test vec(RP.fields.ψ_self) ≈ RP.operators.ΔGS.matrix \ vec(RP.operators.RHS) rtol = 1.0e-12
+end
+
+@testitem "Ampère: the combined momentum–Ampère system is factorized once per step, not per Picard iteration" begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
+    FT = Float64
+    config = SimulationConfig{FT}(
+        device_Name = "manual", NR = 12, NZ = 12, prefilled_gas_pressure = 5.0e-3, R0B0 = 1.0, dt = 1.0e-6,
+    )
+    config.Output_path = mktempdir()
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(
+        ud_evolve = true, Implicit = true, Atomic_Collision = true, Coulomb_Collision = true,
+        Spitzer_Resistivity = true, src = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
+        diffu = false, convec = false, Ampere = true, Ampere_Itor_threshold = 0.0,
+        E_para_self_ES = false, E_para_self_EM = true, update_ni_independently = false,
+        Include_ud_convec_term = true, Include_ud_pressure_term = false, Include_ud_diffu_term = false,
+    )
+    initialize!(RP)
+    RP.plasma.ne .= 1.0e14
+    RP.plasma.ni .= 1.0e14
+    RP.plasma.Te_eV .= 10.0
+    RP.plasma.Ti_eV .= 1.0
+    RAPID2D.update_transport_quantities!(RP)
+    nsteps = 3
+    for _ in 1:nsteps
+        # a tolerance no iteration can meet: every step runs all max_iter Picard iterations
+        solve_combined_momentum_Ampere_equations_with_coils!(RP; tolerance = 1.0e-300, max_iter = 4)
+    end
+    @test RP.operators.uψ_solver.nfactor == nsteps  # 4 iterations per step, one factorization each step
+    @test all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_self)
+end
