@@ -143,6 +143,18 @@ function Base.copy(src::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
     return new_op
 end
 
+"""
+    similar(op::DiscretizedOperator) -> DiscretizedOperator
+
+A zero operator on the same structure: its own copies of `colptr`, `rowval` and `k2csc`, so
+writing values into one never touches another.
+"""
+function Base.similar(op::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
+    M = op.matrix
+    S = SparseMatrixCSC(size(M, 1), size(M, 2), copy(M.colptr), copy(M.rowval), zeros(FT, nnz(M)))
+    return DiscretizedOperator{FT}(dims_rz = op.dims_rz, matrix = S, k2csc = copy(op.k2csc))
+end
+
 function copyto!(dest::DiscretizedOperator{FT}, src::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
     @assert dest.dims_rz == src.dims_rz "Dimensions of dest=$(dest.dims_rz) and src=$(src.dims_rz) do not match"
     copyto!(dest.matrix, src.matrix)

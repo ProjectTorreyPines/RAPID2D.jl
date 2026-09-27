@@ -45,6 +45,7 @@ include("numerics/operators.jl")
 include("physics/reactions.jl")             # event rates -> per-species sources
 include("physics/neutral_gas.jl")
 include("physics/wall.jl")   # wall face geometry; shares the Maxwellian speeds
+include("numerics/wall_pattern.jl")        # the one sparsity pattern of the in-wall operators, in-place arithmetic on it
 include("physics/transport_channels.jl")   # the (v∥, λ∥, v⊥, λ⊥) basis
 include("numerics/wall_diffusion.jl")      # wall-aware 9-point tensor operator
 include("numerics/face_flux.jl")           # ∇·(u f) on cell faces, wall-aware

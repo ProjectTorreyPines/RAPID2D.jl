@@ -41,28 +41,37 @@ the SuiteSparse UMFPACK build bundled with Julia). `factorize!` reuses the
 symbolic analysis via `lu!` once a factorization exists.
 """
 mutable struct SparseLUSolver{FT} <: AbstractLinearSolver{FT}
-    F::Any   # UmfpackLU after first factorize!; `Any` avoids naming SparseArrays internals
+    F::Any          # UmfpackLU after first factorize!; `Any` avoids naming SparseArrays internals
+    nfactor::Int    # factorize! calls so far
+    nsymbolic::Int  # symbolic analyses among them: 1 for a run on a step-stable pattern
 end
-SparseLUSolver{FT}() where {FT <: AbstractFloat} = SparseLUSolver{FT}(nothing)
+SparseLUSolver{FT}() where {FT <: AbstractFloat} = SparseLUSolver{FT}(nothing, 0, 0)
 SparseLUSolver() = SparseLUSolver{Float64}()
 
 function factorize!(s::SparseLUSolver{FT}, A::SparseMatrixCSC{FT}; reuse::Bool = true) where {FT}
+    s.nfactor += 1
     if s.F === nothing || !reuse
         s.F = lu(A)
+        s.nsymbolic += 1
     else
         try
             lu!(s.F, A)
         catch err
             # Sparse broadcast drops numerical zeros, so a value turning on (e.g.
-            # convection starting from u=0) can GROW the assembled pattern between
+            # convection starting from u=0) can GROW an assembled pattern between
             # steps. lu! then throws "pattern of the matrix changed" — recover with
-            # a fresh symbolic analysis instead of failing the step.
+            # a fresh symbolic analysis instead of failing the step. Operators on the
+            # wall pattern never change structure, so for them this does not fire.
             err isa ArgumentError || rethrow()
             s.F = lu(A)
+            s.nsymbolic += 1
         end
     end
     return s
 end
+
+"Factorize an operator through its own matrix, so callers never reach inside it."
+factorize!(s::AbstractLinearSolver, A::DiscretizedOperator; kw...) = factorize!(s, A.matrix; kw...)
 
 function solve!(X::AbstractVecOrMat{FT}, s::SparseLUSolver{FT}, B::AbstractVecOrMat{FT}) where {FT}
     ldiv!(X, s.F, B)
