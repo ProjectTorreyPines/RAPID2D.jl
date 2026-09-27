@@ -5,9 +5,9 @@
 # slot) to its `nonzeros` position through `k2csc`, nine slots per row; operators only ever
 # write values, so the structure — and every cached symbolic LU — never changes.
 
+# Testitems import what they call in their own bodies: under ReTestItems (the parallel suite)
+# an import inside the snippet reaches the snippet module only.
 @testsnippet PatternBox begin
-    using RAPID2D: build_wall_pattern, is_in_wall, STENCIL_OFFSETS
-    using RAPID2D.SparseArrays
     function pattern_box()
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
@@ -20,6 +20,8 @@
 end
 
 @testitem "wall pattern: every (row, slot) names its own entry, and nothing else is stored" setup = [PatternBox] begin
+    using RAPID2D: build_wall_pattern, is_in_wall, STENCIL_OFFSETS
+    using RAPID2D.SparseArrays
     G = pattern_box().G
     P = build_wall_pattern(G)
     Ng = G.NR * G.NZ
@@ -51,7 +53,8 @@ end
 end
 
 @testitem "wall pattern: the fresh builders' patterns are subsets of it" setup = [PatternBox] begin
-    using RAPID2D: build_face_flux_divergence, build_wall_diffusion_matrix
+    using RAPID2D: build_face_flux_divergence, build_wall_diffusion_matrix, build_wall_pattern
+    using RAPID2D.SparseArrays
     G = pattern_box().G
     P = Set(zip(findnz(build_wall_pattern(G).matrix)[1:2]...))
     Rc = 0.5 * (G.R1D[1] + G.R1D[end])
@@ -72,6 +75,8 @@ end
 end
 
 @testitem "wall pattern: a valid CSC, and similar gives independent values on the same structure" setup = [PatternBox] begin
+    using RAPID2D: build_wall_pattern
+    using RAPID2D.SparseArrays
     G = pattern_box().G
     P = build_wall_pattern(G)
     M = P.matrix
@@ -89,8 +94,9 @@ end
 end
 
 @testitem "wall pattern: identity, scaled add and diagonal add are vector arithmetic on it" setup = [PatternBox] begin
-    using RAPID2D: set_identity!, add_scaled!, add_diagonal!, build_wall_diffusion_matrix, DiscretizedOperator
-    using RAPID2D.LinearAlgebra
+    using RAPID2D: set_identity!, add_scaled!, add_diagonal!, build_wall_diffusion_matrix, DiscretizedOperator,
+        build_wall_pattern
+    using RAPID2D.LinearAlgebra, RAPID2D.SparseArrays
     G = pattern_box().G
     Ng = G.NR * G.NZ
     A = build_wall_pattern(G)

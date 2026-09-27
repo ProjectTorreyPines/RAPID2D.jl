@@ -1152,7 +1152,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         # debit Σ_f (A_f/V_i)·v_absorb_f, and the albedo's return of the convective outflow
         # a·Σ_f (A_f/V_i)·max(u·n̂_f, 0). The ledger books each face with the same speeds, so
         # operator and ledger are one arithmetic. Each channel enters only with its flag.
-        op_e = electron_operator_cache(RP)
+        electron_operator_cache(RP)   # refuses a missing or stale cache; `op` is RP.operators
         faces_e = RP.transport.wall_faces
         Ng = length(pla.ne)
         v_e = zeros(FT, length(faces_e))
@@ -1173,11 +1173,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         n_vec, rhs_vec = vec(pla.ne), vec(op.RHS)
         if RP.flags.diffu
             # ∇⋅𝐃⋅∇n with the Robin wall
-            rhs_vec .+= op_e.A_diffu_e.matrix * n_vec .- robin_e .* n_vec
+            rhs_vec .+= op.A_diffu_e.matrix * n_vec .- robin_e .* n_vec
         end
         if RP.flags.convec
             # -∇⋅(n 𝐮), the albedo returning its share of the wall outflow
-            rhs_vec .-= op_e.A_conv_e.matrix * n_vec .- returned_e .* n_vec
+            rhs_vec .-= op.A_conv_e.matrix * n_vec .- returned_e .* n_vec
         end
 
         # A GROWTH eigenvalue, z = +ν_iz_tot·Δt (BOTH electron-producing channels —
@@ -1241,11 +1241,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
             A = op.A_LHS
             set_identity!(A)
             if RP.flags.diffu
-                add_scaled!(A, -dt * θ_tr, op_e.A_diffu_e)
+                add_scaled!(A, -dt * θ_tr, op.A_diffu_e)
                 add_diagonal!(A, robin_e; scale = dt * θ_tr)
             end
             if RP.flags.convec
-                add_scaled!(A, dt * θ_tr, op_e.A_conv_e)
+                add_scaled!(A, dt * θ_tr, op.A_conv_e)
                 add_diagonal!(A, returned_e; scale = -dt * θ_tr)
             end
             (RP.flags.src && !fit_growth) && add_diagonal!(A, vec(pla.ν_en_iz_tot); scale = -dt * θ_gr)
