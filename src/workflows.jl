@@ -156,8 +156,11 @@ Handles time stepping, diagnostics output, and snapshot generation.
 - `RP::RAPID{FT}`: The RAPID object containing all simulation state
 - `controller`: optional `Controller` updated at the end of every step
 - `callback_before_step`: optional `f(RP)`, called at the start of every step on the state
-  at tⁿ, before the step advances it. Whatever it changes reaches the step as it is:
-  refresh what depends on it (`update_transport_quantities!`) there too.
+  at tⁿ, before the step advances it. The step first recomputes `Jϕ`, the reaction counts,
+  `Bϕ` and `Eϕ_ext`, and, with a field file, `BR_ext`, `BZ_ext`, `LV_ext` and `ψ_ext`:
+  writes to those are lost, so change their sources instead (the plasma state,
+  `fields.R0B0`, `LV_ext` without a field file). Other changes reach the step as they
+  are; refresh what depends on them (`update_transport_quantities!`) there too.
 - `callback_after_step`: optional `f(RP)`, called at the end of every completed step, at
   tⁿ⁺¹, after that step's snapshots and the controller update.
 
