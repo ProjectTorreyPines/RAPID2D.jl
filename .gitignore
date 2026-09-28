@@ -29,3 +29,7 @@ test/*.png
 
 # Subagent-driven-development scratch (ledgers, briefs, review packages)
 .superpowers/
+
+# Example run artifacts and the resolved examples environment
+examples/output/
+examples/Manifest.toml
