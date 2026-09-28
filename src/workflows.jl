@@ -154,11 +154,25 @@ Handles time stepping, diagnostics output, and snapshot generation.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing all simulation state
+- `controller`: optional `Controller` updated at the end of every step
+- `callback_before_step`: optional `f(RP)`, called at the start of every step on the state
+  at tⁿ, before the step advances it. Whatever it changes reaches the step as it is:
+  refresh what depends on it (`update_transport_quantities!`) there too.
+- `callback_after_step`: optional `f(RP)`, called at the end of every completed step, at
+  tⁿ⁺¹, after that step's snapshots and the controller update.
+
+The two bracket one step: record what the snapshots do not carry, impose a field between
+steps, or diagnose the change a step makes, without re-implementing this loop.
 
 # Returns
 - `RP`: The updated RAPID object after completion of the simulation
 """
-function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT}} = nothing) where {FT <: AbstractFloat}
+function run_simulation!(
+        RP::RAPID{FT};
+        controller::Union{Nothing, Controller{FT}} = nothing,
+        callback_before_step = nothing,
+        callback_after_step = nothing,
+    ) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "run_simulation!" begin
         # Simulation parameters
         dt = RP.dt
@@ -197,6 +211,10 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
         # Main time loop
         @timeit RAPID_TIMER "main_time_loop" begin
             while RP.time_s < t_end - 0.1 * dt
+
+                if !isnothing(callback_before_step)
+                    callback_before_step(RP)
+                end
 
                 # Advance simulation one time step
                 advance_timestep!(RP, dt)
@@ -257,6 +275,10 @@ function run_simulation!(RP::RAPID{FT}; controller::Union{Nothing, Controller{FT
 
                 if !isnothing(controller)
                     update_controller!(RP, controller)
+                end
+
+                if !isnothing(callback_after_step)
+                    callback_after_step(RP)
                 end
             end
         end
