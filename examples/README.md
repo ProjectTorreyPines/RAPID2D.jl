@@ -44,8 +44,23 @@ The examples pass both through `SimulationConfig(inputs = InputPaths(field = …
 ## Step callbacks
 
 `run_simulation!` calls `callback_before_step(RP)` at the start of every step and
-`callback_after_step(RP)` at its end. Anything callable with `RP` works, and the examples
-use three forms:
+`callback_after_step(RP)` at its end. Anything callable with `RP` works; any other state it
+needs, it captures:
+
+```julia
+ne_before = similar(RP.plasma.ne)
+dne = Float64[]
+run_simulation!(RP;
+    callback_before_step = rp -> copyto!(ne_before, rp.plasma.ne),
+    callback_after_step = rp -> push!(dne, maximum(abs, rp.plasma.ne .- ne_before)),
+)
+```
+
+Mutate what a callback captures (`copyto!`, `push!`, `x[] = …` on a `Ref`) rather than
+reassigning it. At the top level of a script, `n += 1` inside a callback fails unless `n` is
+declared `global`.
+
+The examples use three forms:
 
 - **Plain functions:** `townsend_avalanche.jl` defines `count_before_step` and
   `record_growth_rate`, which measure the net growth rate of each step.
