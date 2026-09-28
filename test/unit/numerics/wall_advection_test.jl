@@ -1,12 +1,12 @@
-# (u·∇)f for a primitive variable (u∥, Te), derived from the SAME mass-flux divergence the
+# (u·∇)f for a per-particle variable (u∥, Te), derived from the SAME mass-flux divergence the
 # continuity equation uses:  u·∇f ≡ [∇·(n u f) − f ∇·(n u)] / n.
 # Constants are annihilated exactly, the interior is the donor-cell difference with the face
 # metric when n and u are uniform, and at a wall face the two terms cancel so nothing outside
 # the plasma is read.
 # internal/docs/src/notes/design/wall-flux-channels.md §2.5–2.6; PLAN_wall-flux-channels.md PR2b.
 
-@testitem "primitive advection: annihilates constants, donor-cell difference at uniform n, no wall gradient" begin
-    using RAPID2D: primitive_advection_operator, build_face_flux_divergence
+@testitem "advection: annihilates constants, donor-cell difference at uniform n, no wall gradient" begin
+    using RAPID2D: advection_operator, build_face_flux_divergence
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
         dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
@@ -20,7 +20,7 @@
     A_conv = build_face_flux_divergence(G, uR, uZ)
     n = zeros(G.NR, G.NZ)
     n[inw] .= 1.0e14 .* (1 .+ 0.5 .* sin.(4 .* G.R2D[inw]))
-    U = primitive_advection_operator(A_conv, vec(n); n_floor = 1.0)
+    U = advection_operator(A_conv, vec(n); n_floor = 1.0)
     # 1. (u·∇)const = 0 exactly (to rounding of the two cancelling terms)
     @test all(x -> abs(x) < 1.0e-9 * 1.0e5 / G.dR, (U * fill(3.0, G.NR * G.NZ))[inw])
     # 2. uniform n and uniform u: the donor-cell difference, weighted on the R faces by the
@@ -29,7 +29,7 @@
     n_u[inw] .= 1.0e14
     uRu, uZu = 1.5e5, -6.0e4
     Cu = build_face_flux_divergence(G, fill(uRu, G.NR, G.NZ), fill(uZu, G.NR, G.NZ))
-    Uu = primitive_advection_operator(Cu, vec(n_u); n_floor = 1.0)
+    Uu = advection_operator(Cu, vec(n_u); n_floor = 1.0)
     f = @. sin(3 * G.R2D) * cos(2 * G.Z2D)
     # deep: the whole 5×5 stencil footprint is in-wall (two cells of margin)
     deep = [
@@ -99,8 +99,8 @@ end
     @test all(x -> isapprox(x, -7.0e2; rtol = 1.0e-10), gZ[inw])
 end
 
-@testitem "primitive advection: matrix-free application equals the assembled operator" begin
-    using RAPID2D: build_face_flux_divergence, primitive_advection_operator, apply_primitive_advection
+@testitem "advection: matrix-free application equals the assembled operator" begin
+    using RAPID2D: build_face_flux_divergence, advection_operator, apply_advection
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
         dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
@@ -116,9 +116,39 @@ end
     n[inw] .= 1.0e14 .* (1 .+ 0.5 .* sin.(4 .* G.R2D[inw]))
     n[inw[1:5]] .= 0.5                                   # below the floor: empty rows
     f = @. 3.0 + sin(3 * G.R2D) * cos(2 * G.Z2D)
-    U = primitive_advection_operator(A_conv, vec(n); n_floor = 1.0)
-    direct = apply_primitive_advection(A_conv, vec(n), vec(f); n_floor = 1.0)
+    U = advection_operator(A_conv, vec(n); n_floor = 1.0)
+    direct = apply_advection(A_conv, vec(n), vec(f); n_floor = 1.0)
     @test direct ≈ U * vec(f) rtol = 1.0e-12
     @test all(iszero, direct[inw[1:5]])
     @test all(iszero, direct[G.nodes.on_out_wall_nids])
+end
+
+@testitem "advection in place equals the assembled product, empty rows included, rewritten not accumulated" begin
+    using RAPID2D: advection_operator, advection_operator!, build_face_flux_divergence!, build_wall_pattern,
+        wall_divergence, wall_divergence!
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    Rc = 0.5 * (G.R1D[1] + G.R1D[end])
+    uR = @. 1.0e5 * sign(Rc - G.R2D)
+    uZ = @. 3.0e4 * sin(G.Z2D)
+    A_conv = build_wall_pattern(G)
+    build_face_flux_divergence!(A_conv, G, uR, uZ)
+    inw = G.nodes.in_wall_nids
+    n = zeros(G.NR * G.NZ)
+    n[inw] .= 1.0e14 .* (1 .+ 0.3 .* cos.(2 .* vec(G.Z2D)[inw]))
+    n[inw[1:7]] .= 0.5                               # below the floor: empty rows
+    A_adv = similar(A_conv)
+    advection_operator!(A_adv, A_conv, n; n_floor = 1.0)
+    @test A_adv.matrix ≈ advection_operator(A_conv.matrix, n; n_floor = 1.0) rtol = 1.0e-14
+    @test all(iszero, A_adv.matrix[inw[1:7], :])
+    advection_operator!(A_adv, A_conv, 2 .* n; n_floor = 1.0)   # rewritten, not accumulated
+    @test A_adv.matrix ≈ advection_operator(A_conv.matrix, 2 .* n; n_floor = 1.0) rtol = 1.0e-14
+    div = fill(NaN, G.NR, G.NZ)
+    wall_divergence!(div, G, uR, uZ)                  # every node rewritten
+    @test div == wall_divergence(G, uR, uZ)
 end

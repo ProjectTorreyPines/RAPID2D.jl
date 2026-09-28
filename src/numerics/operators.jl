@@ -15,7 +15,7 @@ Key functionalities include:
     - `construct_ΔGS_operator`.
 
 The transport operators (diffusion, convection, advection) are not built here: they live
-on in-wall rows only, in `wall_diffusion.jl`, `face_flux.jl` and `primitive_advection.jl`.
+on in-wall rows only, in `wall_diffusion.jl`, `face_flux.jl` and `wall_advection.jl`.
 """
 
 # Export public functions

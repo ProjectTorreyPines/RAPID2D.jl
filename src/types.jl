@@ -580,21 +580,9 @@ Fields include diffusion coefficients in different directions.
     CTRZ::Matrix{FT} = zeros(FT, dims)    # R-Z component of coefficient tensor
     CTZZ::Matrix{FT} = zeros(FT, dims)    # Z-Z component of coefficient tensor
 
-    # Per-step cache of the electron in-wall operators, rebuilt at the end of
-    # `update_transport_quantities!` from the velocities and the tensor it just finalised:
-    # the face-flux divergence of the electron velocity (`build_face_flux_divergence`), the
-    # reflective diffusion operator (`build_wall_diffusion_matrix` without faces) and ∇·u_e
-    # (`wall_divergence`). `wall_faces` is geometry, built once at `initialize!`. Consumers
-    # derive the rest: `(u·∇)` from `A_conv_e` and the current `ne`, the Robin operator from the
-    # faces and its own coefficients.
+    # The wall faces are geometry, built once at `initialize!`; every wall-aware operator and
+    # ledger of the run reads them from here. The operators themselves live on `Operators`.
     wall_faces::Vector{WallFace{FT}} = WallFace{FT}[]
-    A_conv_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
-    # The `flags.upwind` `A_conv_e` was built with. A consumer cannot tell a central divergence
-    # from an upwind one by looking at it, so it checks this against the current flag
-    # (`electron_operator_cache`) instead of applying a cache built for the other scheme.
-    A_conv_e_upwind::Bool = true
-    A_diffu_e::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims), prod(dims))
-    div_ue::Matrix{FT} = zeros(FT, dims)
 end
 
 # Constructor with separate dimensions
@@ -620,29 +608,43 @@ Fields include various matrices for solving different parts of the model.
     # Identity matrix
     II::SparseMatrixCSC{FT, Int} = sparse(one(FT) * I, prod(dims), prod(dims))
 
-    # Matrix placeholders to avoid repetitive allocations
-    A_LHS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # LHS for implicit methods
+    # The LHS buffer every implicit in-wall electron solve (ne, u∥, Te) assembles into, on the
+    # wall pattern (`initialize_operators!`): only values are rewritten, so each solver keeps its
+    # symbolic analysis. After a step it holds the last solve's matrix.
+    A_LHS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+
+    # The electron in-wall operators, allocated once on the wall pattern and refreshed in place:
+    # `A_conv_e` (face-flux divergence of the electron velocity), `A_diffu_e` (reflective
+    # ∇·D∇) and ∇·u_e by `cache_electron_operators!` at the end of every
+    # `update_transport_quantities!`; `A_adv_e` ((u·∇), from `A_conv_e` and the CURRENT ne) by
+    # `ue_Te_operators` at each use. The wall enters the continuity solve as diagonal terms.
+    A_conv_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    # The `flags.upwind` `A_conv_e` was built with. A consumer cannot tell a central divergence
+    # from an upwind one by looking at it, so it checks this against the current flag
+    # (`electron_operator_cache`) instead of applying a cache built for the other scheme.
+    A_conv_e_upwind::Bool = true
+    A_diffu_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    A_adv_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    div_ue::Matrix{FT} = zeros(FT, dims)
 
     # Basic differential operators (2nd-order central difference)
     ∂R::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Radial derivative operator ∂R
     𝐽⁻¹∂R_𝐽::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
     ∂Z::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Vertical derivative operator ∂Z
 
-    # The transport operators (wall-aware diffusion, face-flux convection, primitive
-    # advection) are not cached here: they are built from the current state where they
-    # are used, on in-wall rows only.
-    # Named `_tot`, not `ν_en_iz`, because it is built from `pla.ν_en_iz_tot`: under the
-    # INTERIM(diz-ion-species) (`REACTION_STOICHIOMETRY.diz`) every ion is booked as H₂⁺, so the continuity
-    # assembly needs both ionization channels, not the H₂⁺-only rate.
-    ν_en_iz_tot::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Reaction frequency of ionization (both channels) [1/s]
-
     # Operator for magnetic field solver
     ΔGS::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Grad-Shafranov operator
+    # ΔGS never changes during a run, so it is factorized once, on its first solve.
+    ΔGS_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+    # The combined momentum–Ampère system: fixed inside a step's Picard loop, so it is
+    # factorized once per step and every iteration only back-substitutes.
+    uψ_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
 
     # Cached linear solvers (numerics/linear_solvers.jl) — one per equation, so each
     # sees a step-stable sparsity pattern and the lu! symbolic-reuse path stays valid
     ne_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
     Te_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+    ue_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
     # Neutral fill gas. The sparsity pattern is fixed by the wall geometry and only
     # the values move with D, so the symbolic analysis is reusable every step.
     gas_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()

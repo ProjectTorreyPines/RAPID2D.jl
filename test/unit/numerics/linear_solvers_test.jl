@@ -163,3 +163,29 @@ end
         @test maximum(abs, naive .- Te_ref) / maximum(abs, Te_ref) > 1.0e-6
     end
 end
+
+@testitem "LinearSolvers SparseLU counts its factorizations and its symbolic analyses" begin
+    using RAPID2D: SparseLUSolver, factorize!, solve!, DiscretizedOperator
+    using RAPID2D.SparseArrays, RAPID2D.LinearAlgebra
+    n = 40
+    A = sparse(Tridiagonal(fill(-1.0, n - 1), fill(4.0, n), fill(-1.0, n - 1)))
+    s = SparseLUSolver{Float64}()
+    @test s.nsymbolic == 0 && s.nfactor == 0
+    factorize!(s, A)
+    @test s.nsymbolic == 1 && s.nfactor == 1
+    nonzeros(A) .*= 1.5
+    factorize!(s, A)
+    @test s.nsymbolic == 1 && s.nfactor == 2          # same pattern: numeric refactorization only
+    A2 = A + sparse([1], [n], [0.5], n, n)
+    factorize!(s, A2)
+    @test s.nsymbolic == 2 && s.nfactor == 3          # pattern grew: the fallback re-analysed
+    x = zeros(n)
+    solve!(x, s, ones(n))
+    @test A2 * x ≈ ones(n)
+    # an operator is factorized through its own matrix, without the caller reaching inside
+    dop = DiscretizedOperator((n, 1), findnz(A2)...)
+    factorize!(s, dop)
+    @test s.nfactor == 4
+    solve!(x, s, ones(n))
+    @test A2 * x ≈ ones(n)
+end

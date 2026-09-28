@@ -46,7 +46,11 @@ function electron_wall_absorption_speeds(RP::RAPID{FT}, faces) where {FT <: Abst
     return wall_absorption_speeds(electron_wall_channels(RP), faces, electron_wall_albedo(RP))
 end
 
-"Wall-aware `∇·(𝐃∇·)` for electrons plus its Robin coefficients, from the transport tensor."
+"""
+Wall-aware `∇·(𝐃∇·)` for electrons plus its Robin coefficients, from the transport tensor: the
+fresh reference. The continuity solve applies the same Robin wall as a diagonal rate on the
+cached reflective operator (`operators.A_diffu_e`).
+"""
 function electron_transport_operator(RP::RAPID{FT}, faces) where {FT <: AbstractFloat}
     tp = RP.transport
     v_absorb = electron_wall_absorption_speeds(RP, faces)

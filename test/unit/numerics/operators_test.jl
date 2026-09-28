@@ -103,7 +103,7 @@ end
     # The diffusion, advection and convective-divergence builders swept 2:N-1 with no wall
     # awareness and were refreshed once per step into `Operators`. All transport operators
     # are now built on in-wall rows where they are used (wall_diffusion.jl, face_flux.jl,
-    # primitive_advection.jl); nothing of the old family may survive as a silent fallback.
+    # wall_advection.jl); nothing of the old family may survive as a silent fallback.
     for name in (
             :compute_∇𝐃∇f_directly, :construct_∇𝐃∇_operator, :update_∇𝐃∇_operator!,
             :compute_𝐮∇f_directly, :construct_𝐮∇_operator, :update_𝐮∇_operator!,

@@ -5,9 +5,13 @@
 # knows about the wall but is 5-point and isotropic. This one is both.
 
 """
-    build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms = :drop)
+    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms = :drop, faces = nothing, v_absorb = nothing) -> A
+    build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms = :drop, faces = nothing, v_absorb = nothing)
 
-Nine-point `∇·(𝐃∇·)` with a **reflective** wall, on the full `NR·NZ` indexing.
+Nine-point `∇·(𝐃∇·)` with a **reflective** wall, on the full `NR·NZ` indexing. The `!` form
+writes the values into `A`, an operator on the wall pattern (`build_wall_pattern`): every slot
+is rewritten and a pair that `:drop` removes stays a stored zero. The allocating form fills a
+fresh pattern and drops its stored zeros.
 
 Takes the tensor directly rather than a `RAPID` object, so the operator can be
 driven from a manufactured `(D_RR, D_RZ, D_ZZ)` with no physics model behind it —
@@ -103,47 +107,24 @@ reproducible; it must not be used for production transport.
 of the standard 9-point cross-derivative stencil, not of the wall treatment, and
 it is why positivity is asserted by *solving* rather than by inspecting signs.
 """
-function build_wall_diffusion_matrix(
-        G::GridGeometry{FT},
+function build_wall_diffusion_matrix!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT},
         D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT};
         cross_terms::Symbol = :drop,
         faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
         v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
     ) where {FT <: AbstractFloat}
-
-    cross_terms in (:drop, :reflect) ||
-        throw(ArgumentError("cross_terms must be :drop or :reflect, got :$cross_terms"))
-    isnothing(faces) == isnothing(v_absorb) ||
-        throw(ArgumentError("`faces` and `v_absorb` must be given together"))
-    if !isnothing(faces)
-        length(faces) == length(v_absorb) ||
-            throw(DimensionMismatch("v_absorb must have one entry per wall face"))
-        any(<(zero(FT)), v_absorb) &&
-            throw(ArgumentError("v_absorb must be non-negative: a wall cannot emit here"))
-    end
-
-    # Accumulate the Robin debit per owning cell first, so the diagonal is written
-    # once. A staircase corner contributes through both of its faces.
-    debit = zeros(FT, G.NR * G.NZ)
-    if !isnothing(faces)
-        for (f, v) in zip(faces, v_absorb)
-            debit[f.nid] += f.area_per_volume * v
-        end
-    end
-
+    check_wall_pattern(A)
+    _check_wall_diffusion_args(cross_terms, faces, v_absorb)
     NR, NZ = G.NR, G.NZ
-    Ng = NR * NZ
+    # the Robin debit per owning cell, so the diagonal is written once
+    debit = wall_face_debit(FT, NR * NZ, faces, v_absorb)
     CTRR = @. G.Jacob * D_RR / (G.dR * G.dR)
     CTRZ = @. G.Jacob * D_RZ / (G.dR * G.dZ)
     CTZZ = @. G.Jacob * D_ZZ / (G.dZ * G.dZ)
     nid = G.nodes.nid
-
-    rows = Int[]
-    cols = Int[]
-    vals = FT[]
-    sizehint!(rows, 9 * Ng)
-    sizehint!(cols, 9 * Ng)
-    sizehint!(vals, 9 * Ng)
+    nz, k2c = nonzeros(A.matrix), A.k2csc
+    fill!(nz, zero(FT))
 
     @inbounds for j in 1:NZ, i in 1:NR
         is_in_wall(G, i, j) || continue
@@ -152,14 +133,12 @@ function build_wall_diffusion_matrix(
         diag = zero(FT)
 
         # ── cardinal arms: the five-point part ──────────────────────────────
-        for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
+        for (di, dj, s) in ((1, 0, SLOT_E), (-1, 0, SLOT_W), (0, 1, SLOT_N), (0, -1, SLOT_S))
             ii, jj = i + di, j + dj
             is_in_wall(G, ii, jj) || continue     # reflective: omit, do not zero
             CT = dj == 0 ? CTRR : CTZZ
             c = invJ * FT(0.5) * (CT[ii, jj] + CT[i, j])
-            push!(rows, row)
-            push!(cols, nid[ii, jj])
-            push!(vals, c)
+            nz[slot_position(k2c, row, s)] += c
             diag -= c
         end
 
@@ -179,27 +158,18 @@ function build_wall_diffusion_matrix(
                 mi_, mj_ = oi - ti, oj - tj
                 in_p = is_in_wall(G, pi_, pj_)
                 in_m = is_in_wall(G, mi_, mj_)
-
                 if cross_terms === :drop
                     (in_p && in_m) || continue    # the pair goes as a unit
-                    push!(rows, row)
-                    push!(cols, nid[pi_, pj_])
-                    push!(vals, c)
-                    push!(rows, row)
-                    push!(cols, nid[mi_, mj_])
-                    push!(vals, -c)
+                    nz[slot_position(k2c, row, stencil_slot(pi_ - i, pj_ - j))] += c
+                    nz[slot_position(k2c, row, stencil_slot(mi_ - i, mj_ - j))] -= c
                 else
                     if in_p
-                        push!(rows, row)
-                        push!(cols, nid[pi_, pj_])
-                        push!(vals, c)
+                        nz[slot_position(k2c, row, stencil_slot(pi_ - i, pj_ - j))] += c
                     else
                         diag += c
                     end
                     if in_m
-                        push!(rows, row)
-                        push!(cols, nid[mi_, mj_])
-                        push!(vals, -c)
+                        nz[slot_position(k2c, row, stencil_slot(mi_ - i, mj_ - j))] -= c
                     else
                         diag -= c
                     end
@@ -210,10 +180,47 @@ function build_wall_diffusion_matrix(
         # ── the Robin debit ────────────────────────────────────────────────
         # v_absorb ≥ 0, so this only makes the diagonal more negative: the wall
         # drains and never sources, and the term cannot cost positivity.
-        push!(rows, row)
-        push!(cols, row)
-        push!(vals, diag - debit[row])
+        nz[slot_position(k2c, row, SLOT_C)] = diag - debit[row]
     end
+    return A
+end
 
-    return sparse(rows, cols, vals, Ng, Ng)
+function build_wall_diffusion_matrix(
+        G::GridGeometry{FT},
+        D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT};
+        cross_terms::Symbol = :drop,
+        faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
+        v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
+    ) where {FT <: AbstractFloat}
+    A = build_wall_diffusion_matrix!(build_wall_pattern(G), G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
+    return dropzeros!(A.matrix)
+end
+
+function _check_wall_diffusion_args(cross_terms, faces, v_absorb)
+    cross_terms in (:drop, :reflect) ||
+        throw(ArgumentError("cross_terms must be :drop or :reflect, got :$cross_terms"))
+    isnothing(faces) == isnothing(v_absorb) ||
+        throw(ArgumentError("`faces` and `v_absorb` must be given together"))
+    if !isnothing(faces)
+        length(faces) == length(v_absorb) ||
+            throw(DimensionMismatch("v_absorb must have one entry per wall face"))
+        any(<(0), v_absorb) &&
+            throw(ArgumentError("v_absorb must be non-negative: a wall cannot emit here"))
+    end
+    return nothing
+end
+
+"""
+    wall_face_debit(FT, Ng, faces, v) -> Vector
+
+`Σ_{f ∈ ∂wall i} (A_f/V_i)·v_f` per owning cell: a speed per wall face turned into a diagonal
+rate per node. A staircase corner takes both of its faces. No faces: all zero.
+"""
+function wall_face_debit(::Type{FT}, Ng::Int, faces, v) where {FT <: AbstractFloat}
+    debit = zeros(FT, Ng)
+    isnothing(faces) && return debit
+    for (f, vf) in zip(faces, v)
+        debit[f.nid] += f.area_per_volume * vf
+    end
+    return debit
 end

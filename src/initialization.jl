@@ -160,11 +160,12 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # refresh in `run_simulation!` answers a different question ("has the field moved").
     flf_analysis_field_lines_rz_plane!(RP)
 
+    # Operators first: they depend on the grid alone, and the transport refresh at the end of
+    # `initialize_plasma_and_transport!` writes the electron in-wall operators into them.
+    initialize_operators!(RP)
+
     # Initialize plasma and transport
     initialize_plasma_and_transport!(RP)
-
-    # Initialize operators
-    initialize_operators!(RP)
 
     initialize_diagnostics!(RP)
     initialize_snapshots_IO!(RP)
@@ -247,6 +248,14 @@ Initialize the numerical operators for the simulation.
 function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Create properly sized operators object
     RP.operators = Operators{FT}(RP.G.NR, RP.G.NZ)
+
+    # The electron in-wall operators and the LHS buffer, allocated once on the wall pattern;
+    # every later update writes values only.
+    pattern = build_wall_pattern(RP.G)
+    RP.operators.A_LHS = pattern
+    RP.operators.A_conv_e = similar(pattern)
+    RP.operators.A_diffu_e = similar(pattern)
+    RP.operators.A_adv_e = similar(pattern)
 
     # Construct basic differntial operators
     RP.operators.∂R = construct_∂R_operator(RP.G)

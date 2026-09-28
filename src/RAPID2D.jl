@@ -45,15 +45,16 @@ include("numerics/operators.jl")
 include("physics/reactions.jl")             # event rates -> per-species sources
 include("physics/neutral_gas.jl")
 include("physics/wall.jl")   # wall face geometry; shares the Maxwellian speeds
+include("numerics/wall_pattern.jl")        # the one sparsity pattern of the in-wall operators, in-place arithmetic on it
 include("physics/transport_channels.jl")   # the (v∥, λ∥, v⊥, λ⊥) basis
 include("numerics/wall_diffusion.jl")      # wall-aware 9-point tensor operator
 include("numerics/face_flux.jl")           # ∇·(u f) on cell faces, wall-aware
-include("numerics/primitive_advection.jl") # (u·∇)f from the mass flux; ∇·u and ∇f on in-wall nodes
+include("numerics/wall_advection.jl")      # (u·∇)f from the mass flux; ∇·u and ∇f on in-wall nodes
 include("diagnostics/field_moments.jl")    # shape statistics, for direction checks
 include("physics/wall_ledger.jl")          # per-face absorbed/emitted inventory
 include("physics/ion_transport.jl")        # which equation the ion species share
 include("physics/electron_wall.jl")
-include("physics/primitive_transport.jl")  # u∥/Te operators from the face mass flux, in-wall rows only
+include("physics/electron_operators.jl")   # the per-step electron in-wall operators; what u∥ and Te solve with
 include("physics/fields.jl")
 include("physics/transport.jl")
 
