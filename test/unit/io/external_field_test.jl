@@ -70,6 +70,38 @@ end
     end
 end
 
+@testitem "external field: initialize! reports which field and which wall it chose" setup = [BreakFieldFile] begin
+    # Each source is a separate path through the lookup; the report names the one taken, so a
+    # run that silently fell back to something else is visible in its log.
+    mktempdir() do dir
+        field = write_break_field(joinpath(dir, "quad.dat"))
+        wall = joinpath(dir, "box_wall.dat")
+        write(wall, "WALL_NUM\t\t4\n\n1.2 -0.7\n1.2 0.7\n1.8 0.7\n1.8 -0.7\n")
+        mkpath(joinpath(dir, "dev", "shot"))
+        write_break_field(joinpath(dir, "dev", "shot", "slice.dat"))
+        cp(wall, joinpath(dir, "dev_First_Wall.dat"))
+        rp(; kw...) = RAPID{Float64}(
+            SimulationConfig{Float64}(;
+                NR = 11, NZ = 13, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+                dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, kw...,
+            )
+        )
+
+        @test_logs (:info, r"^External field from inputs\.field: static \(1 slice\)") (:info, r"^Wall from inputs\.wall: 4 points") match_mode = :any initialize!(
+            rp(inputs = InputPaths(field = field, wall = wall))
+        )
+        @test_logs (:info, r"^External field from Input_path/device_Name/shot_Name: static") (:info, r"^Wall from the device file: 4 points") match_mode = :any initialize!(
+            rp(Input_path = dir, device_Name = "dev", shot_Name = "shot")
+        )
+        @test_logs (:info, r"^External field from the manual setup") (:info, r"^Wall from config\.wall_R/wall_Z: 4 points") match_mode = :any initialize!(
+            rp(wall_R = [1.2, 1.8, 1.8, 1.2], wall_Z = [-0.7, -0.7, 0.7, 0.7])
+        )
+        @test_logs (:info, r"^Wall from a default box three cells inside the domain") match_mode = :any initialize!(
+            rp(inputs = InputPaths(field = field))
+        )
+    end
+end
+
 @testitem "external field: two slices are interpolated linearly in time and held outside them" setup = [BreakFieldFile] begin
     using RAPID2D: read_external_field_time_series, calculate_external_fields_at_time
     mktempdir() do dir

@@ -286,19 +286,27 @@ The wall outline `RP.wall` on the grid `RP.G`, whichever way the fields were set
 wins: `config.wall_R`/`wall_Z`; the wall file `config.inputs.wall`; the device's
 `<device_Name>_First_Wall.dat` for a named device; else a box three cells inside the domain.
 The outline only: the in-wall node states and volumes follow in
-`setup_grid_state_and_volumes_with_wall!`.
+`setup_grid_state_and_volumes_with_wall!`. The choice is reported with `@info`.
 """
 function set_wall_geometry_from_config!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     cfg, G = RP.config, RP.G
+    path = ""
     if !isempty(cfg.wall_R) && !isempty(cfg.wall_Z)
         RP.wall = WallGeometry{FT}(cfg.wall_R, cfg.wall_Z)
+        source = "Wall from config.wall_R/wall_Z"
     elseif !isempty(cfg.inputs.wall) || cfg.device_Name != "manual"
-        read_device_wall_data!(RP)
+        path = wall_file_path(cfg)
+        read_device_wall_data!(RP, path)
+        source = isempty(cfg.inputs.wall) ? "Wall from the device file" : "Wall from inputs.wall"
     else
         R_lo, R_hi = G.R1D[1] + 3 * G.dR, G.R1D[end] - 3 * G.dR
         Z_lo, Z_hi = G.Z1D[1] + 3 * G.dZ, G.Z1D[end] - 3 * G.dZ
         RP.wall = WallGeometry{FT}([R_lo, R_hi, R_hi, R_lo, R_lo], [Z_lo, Z_lo, Z_hi, Z_hi, Z_lo])
+        source = "Wall from a default box three cells inside the domain (no wall given)"
     end
+    # the outline is stored closed, its first point repeated at the end
+    n_points = length(RP.wall.R) - 1
+    @info "$source: $n_points points" * (isempty(path) ? "" : ", $path") R = extrema(RP.wall.R) Z = extrema(RP.wall.Z)
     return RP
 end
 
@@ -320,6 +328,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     Z_min = isnothing(RP.config.Z_min) ? FT(-1.2) : RP.config.Z_min
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
+    @info "External field from the manual setup (device_Name = \"manual\", no inputs.field)" R = (R_min, R_max) Z = (Z_min, Z_max)
     set_wall_geometry_from_config!(RP)
 
     # Initialize fields if not already created
@@ -374,9 +383,12 @@ This function loads field data from the specified path and initializes the simul
 """
 function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String = "") where {FT <: AbstractFloat}
 
+    source = "the given path"
     if isempty(dir_path)
-        dir_path = isempty(RP.config.inputs.field) ?
-            joinpath(RP.config.Input_path, RP.config.device_Name, RP.config.shot_Name) : RP.config.inputs.field
+        from_inputs = !isempty(RP.config.inputs.field)
+        dir_path = from_inputs ? RP.config.inputs.field :
+            joinpath(RP.config.Input_path, RP.config.device_Name, RP.config.shot_Name)
+        source = from_inputs ? "inputs.field" : "Input_path/device_Name/shot_Name"
     end
 
 
@@ -403,6 +415,9 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String = "") where {FT <
     Z_max = RP.external_field.Z_MAX
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
+    n_slices = length(RP.external_field.time_s)
+    kind = n_slices == 1 ? "static (1 slice)" : "time series ($n_slices slices)"
+    @info "External field from $source: $kind, $dir_path" R = (R_min, R_max) Z = (Z_min, Z_max)
     set_wall_geometry_from_config!(RP)
 
     return RP

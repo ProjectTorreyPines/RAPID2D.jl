@@ -71,14 +71,16 @@ a new RAPID instance with the wall field updated.
 
 """
 function read_device_wall_data!(RP::RAPID{FT}, wall_file_name::String = "") where {FT <: AbstractFloat}
-    # Use provided file name, the configured wall file, or the device's default file
-    file_path = !isempty(wall_file_name) ? wall_file_name :
-        !isempty(RP.config.inputs.wall) ? RP.config.inputs.wall :
-        joinpath(RP.config.Input_path, "$(RP.config.device_Name)_First_Wall.dat")
+    # Use provided file name, else the file the config names
+    file_path = isempty(wall_file_name) ? wall_file_path(RP.config) : wall_file_name
 
     # Read the wall data and assign to RAPID instance
     return RP.wall = read_wall_data_file(file_path, FT)
 end
+
+"The wall file a config names: `inputs.wall`, else the device's `<device_Name>_First_Wall.dat` under `Input_path`."
+wall_file_path(config::SimulationConfig) = isempty(config.inputs.wall) ?
+    joinpath(config.Input_path, "$(config.device_Name)_First_Wall.dat") : config.inputs.wall
 
 
 """
