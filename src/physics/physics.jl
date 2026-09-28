@@ -92,7 +92,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # #2: Advection term (1-θ_op)*[-(𝐮⋅∇)*ue_para]. θ_op, not θu: the fitted
             # weight belongs to the friction's eigenvalue, not to a nonlocal operator.
             if RP.flags.Include_ud_convec_term
-                accel_para_tilde .+= (one_FT - θ_op) * (-apply_op(pops.A_adv, pla.ue_para))
+                accel_para_tilde .+= (one_FT - θ_op) * (-(pops.A_adv * pla.ue_para))
                 add_scaled!(A, θ_op * dt, pops.A_adv)
             end
 
@@ -115,7 +115,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
             if RP.flags.Include_ud_diffu_term
-                accel_para_tilde .+= (one_FT - θ_op) * apply_op(pops.A_diffu, pla.ue_para)
+                accel_para_tilde .+= (one_FT - θ_op) * (pops.A_diffu * pla.ue_para)
                 add_scaled!(A, -θ_op * dt, pops.A_diffu)
             end
 
@@ -152,7 +152,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
 
             if RP.flags.Include_ud_convec_term
-                accel_by_grad_ud = -apply_op(pops.A_adv, pla.ue_para)
+                accel_by_grad_ud = -(pops.A_adv * pla.ue_para)
                 @. pla.ue_para += inv_factor * dt * (accel_by_grad_ud)
             end
         end
@@ -530,7 +530,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
             # P_diffu = 1.5*∇·D∇Te
-            ePowers.diffu .= ee * FT(1.5) * apply_op(op_e.A_diffu_e, pla.Te_eV)
+            ePowers.diffu .= ee * FT(1.5) * (op_e.A_diffu_e * pla.Te_eV)
         end
 
         # If convection term is included in temperature equation
@@ -1847,7 +1847,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     # the same in-wall operator (`electron_operators.jl`)
     A_adv = flags.Include_ud_convec_term ? ue_Te_operators(RP).A_adv : nothing
     if flags.Include_ud_convec_term
-        accel_para_tilde .+= (one(FT) - θimp) * (-apply_op(A_adv, pla.ue_para))
+        accel_para_tilde .+= (one(FT) - θimp) * (-(A_adv * pla.ue_para))
     end
 
     # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
@@ -2200,7 +2200,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # the same in-wall operator (`electron_operators.jl`)
         A_adv = flags.Include_ud_convec_term ? ue_Te_operators(RP).A_adv : nothing
         if flags.Include_ud_convec_term
-            accel_para_tilde .+= (one(FT) - θimp) * (-apply_op(A_adv, pla.ue_para))
+            accel_para_tilde .+= (one(FT) - θimp) * (-(A_adv * pla.ue_para))
         end
 
         # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]

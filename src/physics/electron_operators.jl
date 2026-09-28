@@ -30,14 +30,12 @@ end
 
 # The electron operators must have been allocated on the wall pattern by `initialize!`.
 function check_electron_operators(op::Operators)
-    for A in (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_LHS)
-        length(A.k2csc) == 9 * prod(A.dims_rz) || throw(
-            ArgumentError(
-                "RP.operators was not built by initialize!: the electron in-wall operators " *
-                    "are not allocated on the wall pattern"
-            )
+    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_LHS)) || throw(
+        ArgumentError(
+            "RP.operators was not built by initialize!: the electron in-wall operators " *
+                "are not allocated on the wall pattern"
         )
-    end
+    )
     return op
 end
 
@@ -88,7 +86,3 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     advection_operator!(op.A_adv_e, op.A_conv_e, vec(pla.ne); n_floor = FT(1.0))
     return (A_adv = op.A_adv_e, A_diffu = op.A_diffu_e, div_u = op.div_ue)
 end
-
-"Apply `A` (a sparse matrix or an operator) to a 2-D field and return a 2-D field."
-apply_op(A::SparseMatrixCSC{FT, Int}, f::AbstractMatrix{FT}) where {FT} = reshape(A * vec(f), size(f))
-apply_op(A::DiscretizedOperator{FT}, f::AbstractMatrix{FT}) where {FT} = reshape(A.matrix * vec(f), size(f))

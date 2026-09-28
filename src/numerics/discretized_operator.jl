@@ -75,7 +75,9 @@ function Base.:(==)(
     )
 end
 
+# an operator applied to a 2-D field on its grid gives a 2-D field
 function *(dop::DiscretizedOperator{FT}, mat::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    size(mat) == dop.dims_rz || throw(DimensionMismatch("A.dims_rz=$(dop.dims_rz) and size(f)=$(size(mat)) do not match"))
     return reshape(dop.matrix * @view(mat[:]), dop.dims_rz)
 end
 

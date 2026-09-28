@@ -68,6 +68,15 @@ end
     @test dr_result[8] ≈ 1.0 atol = 1.0e-10
 end
 
+@testitem "DiscretizedOperator applied to a field needs the field's grid shape" begin
+    # `A * f` on a 2-D field is how physics applies an operator; a field of the same length
+    # but the other shape is refused rather than silently reshaped.
+    op = DiscretizedOperator((2, 3), collect(1:6), collect(1:6), collect(1.0:6.0))
+    f = reshape(collect(1.0:6.0), 2, 3)
+    @test op * f == reshape(op.matrix * vec(f), 2, 3)
+    @test_throws DimensionMismatch op * permutedims(f)
+end
+
 @testitem "DiscretizedOperator Arithmetic Operations" setup = [DiscretizedOperatorFixtures] begin
     using RAPID2D.SparseArrays  # findnz
 

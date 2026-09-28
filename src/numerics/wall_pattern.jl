@@ -58,10 +58,15 @@ function build_wall_pattern(G::GridGeometry{FT}) where {FT <: AbstractFloat}
     return DiscretizedOperator{FT}(dims_rz = (NR, NZ), matrix = M, k2csc = k2csc)
 end
 
-"Throw unless `A` lives on a wall pattern (`k2csc` with nine slots per row)."
-function check_wall_pattern(A::DiscretizedOperator)
+"Whether `A` lives on a wall pattern (`k2csc` with nine slots per row)."
+function is_on_wall_pattern(A::DiscretizedOperator)
     Ng = prod(A.dims_rz)
-    (size(A.matrix) == (Ng, Ng) && length(A.k2csc) == 9 * Ng) || throw(
+    return size(A.matrix) == (Ng, Ng) && length(A.k2csc) == 9 * Ng
+end
+
+"Throw unless `A` lives on a wall pattern."
+function check_wall_pattern(A::DiscretizedOperator)
+    is_on_wall_pattern(A) || throw(
         ArgumentError(
             "the operator is not allocated on the wall pattern " *
                 "(use build_wall_pattern(G) or similar of an operator on it)"

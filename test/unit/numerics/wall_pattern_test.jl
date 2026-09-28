@@ -116,6 +116,21 @@ end
     @test_throws ArgumentError add_diagonal!(off, v)
 end
 
+@testitem "wall pattern: is_on_wall_pattern tells a pattern operator from any other" setup = [PatternBox] begin
+    # Callers ask the predicate, never the storage: the stride of k2csc is numerics' business.
+    using RAPID2D: build_wall_pattern, is_on_wall_pattern, check_wall_pattern, build_wall_diffusion_matrix,
+        DiscretizedOperator
+    using RAPID2D.SparseArrays
+    G = pattern_box().G
+    P = build_wall_pattern(G)
+    @test is_on_wall_pattern(P) && is_on_wall_pattern(similar(P))
+    D = build_wall_diffusion_matrix(G, ones(G.NR, G.NZ), zeros(G.NR, G.NZ), ones(G.NR, G.NZ))
+    for off in (DiscretizedOperator{Float64}(G.NR, G.NZ), DiscretizedOperator((G.NR, G.NZ), findnz(D)...))
+        @test !is_on_wall_pattern(off)
+        @test_throws ArgumentError check_wall_pattern(off)
+    end
+end
+
 @testitem "wall pattern: a broadcast that changes the structure drops k2csc, so in-place writes refuse" setup = [PatternBox] begin
     # The generic DiscretizedOperator broadcast materializes a new sparse matrix; if its
     # structure differs from the pattern, a copied k2csc would point at wrong positions and
