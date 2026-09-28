@@ -280,13 +280,15 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    set_wall!(RP)
+    set_wall_geometry_from_config!(RP)
 
-The wall on the grid `RP.G`, whichever way the fields were set, first match wins:
-`config.wall_R`/`wall_Z`; the wall file `config.inputs.wall`; the device's
+The wall outline `RP.wall` on the grid `RP.G`, whichever way the fields were set, first match
+wins: `config.wall_R`/`wall_Z`; the wall file `config.inputs.wall`; the device's
 `<device_Name>_First_Wall.dat` for a named device; else a box three cells inside the domain.
+The outline only: the in-wall node states and volumes follow in
+`setup_grid_state_and_volumes_with_wall!`.
 """
-function set_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function set_wall_geometry_from_config!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     cfg, G = RP.config, RP.G
     if !isempty(cfg.wall_R) && !isempty(cfg.wall_Z)
         RP.wall = WallGeometry{FT}(cfg.wall_R, cfg.wall_Z)
@@ -318,7 +320,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     Z_min = isnothing(RP.config.Z_min) ? FT(-1.2) : RP.config.Z_min
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
-    set_wall!(RP)
+    set_wall_geometry_from_config!(RP)
 
     # Initialize fields if not already created
     if !isdefined(RP, :fields) || isnothing(RP.fields)
@@ -401,7 +403,7 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String = "") where {FT <
     Z_max = RP.external_field.Z_MAX
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
-    set_wall!(RP)
+    set_wall_geometry_from_config!(RP)
 
     return RP
 end
