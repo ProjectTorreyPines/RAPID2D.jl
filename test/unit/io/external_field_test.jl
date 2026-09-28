@@ -96,7 +96,7 @@ end
         @test_logs (:info, r"^External field from the manual setup") (:info, r"^Wall from config\.wall_R/wall_Z: 4 points") match_mode = :any initialize!(
             rp(wall_R = [1.2, 1.8, 1.8, 1.2], wall_Z = [-0.7, -0.7, 0.7, 0.7])
         )
-        @test_logs (:info, r"^Wall from a default box three cells inside the domain") match_mode = :any initialize!(
+        @test_logs (:info, r"^Wall from a default box 3 cells inside the domain") match_mode = :any initialize!(
             rp(inputs = InputPaths(field = field))
         )
     end
@@ -113,4 +113,33 @@ end
         @test calculate_external_fields_at_time(extF, -1.0).BR == extF.BR[:, :, 1]
         @test calculate_external_fields_at_time(extF, 2.0).BR == extF.BR[:, :, 2]
     end
+end
+
+@testitem "external field: the manual setup comes from config.manual (ManualSetup), in one place" begin
+    kw = (NR = 11, NZ = 13, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0)
+    meanR(G) = sum(G.R1D) / length(G.R1D)
+
+    # the defaults are the values the manual setup always had
+    RP = RAPID{Float64}(SimulationConfig{Float64}(; kw...))
+    initialize!(RP)
+    G, F = RP.G, RP.fields
+    @test [G.R1D[1], G.R1D[end], G.Z1D[1], G.Z1D[end]] ≈ [0.8, 2.4, -1.2, 1.2]
+    @test all(==(0.0), F.BR_ext) && all(==(5.0e-3), F.BZ_ext)
+    @test F.Eϕ_ext ≈ 0.3 .* meanR(G) ./ G.R2D
+    @test extrema(RP.wall.R) == (G.R1D[1] + 3 * G.dR, G.R1D[end] - 3 * G.dR)
+
+    # every value is read from config.manual
+    manual = ManualSetup{Float64}(R = (1.0, 2.0), Z = (-0.5, 0.5), BR = 1.0e-3, BZ = 2.0e-3, Eϕ = 0.5, wall_margin_cells = 2)
+    RP = RAPID{Float64}(SimulationConfig{Float64}(; manual, kw...))
+    @test_logs (:info, r"^External field from the manual setup") (:info, r"^Wall from a default box 2 cells inside the domain") match_mode = :any initialize!(RP)
+    G, F = RP.G, RP.fields
+    @test [G.R1D[1], G.R1D[end], G.Z1D[1], G.Z1D[end]] ≈ [1.0, 2.0, -0.5, 0.5]
+    @test all(==(1.0e-3), F.BR_ext) && all(==(2.0e-3), F.BZ_ext)
+    @test F.Eϕ_ext ≈ 0.5 .* meanR(G) ./ G.R2D
+    @test extrema(RP.wall.R) == (G.R1D[1] + 2 * G.dR, G.R1D[end] - 2 * G.dR)
+
+    # R_min/R_max/Z_min/Z_max still set the domain of any run, over the manual defaults
+    RP = RAPID{Float64}(SimulationConfig{Float64}(; manual, R_min = 1.2, kw...))
+    initialize!(RP)
+    @test [RP.G.R1D[1], RP.G.R1D[end]] ≈ [1.2, 2.0]
 end

@@ -34,7 +34,8 @@ end
 
 # ── manual-device fields and initial columns (current_diffusion, force_balance_control) ──────────────────────
 # Pure toroidal field Bϕ = R0B0/R with a loop voltage E0 [V/m] referenced to mean(R).
-# Call after `setup`: the manual device otherwise carries a 5 mT vertical field.
+# Call after `setup`: the manual setup otherwise carries its uniform vertical field
+# (`config.manual.BZ`, 5 mT by default).
 function toroidal_field!(RP::RAPID; E0::Real)
     G, F = RP.G, RP.fields
     fill!(F.BR_ext, 0.0)
