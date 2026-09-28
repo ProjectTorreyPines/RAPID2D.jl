@@ -138,8 +138,8 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         :n_H2_update => 0.0
     )
 
-    # Set up fields based on device
-    if RP.config.device_Name == "manual"
+    # Set up fields based on device, or from the field file when one is given
+    if RP.config.device_Name == "manual" && isempty(RP.config.inputs.field)
         set_RZ_B_E_manually!(RP)
     else
         set_RZ_B_E_from_file!(RP)
@@ -280,6 +280,27 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
+    set_wall!(RP)
+
+The wall on the grid `RP.G`, whichever way the fields were set, first match wins:
+`config.wall_R`/`wall_Z`; the wall file `config.inputs.wall`; the device's
+`<device_Name>_First_Wall.dat` for a named device; else a box three cells inside the domain.
+"""
+function set_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    cfg, G = RP.config, RP.G
+    if !isempty(cfg.wall_R) && !isempty(cfg.wall_Z)
+        RP.wall = WallGeometry{FT}(cfg.wall_R, cfg.wall_Z)
+    elseif !isempty(cfg.inputs.wall) || cfg.device_Name != "manual"
+        read_device_wall_data!(RP)
+    else
+        R_lo, R_hi = G.R1D[1] + 3 * G.dR, G.R1D[end] - 3 * G.dR
+        Z_lo, Z_hi = G.Z1D[1] + 3 * G.dZ, G.Z1D[end] - 3 * G.dZ
+        RP.wall = WallGeometry{FT}([R_lo, R_hi, R_hi, R_lo, R_lo], [Z_lo, Z_lo, Z_hi, Z_hi, Z_lo])
+    end
+    return RP
+end
+
+"""
     set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Set up electromagnetic fields manually for a test case.
@@ -297,30 +318,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     Z_min = isnothing(RP.config.Z_min) ? FT(-1.2) : RP.config.Z_min
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
-
-    if isempty(RP.config.wall_R) || isempty(RP.config.wall_Z)
-        # Set default wall coordinates if not provided
-        # Create rectangular wall a few cells away from the numerical boundary
-        # Set wall offset (several grid cells from the boundary)
-        offset_R = 3 * RP.G.dR  # 3 cells from R boundary
-        offset_Z = 3 * RP.G.dZ  # 3 cells from Z boundary
-
-        # Create wall coordinates with the offset
-        wall_R_min = R_min + offset_R
-        wall_R_max = R_max - offset_R
-        wall_Z_min = Z_min + offset_Z
-        wall_Z_max = Z_max - offset_Z
-
-        # Create rectangular wall
-        RP.wall = WallGeometry{FT}(
-            [wall_R_min, wall_R_max, wall_R_max, wall_R_min, wall_R_min],  # Wall R coordinates
-            [wall_Z_min, wall_Z_min, wall_Z_max, wall_Z_max, wall_Z_min]   # Wall Z coordinates
-        )
-    else
-        # Use provided wall coordinates
-        RP.wall = WallGeometry{FT}(RP.config.wall_R, RP.config.wall_Z)
-    end
-
+    set_wall!(RP)
 
     # Initialize fields if not already created
     if !isdefined(RP, :fields) || isnothing(RP.fields)
@@ -375,7 +373,8 @@ This function loads field data from the specified path and initializes the simul
 function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String = "") where {FT <: AbstractFloat}
 
     if isempty(dir_path)
-        dir_path = joinpath(RP.config.Input_path, RP.config.device_Name, RP.config.shot_Name)
+        dir_path = isempty(RP.config.inputs.field) ?
+            joinpath(RP.config.Input_path, RP.config.device_Name, RP.config.shot_Name) : RP.config.inputs.field
     end
 
 
@@ -402,14 +401,7 @@ function set_RZ_B_E_from_file!(RP::RAPID{FT}, dir_path::String = "") where {FT <
     Z_max = RP.external_field.Z_MAX
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
-
-    if isempty(RP.config.wall_R) || isempty(RP.config.wall_Z)
-        # Read device wall data
-        read_device_wall_data!(RP)
-    else
-        # Use provided wall coordinates
-        RP.wall = WallGeometry{FT}(RP.config.wall_R, RP.config.wall_Z)
-    end
+    set_wall!(RP)
 
     return RP
 end

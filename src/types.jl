@@ -18,6 +18,22 @@ include("coils/types.jl")
 abstract type AbstractSpeciesRRCs{FT <: AbstractFloat} end
 
 """
+    InputPaths(; field = "", wall = "")
+
+The input files of a run, each given by its path; an empty entry falls back to the device
+lookup under `Input_path`, or to the manual setup for `device_Name = "manual"`.
+
+- `field`: external B and loop voltage, one BREAK file (a static field) or a directory of
+  them (a time series). Fallback: `Input_path/<device_Name>/<shot_Name>`.
+- `wall`: the wall file (`WALL_NUM N` and N points); `wall_R`/`wall_Z` take precedence.
+  Fallback: `Input_path/<device_Name>_First_Wall.dat`, or a box inside the domain.
+"""
+@kwdef mutable struct InputPaths
+    field::String = ""
+    wall::String = ""
+end
+
+"""
     SimulationConfig{FT<:AbstractFloat}
 
 Contains simulation configuration parameters.
@@ -28,6 +44,7 @@ Contains simulation configuration parameters.
     Output_path::String = "./output"   # Path to output files
     Output_prefix::String = ""         # Prefix for output files
     Output_name::String = "RAPID2D"    # Name for output files
+    inputs::InputPaths = InputPaths()  # Input files by path (field, wall)
 
     # Device parameters
     device_Name::String = "manual"     # Device name
@@ -1541,6 +1558,6 @@ RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
 RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
-export SimulationConfig, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState
+export SimulationConfig, InputPaths, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState
 export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags,
     LinearResponseDepth, PartialLinearResponse, FullLinearResponse
