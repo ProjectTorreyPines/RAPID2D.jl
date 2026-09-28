@@ -158,6 +158,9 @@ end
 "A plain sparse copy of the operator's matrix, for code that combines it with other sparse matrices."
 SparseArrays.sparse(op::DiscretizedOperator) = copy(op.matrix)
 
+"Whether every stored value of the operator is zero (an operator that was never written)."
+Base.iszero(op::DiscretizedOperator) = iszero(op.matrix)
+
 function copyto!(dest::DiscretizedOperator{FT}, src::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
     @assert dest.dims_rz == src.dims_rz "Dimensions of dest=$(dest.dims_rz) and src=$(src.dims_rz) do not match"
     copyto!(dest.matrix, src.matrix)

@@ -231,3 +231,20 @@ end
     update_electron_heating_powers!(RP)
     @test all(isfinite, RP.plasma.ne)
 end
+
+@testitem "a never-refreshed convective operator is refused while the wall faces see outflow" begin
+    # An operator allocated on the pattern but never written applies nothing, while the
+    # ledger books the outflow the faces see: refused, as master refused an empty cache.
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
+        dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.convec = true
+    RP.plasma.ueR .= 1.0e5                           # outflow through the outer R-faces
+    RAPID2D.cache_electron_operators!(RP)
+    solve_electron_continuity_equation!(RP)          # refreshed: fine
+    RAPID2D.initialize_operators!(RP)                # fresh operators: allocated, never written
+    @test_throws ArgumentError solve_electron_continuity_equation!(RP)
+end

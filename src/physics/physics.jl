@@ -1166,6 +1166,14 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         if RP.flags.convec
             a_e = electron_wall_albedo(RP)
             v_out = face_outflow_speeds(RP.G, faces_e, pla.ueR, pla.ueZ)
+            # A convective operator never written for these velocities would apply nothing
+            # while the ledger books the outflow the faces see: refused.
+            iszero(op.A_conv_e) && any(>(zero(FT)), v_out) && throw(
+                ArgumentError(
+                    "operators.A_conv_e is empty while wall faces see outflow: run " *
+                        "update_transport_quantities! (or cache_electron_operators!) for these velocities"
+                )
+            )
             returned_e .= wall_face_debit(FT, Ng, faces_e, a_e .* v_out)
             v_e .+= (one(FT) - a_e) .* v_out
         end
@@ -1173,11 +1181,11 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         n_vec, rhs_vec = vec(pla.ne), vec(op.RHS)
         if RP.flags.diffu
             # ∇⋅𝐃⋅∇n with the Robin wall
-            rhs_vec .+= op.A_diffu_e.matrix * n_vec .- robin_e .* n_vec
+            rhs_vec .+= op.A_diffu_e * n_vec .- robin_e .* n_vec
         end
         if RP.flags.convec
             # -∇⋅(n 𝐮), the albedo returning its share of the wall outflow
-            rhs_vec .-= op.A_conv_e.matrix * n_vec .- returned_e .* n_vec
+            rhs_vec .-= op.A_conv_e * n_vec .- returned_e .* n_vec
         end
 
         # A GROWTH eigenvalue, z = +ν_iz_tot·Δt (BOTH electron-producing channels —

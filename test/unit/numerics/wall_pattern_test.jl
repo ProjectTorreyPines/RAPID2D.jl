@@ -115,3 +115,18 @@ end
     @test_throws ArgumentError set_identity!(off)
     @test_throws ArgumentError add_diagonal!(off, v)
 end
+
+@testitem "wall pattern: a broadcast that changes the structure drops k2csc, so in-place writes refuse" setup = [PatternBox] begin
+    # The generic DiscretizedOperator broadcast materializes a new sparse matrix; if its
+    # structure differs from the pattern, a copied k2csc would point at wrong positions and
+    # the next in-place write would land there silently. The map must be dropped instead.
+    using RAPID2D: build_wall_pattern, set_identity!, build_wall_diffusion_matrix!
+    using RAPID2D.SparseArrays
+    G = pattern_box().G
+    A = build_wall_pattern(G)
+    B = build_wall_pattern(G)
+    build_wall_diffusion_matrix!(B, G, ones(G.NR, G.NZ), zeros(G.NR, G.NZ), ones(G.NR, G.NZ))
+    @. A = B - B                                     # an all-zero result: sparse broadcast stores nothing
+    @test isempty(A.k2csc)
+    isempty(A.k2csc) && @test_throws ArgumentError set_identity!(A)
+end
