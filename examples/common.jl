@@ -32,22 +32,11 @@ function setup(config::SimulationConfig{Float64}; flags...)
     return RP
 end
 
-# ── manual-device fields and initial columns (current_diffusion, force_balance_control) ──────────────────────
-# Pure toroidal field Bϕ = R0B0/R with a loop voltage E0 [V/m] referenced to mean(R).
-# Call after `setup`: the manual setup otherwise carries its uniform vertical field
-# (`config.manual.BZ`, 5 mT by default).
-function toroidal_field!(RP::RAPID; E0::Real)
-    G, F = RP.G, RP.fields
-    fill!(F.BR_ext, 0.0)
-    fill!(F.BZ_ext, 0.0)
-    fill!(F.BR_self, 0.0)
-    fill!(F.BZ_self, 0.0)
-    @. G.Jacob = G.R2D
-    @. F.Eϕ_ext = E0 * mean(G.R1D) / G.R2D
-    @. F.LV_ext = F.Eϕ_ext * 2π * G.R2D      # what update_external_fields! rebuilds Eϕ_ext from
-    RAPID2D.combine_external_and_self_fields!(RP)
-    return RP
-end
+# ── pure toroidal field and initial columns (current_diffusion, force_balance_control) ──
+# The manual setup without its vertical field: Bϕ = R0B0/R, no poloidal field, and
+# Eϕ = E0·R̄/R (E0 [V/m] at the mean R), so one loop voltage everywhere.
+# Pass it as `SimulationConfig(manual = pure_toroidal(E0))`.
+pure_toroidal(E0::Real) = ManualSetup{Float64}(BR = 0.0, BZ = 0.0, Eϕ = E0)
 
 # Uniform column of radius `radius` centred at (cenR, cenZ).
 function tophat(G; cenR, cenZ = 0.0, radius, n0)

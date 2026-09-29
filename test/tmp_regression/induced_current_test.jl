@@ -176,7 +176,7 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     # Set up electric field
     E0 = 0.3  # V/m
     E0 = 0.0  # V/m
-    @. RP.fields.Eϕ = E0 * mean(RP.G.R1D) / RP.G.Jacob
+    @. RP.fields.Eϕ = E0 * $mean(RP.G.R1D) / RP.G.Jacob
     @. RP.fields.Eϕ_ext = RP.fields.Eϕ
     @. RP.fields.E_para_ext = RP.fields.Eϕ * RP.fields.bϕ
 

@@ -22,7 +22,7 @@ the plotting extension; the mp4 uses the FFMPEG that ships with it. Outputs go t
 |---|---|---|---|
 | `townsend_avalanche.jl` | single-quadrupole null, box wall | atomic reactions, transport | 0.8 ms |
 | `selfE_avalanche.jl` | single-quadrupole null, box wall | as `townsend_avalanche.jl`, plus E∥ cancellation, mean E×B, turbulent E×B mixing | 4 ms |
-| `current_diffusion.jl` | pure toroidal field | a current filament with Ampère, with and without the inductive E; analytic L/R reference | 2 × 20 ms |
+| `current_diffusion.jl` | pure toroidal field | a current filament with Ampère, with and without the inductive E; single-filament L/R reference with the electrons' kinetic inductance | 2 × 20 ms |
 | `force_balance_control.jl` | pure toroidal field | J×B hoop force; curved vertical-field PID position control | 2 × 2 ms |
 | `full_startup.jl` | single-quadrupole null, box wall | every module except the global J×B force | 10 ms |
 | `kstar_reference.jl` | KSTAR, time-varying external field | self-E model, Ampère off | 40 ms |
@@ -74,7 +74,8 @@ The examples use three forms:
 `common.jl` holds what the scripts share:
 
 - `setup`: config, then flags, then `initialize!`.
-- The pure-toroidal-field helpers and the initial columns used by `current_diffusion.jl` and
+- `pure_toroidal(E0)`, the `ManualSetup` of a pure toroidal field (no poloidal field,
+  Eϕ = E0·R̄/R), and the initial columns used by `current_diffusion.jl` and
   `force_balance_control.jl`.
 - `run!`: runs to the end, or reports a failure mid-run and keeps the snapshots taken so far.
 - The plots: `plot_traces`, `plot_dashboard`, `plot_snapshots2D`, `animate2D`.
