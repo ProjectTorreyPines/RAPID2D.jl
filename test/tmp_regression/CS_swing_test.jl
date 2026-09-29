@@ -140,7 +140,7 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     # Set up electric field
     E0 = 0.3  # V/m
     E0 = 0.0  # V/m
-    Eϕ = @. E0 * mean(RP.G.R1D) / RP.G.Jacob
+    Eϕ = @. E0 * $mean(RP.G.R1D) / RP.G.Jacob
     RP.fields.Eϕ_ext .= Eϕ
     RP.fields.LV_ext .= Eϕ .* (2 * π * RP.G.R2D)
     # Parallel component of E

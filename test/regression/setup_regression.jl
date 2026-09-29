@@ -49,7 +49,7 @@
         @. RP.fields.bϕ = RP.fields.Bϕ / RP.fields.Btot
 
         # Applied toroidal electric field
-        @. RP.fields.Eϕ = E0 * mean(RP.G.R1D) / RP.G.Jacob
+        @. RP.fields.Eϕ = E0 * $mean(RP.G.R1D) / RP.G.Jacob
         @. RP.fields.Eϕ_ext = RP.fields.Eϕ
         @. RP.fields.E_para_ext = RP.fields.Eϕ * RP.fields.bϕ
 
