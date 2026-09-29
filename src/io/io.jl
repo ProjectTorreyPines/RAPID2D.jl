@@ -67,18 +67,20 @@ a new RAPID instance with the wall field updated.
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance
 - `wall_file_name::String=nothing`: Optional specific wall file to read. If not provided,
-  will use "{device_Name}_First_Wall.dat" in the input path.
+  `config.inputs.wall` is used, else "{device_Name}_First_Wall.dat" in the input path.
 
 """
 function read_device_wall_data!(RP::RAPID{FT}, wall_file_name::String = "") where {FT <: AbstractFloat}
-    # Use provided file name or construct default file path
-    file_path = isempty(wall_file_name) ?
-        joinpath(RP.config.Input_path, "$(RP.config.device_Name)_First_Wall.dat") :
-        wall_file_name
+    # Use provided file name, else the file the config names
+    file_path = isempty(wall_file_name) ? wall_file_path(RP.config) : wall_file_name
 
     # Read the wall data and assign to RAPID instance
     return RP.wall = read_wall_data_file(file_path, FT)
 end
+
+"The wall file a config names: `inputs.wall`, else the device's `<device_Name>_First_Wall.dat` under `Input_path`."
+wall_file_path(config::SimulationConfig) = isempty(config.inputs.wall) ?
+    joinpath(config.Input_path, "$(config.device_Name)_First_Wall.dat") : config.inputs.wall
 
 
 """
@@ -408,7 +410,8 @@ end
 Read a time series of external field data from BREAK input files.
 
 # Arguments
-- `dir_path::String`: Path to the directory containing field data files (default: "./")
+- `dir_path::String`: a directory of BREAK files, one per time slice, or the path of a single
+  file (default: "./"). A single slice is a static field, applied at every time.
 - `r_num::Union{Int,Nothing}`: Number of R grid points (default: use value from first file)
 - `r_min::Union{Float64,Nothing}`: Minimum R value (default: use value from first file)
 - `r_max::Union{Float64,Nothing}`: Maximum R value (default: use value from first file)
@@ -431,13 +434,8 @@ function read_external_field_time_series(
         z_max::Union{T, Nothing} = nothing
     ) where {T <: AbstractFloat}
 
-    # Ensure dir_path ends with a path separator
-    if !endswith(dir_path, Base.Filesystem.path_separator)
-        dir_path = dir_path * Base.Filesystem.path_separator
-    end
-
-    # Find all .dat files in the directory
-    files = filter(f -> endswith(f, ".dat"), readdir(dir_path; join = true))
+    # One file, or all .dat files in the directory
+    files = isfile(dir_path) ? [dir_path] : filter(f -> endswith(f, ".dat"), readdir(dir_path; join = true))
 
     if isempty(files)
         error("No .dat files found in directory: $dir_path")

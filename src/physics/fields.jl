@@ -208,7 +208,8 @@ end
 """
     calculate_external_fields_at_time(field::TimeSeriesExternalField{FT}, time::FT, grid::GridGeometry{FT}) where {FT<:AbstractFloat}
 
-Interpolate field values at a specific time from time series data.
+Interpolate field values at a specific time from time series data. Outside the time range
+the nearest slice is held; a single slice is a static field.
 
 # Arguments
 - `field::TimeSeriesExternalField{FT}`: The time series external field data
@@ -218,27 +219,19 @@ Interpolate field values at a specific time from time series data.
 - `NamedTuple`: Contains fields BR, BZ, LV, psi interpolated at the specified time
 """
 function calculate_external_fields_at_time(extF::TimeSeriesExternalField{FT}, time::FT) where {FT <: AbstractFloat}
-    # Find the time indices for interpolation
-    if time <= extF.time_s[1]
-        # Before first time point - use first time point
-        idx = 1
-        t_weight = FT(0)
-    elseif time >= extF.time_s[end]
-        # After last time point - use last time point
-        idx = length(extF.time_s) - 1
-        t_weight = FT(1)
-    else
-        # Find the appropriate time interval
-        idx = searchsortedlast(extF.time_s, time)
-        # Calculate interpolation weight
-        t_weight = (time - extF.time_s[idx]) / (extF.time_s[idx + 1] - extF.time_s[idx])
-    end
+    # The slice at or before `time` and the one after it. Outside the range, and for a single
+    # slice (a static field), both are the nearest slice and the weight is zero.
+    t = extF.time_s
+    n = length(t)
+    i = clamp(searchsortedlast(t, time), 1, n)
+    j = min(i + 1, n)
+    t_weight = j == i ? zero(FT) : clamp((time - t[i]) / (t[j] - t[i]), zero(FT), one(FT))
 
     # Linear interpolation in time
-    BR = (1 - t_weight) * extF.BR[:, :, idx] + t_weight * extF.BR[:, :, idx + 1]
-    BZ = (1 - t_weight) * extF.BZ[:, :, idx] + t_weight * extF.BZ[:, :, idx + 1]
-    psi = (1 - t_weight) * extF.psi[:, :, idx] + t_weight * extF.psi[:, :, idx + 1]
-    LV = (1 - t_weight) * extF.LV[:, :, idx] + t_weight * extF.LV[:, :, idx + 1]
+    BR = (1 - t_weight) * extF.BR[:, :, i] + t_weight * extF.BR[:, :, j]
+    BZ = (1 - t_weight) * extF.BZ[:, :, i] + t_weight * extF.BZ[:, :, j]
+    psi = (1 - t_weight) * extF.psi[:, :, i] + t_weight * extF.psi[:, :, j]
+    LV = (1 - t_weight) * extF.LV[:, :, i] + t_weight * extF.LV[:, :, j]
 
     return (
         BR = BR,
