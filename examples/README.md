@@ -43,9 +43,9 @@ The examples pass both through `SimulationConfig(inputs = InputPaths(field = …
 
 ## Step callbacks
 
-`run_simulation!` calls `callback_before_step(RP)` at the start of every step and
-`callback_after_step(RP)` at its end. Anything callable with `RP` works; any other state it
-needs, it captures:
+`run_simulation!` calls `callback_before_step(RP)` once the step's inputs are set from the
+state at tⁿ (external fields, `Jϕ`), before it solves; `callback_after_step(RP)` runs at its
+end. Anything callable with `RP` works; any other state it needs, it captures:
 
 ```julia
 ne_before = similar(RP.plasma.ne)

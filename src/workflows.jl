@@ -41,27 +41,14 @@ end
 
 
 """
-    advance_timestep!(RP::RAPID{FT}, dt::FT) where FT<:AbstractFloat
+    prepare_timestep!(RP)
 
-Advance the simulation by one time step, coupling all physics processes.
-This function represents the core time-stepping algorithm of RAPID2D.
-
-# Arguments
-- `RP::RAPID{FT}`: The RAPID object containing all simulation state
-- `dt::FT`: Time step size in seconds
-
-# Returns
-- `RP`: The updated RAPID object after advancement
-
-# Main process flow:
-1. Field calculation (vacuum + self-consistent)
-2. Particle transport (density continuity equations)
-3. Energy transport (temperature evolution)
-4. Transport coefficient updates
+Set the inputs of the next step from the current state and time tⁿ, leaving the state itself
+unchanged: reset the per-step reaction counts, evaluate the external fields at `RP.time_s`,
+and compute `Jϕ` from the densities and velocities.
 """
-function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
-    @timeit RAPID_TIMER "advance_timestep!" begin
-
+function prepare_timestep!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "prepare_timestep!" begin
         # Last step's reaction counts are void from here on. Reset at the START of
         # the advance rather than the end, because the wall passes that book the
         # ionization run outside `advance_timestep!` and must still see it.
@@ -81,8 +68,21 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractF
             # a sum; `Z` comes from the species itself and cannot lag behind it.
             Z_i = FT(bulk_ion_charge(RP))
             @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
-            I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
         end
+    end
+    return RP
+end
+
+"""
+    solve_timestep!(RP, dt = RP.dt)
+
+Advance the state from tⁿ to tⁿ⁺¹ on the inputs `prepare_timestep!` set: the momentum
+equation (with Ampère above the current threshold), the densities, the ion velocity and the
+temperatures, the global J×B force and the neutral gas.
+"""
+function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "solve_timestep!" begin
+        I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
 
         # For high current: update electromagnetic fields using Ampere's law
         if RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
@@ -142,8 +142,20 @@ function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractF
             update_neutral_H2_gas_density!(RP)
         end
 
-        return RP
     end
+    return RP
+end
+
+"""
+    advance_timestep!(RP, dt = RP.dt)
+
+One whole time step: [`prepare_timestep!`](@ref), then [`solve_timestep!`](@ref).
+`run_simulation!` calls the two itself, with `callback_before_step` in between.
+"""
+function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
+    prepare_timestep!(RP)
+    solve_timestep!(RP, dt)
+    return RP
 end
 
 """
@@ -155,17 +167,19 @@ Handles time stepping, diagnostics output, and snapshot generation.
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing all simulation state
 - `controller`: optional `Controller` updated at the end of every step
-- `callback_before_step`: optional `f(RP)`, called at the start of every step on the state
-  at tⁿ, before the step advances it. The step first recomputes `Jϕ`, the reaction counts,
-  `Bϕ` and `Eϕ_ext`, and, with a field file, `BR_ext`, `BZ_ext`, `LV_ext` and `ψ_ext`:
-  writes to those are lost, so change their sources instead (the plasma state,
-  `fields.R0B0`, `LV_ext` without a field file). Other changes reach the step as they
-  are; refresh what depends on them (`update_transport_quantities!`) there too.
+- `callback_before_step`: optional `f(RP)`, called on every step between
+  `prepare_timestep!` and `solve_timestep!`: the state is at tⁿ and the step's inputs (the
+  reaction counts, the external fields at tⁿ, `Jϕ`) have just been set from it. Nothing
+  resets them before the step solves, so what the callback writes to them is what the step
+  uses.
 - `callback_after_step`: optional `f(RP)`, called at the end of every completed step, at
   tⁿ⁺¹, after that step's snapshots and the controller update.
 
-The two bracket one step: record what the snapshots do not carry, impose a field between
-steps, or diagnose the change a step makes, without re-implementing this loop.
+The two bracket one step: diagnose the change a step makes, adjust a step's inputs, or
+record what the snapshots do not carry, without re-implementing this loop. A callback that
+changes the state itself (densities, velocities, temperatures) should refresh what depends
+on it (`update_transport_quantities!`); in `callback_before_step`, this step's `Jϕ` is
+already set.
 
 # Returns
 - `RP`: The updated RAPID object after completion of the simulation
@@ -215,12 +229,13 @@ function run_simulation!(
         @timeit RAPID_TIMER "main_time_loop" begin
             while RP.time_s < t_end - 0.1 * dt
 
+                # One time step: set its inputs from the state at tⁿ, let the caller see or
+                # adjust them, then solve to tⁿ⁺¹
+                prepare_timestep!(RP)
                 if !isnothing(callback_before_step)
                     callback_before_step(RP)
                 end
-
-                # Advance simulation one time step
-                advance_timestep!(RP, dt)
+                solve_timestep!(RP, dt)
 
                 # Increment time
                 RP.time_s += dt
@@ -293,7 +308,7 @@ function run_simulation!(
 end
 
 # Export workflow functions
-export advance_timestep!, run_simulation!
+export advance_timestep!, prepare_timestep!, solve_timestep!, run_simulation!
 
 # Export timer utilities
 export RAPID_TIMER, print_timer_results, save_timer_results
