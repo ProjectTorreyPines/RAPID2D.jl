@@ -30,8 +30,10 @@ function (c::CurvedBzControl)(RP::RAPID)
     w = abs.(pla.Jϕ) .* G.inVol2D
     sw = sum(w)
     ctrl_mag = sw > 0 ? max(sum(w .* F.BZ_self) / sw, sum(w .* F.BR_self) / sw) : 1.0e-8
-    R_cen = extract_plasma_position(RP)   # current centroid; the geometric centre at zero current
-    if RP.step >= 5
+    # Jϕ-weighted centroid in R; with no current there is no centroid, and nothing to correct
+    I_sum = sum(pla.Jϕ)
+    R_cen = iszero(I_sum) ? NaN : sum(pla.Jϕ .* G.R2D) / I_sum
+    if RP.step >= 5 && !isnan(R_cen)
         err = c.target - R_cen
         c.int_err += err * c.dt
         pid = c.Kp * err + c.Ki * c.int_err + c.Kd * (err - c.prev_err) / c.dt
