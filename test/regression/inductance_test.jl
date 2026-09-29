@@ -1,6 +1,6 @@
 # Basic inductance regression scenario: a loop-voltage-driven plasma filament checked
 # against two analytical L/R references — constant inductance, and the time-varying L(t)
-# reported by the 0D diagnostics.
+# reported by the 0D diagnostics — each with the electrons' kinetic inductance in series.
 #
 # ONE @testitem: all 5 assertions consume the same ~8.6 s simulation, and a snippet body
 # is re-evaluated per testitem, so splitting would re-run it per group.
@@ -11,6 +11,14 @@
     using Printf
     using Plots
     using Dates
+
+    # Time at which `I` first reaches (1 − 1/e) of `I_sat`, interpolated linearly.
+    function e_folding_time(t, I, I_sat)
+        target = (1 - exp(-1)) * I_sat
+        k = findfirst(>=(target), I)
+        isnothing(k) && return oftype(float(t[end]), NaN)
+        return t[k - 1] + (target - I[k - 1]) * (t[k] - t[k - 1]) / (I[k] - I[k - 1])
+    end
 
     # Compare the simulated toroidal current against analytical L/R solutions.
     # `major_R` / `minor_r` [m] are required kwargs: the inductance estimate must stay
@@ -45,15 +53,20 @@
         μ0 = 4π * 1.0e-7  # H/m
         L_estimate = μ0 * major_R * (log(8 * major_R / minor_r) - 2 + 0.25 * Y)
 
+        # The electrons' kinetic inductance mₑ/(n e²)·2πR/(πa²), in series with L: their
+        # inertia in the momentum equation adds L_kin/R = 1/ν to the L/R time
+        n_column = mean(filter(>(0), RP.plasma.ne))
+        L_kin = me / (n_column * ee^2) * (2π * major_R / (π * minor_r^2))
+
         # Estimate mutual inductance (geometric calculation)
         snap0D_time_s = RP.diagnostics.snaps0D.time_s
         snap0D_time_s = range(snap0D_time_s[1], stop = snap0D_time_s[end], length = length(snap0D_time_s))
-        L_values = RP.diagnostics.snaps0D.self_inductance_plasma
+        L_values = RP.diagnostics.snaps0D.self_inductance_plasma .+ L_kin
         L_values[1] = L_values[2] # Avoid zero at t=0
         itp_L_self_plasma = cubic_interp(snap0D_time_s, L_values)
 
         # L/R time constant
-        tau_LR = L_estimate / R_estimate
+        tau_LR = (L_estimate + L_kin) / R_estimate
 
         if verbose
             println("Circuit Parameter Estimates:")
@@ -61,6 +74,7 @@
             println(@sprintf("  Final current: %.3f A", I_tor[end]))
             println(@sprintf("  Resistance: %.6f Ω", R_estimate))
             println(@sprintf("  Inductance: %.6f μH", L_estimate * 1.0e6))
+            println(@sprintf("  Kinetic inductance: %.6f μH", L_kin * 1.0e6))
             println(@sprintf("  L/R time: %.1f μs", tau_LR * 1.0e6))
         end
 
@@ -90,11 +104,18 @@
             mean_error_timevar = mean(relative_error_timevar)
             max_error_timevar = maximum(relative_error_timevar)
 
+            # Measures that do not divide by the early current: current diffusion leads
+            # every single-filament curve there (reference/inductive-current-rise.md §4.4)
+            max_abs_error = maximum(abs.(I_tor .- I_analytical)) / I_sat_analytical
+            t63_error = e_folding_time(times, I_tor, I_sat_analytical) / tau_LR - 1
+
             if verbose
                 println("\nAccuracy Assessment:")
                 println("  === vs Constant L Analytical ===")
                 println(@sprintf("  Mean relative error: %.2f%%", 100 * mean_error))
                 println(@sprintf("  Max relative error: %.2f%%", 100 * max_error))
+                println(@sprintf("  Max |ΔI|/I_sat: %.2f%%", 100 * max_abs_error))
+                println(@sprintf("  e-folding time vs τ: %+.2f%%", 100 * t63_error))
 
                 println("  === vs Time-varying L Analytical ===")
                 println(@sprintf("  Mean relative error: %.2f%%", 100 * mean_error_timevar))
@@ -103,6 +124,7 @@
 
             return (
                 mean_error = mean_error, max_error = max_error,
+                max_abs_error = max_abs_error, t63_error = t63_error,
                 mean_error_timevar = mean_error_timevar, max_error_timevar = max_error_timevar,
                 times = times, I_tor = I_tor, I_analytical = I_analytical, I_analytical_timevar = I_analytical_timevar,
             )
@@ -349,8 +371,8 @@ end
     @test results !== nothing  # Should return valid results
 
     if results !== nothing
-        @test results.mean_error < 0.03  # Mean error should be less than 3%
-        @test results.max_error < 0.05   # Max error should be less than 5%
+        @test results.max_abs_error < 0.01       # |ΔI| ≤ 1 % of I_sat at every snapshot
+        @test abs(results.t63_error) < 0.01      # e-folding time within 1 % of τ
         @test results.I_tor[end] > 0     # Final current should be positive
         @test length(results.times) > 1  # Should have multiple time points
     end
