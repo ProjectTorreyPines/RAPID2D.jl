@@ -50,7 +50,8 @@ end
 
 function blob_run(name; control::Union{Nothing, CurvedBzControl})
     config = SimulationConfig{Float64}(
-        device_Name = "manual", NR = 30, NZ = 50, R0B0 = 3.0, prefilled_gas_pressure = 1.0e-3,
+        device_Name = "manual", manual = pure_toroidal(0.3), NR = 30, NZ = 50, R0B0 = 3.0,
+        prefilled_gas_pressure = 1.0e-3,
         dt = 5.0e-6, t_end_s = 2.0e-3, snap0D_Δt_s = 10.0e-6, snap2D_Δt_s = 20.0e-6,
         Output_path = output_dir(name),
     )
@@ -64,7 +65,6 @@ function blob_run(name; control::Union{Nothing, CurvedBzControl})
         E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false,
         FLF_nstep = 10,
     )
-    toroidal_field!(RP; E0 = 0.3)
     set_column!(RP, masked_gaussian(RP.G; cenR = R_BLOB, radius = A_BLOB, n0 = N_BLOB))
     isnothing(control) || (control.dt = RP.dt)
     run!(RP; callback_after_step = control)
