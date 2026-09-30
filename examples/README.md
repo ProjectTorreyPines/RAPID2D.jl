@@ -27,6 +27,30 @@ the plotting extension; the mp4 uses the FFMPEG that ships with it. Outputs go t
 | `full_startup.jl` | single-quadrupole null, box wall | every module except the global J×B force | 10 ms |
 | `kstar_reference.jl` | KSTAR, time-varying external field | self-E model, Ampère off | 40 ms |
 
+## Coupled-step verification (`coupled_step/`)
+
+Small problems for the coupled step, in which the electron parallel momentum, Ampère's law
+and the circuits of coils and conducting structures advance together. Each isolates one
+mechanism and plots the simulation against a prediction that does not come from the code.
+They share `coupled_step/common.jl`: a uniform column at rest in a pure toroidal field (the
+column of `current_diffusion.jl`, at Te = 1 eV) and toroidal loops around it.
+`test/regression/coupled_step_test.jl` checks the same problems.
+
+| script | setup | prediction |
+|---|---|---|
+| `two_coils.jl` | two coupled loops, no plasma | the backward-Euler circuit solution, step for step |
+| `density_doubling.jl` | a superconducting loop beside a driven column; n doubled at a fixed drift | the loop keeps its flux, I_c = −Φ_p/L_c |
+| `coil_driven_column.jl` | a 10 V coil drives the column; no loop voltage | two coupled circuits, with the electrons' kinetic inductance |
+| `density_growth_dt.jl` | as `density_doubling.jl`, with n growing at 200/s; Δt = 5 and 2.5 µs | a flux error of one step of growth, halving with Δt |
+| `column_pushed_toward_loop.jl` | the column pushed at 200 m/s toward a superconducting loop outside the wall | I_c = −Φ_p/L_c; the loop pushes the column back |
+| `column_shifted_in_shell.jl` | the column moved up one cell inside a shell of 24 superconducting filaments | the shell's flux-conserving currents push it back down |
+
+Each script writes one figure to `examples/output/coupled_step/`:
+
+```
+julia --project=examples examples/coupled_step/two_coils.jl
+```
+
 ## Input data
 
 - `data/SingleQuad_LV=+5.dat`: a BREAK-format field file. It holds B_R, B_Z, ψ and the loop
