@@ -75,7 +75,7 @@ function lumped_column(RP; R0 = 1.5)
     return (;
         L_p = c.μ0 * R0 * (log(8R0 / sqrt(S / π)) - 7 / 4),
         L_kin = c.me * 2π * R0 / (mean(pla.ne[col]) * c.ee^2 * S),
-        M = flux_at_coils(RP, J) ./ plasma_current(RP, J),
+        M = RP.coil_system.n_total > 0 ? flux_at_coils(RP, J) ./ plasma_current(RP, J) : Float64[],
         S,
     )
 end

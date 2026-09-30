@@ -42,7 +42,7 @@ flux, and that flux is computed from the simulated current.
 | script | setup | prediction |
 |---|---|---|
 | `two_coils.jl` | two coupled loops, no plasma | exp(−M⁻¹R t) I(0), and the backward-Euler recursion step for step |
-| `density_doubling.jl` | a superconducting loop beside a driven column; n doubled at a fixed drift | the fluxes cannot jump: I_p rises under 2 %, the drift halves, the loop current holds (lumped model) |
+| `density_doubling.jl` | a driven column, alone and with a superconducting loop beside it; n doubled at a fixed drift | the fluxes cannot jump: I_p rises under 2 %, the drift halves, the loop current holds (lumped model) |
 | `coil_driven_column.jl` | a 10 V coil drives the column; no loop voltage | two coupled circuits, with the electrons' kinetic inductance (lumped model) |
 | `density_growth_dt.jl` | as `density_doubling.jl`, with n growing at 200/s; Δt = 5 and 2.5 µs | the loop keeps its flux (lumped model); the error is one step of growth, halving with Δt |
 | `column_pushed_toward_loop.jl` | the column pushed at 200 m/s toward a superconducting loop outside the wall | I_c = −Φ_p/L_c; the loop pushes the column back |
