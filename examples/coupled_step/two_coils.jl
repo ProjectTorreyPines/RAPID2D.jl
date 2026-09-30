@@ -1,11 +1,12 @@
 # Two coupled toroidal loops and no plasma. Loop A starts at 1 kA and decays through its
 # resistance; loop B, linked to A by their mutual inductance, picks up the current that A's
-# decay induces. The coil circuits advance by backward Euler,
+# decay induces. The exact solution is I(t) = exp(−M⁻¹R t) I(0). The coil circuits advance by
+# backward Euler,
 #   (M + Δt R) Iⁿ⁺¹ = M Iⁿ,
-# so that recursion is the answer for the discrete system, step for step. Two runs: Ampère
-# from the first step (threshold 0), and the default threshold (1 A). With no plasma the
-# threshold on the plasma current has nothing to act on, so both runs should follow the
-# same curve.
+# so that recursion is the answer for the discrete system, step for step; it trails the exact
+# solution by O(Δt R/L). Two runs: Ampère from the first step (threshold 0), and the default
+# threshold (1 A). With no plasma the threshold on the plasma current has nothing to act on,
+# so both runs should follow the same curve.
 #
 #   julia --project=examples examples/coupled_step/two_coils.jl
 
@@ -26,24 +27,32 @@ end
 RP, I_open = two_coils(0.0)
 _, I_default = two_coils(1.0)
 
-# the backward-Euler recursion, from the same mutual-inductance matrix
+# the exact solution and the backward-Euler recursion, from the same M and R
 M, r = RP.coil_system.mutual_inductance, get_all_resistances(RP.coil_system)
-step = (M + DT * [r[1] 0; 0 r[2]]) \ M
-exact = accumulate((I, _) -> step * I, 1:(length(I_open) - 1); init = [I_START, 0.0])
-pushfirst!(exact, [I_START, 0.0])
-dev(run) = maximum(maximum(abs.(run[k] .- exact[k])) for k in eachindex(exact)) / I_START
-@printf("largest deviation from the recursion, over I_start: %.2e (threshold 0), %.2e (threshold 1 A)\n", dev(I_open), dev(I_default))
+R = [r[1] 0; 0 r[2]]
+t = (0:(length(I_open) - 1)) .* DT
+exact = [exp(-(M \ R) * tk) * [I_START, 0.0] for tk in t]
+step = (M + DT * R) \ M
+recursion = accumulate((I, _) -> step * I, t[2:end]; init = [I_START, 0.0])
+pushfirst!(recursion, [I_START, 0.0])
+dev(run) = maximum(maximum(abs.(run[k] .- recursion[k])) for k in eachindex(recursion)) / I_START
+@printf(
+    "largest deviation from the recursion, over I_start: %.2e (threshold 0), %.2e (threshold 1 A); recursion vs exact: %.2e\n",
+    dev(I_open), dev(I_default), dev(exact)
+)
 
 out = output_dir("coupled_step")
-t = (0:(length(exact) - 1)) .* DT .* 1.0e3
+tms = t .* 1.0e3
 p1 = plot(
-    t, first.(exact); c = :green, lw = 5, alpha = 0.35, label = "backward Euler, exact",
+    tms, first.(recursion); c = :green, lw = 5, alpha = 0.35, label = "backward Euler recursion",
     ylabel = "I_A (A)", title = "two loops, no plasma: A decays, B is induced",
 )
-plot!(p1, t, first.(I_open); c = :royalblue, lw = 2, label = "RAPID2D, Ampère threshold 0")
-plot!(p1, t, first.(I_default); c = :crimson, ls = :dot, lw = 2, label = "RAPID2D, threshold 1 A (default)")
-p2 = plot(t, last.(exact); c = :green, lw = 5, alpha = 0.35, label = "exact", ylabel = "I_B (A)", xlabel = "t (ms)")
-plot!(p2, t, last.(I_open); c = :royalblue, lw = 2, label = "threshold 0")
-plot!(p2, t, last.(I_default); c = :crimson, ls = :dot, lw = 2, label = "threshold 1 A")
+plot!(p1, tms, first.(exact); c = :black, lw = 1, ls = :dot, label = "exact, exp(−M⁻¹R t) I(0)")
+plot!(p1, tms, first.(I_open); c = :royalblue, lw = 2, label = "RAPID2D, Ampère threshold 0")
+plot!(p1, tms, first.(I_default); c = :crimson, ls = :dot, lw = 2, label = "RAPID2D, threshold 1 A (default)")
+p2 = plot(tms, last.(recursion); c = :green, lw = 5, alpha = 0.35, label = "backward Euler", ylabel = "I_B (A)", xlabel = "t (ms)")
+plot!(p2, tms, last.(exact); c = :black, lw = 1, ls = :dot, label = "exact")
+plot!(p2, tms, last.(I_open); c = :royalblue, lw = 2, label = "threshold 0")
+plot!(p2, tms, last.(I_default); c = :crimson, ls = :dot, lw = 2, label = "threshold 1 A")
 savefig(plot(p1, p2; layout = (2, 1), size = (720, 620)), joinpath(out, "two_coils.png"))
 println("outputs in ", out)

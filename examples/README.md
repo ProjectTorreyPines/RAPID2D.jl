@@ -33,15 +33,18 @@ Small problems for the coupled step, in which the electron parallel momentum, Am
 and the circuits of coils and conducting structures advance together. Each isolates one
 mechanism and plots the simulation against a prediction that does not come from the code.
 They share `coupled_step/common.jl`: a uniform column at rest in a pure toroidal field (the
-column of `current_diffusion.jl`, at Te = 1 eV) and toroidal loops around it.
+column of `current_diffusion.jl`, at Te = 1 eV), toroidal loops around it, and a lumped
+model of the column as one plasma loop, which gives the circuit problems their reference
+curves. The two motion problems need no model: a superconducting loop or shell keeps its
+flux, and that flux is computed from the simulated current.
 `test/regression/coupled_step_test.jl` checks the same problems.
 
 | script | setup | prediction |
 |---|---|---|
-| `two_coils.jl` | two coupled loops, no plasma | the backward-Euler circuit solution, step for step |
-| `density_doubling.jl` | a superconducting loop beside a driven column; n doubled at a fixed drift | the loop keeps its flux, I_c = −Φ_p/L_c |
-| `coil_driven_column.jl` | a 10 V coil drives the column; no loop voltage | two coupled circuits, with the electrons' kinetic inductance |
-| `density_growth_dt.jl` | as `density_doubling.jl`, with n growing at 200/s; Δt = 5 and 2.5 µs | a flux error of one step of growth, halving with Δt |
+| `two_coils.jl` | two coupled loops, no plasma | exp(−M⁻¹R t) I(0), and the backward-Euler recursion step for step |
+| `density_doubling.jl` | a superconducting loop beside a driven column; n doubled at a fixed drift | the fluxes cannot jump: I_p rises under 2 %, the drift halves, the loop current holds (lumped model) |
+| `coil_driven_column.jl` | a 10 V coil drives the column; no loop voltage | two coupled circuits, with the electrons' kinetic inductance (lumped model) |
+| `density_growth_dt.jl` | as `density_doubling.jl`, with n growing at 200/s; Δt = 5 and 2.5 µs | the loop keeps its flux (lumped model); the error is one step of growth, halving with Δt |
 | `column_pushed_toward_loop.jl` | the column pushed at 200 m/s toward a superconducting loop outside the wall | I_c = −Φ_p/L_c; the loop pushes the column back |
 | `column_shifted_in_shell.jl` | the column moved up one cell inside a shell of 24 superconducting filaments | the shell's flux-conserving currents push it back down |
 
@@ -83,6 +86,11 @@ run_simulation!(RP;
 Mutate what a callback captures (`copyto!`, `push!`, `x[] = …` on a `Ref`) rather than
 reassigning it. At the top level of a script, `n += 1` inside a callback fails unless `n` is
 declared `global`.
+
+A step refreshes the collision rates and transport coefficients at its end, before
+`callback_after_step` runs. A callback that changes the plasma state (densities,
+temperatures, velocities) calls `RAPID2D.update_transport_quantities!(RP)` afterwards, or the
+next step runs on the rates of the old state.
 
 The examples use three forms:
 

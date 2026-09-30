@@ -1,19 +1,18 @@
 # No loop voltage: a coil at R = 0.6 m, inboard of the grid like a central solenoid, with
 # 10 V applied, is the only drive. The column is the secondary of a transformer. The
-# prediction is two coupled circuits, the coil and a single-filament plasma loop carrying a
-# uniform current,
+# prediction is two coupled circuits, the coil and the column as one plasma loop carrying a
+# uniform current (lumped_column in common.jl),
 #   [L_c  M; M  L_p + L_kin] d/dt [I_c; I_p] = [V − R_c I_c; −R_p I_p],
-#   L_p = μ0 R (ln(8R/a) − 7/4),   L_kin = mₑ 2πR / (n e² πa²),   R_p = ν L_kin,
-# where L_kin is the electrons' inertia, ν their Coulomb collision frequency, and M the coil
-# flux per ampere of that uniform current. Two runs, as in two_coils.jl: Ampère from the
-# first step (threshold 0), and the default threshold (1 A).
+# with L_kin = mₑ 2πR / (n e² πa²) the electrons' inertia, R_p the Coulomb resistance of the
+# column, and M the coil's flux per ampere of that uniform current. Two runs, as in
+# two_coils.jl: Ampère from the first step (threshold 0), and the default threshold (1 A).
 #
 #   julia --project=examples examples/coupled_step/coil_driven_column.jl
 
 include("common.jl")
 
 const V_COIL, R_COIL = 10.0, 1.0e-4   # applied voltage [V], coil resistance [Ω]
-const R0, A0 = 1.5, 0.3               # column major and minor radius [m]
+const R0, A0 = 1.5, 0.3               # column centre and radius [m]
 
 function driven(threshold)
     RP = column("coupled_step/coil_driven_column/threshold_$threshold"; E0 = 0.0, cenR = R0, radius = A0, threshold)
@@ -30,41 +29,14 @@ function driven(threshold)
     return RP, Lc, rec
 end
 
-# The lumped plasma loop, read after the run: n and Te are fixed, so ν is constant through it.
-function lumped_model(RP, Lc)
-    pla, c = RP.plasma, RP.config.constants
-    col = findall(>(0), pla.ne)
-    L_kin = c.me / (mean(pla.ne[col]) * c.ee^2) * (2π * R0 / (π * A0^2))
-    L_p = c.μ0 * R0 * (log(8R0 / A0) - 7 / 4)
-    J = zeros(size(pla.ne))
-    J[col] .= 1.0
-    M = flux_at_coils(RP, J)[1] / plasma_current(RP, J)
-    return (; Lc, M, L = L_p + L_kin, R_p = mean(pla.ν_ei_eff[col]) * L_kin)
-end
-
-# the two circuits, RK4 between the recorded times
-function two_circuit(m, t; substeps = 50)
-    A = [m.Lc m.M; m.M m.L]
-    f(x) = A \ [V_COIL - R_COIL * x[1], -m.R_p * x[2]]
-    x = [0.0, 0.0]
-    X = [x]
-    for k in 2:length(t)
-        h = (t[k] - t[k - 1]) / substeps
-        for _ in 1:substeps
-            k1 = f(x)
-            k2 = f(x .+ h / 2 .* k1)
-            k3 = f(x .+ h / 2 .* k2)
-            k4 = f(x .+ h .* k3)
-            x = x .+ h / 6 .* (k1 .+ 2k2 .+ 2k3 .+ k4)
-        end
-        push!(X, x)
-    end
-    return X
-end
-
 RP, Lc, open = driven(0.0)
 _, _, default = driven(1.0)
-model = two_circuit(lumped_model(RP, Lc), open.t)
+
+# The lumped model, read after the run: n and Te are fixed, so the resistance is constant.
+m = lumped_column(RP; R0)
+L = [Lc m.M[1]; m.M[1] (m.L_p + m.L_kin)]
+R = [R_COIL 0; 0 column_resistance(RP)]
+model = circuits(_ -> L, _ -> R, [V_COIL, 0.0], [0.0, 0.0], open.t)
 @printf(
     "at %.2f ms: I_p = %.1f A (model %.1f A), I_coil = %.0f A (model %.0f A); threshold 1 A: I_p = %.2f A\n",
     open.t[end] * 1.0e3, open.Ip[end], model[end][2], open.Ic[end], model[end][1], default.Ip[end]

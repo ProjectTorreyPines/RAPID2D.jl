@@ -1,6 +1,10 @@
 # Shared pieces of the coupled-step examples: a current-carrying column in a pure toroidal
-# field, toroidal loops around it, and the plasma flux each loop links.
-# `include("common.jl")` from a script in this directory.
+# field, toroidal loops around it, the plasma flux each loop links, and the lumped circuit
+# model the plots compare against. `include("common.jl")` from a script in this directory.
+#
+# A step refreshes the collision rates at its end, before `callback_after_step` runs. A
+# callback that changes n, T or u must refresh them itself, or the next step uses the rates
+# of the old state: `RAPID2D.update_transport_quantities!(RP)`.
 
 include(joinpath(@__DIR__, "..", "common.jl"))
 
@@ -57,6 +61,54 @@ plasma_current(RP, J) = sum(J) * RP.G.dR * RP.G.dZ
 
 # Plasma flux through each loop, 2π Σ G(r_loop; r) J dA.
 flux_at_coils(RP, J) = 2π .* (RP.coil_system.Green_grid2coils * vec(J)) .* (RP.G.dR * RP.G.dZ)
+
+# ── the lumped model: the column as one plasma loop ────────────────────────────────
+# One loop carrying a uniform current over the cells the column fills (area S, a = √(S/π)):
+# L_p = μ0 R (ln(8R/a) − 7/4); the electrons' inertia L_kin = mₑ 2πR / (n e² S) at the present
+# density; and M, the flux through each coil per ampere of that current.
+function lumped_column(RP; R0 = 1.5)
+    G, pla, c = RP.G, RP.plasma, RP.config.constants
+    col = findall(>(0), pla.ne)
+    S = length(col) * G.dR * G.dZ
+    J = zeros(size(pla.ne))
+    J[col] .= 1.0
+    return (;
+        L_p = c.μ0 * R0 * (log(8R0 / sqrt(S / π)) - 7 / 4),
+        L_kin = c.me * 2π * R0 / (mean(pla.ne[col]) * c.ee^2 * S),
+        M = flux_at_coils(RP, J) ./ plasma_current(RP, J),
+        S,
+    )
+end
+
+# Resistance of the column to a uniform loop voltage, 1/R_p = Σ σ dA / (2πR), with the Coulomb
+# conductivity σ = n e² / (mₑ ν), which does not depend on n (ν ∝ n).
+function column_resistance(RP)
+    G, pla, c = RP.G, RP.plasma, RP.config.constants
+    col = findall(>(0), pla.ne)
+    return 1 / (sum(@. c.ee^2 * pla.ne[col] / (c.me * pla.ν_ei_eff[col] * 2π * G.R2D[col])) * G.dR * G.dZ)
+end
+
+# Circuits in flux form, dΨ/dt = V − R I with Ψ = L I, by RK4 over the times `t` from
+# I(t[1]) = I0; L(t) and R(t) are matrices given as functions of time. Where L jumps, Ψ stays
+# continuous, as the circuit equations require.
+function circuits(L, R, V, I0, t; substeps = 20)
+    f(τ, Ψ) = V .- R(τ) * (L(τ) \ Ψ)
+    Ψ = L(t[1]) * I0
+    I = [I0]
+    for k in 2:length(t)
+        h = (t[k] - t[k - 1]) / substeps
+        for j in 1:substeps
+            τ = t[k - 1] + (j - 1) * h
+            k1 = f(τ, Ψ)
+            k2 = f(τ + h / 2, Ψ .+ h / 2 .* k1)
+            k3 = f(τ + h / 2, Ψ .+ h / 2 .* k2)
+            k4 = f(τ + h, Ψ .+ h .* k3)
+            Ψ = Ψ .+ h / 6 .* (k1 .+ 2k2 .+ 2k3 .+ k4)
+        end
+        push!(I, L(t[k]) \ Ψ)
+    end
+    return I
+end
 
 # Where things sit: the current density (scaled to its peak), the wall, and the loops.
 function plot_layout(RP; J = current_density(RP), title = "layout")

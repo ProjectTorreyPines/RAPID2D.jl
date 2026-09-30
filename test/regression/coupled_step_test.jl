@@ -68,7 +68,31 @@
     # Plasma flux through each loop, 2π Σ G(r_loop; r) J dA.
     flux_at_coils(RP, J) = 2π .* (RP.coil_system.Green_grid2coils * vec(J)) .* (RP.G.dR * RP.G.dZ)
 
-    # Run to t_end with a callback after every step; progress lines are dropped.
+    # The column as one loop of uniform current over the cells it fills (area S): L_p, the
+    # electrons' inertia L_kin at the present density, and M, each coil's flux per ampere.
+    function lumped_column(RP; R0 = 1.5)
+        G, pla, c = RP.G, RP.plasma, RP.config.constants
+        col = findall(>(0), pla.ne)
+        S = length(col) * G.dR * G.dZ
+        J = zeros(size(pla.ne))
+        J[col] .= 1.0
+        return (;
+            L_p = c.μ0 * R0 * (log(8R0 / sqrt(S / π)) - 7 / 4),
+            L_kin = c.me * 2π * R0 / (sum(pla.ne[col]) / length(col) * c.ee^2 * S),
+            M = flux_at_coils(RP, J) ./ plasma_current(RP, J),
+        )
+    end
+
+    # Resistance of the column to a uniform loop voltage, 1/R_p = Σ σ dA / (2πR), σ = n e²/(mₑ ν).
+    function column_resistance(RP)
+        G, pla, c = RP.G, RP.plasma, RP.config.constants
+        col = findall(>(0), pla.ne)
+        return 1 / (sum(@. c.ee^2 * pla.ne[col] / (c.me * pla.ν_ei_eff[col] * 2π * G.R2D[col])) * G.dR * G.dZ)
+    end
+
+    # Run to t_end with a callback after every step; progress lines are dropped. A callback
+    # that changes the plasma state calls RAPID2D.update_transport_quantities!: the step
+    # refreshes the collision rates before the callback, not after it.
     function run_quiet!(RP; after = nothing)
         redirect_stdout(devnull) do
             run_simulation!(RP; callback_after_step = after)
@@ -103,12 +127,14 @@ end
 
 @testitem "Coupled step: loop flux with the density doubled" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
     # A driven column beside a superconducting loop, which must keep L_c I_c + Φ_p = 0. At t1
-    # every electron and ion is cloned with its own velocity (n → 2n): the column keeps its own
-    # flux, so its current barely moves, and the loop current must not move either.
+    # every electron and ion is cloned with its own velocity (n → 2n). The fluxes
+    # (L_p + L_kin) I_p + M I_c and L_c I_c + M I_p cannot jump, and L_kin halves: the current
+    # rises by under 2 % (it does not double), the drift halves, the loop current holds.
     t1 = 0.75e-3
     RP = column(; t_end = 1.5e-3)
     Lc = add_loop!(RP, 1.2, 0.8)
     initialize_coil_system!(RP)
+    m = lumped_column(RP)
     t, Ip, Ic, Ic_flux = Float64[], Float64[], Float64[], Float64[]
     doubled = Ref(false)
     run_quiet!(
@@ -121,25 +147,31 @@ end
             if !doubled[] && rp.time_s >= t1 - 1.0e-12
                 rp.plasma.ne .*= 2
                 rp.plasma.ni .*= 2
+                RAPID2D.update_transport_quantities!(rp)
                 doubled[] = true
             end
         end
     )
     flux_error(ks) = maximum(abs.(Ic[ks] .- Ic_flux[ks])) / maximum(abs.(Ic_flux[ks]))
     before, later = findall(<(t1 - 1.0e-12), t), findall(>=(t1 + 50.0e-6), t)
-    k1 = before[end]
+    kd = before[end] + 1   # the doubling step, recorded just before it
+    L_before = [m.L_p + m.L_kin m.M[1]; m.M[1] Lc]
+    L_after = [m.L_p + m.L_kin / 2 m.M[1]; m.M[1] Lc]
+    jump = (L_after \ (L_before * [Ip[kd], Ic[kd]]))[1] / Ip[kd]
+    rise = Ip[kd + 1] / Ip[kd]
 
     @test flux_error(before) < 1.0e-3
-    @test abs(Ip[k1 + 2] - Ip[k1]) / Ip[k1] < 0.1
-    # The loop sees only the halved drift and loses its current.
+    @test abs(rise - 1) < 0.1   # the current does not double
+    # The loop answers the halved drift instead: it jumps to about zero, and the plasma
+    # current, pushed by it, drops instead of rising.
+    @test_broken abs(rise - jump) < 0.005
     @test_broken flux_error(later) < 1.0e-2
 end
 
 @testitem "Coupled step: coil-driven column" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
-    using RAPID2D.Statistics
-    # No loop voltage; a 10 V coil at R = 0.6 m drives the column. Prediction: the coil and a
-    # single-filament plasma loop (uniform current, with the electrons' kinetic inductance),
-    #   [L_c M; M L_p + L_kin] d/dt [I_c; I_p] = [V − R_c I_c; −R_p I_p],   R_p = ν L_kin.
+    # No loop voltage; a 10 V coil at R = 0.6 m drives the column. Prediction: the coil and the
+    # column as one loop of uniform current, with the electrons' inertia L_kin,
+    #   [L_c M; M L_p + L_kin] d/dt [I_c; I_p] = [V − R_c I_c; −R_p I_p].
     V, Rcoil, R0, a = 10.0, 1.0e-4, 1.5, 0.3
     function driven(threshold)
         RP = column(; E0 = 0.0, cenR = R0, radius = a, threshold)
@@ -148,16 +180,11 @@ end
         run_quiet!(RP)
         return RP, Lc
     end
-    # the model at t_end, RK4; read after the run (n and Te are fixed, so ν is constant)
+    # the model at t_end, RK4; read after the run (n and Te are fixed, so R_p is constant)
     function two_circuit(RP, Lc; nsteps = 10_000)
-        pla, c = RP.plasma, RP.config.constants
-        col = findall(>(0), pla.ne)
-        Lk = c.me / (mean(pla.ne[col]) * c.ee^2) * (2π * R0 / (π * a^2))
-        Juni = zeros(size(pla.ne))
-        Juni[col] .= 1.0
-        M = flux_at_coils(RP, Juni)[1] / plasma_current(RP, Juni)
-        A = [Lc M; M (c.μ0 * R0 * (log(8R0 / a) - 7 / 4) + Lk)]
-        Rp = mean(pla.ν_ei_eff[col]) * Lk
+        m = lumped_column(RP; R0)
+        A = [Lc m.M[1]; m.M[1] (m.L_p + m.L_kin)]
+        Rp = column_resistance(RP)
         f(x) = A \ [V - Rcoil * x[1], -Rp * x[2]]
         x, h = [0.0, 0.0], RP.time_s / nsteps
         for _ in 1:nsteps
@@ -194,6 +221,7 @@ end
             RP; after = rp -> begin
                 rp.plasma.ne .*= 1 + γ * rp.dt
                 rp.plasma.ni .*= 1 + γ * rp.dt
+                RAPID2D.update_transport_quantities!(rp)
             end
         )
         Φ = flux_at_coils(RP, current_density(RP))[1]
@@ -274,6 +302,7 @@ end
                 for A in (pla.ne, pla.ni, pla.ue_para, pla.ui_para)
                     A .= circshift(A, (0, 1))
                 end
+                RAPID2D.update_transport_quantities!(rp)
                 J_shifted = current_density(rp)
                 ΔI = -(rp.coil_system.mutual_inductance \ (flux_at_coils(rp, J_shifted) .- flux_at_coils(rp, J)))
                 F_pred[] = force_Z(J_shifted, I_before .+ ΔI)

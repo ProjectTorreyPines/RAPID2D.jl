@@ -47,6 +47,7 @@ function shift_and_record(rp)
         for A in (pla.ne, pla.ni, pla.ue_para, pla.ui_para)
             A .= circshift(A, (0, 1))   # up by one cell
         end
+        RAPID2D.update_transport_quantities!(rp)   # collision rates follow the plasma
         J_shifted = current_density(rp)
         pred.ΔI .= -(rp.coil_system.mutual_inductance \ (flux_at_coils(rp, J_shifted) .- flux_at_coils(rp, J)))
         pred.F[] = force_Z(J_shifted, pred.I_before .+ pred.ΔI)
