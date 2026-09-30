@@ -79,7 +79,7 @@
         return (;
             L_p = c.μ0 * R0 * (log(8R0 / sqrt(S / π)) - 7 / 4),
             L_kin = c.me * 2π * R0 / (sum(pla.ne[col]) / length(col) * c.ee^2 * S),
-            M = flux_at_coils(RP, J) ./ plasma_current(RP, J),
+            M = RP.coil_system.n_total > 0 ? flux_at_coils(RP, J) ./ plasma_current(RP, J) : Float64[],
         )
     end
 
@@ -123,6 +123,34 @@ end
     @test maximum(maximum(abs.(I_open[k] .- exact[k])) for k in eachindex(exact)) < 1.0e-12 * I0
     # Without plasma the 1 A threshold has nothing to act on, yet the coils stay frozen.
     @test_broken I_default[end][1] < 0.1 * I0
+end
+
+@testitem "Coupled step: density doubled, column alone" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+    # The column alone; at t1 every electron and ion is cloned with its own velocity (n → 2n).
+    # Its self-inductance holds the flux (L_p + L_kin) I_p, and the electrons' inertia L_kin
+    # halves: the current rises by (L_p + L_kin)/(L_p + L_kin/2) and the drift halves. The
+    # coupled step gets this right today; the check guards it.
+    t1 = 0.75e-3
+    RP = column(; t_end = t1 + 10.0e-6)
+    m = lumped_column(RP)
+    t, Ip = Float64[], Float64[]
+    doubled = Ref(false)
+    run_quiet!(
+        RP; after = rp -> begin
+            push!(t, rp.time_s)
+            push!(Ip, plasma_current(rp, current_density(rp)))
+            if !doubled[] && rp.time_s >= t1 - 1.0e-12
+                rp.plasma.ne .*= 2
+                rp.plasma.ni .*= 2
+                RAPID2D.update_transport_quantities!(rp)
+                doubled[] = true
+            end
+        end
+    )
+    kd = findfirst(>=(t1 - 1.0e-12), t)   # the doubling step, recorded just before it
+    jump = (m.L_p + m.L_kin) / (m.L_p + m.L_kin / 2)
+
+    @test abs(Ip[kd + 1] / Ip[kd] - jump) < 0.005
 end
 
 @testitem "Coupled step: loop flux with the density doubled" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
