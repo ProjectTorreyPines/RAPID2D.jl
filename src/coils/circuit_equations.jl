@@ -440,6 +440,32 @@ function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT = csys.time_s) whe
 end
 
 
+"""
+    advance_LR_circuit_step!(csys, G, Jϕ, t = csys.time_s)
+
+One backward-Euler step of the coil circuits with the plasma's flux:
+
+    (M + Δt R) Iⁿ⁺¹ = M Iⁿ + Δt V − 2π [ψ_pla(r_c; Jϕ) − ψ_pla,c],
+
+with ψ_pla,c the flux each coil used last (`Coil.ψ_pla`), which this then sets to
+ψ_pla(r_c; Jϕ). Used when the coupled solve does not run.
+"""
+function advance_LR_circuit_step!(
+        csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}, t::FT = csys.time_s
+    ) where {FT <: AbstractFloat}
+    if csys.n_total == 0
+        return nothing
+    end
+    ψ_last = init_unset_coil_plasma_flux!(csys, G, Jϕ)
+    ψ_now = plasma_flux_at_coils(csys, G, Jϕ)
+    circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, t) .- 2π .* (ψ_now .- ψ_last)
+    set_all_currents!(csys, csys.inv_A_LR_circuit * circuit_rhs)
+    csys.coils.ψ_pla = ψ_now
+    csys.time_s += csys.Δt
+    return nothing
+end
+
+
 function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT = csys.time_s) where {FT <: AbstractFloat}
     if csys.n_total == 0
         return nothing

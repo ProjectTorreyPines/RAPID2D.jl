@@ -4,10 +4,6 @@
 # must keep, and time-step refinement. examples/coupled_step/ has the same problems with
 # their physics written out and plotted.
 #
-# @test_broken marks a defect of the current scheme, inherited from MATLAB (internal notes,
-# issues/); it flips to a failure the day the defect is fixed.
-#   - coils-advance-only-in-coupled-solve: below the Ampère threshold the coil currents do
-#     not advance.
 
 @testsnippet CoupledStepSetup begin
     # A uniform column at rest in a pure toroidal field (Eϕ = E0·R̄/R), Coulomb drag only;
@@ -90,9 +86,9 @@
     # Run to t_end with a callback after every step; progress lines are dropped. A callback
     # that changes the plasma state calls RAPID2D.update_transport_quantities!: the step
     # refreshes the collision rates before the callback, not after it.
-    function run_quiet!(RP; after = nothing)
+    function run_quiet!(RP; before = nothing, after = nothing)
         redirect_stdout(devnull) do
-            run_simulation!(RP; callback_after_step = after)
+            run_simulation!(RP; callback_before_step = before, callback_after_step = after)
         end
         return RP
     end
@@ -118,8 +114,8 @@ end
     exact = accumulate((I, _) -> step * I, eachindex(I_open); init = [I0, 0.0])
 
     @test maximum(maximum(abs.(I_open[k] .- exact[k])) for k in eachindex(exact)) < 1.0e-12 * I0
-    # Without plasma the 1 A threshold has nothing to act on, yet the coils stay frozen.
-    @test_broken I_default[end][1] < 0.1 * I0
+    # without plasma the 1 A threshold has nothing to act on: the same recursion
+    @test maximum(maximum(abs.(I_default[k] .- exact[k])) for k in eachindex(exact)) < 1.0e-12 * I0
 end
 
 @testitem "Coupled step: a pre-charged loop induces nothing" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
@@ -241,8 +237,42 @@ end
     # The lumped loop assumes a uniform current; the coil's field falls off across the column.
     @test abs(Ip - Ip_model) < 0.05 * abs(Ip_model)
     @test abs(RP.coil_system.coils[1].current - Ic_model) < 0.02 * abs(Ic_model)
-    # The column starts at zero current, under the 1 A threshold: neither current moves.
-    @test_broken abs(plasma_current(RP_default, current_density(RP_default))) > 0.5 * abs(Ip_model)
+    # Under the default 1 A threshold the coil still drives the column from zero current.
+    @test abs(plasma_current(RP_default, current_density(RP_default)) - Ip) < 0.02 * abs(Ip)
+end
+
+@testitem "Coupled step: a decaying current passes the gate and dies" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+    # A column driven for 1 ms, then left without loop voltage: its current decays to zero.
+    # Under the default 1 A threshold it must decay through the threshold the same way;
+    # nothing should keep pushing once the coupled solve stops.
+    function decay(threshold)
+        RP = column(; threshold, t_end = 3.5e-3)
+        off = rp -> if rp.time_s >= 1.0e-3 - 1.0e-12
+            fill!(rp.fields.LV_ext, 0.0)
+            fill!(rp.fields.Eϕ_ext, 0.0)
+            fill!(rp.fields.E_para_ext, 0.0)
+        end
+        Ip = Float64[]
+        run_quiet!(RP; before = off, after = rp -> push!(Ip, plasma_current(rp, current_density(rp))))
+        return Ip
+    end
+    Ip_open, Ip_default = decay(0.0), decay(1.0)
+
+    @test abs(Ip_open[end]) < 1.0e-2
+    @test abs(Ip_default[end]) < 1.0e-2
+end
+
+@testitem "Coupled step: the current does not jump back when the gate opens" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+    # A thin column (1e14 m⁻³) under a weak loop voltage: its current grows through the
+    # default 1 A threshold over many steps, as in an avalanche. When the coupled solve takes
+    # over it must start from the flux of the current already there, not from zero.
+    RP = column(; E0 = 0.003, n0 = 1.0e14, threshold = 1.0, t_end = 1.0e-3)
+    Ip = Float64[]
+    run_quiet!(RP; after = rp -> push!(Ip, plasma_current(rp, current_density(rp))))
+    k = findfirst(>=(1.0), Ip)
+
+    @test k !== nothing && 1 < k < length(Ip)   # the gate opens inside the run
+    @test all(diff(Ip) .>= -1.0e-9 * maximum(Ip))
 end
 
 @testitem "Coupled step: growing density, time step halved" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin

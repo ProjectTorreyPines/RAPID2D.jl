@@ -1712,11 +1712,71 @@ function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT} = RP.fields; plasma
         calculate_B_from_ψ!(RP.G, F.ψ_self, F.BR_self, F.BZ_self)
 
         if update_Eϕ_self && RP.flags.E_para_self_EM
-            @. F.Eϕ_self = - (F.ψ_self - old_ψ_self) / (RP.G.R2D * RP.flags.Ampere_nstep * RP.dt)
+            @. F.Eϕ_self = - (F.ψ_self - old_ψ_self) / (RP.G.R2D * RP.dt)
         end
 
         return RP
     end # @timeit
+end
+
+"""
+    coil_flux_on_grid(RP, I)
+
+The flux ψ [Wb/rad] that coil currents `I` alone make on the grid: the Grad–Shafranov
+solution with the in-grid coils as sources and the coils' Green function on the boundary.
+"""
+function coil_flux_on_grid(RP::RAPID{FT}, I::AbstractVector{FT}) where {FT <: AbstractFloat}
+    G, OP, csys = RP.G, RP.operators, RP.coil_system
+    RHS = -RP.config.constants.μ0 .* G.R2D .* distribute_coil_currents_to_Jϕ(csys, G; currents = I)
+    RHS[G.BDY_idx] .= csys.Green_coils2bdy * I
+    OP.ΔGS_solver.F === nothing && factorize!(OP.ΔGS_solver, OP.ΔGS)
+    ψ = similar(RHS)
+    solve!(vec(ψ), OP.ΔGS_solver, vec(RHS))
+    return ψ
+end
+
+"""
+    set_Eϕ_self_from_coils!(RP, ΔI)
+
+Below the Ampère gate the induced field is the coils' alone, Eϕ_self = −ψ_coils(ΔI)/(R Δt),
+with ΔI the coil currents' change over the step. The plasma's own inductance is left out by
+design: taken explicitly it is unstable for L ≫ L_kin. E∥ follows; its external part stays
+as the last step projected it.
+"""
+function set_Eϕ_self_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
+    F = RP.fields
+    F.Eϕ_self_prev .= F.Eϕ_self
+    if isempty(ΔI) || all(iszero, ΔI)
+        fill!(F.Eϕ_self, zero(FT))
+    else
+        ψ = coil_flux_on_grid(RP, ΔI)
+        @. F.Eϕ_self = -ψ / (RP.G.R2D * RP.dt)
+    end
+    if RP.flags.E_para_self_EM
+        @. F.E_para_self_EM = F.Eϕ_self * F.bϕ
+    end
+    @. F.E_para_tot = F.E_para_ext + F.E_para_self_ES + F.E_para_self_EM
+    return RP
+end
+
+"""
+    advance_coils!(RP) -> ΔI
+
+Advance the coil currents one step outside the coupled solve: their circuits with the
+plasma's flux change since each coil's last update, the plasma current taken at the start
+of the step. Returns the change of the coil currents (empty without coils).
+"""
+function advance_coils!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    csys = RP.coil_system
+    csys.n_total == 0 && return FT[]
+    if RP.dt != csys.Δt || csys.θimp != one(FT)
+        csys.Δt = RP.dt
+        csys.θimp = one(FT)
+        calculate_circuit_matrices!(csys)
+    end
+    I_before = get_all_currents(csys)
+    advance_LR_circuit_step!(csys, RP.G, RP.plasma.Jϕ, RP.time_s)
+    return get_all_currents(csys) .- I_before
 end
 
 

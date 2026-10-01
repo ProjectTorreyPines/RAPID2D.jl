@@ -111,32 +111,40 @@ end
     solve_timestep!(RP, dt = RP.dt)
 
 Advance the state from tⁿ to tⁿ⁺¹ on the inputs `prepare_timestep!` set: the momentum
-equation (with Ampère above the current threshold), the densities, the ion velocity and the
-temperatures, the global J×B force and the neutral gas.
+equation and the coil circuits (coupled with Ampère above the current threshold; below it the
+coils advance on their own and Ampère only keeps `ψ_self`), the densities, the ion velocity
+and the temperatures, the global J×B force and the neutral gas.
 """
 function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "solve_timestep!" begin
         I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
 
-        # For high current: update electromagnetic fields using Ampere's law
-        if RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
-            if RP.flags.E_para_self_EM && RP.flags.ud_evolve
-                # Solve the coupled drift velocity and magnetic field equations
-                # @timeit RAPID_TIMER "solve_coupled_momentum_Ampere_equations_with_coils!" solve_coupled_momentum_Ampere_equations_with_coils!(RP)
-                solve_combined_momentum_Ampere_equations_with_coils!(RP)
-            else
-                # Update drift velocity separately
+        above_gate = RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
+        if above_gate && RP.flags.E_para_self_EM && RP.flags.ud_evolve
+            # u∥, ψ_self and the coil currents together
+            solve_combined_momentum_Ampere_equations_with_coils!(RP)
+        else
+            # The coils advance on their own circuits, the plasma entering through the flux
+            # each coil remembers
+            ΔI_coils = advance_coils!(RP)
+            if above_gate
                 if RP.flags.ud_evolve
                     update_ue_para!(RP)
                 end
-
-                # Solve the Grad-Shafranov equation for the magnetic field
+                update_Jϕ!(RP)
                 @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP)
-            end
-        else
-            # For low current: only update drift velocity
-            if RP.flags.ud_evolve
-                update_ue_para!(RP)
+            else
+                # Below the gate the induced field is the coils' alone (see
+                # set_Eϕ_self_from_coils!), and ψ_self stays the field of the present currents,
+                # so the coupled solve starts from it when the gate opens
+                RP.flags.Ampere && set_Eϕ_self_from_coils!(RP, ΔI_coils)
+                if RP.flags.ud_evolve
+                    update_ue_para!(RP)
+                end
+                if RP.flags.Ampere
+                    update_Jϕ!(RP)
+                    @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP; update_Eϕ_self = false)
+                end
             end
         end
 
