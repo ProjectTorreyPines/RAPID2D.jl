@@ -41,6 +41,48 @@ end
 
 
 """
+    update_Jϕ!(RP)
+
+`Jϕ` of the present state: (qₑ nₑ uₑ∥ + Z e nᵢ uᵢ∥) bϕ, electrons and ions.
+"""
+function update_Jϕ!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    F = RP.fields
+    @unpack qe, ee = RP.config.constants
+    # `ni·Z` is the ion CHARGE density. One species, so it is a product and not a sum; `Z`
+    # comes from the species itself and cannot lag behind it.
+    Z_i = FT(bulk_ion_charge(RP))
+    @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+    return RP
+end
+
+"""
+    initialize_coupled_fields!(RP)
+
+Before a run's first step, make the coils' memory and the self field consistent with the
+initial state: `Jϕ` from the initial densities and velocities, every coil's `ψ_pla` from it,
+and, if the run starts with currents and Ampère is on, `ψ_self` from the Grad–Shafranov
+solution of the initial plasma and coil currents, with no induced field yet. Without it the
+first step reads the flux of those currents appearing as a sudden change, and the plasma
+screens it.
+"""
+function initialize_coupled_fields!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    update_Jϕ!(RP)
+    csys = RP.coil_system
+    if csys.n_total > 0
+        csys.coils.ψ_pla = plasma_flux_at_coils(csys, RP.G, RP.plasma.Jϕ)
+    end
+    has_current = any(!iszero, RP.plasma.Jϕ) || (csys.n_total > 0 && any(!iszero, csys.coils.current))
+    if RP.flags.Ampere && has_current
+        solve_Ampere_equation!(RP; update_Eϕ_self = false)
+        fill!(RP.fields.Eϕ_self, zero(FT))
+        fill!(RP.fields.Eϕ_self_prev, zero(FT))
+        combine_external_and_self_fields!(RP)
+    end
+    return RP
+end
+
+"""
     prepare_timestep!(RP)
 
 Set the inputs of the next step from the current state and time tⁿ, leaving the state itself
@@ -60,15 +102,7 @@ function prepare_timestep!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         end
 
         # Current calculations
-        @timeit RAPID_TIMER "current_calculation" begin
-            pla = RP.plasma
-            F = RP.fields
-            @unpack qe, ee = RP.config.constants
-            # `ni·Z` is the ion CHARGE density. One species, so it is a product and not
-            # a sum; `Z` comes from the species itself and cannot lag behind it.
-            Z_i = FT(bulk_ion_charge(RP))
-            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
-        end
+        @timeit RAPID_TIMER "current_calculation" update_Jϕ!(RP)
     end
     return RP
 end
@@ -203,6 +237,10 @@ function run_simulation!(
             RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= zero(FT)
             RP.flags.secondary_electron && RP.flags.update_ni_independently &&
                 @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
+
+            # The coils' memory and the self field start from the initial currents. A resumed
+            # run keeps both: they are state.
+            initialize_coupled_fields!(RP)
         end
 
         # Establish the invariant the loop only maintains: its refresh runs at the END of

@@ -2338,7 +2338,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             @. pla.Rue_ei += pla.ν_ei_eff * (-θimp * pla.ue_para)
         end
 
-        @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+        update_Jϕ!(RP)
 
         # Update coil currents, with the plasma flux they were computed from
         if RP.coil_system.n_total > 0

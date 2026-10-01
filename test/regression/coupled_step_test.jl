@@ -122,6 +122,20 @@ end
     @test_broken I_default[end][1] < 0.1 * I0
 end
 
+@testitem "Coupled step: a pre-charged loop induces nothing" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+    # A column at rest, no loop voltage, beside a superconducting loop that already carries
+    # 1 kA. Nothing changes, so nothing is induced. The loop's flux must be in ψ_self from the
+    # start; otherwise the first step reads its appearance as a sudden flux change and the
+    # column screens it.
+    RP = column(; E0 = 0.0, t_end = 0.1e-3)
+    add_loop!(RP, 1.2, 0.8; I0 = 1000.0)
+    initialize_coil_system!(RP)
+    Ip = Float64[]
+    run_quiet!(RP; after = rp -> push!(Ip, plasma_current(rp, current_density(rp))))
+
+    @test maximum(abs, Ip) < 1.0e-3 * 1000.0
+end
+
 @testitem "Coupled step: density doubled, column alone" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
     # The column alone; at t1 every electron and ion is cloned with its own velocity (n → 2n).
     # Its self-inductance holds the flux (L_p + L_kin) I_p, and the electrons' inertia L_kin
