@@ -1824,6 +1824,30 @@ end
     @test vec(RP.fields.ψ_self) ≈ RP.operators.ΔGS.matrix \ vec(RP.operators.RHS) rtol = 1.0e-12
 end
 
+@testitem "Ampère: without the coupled solve, Eϕ_self is the change of ψ over one step" begin
+    using RAPID2D: solve_Ampere_equation!
+    # Ampère runs every step, so the induced field is −Δψ/(R Δt). It used to be divided by
+    # Ampere_nstep Δt, ten times too small, a leftover of solving Ampère every nstep steps.
+    FT = Float64
+    config = SimulationConfig{FT}(
+        device_Name = "manual", NR = 12, NZ = 12, prefilled_gas_pressure = 5.0e-3, R0B0 = 1.0, dt = 1.0e-6,
+    )
+    config.Output_path = mktempdir()
+    RP = RAPID{FT}(config)
+    RP.flags = SimulationFlags{FT}(Ampere = true, E_para_self_EM = true)
+    initialize!(RP)
+    G = RP.G
+    RP.plasma.Jϕ .= 0.0
+    RP.plasma.Jϕ[G.nodes.in_wall_nids] .= 1.0e4 .* exp.(-(vec(G.Z2D)[G.nodes.in_wall_nids] ./ 0.3) .^ 2)
+    solve_Ampere_equation!(RP)
+    ψ_before = copy(RP.fields.ψ_self)
+    RP.plasma.Jϕ .*= 1.1
+    solve_Ampere_equation!(RP)
+
+    @test RP.flags.Ampere_nstep != 1                 # so the old divisor would show
+    @test RP.fields.Eϕ_self ≈ -(RP.fields.ψ_self .- ψ_before) ./ (G.R2D .* RP.dt) rtol = 1.0e-12
+end
+
 @testitem "Ampère: the combined momentum–Ampère system is factorized once per step, not per Picard iteration" begin
     using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
     FT = Float64
