@@ -6,6 +6,9 @@
 # with L_kin = mₑ 2πR / (n e² πa²) the electrons' inertia, R_p the Coulomb resistance of the
 # column, and M the coil's flux per ampere of that uniform current. Two runs, as in
 # two_coils.jl: Ampère from the first step (threshold 0), and the default threshold (1 A).
+# Under the 1 A gate the first step runs without the column's self-inductance, so the current
+# jumps in that one step before the coupled solve takes over; the gate is meant for currents
+# that grow from breakdown.
 #
 #   julia --project=examples examples/coupled_step/coil_driven_column.jl
 
