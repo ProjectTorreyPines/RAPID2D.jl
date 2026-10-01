@@ -237,3 +237,73 @@ end
     residual = M * (rec.I[1] - I0) + dt * r_c .* rec.I[1] + 2π * (rec.ψ[1] - ψ0)
     @test maximum(abs, residual) < 1.0e-10 * (maximum(abs, M * rec.I[1]) + 2π * maximum(abs, rec.ψ[1]))
 end
+
+@testitem "Split step: above the gate without the coupled solve, the circuits take the plasma's flux change" setup = [CoilFluxColumn] begin
+    # With ud_evolve off the coupled solve does not run, and the coils advance on their own
+    # circuits with the plasma term, the change from the flux each coil remembers. A column
+    # with a fixed drift whose density grows by 1 % after every step: the flux balance must
+    # close every step, as it does in the coupled solve.
+    RP = column_with_loops([(1.2, 0.8, 1.0e-3, 0.0, "loop"), (0.6, 0.0, 1.0e-4, 10.0, "OH")])
+    RP.flags.ud_evolve = false
+    RP.plasma.ue_para[RP.plasma.ne .> 0] .= -1.0e5
+    rec = (I = Vector{Float64}[], ψ = Vector{Float64}[])
+    quiet() do
+        run_simulation!(
+            RP; callback_after_step = rp -> begin
+                push!(rec.I, copy(rp.coil_system.coils.current))
+                push!(rec.ψ, copy(rp.coil_system.coils.ψ_pla))
+                grow!(rp)
+            end
+        )
+    end
+    csys = RP.coil_system
+    M, r_c, V, dt = csys.mutual_inductance, get_all_resistances(csys), get_all_voltages_at_time(csys), RP.dt
+    residual(k) = M * (rec.I[k] - rec.I[k - 1]) + dt * r_c .* rec.I[k] + 2π * (rec.ψ[k] - rec.ψ[k - 1]) - dt * V
+    scale(k) = maximum(abs, M * rec.I[k]) + dt * maximum(abs, V)
+
+    @test RP.diagnostics.ampere_picard.nsolve == 0      # the coupled solve never ran
+    @test maximum(abs, rec.ψ[end] .- rec.ψ[1]) > 0      # the coils saw the plasma change
+    @test maximum(maximum(abs, residual(k)) / scale(k) for k in 2:length(rec.I)) < 1.0e-10
+end
+
+@testitem "Split step: the coils step with the run's Δt" setup = [CoilFluxColumn] begin
+    # advance_coils! rebuilds the circuit matrices when the run's Δt (or θ) differs from the
+    # one they were built with. A resistive loop below the gate, its circuit built for 2Δt:
+    # one step must decay it by L/(L + Δt R).
+    RP = column_with_loops([(1.2, 0.8, 0.1, 0.0, "loop")])
+    csys = RP.coil_system
+    csys.coils.current = [100.0]
+    csys.Δt = 2 * RP.dt
+    RAPID2D.calculate_circuit_matrices!(csys)
+    L, R = csys.mutual_inductance[1, 1], get_all_resistances(csys)[1]
+    ΔI = RAPID2D.advance_coils!(RP; plasma = false)
+
+    @test csys.Δt == RP.dt
+    @test csys.coils.current[1] ≈ 100.0 * L / (L + RP.dt * R) rtol = 1.0e-12
+    @test ΔI[1] ≈ csys.coils.current[1] - 100.0 rtol = 1.0e-12
+end
+
+@testitem "Coupled step: the alternative solver takes the same step as the combined one" setup = [CoilFluxColumn] begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!, solve_coupled_momentum_Ampere_equations_with_coils!
+    # The two coupled solvers assemble the same equations differently. Two identical columns
+    # with a resistive loop and a powered coil, a few steps in; then one step with each, both
+    # iterated to a tight tolerance without floors.
+    loops = [(1.2, 0.8, 1.0e-3, 0.0, "loop"), (0.6, 0.0, 1.0e-4, 10.0, "OH")]
+    a, b = column_with_loops(loops; t_end = 50.0e-6), column_with_loops(loops; t_end = 50.0e-6)
+    for RP in (a, b)
+        RAPID2D.update_transport_quantities!(RP)
+        quiet(() -> run_simulation!(RP))
+        prepare_timestep!(RP)
+    end
+    tight = (tolerance = 1.0e-12, max_iter = 200, E_floor = 0.0, I_floor = 0.0)
+    solve_combined_momentum_Ampere_equations_with_coils!(a; tight...)
+    solve_coupled_momentum_Ampere_equations_with_coils!(b; tight...)
+    agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
+
+    @test a.diagnostics.ampere_picard.nunconverged == 0 && b.diagnostics.ampere_picard.nunconverged == 0
+    @test agree(b.plasma.ue_para, a.plasma.ue_para)
+    @test agree(b.fields.ψ_self, a.fields.ψ_self)
+    @test agree(b.fields.Eϕ_self, a.fields.Eϕ_self)
+    @test agree(b.coil_system.coils.current, a.coil_system.coils.current)
+    @test agree(b.coil_system.coils.ψ_pla, a.coil_system.coils.ψ_pla)
+end
