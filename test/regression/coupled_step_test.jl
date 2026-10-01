@@ -13,7 +13,11 @@
             E0 = 0.3, Te = 1.0, n0 = 1.0e16, cenR = 1.5, cenZ = 0.0, radius = 0.3, threshold = 0.0,
             dt = 5.0e-6, t_end = 1.0e-3, moving = false,
         )
-        config = regression_config(;
+        # Built here, not with RegressionCommon's helpers: under ReTestItems a snippet is its
+        # own module and cannot call another snippet's functions. cleanup = false, because the
+        # RAPID constructor opens ADIOS handles there that a finalizer closes later.
+        config = SimulationConfig{Float64}(;
+            device_Name = "manual", Output_path = mktempdir(; cleanup = false),
             manual = ManualSetup{Float64}(BR = 0.0, BZ = 0.0, Eϕ = E0),
             NR = 30, NZ = 50, R0B0 = 3.0, prefilled_gas_pressure = 0.0,
             dt, t_end_s = t_end, snap0D_Δt_s = 10dt, snap2D_Δt_s = t_end,
@@ -28,7 +32,8 @@
             mean_ExB = moving, turb_ExB_mixing = false, FLF_nstep = 100_000,
         )
         initialize!(RP)
-        n = tophat_blob(RP.G; cenR, cenZ, radius, n0)
+        r = @. sqrt((RP.G.R2D - cenR)^2 + (RP.G.Z2D - cenZ)^2)
+        n = @. ifelse(r < radius, n0, 0.0)
         RP.plasma.ne .= n
         RP.plasma.ni .= n
         fill!(RP.plasma.Te_eV, Te)
@@ -94,7 +99,7 @@
     end
 end
 
-@testitem "Coupled step: two coils without plasma" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: two coils without plasma" tags = [:regression] setup = [CoupledStepSetup] begin
     # Loop A (1 kA) decays and induces a current in loop B. The coil circuits are backward
     # Euler, so the answer is that recursion, step for step: (M + Δt R) Iⁿ⁺¹ = M Iⁿ.
     dt, I0 = 20.0e-6, 1000.0
@@ -118,7 +123,7 @@ end
     @test maximum(maximum(abs.(I_default[k] .- exact[k])) for k in eachindex(exact)) < 1.0e-12 * I0
 end
 
-@testitem "Coupled step: a pre-charged loop induces nothing" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: a pre-charged loop induces nothing" tags = [:regression] setup = [CoupledStepSetup] begin
     # A column at rest, no loop voltage, beside a superconducting loop that already carries
     # 1 kA. Nothing changes, so nothing is induced. The loop's flux must be in ψ_self from the
     # start; otherwise the first step reads its appearance as a sudden flux change and the
@@ -132,7 +137,7 @@ end
     @test maximum(abs, Ip) < 1.0e-3 * 1000.0
 end
 
-@testitem "Coupled step: density doubled, column alone" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: density doubled, column alone" tags = [:regression] setup = [CoupledStepSetup] begin
     # The column alone; at t1 every electron and ion is cloned with its own velocity (n → 2n).
     # Its self-inductance holds the flux (L_p + L_kin) I_p, and the electrons' inertia L_kin
     # halves: the current rises by (L_p + L_kin)/(L_p + L_kin/2) and the drift halves. The
@@ -160,7 +165,7 @@ end
     @test abs(Ip[kd + 1] / Ip[kd] - jump) < 0.005
 end
 
-@testitem "Coupled step: loop flux with the density doubled" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: loop flux with the density doubled" tags = [:regression] setup = [CoupledStepSetup] begin
     # A driven column beside a superconducting loop, which must keep L_c I_c + Φ_p = 0. At t1
     # every electron and ion is cloned with its own velocity (n → 2n). The fluxes
     # (L_p + L_kin) I_p + M I_c and L_c I_c + M I_p cannot jump, and L_kin halves: the current
@@ -201,7 +206,7 @@ end
     @test flux_error(later) < 1.0e-2  # and the loop keeps its flux through it
 end
 
-@testitem "Coupled step: coil-driven column" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: coil-driven column" tags = [:regression] setup = [CoupledStepSetup] begin
     # No loop voltage; a 10 V coil at R = 0.6 m drives the column. Prediction: the coil and the
     # column as one loop of uniform current, with the electrons' inertia L_kin,
     #   [L_c M; M L_p + L_kin] d/dt [I_c; I_p] = [V − R_c I_c; −R_p I_p].
@@ -241,7 +246,7 @@ end
     @test abs(plasma_current(RP_default, current_density(RP_default)) - Ip) < 0.02 * abs(Ip)
 end
 
-@testitem "Coupled step: a decaying current passes the gate and dies" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: a decaying current passes the gate and dies" tags = [:regression] setup = [CoupledStepSetup] begin
     # A column driven for 1 ms, then left without loop voltage: its current decays to zero.
     # Under the default 1 A threshold it must decay through the threshold the same way;
     # nothing should keep pushing once the coupled solve stops.
@@ -262,7 +267,7 @@ end
     @test abs(Ip_default[end]) < 1.0e-2
 end
 
-@testitem "Coupled step: below the gate a loop does not drive the column" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: below the gate a loop does not drive the column" tags = [:regression] setup = [CoupledStepSetup] begin
     # The decay through the 1 A gate with a superconducting loop beside the column. Below the
     # gate the column is not a source of induction: its own inductance is left out, and so is
     # its flux in the loop's circuit. Were the loop's reaction fed back without L_p, it would
@@ -284,7 +289,7 @@ end
     @test count(i -> sign(Ip[i]) != sign(Ip[i - 1]), (k + 1):length(Ip)) <= 1
 end
 
-@testitem "Coupled step: the current does not jump back when the gate opens" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: the current does not jump back when the gate opens" tags = [:regression] setup = [CoupledStepSetup] begin
     # A thin column (1e14 m⁻³) under a weak loop voltage: its current grows through the
     # default 1 A threshold over many steps, as in an avalanche. When the coupled solve takes
     # over it must start from the flux of the current already there, not from zero.
@@ -297,7 +302,7 @@ end
     @test all(diff(Ip) .>= -1.0e-9 * maximum(Ip))
 end
 
-@testitem "Coupled step: growing density, time step halved" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: growing density, time step halved" tags = [:regression] setup = [CoupledStepSetup] begin
     # After every step n → n(1 + γΔt), γ = 200/s: the same history for any Δt. The
     # superconducting loop must keep L_c I_c + Φ_p = 0. On the state a step hands to the next,
     # a consistent scheme is off by that step's growth, γΔt, which halves with Δt.
@@ -321,7 +326,7 @@ end
     @test errs[1] < 0.01 && 0.4 < errs[2] / errs[1] < 0.6
 end
 
-@testitem "Coupled step: column pushed toward a loop" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: column pushed toward a loop" tags = [:regression] setup = [CoupledStepSetup] begin
     # A column (R = 1.4 m, a = 0.2 m) at its saturated current is pushed outward at 200 m/s
     # toward a superconducting loop at R = 2.3 m, outside the wall. The loop keeps its flux, so
     # it carries a current opposite to the plasma's and pushes the column back (F_R < 0).
@@ -356,7 +361,7 @@ end
     @test maximum(abs.(Ic .- Ic_flux)) < 0.02 * maximum(abs.(Ic_flux))
 end
 
-@testitem "Coupled step: column shifted inside a shell" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+@testitem "Coupled step: column shifted inside a shell" tags = [:regression] setup = [CoupledStepSetup] begin
     # An ideal shell of 24 superconducting filaments, 0.12 m outside the column. At t_on the
     # plasma state moves up one cell, a rigid shift of J. A flux-conserving shell answers with
     # ΔI = −M⁻¹ (Φ(J_shifted) − Φ(J_before)), which pushes the column back down.
