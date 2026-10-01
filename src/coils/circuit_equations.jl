@@ -457,6 +457,32 @@ function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT = csys.ti
     return csys.mutual_inductance * currents .+ csys.Δt * (voltages - (one(FT) - csys.θimp) * resistances .* currents)
 end
 
+"""
+    plasma_flux_at_coils(csys, G, Jϕ)
+
+The plasma's flux at each coil, ψ_pla(r_c) = Σ_g G(r_c; r_g) Jϕ_g dA [Wb/rad].
+"""
+function plasma_flux_at_coils(csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    return (csys.Green_grid2coils * vec(Jϕ)) .* (G.dR * G.dZ)
+end
+
+"""
+    init_unset_coil_plasma_flux!(csys, G, Jϕ)
+
+Give every coil whose `ψ_pla` is unset (`NaN`) the plasma flux of `Jϕ`, and return the
+coils' `ψ_pla`. A coil starts accounting from the plasma current it first meets: at a run's
+first step, or at the first update after it was added.
+"""
+function init_unset_coil_plasma_flux!(csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    ψ = csys.coils.ψ_pla
+    unset = isnan.(ψ)
+    if any(unset)
+        ψ[unset] .= plasma_flux_at_coils(csys, G, Jϕ)[unset]
+        csys.coils.ψ_pla = ψ
+    end
+    return ψ
+end
+
 
 """
     calculate_circuit_magnetic_energy(csys::CoilSystem{FT}) where FT

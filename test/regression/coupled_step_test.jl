@@ -4,11 +4,8 @@
 # must keep, and time-step refinement. examples/coupled_step/ has the same problems with
 # their physics written out and plotted.
 #
-# @test_broken marks two defects of the current scheme, both inherited from MATLAB (internal
-# notes, issues/); they flip to failures the day the defect is fixed.
-#   - coil-flux-misses-between-step-current-change: the circuits see the change of the
-#     electron velocity inside the coupled solve, never a current change made between solves
-#     (density, ions, motion).
+# @test_broken marks a defect of the current scheme, inherited from MATLAB (internal notes,
+# issues/); it flips to a failure the day the defect is fixed.
 #   - coils-advance-only-in-coupled-solve: below the Ampère threshold the coil currents do
 #     not advance.
 
@@ -190,10 +187,8 @@ end
 
     @test flux_error(before) < 1.0e-3
     @test abs(rise - 1) < 0.1   # the current does not double
-    # The loop answers the halved drift instead: it jumps to about zero, and the plasma
-    # current, pushed by it, drops instead of rising.
-    @test_broken abs(rise - jump) < 0.005
-    @test_broken flux_error(later) < 1.0e-2
+    @test abs(rise - jump) < 0.005   # the jump of the canonical fluxes, loop included
+    @test flux_error(later) < 1.0e-2  # and the loop keeps its flux through it
 end
 
 @testitem "Coupled step: coil-driven column" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
@@ -257,8 +252,7 @@ end
     end
     errs = flux_error.((5.0e-6, 2.5e-6))
 
-    # The missing flux does not shrink with Δt.
-    @test_broken errs[1] < 0.01 && 0.4 < errs[2] / errs[1] < 0.6
+    @test errs[1] < 0.01 && 0.4 < errs[2] / errs[1] < 0.6
 end
 
 @testitem "Coupled step: column pushed toward a loop" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
@@ -292,9 +286,8 @@ end
 
     @test Rc[end] > 1.6                # the push moved the column
     @test F1[end] * Ic_flux[end] < 0   # a flux-conserving loop pushes it back
-    # The loop sees the motion only through the rigid-filament term, which misses the current
-    # carried into new cells: it keeps almost none of its flux.
-    @test_broken maximum(abs.(Ic .- Ic_flux)) < 0.02 * maximum(abs.(Ic_flux))
+    # the loop keeps its flux while the current moves into new cells (one step behind)
+    @test maximum(abs.(Ic .- Ic_flux)) < 0.02 * maximum(abs.(Ic_flux))
 end
 
 @testitem "Coupled step: column shifted inside a shell" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
@@ -339,8 +332,7 @@ end
     )
 
     @test F_pred[] < 0
-    # The shift happened between steps, so the shell never sees it: it answers only the
-    # plasma's velocity response, first pushing the wrong way, then not at all.
-    @test_broken F[1] < 0
-    @test_broken abs(F[end] - F_pred[]) < 0.02 * abs(F_pred[])
+    # The shift happens between steps; the shell answers it at the next one and then holds.
+    @test F[1] < 0
+    @test abs(F[end] - F_pred[]) < 0.02 * abs(F_pred[])
 end
