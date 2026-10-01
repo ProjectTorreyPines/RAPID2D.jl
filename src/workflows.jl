@@ -59,17 +59,14 @@ end
 """
     initialize_coupled_fields!(RP)
 
-Before a run's first step, make the self field and the coils' memory consistent with the
-initial state. Every coil without a memory (`ψ_pla` unset) takes the plasma flux of the
-initial `Jϕ`. If the run starts with currents, Ampère is on and `ψ_self` is still zero,
-`ψ_self` becomes the Grad–Shafranov solution of the initial plasma and coil currents, with
-no induced field yet; otherwise the first step reads the flux of those currents appearing as
-a sudden change, and the plasma screens it. Both come from the same `Jϕ`, as after a coupled
-solve; the self field then tilts b, and the first step takes the change of `Jϕ` that follows.
+Make the coils' memory and `ψ_self` consistent with the initial state, both from the same `Jϕ`:
+- every coil without a memory (`ψ_pla` unset) takes the plasma flux of `Jϕ`;
+- if the run starts with currents, Ampère is on and `ψ_self` is zero, `ψ_self` becomes the
+  Grad–Shafranov solution of those currents, with no induced field.
 
-`run_simulation!` calls it before its first step. A loop over `advance_timestep!` calls it
-once before the first. A coil added later with a current enters `ψ_self` only at the next
-solve; solve Ampère (`solve_Ampere_equation!(RP; update_Eϕ_self = false)`) after adding it.
+`run_simulation!` calls it before the first step; a loop over `advance_timestep!` calls it
+once before the first. A coil added later with a current enters `ψ_self` at the next solve;
+call `solve_Ampere_equation!(RP; update_Eϕ_self = false)` after adding it.
 """
 function initialize_coupled_fields!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     update_Jϕ!(RP)
@@ -115,9 +112,9 @@ end
     solve_timestep!(RP, dt = RP.dt)
 
 Advance the state from tⁿ to tⁿ⁺¹ on the inputs `prepare_timestep!` set: the momentum
-equation and the coil circuits (coupled with Ampère above the current threshold; below it the
-coils advance on their own and Ampère only keeps `ψ_self`), the densities, the ion velocity
-and the temperatures, the global J×B force and the neutral gas.
+equation and the coil circuits (coupled with Ampère above the current threshold; below it, and
+with Ampère off, the coils advance as vacuum circuits and Ampère only keeps `ψ_self`), the
+densities, the ion velocity and the temperatures, the global J×B force and the neutral gas.
 """
 function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "solve_timestep!" begin
@@ -217,7 +214,7 @@ Handles time stepping, diagnostics output, and snapshot generation.
   `prepare_timestep!` and `solve_timestep!`: the state is at tⁿ and the step's inputs (the
   reaction counts, the external fields at tⁿ, `Jϕ`) have just been set from it. Nothing
   resets them before the step solves, so what the callback writes to them is what the step
-  uses.
+  uses. The step recomputes `Jϕ` once it has updated u∥.
 - `callback_after_step`: optional `f(RP)`, called at the end of every completed step, at
   tⁿ⁺¹, after that step's snapshots and the controller update.
 

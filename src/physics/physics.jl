@@ -1738,13 +1738,12 @@ end
 """
     set_Eϕ_self_from_coils!(RP, ΔI)
 
-Below the Ampère gate the induced field is the coils' alone, Eϕ_self = −ψ_coils(ΔI)/(R Δt),
-with ΔI their change over the step. There the plasma current is not a source of induction.
-Its own inductance is left out (taken explicitly it is unstable for L ≫ L_kin). The coils
-advance without its flux (`advance_coils!(RP; plasma = false)`): their reaction, fed back
-without L_p, acts as a negative inductance L_kin − M²/L_c at once and, through its resistive
-decay, as an oscillation that grows a step late. E∥ follows; its external part stays as the
-last step projected it.
+Below the Ampère gate, set the induced field to the coils' alone, Eϕ_self = −ψ_coils(ΔI)/(R Δt)
+with ΔI their change over the step, and E∥ from it; the external part of E∥ stays as the last
+step projected it. There the plasma is not a source of induction: its own inductance is left
+out (unstable taken explicitly), and so is its flux in the coils (their reaction, fed back
+without L_p, is unstable); see `internal/docs/src/notes/design/coupled-step-coil-flux.md`
+§5.3 and §10.1.
 """
 function set_Eϕ_self_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
     F = RP.fields
@@ -1897,12 +1896,18 @@ Solves the coupled system:
 The electromagnetic induction coupling creates strong nonlinearity requiring iterative solution.
 
 # Arguments
-- `tolerance`: Convergence tolerance for Picard iteration (default: 1e-3)
-- `max_iter`: Maximum iterations (default: 10)
+- `tolerance`: Picard stops when an iteration changes the induced field by less than this
+  fraction of what the step induces, plus `E_floor` (see `picard_step_converged`; default 1e-3).
+- `max_iter`: Maximum iterations (default: 10). A solve that reaches it is counted in
+  `RP.diagnostics.ampere_picard`; the run's first one warns.
 - `relaxation_w`: Boundary relaxation weight (default: 0.5)
+- `E_floor`: Absolute floor on that change [V/m] (default: 1e-6).
+- `I_floor`: Absolute floor on the coil currents' change [A] (default: 1e-6).
 
 # Updates
-Modifies `RP.plasma.ue_para`, `RP.fields.ψ_self`, `RP.fields.Eϕ_self`, and magnetic fields.
+Modifies `RP.plasma.ue_para`, `RP.fields.ψ_self`, `RP.fields.Eϕ_self`, the magnetic fields, and
+the coil currents. The circuits' plasma term d/dt[2π ψ_pla(r_c)] is the change from
+`Coil.ψ_pla`, the flux each coil last used, which this updates.
 """
 function solve_coupled_momentum_Ampere_equations_with_coils!(
         RP::RAPID{FT};
