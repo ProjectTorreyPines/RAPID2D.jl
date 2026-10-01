@@ -264,9 +264,10 @@ end
 
 @testitem "Coupled step: below the gate a loop does not drive the column" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
     # The decay through the 1 A gate with a superconducting loop beside the column. Below the
-    # gate the column's own inductance is left out, so the loop's reaction to the column must
-    # be left out of the column's field too: fed back alone it acts as a negative inductance
-    # (L_kin − M²/L_c < 0 here), and the current rings at the gate instead of dying.
+    # gate the column is not a source of induction: its own inductance is left out, and so is
+    # its flux in the loop's circuit. Were the loop's reaction fed back without L_p, it would
+    # act as a negative inductance (L_kin − M²/L_c < 0 here), and the current would ring at
+    # the gate instead of dying.
     RP = column(; threshold = 1.0, t_end = 3.0e-3)
     add_loop!(RP, 1.2, 0.8)
     initialize_coil_system!(RP)

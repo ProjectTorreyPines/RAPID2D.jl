@@ -1736,13 +1736,15 @@ function coil_flux_on_grid(RP::RAPID{FT}, I::AbstractVector{FT}) where {FT <: Ab
 end
 
 """
-    set_Eϕ_self_from_coils!(RP, ΔI_driven)
+    set_Eϕ_self_from_coils!(RP, ΔI)
 
 Below the Ampère gate the induced field is the coils' alone, Eϕ_self = −ψ_coils(ΔI)/(R Δt),
-with ΔI the change the coils' own drive makes over the step. The plasma's own inductance is
-left out by design (taken explicitly it is unstable for L ≫ L_kin), and so is the coils'
-reaction to the plasma: fed back without L_p it acts as a negative inductance,
-L_kin − M²/L_c. E∥ follows; its external part stays as the last step projected it.
+with ΔI their change over the step. There the plasma current is not a source of induction.
+Its own inductance is left out (taken explicitly it is unstable for L ≫ L_kin). The coils
+advance without its flux (`advance_coils!(RP; plasma = false)`): their reaction, fed back
+without L_p, acts as a negative inductance L_kin − M²/L_c at once and, through its resistive
+decay, as an oscillation that grows a step late. E∥ follows; its external part stays as the
+last step projected it.
 """
 function set_Eϕ_self_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
     F = RP.fields
@@ -1761,15 +1763,14 @@ function set_Eϕ_self_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where 
 end
 
 """
-    advance_coils!(RP) -> ΔI_driven
+    advance_coils!(RP; plasma = true) -> ΔI
 
-Advance the coil currents one step outside the coupled solve: their circuits with the
-plasma's flux change since each coil's last update, the plasma current taken at the start
-of the step. Returns the part of the change that the coils' own drive makes (voltages and
-resistance, without the plasma's flux), empty without coils: below the gate the plasma is
-shown that part only (see `set_Eϕ_self_from_coils!`).
+Advance the coil currents one step outside the coupled solve and return their change, empty
+without coils. Their circuits take the plasma's flux change since each coil's last update,
+the plasma current taken at the start of the step; below the gate (`plasma = false`) they
+advance as in vacuum (see `set_Eϕ_self_from_coils!`).
 """
-function advance_coils!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function advance_coils!(RP::RAPID{FT}; plasma::Bool = true) where {FT <: AbstractFloat}
     csys = RP.coil_system
     csys.n_total == 0 && return FT[]
     if RP.dt != csys.Δt || csys.θimp != one(FT)
@@ -1778,9 +1779,8 @@ function advance_coils!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         calculate_circuit_matrices!(csys)
     end
     I_before = get_all_currents(csys)
-    ΔI_driven = csys.inv_A_LR_circuit * calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) .- I_before
-    advance_LR_circuit_step!(csys, RP.G, RP.plasma.Jϕ, RP.time_s)
-    return ΔI_driven
+    advance_LR_circuit_step!(csys, RP.G, RP.plasma.Jϕ, RP.time_s; plasma)
+    return get_all_currents(csys) .- I_before
 end
 
 

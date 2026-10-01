@@ -4,12 +4,12 @@
 # losses, motion) reaches the coil at the next one.
 
 @testsnippet CoilFluxColumn begin
-    # A small column (n = 1e16 m⁻³, Te = 1 eV) in a pure toroidal field with Eϕ = 0.3 V/m at
-    # the mean R, Ampère from the first step, and toroidal loops given as (r, z, R, V, name).
-    function column_with_loops(loops; t_end = 100.0e-6)
+    # A small column (n = 1e16 m⁻³, Te = 1 eV) in a pure toroidal field with Eϕ = E0 at the
+    # mean R, Ampère from the first step, and toroidal loops given as (r, z, R, V, name).
+    function column_with_loops(loops; t_end = 100.0e-6, E0 = 0.3)
         FT = Float64
         config = SimulationConfig{FT}(;
-            device_Name = "manual", manual = ManualSetup{FT}(BR = 0.0, BZ = 0.0, Eϕ = 0.3),
+            device_Name = "manual", manual = ManualSetup{FT}(BR = 0.0, BZ = 0.0, Eϕ = E0),
             NR = 20, NZ = 30, R0B0 = 3.0, prefilled_gas_pressure = 0.0,
             dt = 5.0e-6, t_end_s = t_end, snap0D_Δt_s = 50.0e-6, snap2D_Δt_s = 100.0e-6,
             Output_path = mktempdir(; cleanup = false),
@@ -153,6 +153,61 @@ end
     quiet(() -> run_simulation!(RP))
     @test abs(RP.coil_system.coils.current[1]) > 0
     @test all(iszero, RP.fields.Eϕ_self)
+end
+
+@testitem "Coupled step: the coils' memory starts from the current ψ_self is solved from" setup = [CoilFluxColumn] begin
+    using RAPID2D: plasma_flux_at_coils
+    # A column carrying ~10 kA at the start. The initial Grad–Shafranov solve sources ψ_self
+    # with J₀; adding that self field tilts b, so J moves after it. The coils must start
+    # from J₀ as ψ_self does, or the first step reads the difference as induced on one side
+    # only.
+    RP = column_with_loops([(1.2, 0.8, 1.0e-3, 0.0, "loop")])
+    in_column = RP.plasma.ne .> 0
+    RP.plasma.ne[in_column] .= 1.0e18
+    RP.plasma.ni .= RP.plasma.ne
+    RP.plasma.ue_para[in_column] .= -2.5e5
+    RAPID2D.update_Jϕ!(RP)
+    J0 = copy(RP.plasma.Jϕ)
+    initialize_coupled_fields!(RP)
+
+    @test RP.plasma.Jϕ != J0   # b moved: the test can tell J₀ from the J after it
+    ψ0 = plasma_flux_at_coils(RP.coil_system, RP.G, J0)
+    @test maximum(abs, RP.coil_system.coils.ψ_pla .- ψ0) <= 1.0e-14 * maximum(abs, ψ0)
+end
+
+@testitem "Coupled step: below the gate a resistive loop decays as in vacuum" setup = [CoilFluxColumn] begin
+    # Below the gate the plasma current is not a source of induction: the loop does not see
+    # it, and the column is driven by the loop's decay alone. A dense, hot column at rest, no
+    # applied field, beside a pre-charged loop with Δt R/L ≈ 0.07, the gate held above
+    # anything reached. Driven so, with fixed collision rates, the column's current follows
+    # the loop's in a fixed ratio once its 1/(1 + νΔt) transient is gone. Were the loop's
+    # reaction fed back a step late, through its resistive decay, the pair would grow without
+    # bound and flip sign every other step.
+    RP = column_with_loops([(1.5, 0.45, 0.1, 0.0, "loop")]; t_end = 150.0e-6, E0 = 0.0)
+    in_column = RP.plasma.ne .> 0
+    RP.plasma.ne[in_column] .= 1.0e18
+    RP.plasma.ni .= RP.plasma.ne
+    fill!(RP.plasma.Te_eV, 10.0)
+    RP.flags.Ampere_Itor_threshold = 1.0e9
+    RP.coil_system.coils.current = [100.0]
+    RAPID2D.update_transport_quantities!(RP)
+    Ip, Ic = Float64[], Float64[]
+    quiet() do
+        run_simulation!(
+            RP; callback_after_step = rp -> begin
+                push!(Ip, sum(rp.plasma.Jϕ) * rp.G.dR * rp.G.dZ)
+                push!(Ic, rp.coil_system.coils.current[1])
+            end
+        )
+    end
+    L, R = RP.coil_system.mutual_inductance[1, 1], get_all_resistances(RP.coil_system)[1]
+    vacuum = [100.0 * (L / (L + RP.dt * R))^k for k in eachindex(Ic)]
+    ratio = [Ip[k] / Ic[k - 1] for k in 8:length(Ip)]
+
+    @test length(Ic) == 30
+    @test maximum(abs, Ic .- vacuum) <= 1.0e-10 * 100.0
+    @test all(>(0), Ip)
+    @test maximum(ratio) - minimum(ratio) <= 1.0e-3 * minimum(ratio)
 end
 
 @testitem "Coupled step: steps taken before run_simulation! keep the coils' memory" setup = [CoilFluxColumn] begin

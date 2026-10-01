@@ -65,17 +65,18 @@ end
 @testitem "Ampère Picard: the stopping test bounds the induced-field error" setup = [PicardColumn] begin
     using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
     # Two identical columns, a few steps in; then one more step solved with the defaults and
-    # with a tolerance tight enough to stand for the exact solution. The default's induced
-    # field must agree with it to well within the default tolerance of the step's field.
+    # with a tolerance tight enough, and no floors, to stand for the exact solution. The
+    # default's induced field must agree with it to within the default tolerance (1e-3) of
+    # the step's field.
     a, b = picard_column(), picard_column()
     for RP in (a, b)
         redirect_stdout(() -> run_simulation!(RP), devnull)
         prepare_timestep!(RP)
     end
     solve_combined_momentum_Ampere_equations_with_coils!(a)
-    solve_combined_momentum_Ampere_equations_with_coils!(b; tolerance = 1.0e-12, max_iter = 200)
+    solve_combined_momentum_Ampere_equations_with_coils!(b; tolerance = 1.0e-12, max_iter = 200, E_floor = 0.0, I_floor = 0.0)
     E_a, E_b = a.fields.Eϕ_self, b.fields.Eϕ_self
 
     @test b.diagnostics.ampere_picard.nunconverged == 0
-    @test maximum(abs, E_a .- E_b) <= 1.0e-2 * maximum(abs, E_b)
+    @test maximum(abs, E_a .- E_b) <= 1.0e-3 * maximum(abs, E_b)
 end
