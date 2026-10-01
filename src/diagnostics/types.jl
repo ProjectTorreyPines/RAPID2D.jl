@@ -262,6 +262,21 @@ Tracks cumulative sources and losses of particles and energy
 end
 
 """
+    PicardStats
+
+Counts kept over a run for the coupled momentum–Ampère solve: solves, Picard iterations
+summed over them, and solves that stopped at `max_iter` short of the tolerance; with the last
+solve's iterations and the change of the induced field in its last iteration [V/m].
+"""
+@kwdef mutable struct PicardStats
+    nsolve::Int = 0
+    niter::Int = 0
+    nunconverged::Int = 0
+    last_niter::Int = 0
+    last_E_residual::Float64 = 0.0
+end
+
+"""
 Main Diagnostics container
 Pure struct-based approach using @kwdef for automatic initialization
 No legacy Dictionary compatibility layer
@@ -281,6 +296,9 @@ No legacy Dictionary compatibility layer
 
     # tracking number of particles (source/loss)
     Ntracker::SrcLossTracker{FT} = SrcLossTracker{FT}(; dims_RZ)
+
+    # Picard iterations of the coupled momentum–Ampère solve
+    ampere_picard::PicardStats = PicardStats()
 end
 
 function Diagnostics{FT}(dim_R::Int, dim_Z::Int) where {FT <: AbstractFloat}

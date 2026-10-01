@@ -1841,6 +1841,40 @@ function _refuse_full_response_decay(flags::SimulationFlags)
 end
 
 """
+    picard_step_converged(ψ_new, ψ_iter, ψ_old, I_new, I_iter, I_old, R, dt; tol, E_floor, I_floor)
+
+The coupled solve's stopping test, in the units of the induced field E = −Δψ/(R Δt): the
+last iteration's change, max|ψ_new − ψ_iter|/(R Δt), against `tol` times the field the step
+induces, max|ψ_new − ψ_old|/(R Δt), plus the floor `E_floor` [V/m]; the coil currents
+likewise, with the floor `I_floor` [A]. There is no division, so a step that induces
+nothing stops at once. Returns `(converged, E_residual)`.
+"""
+function picard_step_converged(ψ_new, ψ_iter, ψ_old, I_new, I_iter, I_old, R, dt; tol, E_floor, I_floor)
+    E_iter = maximum(abs, (ψ_new .- ψ_iter) ./ R) / dt
+    E_step = maximum(abs, (ψ_new .- ψ_old) ./ R) / dt
+    converged = E_iter <= tol * E_step + E_floor
+    if converged && !isempty(I_new)
+        converged = maximum(abs, I_new .- I_iter) <= tol * maximum(abs, I_new .- I_old) + I_floor
+    end
+    return converged, E_iter
+end
+
+# Count the solve in RP.diagnostics.ampere_picard, and warn at a run's first unconverged one.
+function record_picard!(RP::RAPID, iter::Int, converged::Bool, E_residual::Real, max_iter::Int)
+    stats = RP.diagnostics.ampere_picard
+    stats.nsolve += 1
+    stats.niter += iter
+    stats.last_niter = iter
+    stats.last_E_residual = E_residual
+    if !converged
+        stats.nunconverged += 1
+        stats.nunconverged == 1 &&
+            @warn "Ampère Picard iteration stopped at max_iter = $max_iter short of its tolerance (step $(RP.step)); later ones are only counted in RP.diagnostics.ampere_picard" E_residual
+    end
+    return nothing
+end
+
+"""
     solve_coupled_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
                                                         tolerance=1e-3,
                                                         max_iter=10,
@@ -1868,9 +1902,11 @@ Modifies `RP.plasma.ue_para`, `RP.fields.ψ_self`, `RP.fields.Eϕ_self`, and mag
 """
 function solve_coupled_momentum_Ampere_equations_with_coils!(
         RP::RAPID{FT};
-        tolerance::FT = 1.0e-6,
+        tolerance::FT = 1.0e-3,
         max_iter::Int = 10,
-        relaxation_w::FT = 0.5
+        relaxation_w::FT = 0.5,
+        E_floor::FT = FT(1.0e-6),
+        I_floor::FT = FT(1.0e-6),
     ) where {FT <: AbstractFloat}
     _refuse_exprb_decay(
         RP.flags, "solve_coupled_momentum_Ampere_equations_with_coils!", "fixes θ = 1 for the u∥ friction"
@@ -1960,6 +1996,8 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     # Prepare Picard iteration for coupled system
     F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
     old_ψ_self = copy(F.ψ_self) # Store old ψ_self for convergence checking
+    coils_I_n = csys.n_total > 0 ? get_all_currents(csys) : FT[]
+    coils_I_iter = copy(coils_I_n)
 
 
     ue_para_k = zeros(FT, G.NR, G.NZ) # Initialize ue_para for iterationo
@@ -1993,6 +2031,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
 
     iter = 1
     converged = false
+    E_residual = zero(FT)
     while (true)
         # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
         @. RHS = pla.ue_para + dt * accel_para_tilde - facEM * new_ψ_self_k
@@ -2031,22 +2070,20 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
         # Step #4: Solve the implicit Ampere equation
         new_ψ_self_kp1 = A_imp_ampere \ RHS
 
-        # Step #5: Check if ψ solution is converged
-        convergence_rate = norm(new_ψ_self_kp1 - new_ψ_self_k) / norm(new_ψ_self_k)
-        if (convergence_rate < tolerance)
-            # println("  ψ_self converged after $iter iterations! convergence_rate: $convergence_rate")
-            converged = true
-            break
-        elseif iter >= max_iter
-            converged = false
-            println("  Warning: Picard iteration did not converge after $max_iter iterations at step=$(RP.step)")
-            println("  Final change: $(norm(new_ψ_self_kp1 - new_ψ_self_k) / norm(new_ψ_self_k))")
+        # Step #5: stop when the iteration has settled (see picard_step_converged)
+        converged, E_residual = picard_step_converged(
+            new_ψ_self_kp1, new_ψ_self_k, old_ψ_self, new_coils_I_k, coils_I_iter, coils_I_n, G.R2D, dt;
+            tol = tolerance, E_floor, I_floor,
+        )
+        if converged || iter >= max_iter
             break
         else
             new_ψ_self_k .= new_ψ_self_kp1 # Update for next iteration
+            coils_I_iter .= new_coils_I_k
             iter += 1
         end
     end
+    record_picard!(RP, iter, converged, E_residual, max_iter)
 
     # 7. Final updates of electromagnetic fields
     @. F.ψ_self = new_ψ_self_kp1
@@ -2194,18 +2231,24 @@ This method:
 
 # Arguments
 - `RP::RAPID{FT}`: Simulation state object, modified in place.
-- `tolerance::FT=1e-3`: Convergence tolerance for the Picard iteration.
-- `max_iter::Int=10`: Maximum number of Picard iterations.
+- `tolerance::FT=1e-3`: Picard stops when an iteration changes the induced field by less
+  than this fraction of what the step induces, plus `E_floor` (see `picard_step_converged`).
+- `max_iter::Int=10`: Maximum number of Picard iterations. A solve that reaches it is counted
+  in `RP.diagnostics.ampere_picard`; the run's first one warns.
 - `relaxation_w::FT=0.5`: Relaxation weight for boundary ψ updates.
+- `E_floor::FT=1e-6`: Absolute floor on that change [V/m].
+- `I_floor::FT=1e-6`: Absolute floor on the coil currents' change [A].
 
 # Returns
 - `RP::RAPID{FT}`: The updated simulation object with new plasma and field values.
 """
 function solve_combined_momentum_Ampere_equations_with_coils!(
         RP::RAPID{FT};
-        tolerance::FT = 1.0e-6,
+        tolerance::FT = 1.0e-3,
         max_iter::Int = 10,
-        relaxation_w::FT = 0.5
+        relaxation_w::FT = 0.5,
+        E_floor::FT = FT(1.0e-6),
+        I_floor::FT = FT(1.0e-6),
     ) where {FT <: AbstractFloat}
     _refuse_exprb_decay(
         RP.flags, "solve_combined_momentum_Ampere_equations_with_coils!", "fixes θ = 1 for the u∥ friction"
@@ -2288,6 +2331,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # Prepare Picard iteration for coupled system
         F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
         old_ψ_self = copy(F.ψ_self) # Store old ψ_self for convergence checking
+        coils_I_n = csys.n_total > 0 ? get_all_currents(csys) : FT[]
+        coils_I_iter = copy(coils_I_n)
 
 
         ue_para_k = zeros(FT, G.NR, G.NZ) # Initialize ue_para for iterationo
@@ -2325,6 +2370,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         iter = 1
         converged = false
+        E_residual = zero(FT)
         while true
             # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
             @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
@@ -2368,23 +2414,21 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             @views new_ψ_self_kp1[:] .= sol[(G.NR * G.NZ + 1):end]
 
 
-            # Step #5: Check if ψ solution is converged
-            convergence_rate = norm(new_ψ_self_kp1 - new_ψ_self_k) / norm(new_ψ_self_k)
-            if (convergence_rate < tolerance)
-                # println("  ψ_self converged after $iter iterations! convergence_rate: $convergence_rate")
-                converged = true
-                break
-            elseif iter >= max_iter
-                converged = false
-                println("  Warning: Picard iteration did not converge after $max_iter iterations at step=$(RP.step)")
-                println("  Final change: $(norm(new_ψ_self_kp1 - new_ψ_self_k) / norm(new_ψ_self_k))")
+            # Step #5: stop when the iteration has settled (see picard_step_converged)
+            converged, E_residual = picard_step_converged(
+                new_ψ_self_kp1, new_ψ_self_k, old_ψ_self, new_coils_I_k, coils_I_iter, coils_I_n, G.R2D, dt;
+                tol = tolerance, E_floor, I_floor,
+            )
+            if converged || iter >= max_iter
                 break
             else
                 new_ψ_self_k .= new_ψ_self_kp1 # Update for next iteration
                 ue_para_k .= ue_para_kp1
+                coils_I_iter .= new_coils_I_k
                 iter += 1
             end
         end
+        record_picard!(RP, iter, converged, E_residual, max_iter)
 
         # 7. Final updates of electromagnetic fields
         F.ψ_self .= new_ψ_self_kp1
