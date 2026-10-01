@@ -262,6 +262,27 @@ end
     @test abs(Ip_default[end]) < 1.0e-2
 end
 
+@testitem "Coupled step: below the gate a loop does not drive the column" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
+    # The decay through the 1 A gate with a superconducting loop beside the column. Below the
+    # gate the column's own inductance is left out, so the loop's reaction to the column must
+    # be left out of the column's field too: fed back alone it acts as a negative inductance
+    # (L_kin − M²/L_c < 0 here), and the current rings at the gate instead of dying.
+    RP = column(; threshold = 1.0, t_end = 3.0e-3)
+    add_loop!(RP, 1.2, 0.8)
+    initialize_coil_system!(RP)
+    off = rp -> if rp.time_s >= 1.0e-3 - 1.0e-12
+        fill!(rp.fields.LV_ext, 0.0)
+        fill!(rp.fields.Eϕ_ext, 0.0)
+        fill!(rp.fields.E_para_ext, 0.0)
+    end
+    Ip = Float64[]
+    run_quiet!(RP; before = off, after = rp -> push!(Ip, plasma_current(rp, current_density(rp))))
+    k = findfirst(i -> i > 200 && abs(Ip[i]) < 1.0, eachindex(Ip))   # first below the gate after 1 ms
+
+    @test abs(Ip[end]) < 1.0e-2
+    @test count(i -> sign(Ip[i]) != sign(Ip[i - 1]), (k + 1):length(Ip)) <= 1
+end
+
 @testitem "Coupled step: the current does not jump back when the gate opens" tags = [:regression] setup = [RegressionCommon, CoupledStepSetup] begin
     # A thin column (1e14 m⁻³) under a weak loop voltage: its current grows through the
     # default 1 A threshold over many steps, as in an avalanche. When the coupled solve takes

@@ -59,6 +59,7 @@ end
     @test stats.nsolve == 3
     @test stats.nunconverged == 3
     @test stats.niter == 6
+    @test stats.last_E_residual > 0 && isfinite(stats.last_I_residual)
 end
 
 @testitem "Ampère Picard: the stopping test bounds the induced-field error" setup = [PicardColumn] begin

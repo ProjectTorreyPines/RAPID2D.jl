@@ -1736,12 +1736,13 @@ function coil_flux_on_grid(RP::RAPID{FT}, I::AbstractVector{FT}) where {FT <: Ab
 end
 
 """
-    set_Eϕ_self_from_coils!(RP, ΔI)
+    set_Eϕ_self_from_coils!(RP, ΔI_driven)
 
 Below the Ampère gate the induced field is the coils' alone, Eϕ_self = −ψ_coils(ΔI)/(R Δt),
-with ΔI the coil currents' change over the step. The plasma's own inductance is left out by
-design: taken explicitly it is unstable for L ≫ L_kin. E∥ follows; its external part stays
-as the last step projected it.
+with ΔI the change the coils' own drive makes over the step. The plasma's own inductance is
+left out by design (taken explicitly it is unstable for L ≫ L_kin), and so is the coils'
+reaction to the plasma: fed back without L_p it acts as a negative inductance,
+L_kin − M²/L_c. E∥ follows; its external part stays as the last step projected it.
 """
 function set_Eϕ_self_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
     F = RP.fields
@@ -1760,11 +1761,13 @@ function set_Eϕ_self_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where 
 end
 
 """
-    advance_coils!(RP) -> ΔI
+    advance_coils!(RP) -> ΔI_driven
 
 Advance the coil currents one step outside the coupled solve: their circuits with the
 plasma's flux change since each coil's last update, the plasma current taken at the start
-of the step. Returns the change of the coil currents (empty without coils).
+of the step. Returns the part of the change that the coils' own drive makes (voltages and
+resistance, without the plasma's flux), empty without coils: below the gate the plasma is
+shown that part only (see `set_Eϕ_self_from_coils!`).
 """
 function advance_coils!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     csys = RP.coil_system
@@ -1775,8 +1778,9 @@ function advance_coils!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         calculate_circuit_matrices!(csys)
     end
     I_before = get_all_currents(csys)
+    ΔI_driven = csys.inv_A_LR_circuit * calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) .- I_before
     advance_LR_circuit_step!(csys, RP.G, RP.plasma.Jϕ, RP.time_s)
-    return get_all_currents(csys) .- I_before
+    return ΔI_driven
 end
 
 
@@ -1847,29 +1851,29 @@ The coupled solve's stopping test, in the units of the induced field E = −Δψ
 last iteration's change, max|ψ_new − ψ_iter|/(R Δt), against `tol` times the field the step
 induces, max|ψ_new − ψ_old|/(R Δt), plus the floor `E_floor` [V/m]; the coil currents
 likewise, with the floor `I_floor` [A]. There is no division, so a step that induces
-nothing stops at once. Returns `(converged, E_residual)`.
+nothing stops at once. Returns `(converged, E_residual, I_residual)`.
 """
 function picard_step_converged(ψ_new, ψ_iter, ψ_old, I_new, I_iter, I_old, R, dt; tol, E_floor, I_floor)
     E_iter = maximum(abs, (ψ_new .- ψ_iter) ./ R) / dt
     E_step = maximum(abs, (ψ_new .- ψ_old) ./ R) / dt
-    converged = E_iter <= tol * E_step + E_floor
-    if converged && !isempty(I_new)
-        converged = maximum(abs, I_new .- I_iter) <= tol * maximum(abs, I_new .- I_old) + I_floor
-    end
-    return converged, E_iter
+    I_iter_change = isempty(I_new) ? zero(E_iter) : maximum(abs, I_new .- I_iter)
+    I_step = isempty(I_new) ? zero(E_iter) : maximum(abs, I_new .- I_old)
+    converged = E_iter <= tol * E_step + E_floor && I_iter_change <= tol * I_step + I_floor
+    return converged, E_iter, I_iter_change
 end
 
 # Count the solve in RP.diagnostics.ampere_picard, and warn at a run's first unconverged one.
-function record_picard!(RP::RAPID, iter::Int, converged::Bool, E_residual::Real, max_iter::Int)
+function record_picard!(RP::RAPID, iter::Int, converged::Bool, E_residual::Real, I_residual::Real, max_iter::Int)
     stats = RP.diagnostics.ampere_picard
     stats.nsolve += 1
     stats.niter += iter
     stats.last_niter = iter
     stats.last_E_residual = E_residual
+    stats.last_I_residual = I_residual
     if !converged
         stats.nunconverged += 1
         stats.nunconverged == 1 &&
-            @warn "Ampère Picard iteration stopped at max_iter = $max_iter short of its tolerance (step $(RP.step)); later ones are only counted in RP.diagnostics.ampere_picard" E_residual
+            @warn "Ampère Picard iteration stopped at max_iter = $max_iter short of its tolerance (step $(RP.step)); later ones are only counted in RP.diagnostics.ampere_picard" E_residual I_residual
     end
     return nothing
 end
@@ -2032,6 +2036,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
     iter = 1
     converged = false
     E_residual = zero(FT)
+    I_residual = zero(FT)
     while (true)
         # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
         @. RHS = pla.ue_para + dt * accel_para_tilde - facEM * new_ψ_self_k
@@ -2071,7 +2076,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
         new_ψ_self_kp1 = A_imp_ampere \ RHS
 
         # Step #5: stop when the iteration has settled (see picard_step_converged)
-        converged, E_residual = picard_step_converged(
+        converged, E_residual, I_residual = picard_step_converged(
             new_ψ_self_kp1, new_ψ_self_k, old_ψ_self, new_coils_I_k, coils_I_iter, coils_I_n, G.R2D, dt;
             tol = tolerance, E_floor, I_floor,
         )
@@ -2083,7 +2088,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
             iter += 1
         end
     end
-    record_picard!(RP, iter, converged, E_residual, max_iter)
+    record_picard!(RP, iter, converged, E_residual, I_residual, max_iter)
 
     # 7. Final updates of electromagnetic fields
     @. F.ψ_self = new_ψ_self_kp1
@@ -2371,6 +2376,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         iter = 1
         converged = false
         E_residual = zero(FT)
+        I_residual = zero(FT)
         while true
             # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
             @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
@@ -2415,7 +2421,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
 
             # Step #5: stop when the iteration has settled (see picard_step_converged)
-            converged, E_residual = picard_step_converged(
+            converged, E_residual, I_residual = picard_step_converged(
                 new_ψ_self_kp1, new_ψ_self_k, old_ψ_self, new_coils_I_k, coils_I_iter, coils_I_n, G.R2D, dt;
                 tol = tolerance, E_floor, I_floor,
             )
@@ -2428,7 +2434,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
                 iter += 1
             end
         end
-        record_picard!(RP, iter, converged, E_residual, max_iter)
+        record_picard!(RP, iter, converged, E_residual, I_residual, max_iter)
 
         # 7. Final updates of electromagnetic fields
         F.ψ_self .= new_ψ_self_kp1

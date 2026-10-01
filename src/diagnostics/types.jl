@@ -266,7 +266,8 @@ end
 
 Counts kept over a run for the coupled momentum–Ampère solve: solves, Picard iterations
 summed over them, and solves that stopped at `max_iter` short of the tolerance; with the last
-solve's iterations and the change of the induced field in its last iteration [V/m].
+solve's iterations, and the change in its last iteration of the induced field [V/m] and of
+the coil currents [A].
 """
 @kwdef mutable struct PicardStats
     nsolve::Int = 0
@@ -274,6 +275,7 @@ solve's iterations and the change of the induced field in its last iteration [V/
     nunconverged::Int = 0
     last_niter::Int = 0
     last_E_residual::Float64 = 0.0
+    last_I_residual::Float64 = 0.0
 end
 
 """

@@ -59,26 +59,29 @@ end
 """
     initialize_coupled_fields!(RP)
 
-Before a run's first step, make the coils' memory and the self field consistent with the
-initial state: `Jϕ` from the initial densities and velocities, every coil's `ψ_pla` from it,
-and, if the run starts with currents and Ampère is on, `ψ_self` from the Grad–Shafranov
-solution of the initial plasma and coil currents, with no induced field yet. Without it the
-first step reads the flux of those currents appearing as a sudden change, and the plasma
-screens it.
+Before a run's first step, make the self field and the coils' memory consistent with the
+initial state. If the run starts with currents, Ampère is on and `ψ_self` is still zero,
+`ψ_self` becomes the Grad–Shafranov solution of the initial plasma and coil currents, with
+no induced field yet; otherwise the first step reads the flux of those currents appearing as
+a sudden change, and the plasma screens it. Then every coil without a memory (`ψ_pla` unset)
+takes the plasma flux of the initial `Jϕ`.
+
+`run_simulation!` calls it before its first step. A loop over `advance_timestep!` calls it
+once before the first. A coil added later with a current enters `ψ_self` only at the next
+solve; solve Ampère (`solve_Ampere_equation!(RP; update_Eϕ_self = false)`) after adding it.
 """
 function initialize_coupled_fields!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     update_Jϕ!(RP)
     csys = RP.coil_system
-    if csys.n_total > 0
-        csys.coils.ψ_pla = plasma_flux_at_coils(csys, RP.G, RP.plasma.Jϕ)
-    end
     has_current = any(!iszero, RP.plasma.Jϕ) || (csys.n_total > 0 && any(!iszero, csys.coils.current))
-    if RP.flags.Ampere && has_current
+    if RP.flags.Ampere && has_current && all(iszero, RP.fields.ψ_self)
         solve_Ampere_equation!(RP; update_Eϕ_self = false)
         fill!(RP.fields.Eϕ_self, zero(FT))
         fill!(RP.fields.Eϕ_self_prev, zero(FT))
         combine_external_and_self_fields!(RP)
+        update_Jϕ!(RP)   # bϕ has moved with the self field
     end
+    csys.n_total > 0 && init_unset_coil_plasma_flux!(csys, RP.G, RP.plasma.Jϕ)
     return RP
 end
 
@@ -137,7 +140,7 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
                 # Below the gate the induced field is the coils' alone (see
                 # set_Eϕ_self_from_coils!), and ψ_self stays the field of the present currents,
                 # so the coupled solve starts from it when the gate opens
-                RP.flags.Ampere && set_Eϕ_self_from_coils!(RP, ΔI_coils)
+                RP.flags.Ampere && RP.flags.E_para_self_EM && set_Eϕ_self_from_coils!(RP, ΔI_coils)
                 if RP.flags.ud_evolve
                     update_ue_para!(RP)
                 end
@@ -354,7 +357,7 @@ function run_simulation!(
 end
 
 # Export workflow functions
-export advance_timestep!, prepare_timestep!, solve_timestep!, run_simulation!
+export advance_timestep!, prepare_timestep!, solve_timestep!, run_simulation!, initialize_coupled_fields!
 
 # Export timer utilities
 export RAPID_TIMER, print_timer_results, save_timer_results

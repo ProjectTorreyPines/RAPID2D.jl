@@ -143,3 +143,42 @@ end
     quiet(() -> advance_timestep!(RP))
     @test all(isfinite, RP.coil_system.coils.ψ_pla)
 end
+
+@testitem "Coupled step: with E_para_self_EM off the coils induce no Eϕ_self" setup = [CoilFluxColumn] begin
+    # Below the gate, a 10 V coil changes; with the electromagnetic self-field off nothing is
+    # induced on the plasma, as before the coils advanced there.
+    RP = column_with_loops([(0.6, 0.0, 1.0e-4, 10.0, "OH")]; t_end = 25.0e-6)
+    RP.flags.E_para_self_EM = false
+    RP.flags.Ampere_Itor_threshold = 1.0e6
+    quiet(() -> run_simulation!(RP))
+    @test abs(RP.coil_system.coils.current[1]) > 0
+    @test all(iszero, RP.fields.Eϕ_self)
+end
+
+@testitem "Coupled step: steps taken before run_simulation! keep the coils' memory" setup = [CoilFluxColumn] begin
+    # A few steps by advance_timestep!, then run_simulation!. The run must not reset the
+    # memory those steps left (RP.step is still 0): the flux balance closes across the switch.
+    RP = column_with_loops([(1.2, 0.8, 1.0e-3, 0.0, "loop")]; t_end = 50.0e-6)
+    RAPID2D.update_transport_quantities!(RP)
+    quiet() do
+        for _ in 1:3
+            advance_timestep!(RP)
+            RP.time_s += RP.dt
+            grow!(RP)
+        end
+    end
+    I0, ψ0 = copy(RP.coil_system.coils.current), copy(RP.coil_system.coils.ψ_pla)
+    rec = (I = Vector{Float64}[], ψ = Vector{Float64}[])
+    quiet() do
+        run_simulation!(
+            RP; callback_after_step = rp -> begin
+                push!(rec.I, copy(rp.coil_system.coils.current))
+                push!(rec.ψ, copy(rp.coil_system.coils.ψ_pla))
+            end
+        )
+    end
+    csys = RP.coil_system
+    M, r_c, dt = csys.mutual_inductance, get_all_resistances(csys), RP.dt
+    residual = M * (rec.I[1] - I0) + dt * r_c .* rec.I[1] + 2π * (rec.ψ[1] - ψ0)
+    @test maximum(abs, residual) < 1.0e-10 * (maximum(abs, M * rec.I[1]) + 2π * maximum(abs, rec.ψ[1]))
+end
