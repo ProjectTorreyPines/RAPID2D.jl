@@ -117,3 +117,28 @@
         @test all(isfinite.(derivatives.dψ_dZsrc))
     end
 end
+
+@testitem "Green's function: derivatives match finite differences" begin
+    using RAPID2D: calculate_ψ_by_green_function
+    # ψ = 2e-7 I √(R_d R_s/m) f(m): the R-derivatives carry √(R_d R_s) as well as m. A 2×3 array
+    # of destinations and four sources with currents other than one, near and far, on both sides
+    # in R; no destination sits on a source.
+    R_dest = [1.1 1.45 2.3; 1.6 1.95 0.85]
+    Z_dest = [0.05 -0.4 0.3; 0.9 -0.75 0.1]
+    R_src = [1.2, 1.5, 2.1, 0.95]
+    Z_src = [0.2, -0.1, 0.6, -0.5]
+    I_src = [1.0, -2.5, 0.7, 3.2]
+    _, d = calculate_ψ_by_green_function(R_dest, Z_dest, R_src, Z_src, I_src; compute_derivatives = true)
+
+    h = 1.0e-6
+    ψ_at(Rd, Zd, Rs, Zs) = calculate_ψ_by_green_function(Rd, Zd, Rs, Zs, I_src)
+    fd_Rdest = (ψ_at(R_dest .+ h, Z_dest, R_src, Z_src) .- ψ_at(R_dest .- h, Z_dest, R_src, Z_src)) ./ 2h
+    fd_Zdest = (ψ_at(R_dest, Z_dest .+ h, R_src, Z_src) .- ψ_at(R_dest, Z_dest .- h, R_src, Z_src)) ./ 2h
+    fd_Rsrc = (ψ_at(R_dest, Z_dest, R_src .+ h, Z_src) .- ψ_at(R_dest, Z_dest, R_src .- h, Z_src)) ./ 2h
+    fd_Zsrc = (ψ_at(R_dest, Z_dest, R_src, Z_src .+ h) .- ψ_at(R_dest, Z_dest, R_src, Z_src .- h)) ./ 2h
+
+    @test d.dψ_dRdest ≈ fd_Rdest rtol = 1.0e-6
+    @test d.dψ_dZdest ≈ fd_Zdest rtol = 1.0e-6
+    @test d.dψ_dRsrc ≈ fd_Rsrc rtol = 1.0e-6
+    @test d.dψ_dZsrc ≈ fd_Zsrc rtol = 1.0e-6
+end

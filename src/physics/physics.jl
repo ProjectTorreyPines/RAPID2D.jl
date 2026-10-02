@@ -2480,8 +2480,7 @@ is MATLAB's `Ipla_dMcp`.
 Not called. The circuits difference against the plasma flux they last used (`Coil.ψ_pla`),
 which carries the motion one step later; adding this term would count it twice. It is the
 candidate same-step predictor for fast vertical motion, used together with a stored flux
-that includes it. Its R-derivative table misses ψ/(2R) (about 20 % low) and needs fixing
-first. See internal notes, design/coupled-step-coil-flux.md §4.4.
+that includes it. See internal notes, design/coupled-step-coil-flux.md §4.4.
 """
 function coil_flux_change_by_plasma_displacement(
         RP::RAPID{FT}, Jϕ_now::AbstractMatrix{FT}, Jϕ_entry::AbstractMatrix{FT}; θimp::FT = one(FT)
