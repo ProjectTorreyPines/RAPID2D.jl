@@ -409,6 +409,7 @@ new_coil_I_k = obj.coils.inv_A_LR_circuit*circuit_rhs;
 
 # Side effects
 - Updates the current field of all coils in the system
+- Sets the coils' clock to `t + Δt`, the end of the step taken
 
 # Notes
 - Assumes circuit matrices (A_LR_circuit, inv_A_LR_circuit) are already computed
@@ -435,7 +436,38 @@ function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT = csys.time_s) whe
     # Update coil currents
     set_all_currents!(csys, new_currents)
 
-    csys.time_s += csys.Δt  # Advance time
+    csys.time_s = t + csys.Δt
+    return nothing
+end
+
+
+"""
+    advance_LR_circuit_step!(csys, G, Jϕ, t = csys.time_s; plasma = true)
+
+One backward-Euler step of the coil circuits with the plasma's flux:
+
+    (M + Δt R) Iⁿ⁺¹ = M Iⁿ + Δt V − 2π [ψ_pla(r_c; Jϕ) − ψ_pla,c],
+
+with ψ_pla,c the flux each coil used last (`Coil.ψ_pla`), which this then sets to
+ψ_pla(r_c; Jϕ), and the coils' clock to t + Δt. Used when the coupled solve does not run.
+`plasma = false` (below the Ampère gate) leaves the plasma term out and only moves ψ_pla,c
+to ψ_pla(r_c; Jϕ).
+"""
+function advance_LR_circuit_step!(
+        csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}, t::FT = csys.time_s;
+        plasma::Bool = true,
+    ) where {FT <: AbstractFloat}
+    if csys.n_total == 0
+        return nothing
+    end
+    ψ_now = plasma_flux_at_coils(csys, G, Jϕ)
+    circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, t)
+    if plasma
+        circuit_rhs .-= 2π .* (ψ_now .- init_unset_coil_plasma_flux!(csys, G, Jϕ))
+    end
+    set_all_currents!(csys, csys.inv_A_LR_circuit * circuit_rhs)
+    csys.coils.ψ_pla = ψ_now
+    csys.time_s = t + csys.Δt
     return nothing
 end
 
@@ -455,6 +487,32 @@ function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT = csys.ti
     # Right-hand side of LR circuit equation:
     # L * I_old + dt * (V_ext - (1-θimp) * R * I)
     return csys.mutual_inductance * currents .+ csys.Δt * (voltages - (one(FT) - csys.θimp) * resistances .* currents)
+end
+
+"""
+    plasma_flux_at_coils(csys, G, Jϕ)
+
+The plasma's flux at each coil, ψ_pla(r_c) = Σ_g G(r_c; r_g) Jϕ_g dA [Wb/rad].
+"""
+function plasma_flux_at_coils(csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    return (csys.Green_grid2coils * vec(Jϕ)) .* (G.dR * G.dZ)
+end
+
+"""
+    init_unset_coil_plasma_flux!(csys, G, Jϕ)
+
+Give every coil whose `ψ_pla` is unset (`NaN`) the plasma flux of `Jϕ`, and return the
+coils' `ψ_pla`. A coil starts accounting from the plasma current it first meets: at a run's
+first step, or at the first update after it was added.
+"""
+function init_unset_coil_plasma_flux!(csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    ψ = csys.coils.ψ_pla
+    unset = isnan.(ψ)
+    if any(unset)
+        ψ[unset] .= plasma_flux_at_coils(csys, G, Jϕ)[unset]
+        csys.coils.ψ_pla = ψ
+    end
+    return ψ
 end
 
 

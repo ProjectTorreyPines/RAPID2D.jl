@@ -41,6 +41,49 @@ end
 
 
 """
+    update_Jϕ!(RP)
+
+`Jϕ` of the present state: (qₑ nₑ uₑ∥ + Z e nᵢ uᵢ∥) bϕ, electrons and ions.
+"""
+function update_Jϕ!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    F = RP.fields
+    @unpack qe, ee = RP.config.constants
+    # `ni·Z` is the ion CHARGE density. One species, so it is a product and not a sum; `Z`
+    # comes from the species itself and cannot lag behind it.
+    Z_i = FT(bulk_ion_charge(RP))
+    @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+    return RP
+end
+
+"""
+    initialize_coupled_fields!(RP)
+
+Make the coils' memory and `ψ_self` consistent with the initial state, both from the same `Jϕ`:
+- every coil without a memory (`ψ_pla` unset) takes the plasma flux of `Jϕ`;
+- if the run starts with currents, Ampère is on and `ψ_self` is zero, `ψ_self` becomes the
+  Grad–Shafranov solution of those currents, with no induced field.
+
+`run_simulation!` calls it before the first step; a loop over `advance_timestep!` calls it
+once before the first. A coil added later with a current enters `ψ_self` at the next solve;
+call `solve_Ampere_equation!(RP; update_Eϕ_self = false)` after adding it.
+"""
+function initialize_coupled_fields!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    update_Jϕ!(RP)
+    csys = RP.coil_system
+    csys.n_total > 0 && init_unset_coil_plasma_flux!(csys, RP.G, RP.plasma.Jϕ)
+    has_current = any(!iszero, RP.plasma.Jϕ) || (csys.n_total > 0 && any(!iszero, csys.coils.current))
+    if RP.flags.Ampere && has_current && all(iszero, RP.fields.ψ_self)
+        solve_Ampere_equation!(RP; update_Eϕ_self = false)
+        fill!(RP.fields.Eϕ_self, zero(FT))
+        fill!(RP.fields.Eϕ_self_prev, zero(FT))
+        combine_external_and_self_fields!(RP)
+        update_Jϕ!(RP)   # bϕ has moved with the self field
+    end
+    return RP
+end
+
+"""
     prepare_timestep!(RP)
 
 Set the inputs of the next step from the current state and time tⁿ, leaving the state itself
@@ -60,15 +103,7 @@ function prepare_timestep!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         end
 
         # Current calculations
-        @timeit RAPID_TIMER "current_calculation" begin
-            pla = RP.plasma
-            F = RP.fields
-            @unpack qe, ee = RP.config.constants
-            # `ni·Z` is the ion CHARGE density. One species, so it is a product and not
-            # a sum; `Z` comes from the species itself and cannot lag behind it.
-            Z_i = FT(bulk_ion_charge(RP))
-            @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
-        end
+        @timeit RAPID_TIMER "current_calculation" update_Jϕ!(RP)
     end
     return RP
 end
@@ -77,32 +112,40 @@ end
     solve_timestep!(RP, dt = RP.dt)
 
 Advance the state from tⁿ to tⁿ⁺¹ on the inputs `prepare_timestep!` set: the momentum
-equation (with Ampère above the current threshold), the densities, the ion velocity and the
-temperatures, the global J×B force and the neutral gas.
+equation and the coil circuits (coupled with Ampère above the current threshold; below it, and
+with Ampère off, the coils advance as vacuum circuits and Ampère only keeps `ψ_self`), the
+densities, the ion velocity and the temperatures, the global J×B force and the neutral gas.
 """
 function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "solve_timestep!" begin
         I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
 
-        # For high current: update electromagnetic fields using Ampere's law
-        if RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
-            if RP.flags.E_para_self_EM && RP.flags.ud_evolve
-                # Solve the coupled drift velocity and magnetic field equations
-                # @timeit RAPID_TIMER "solve_coupled_momentum_Ampere_equations_with_coils!" solve_coupled_momentum_Ampere_equations_with_coils!(RP)
-                solve_combined_momentum_Ampere_equations_with_coils!(RP)
-            else
-                # Update drift velocity separately
-                if RP.flags.ud_evolve
-                    update_ue_para!(RP)
-                end
-
-                # Solve the Grad-Shafranov equation for the magnetic field
-                @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP)
-            end
-        else
-            # For low current: only update drift velocity
+        above_gate = RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
+        if above_gate && RP.flags.E_para_self_EM && RP.flags.ud_evolve
+            # u∥, ψ_self and the coil currents together
+            solve_combined_momentum_Ampere_equations_with_coils!(RP)
+        elseif above_gate
+            # The coils advance on their own circuits, the plasma entering through the flux
+            # each coil remembers
+            advance_coils!(RP)
             if RP.flags.ud_evolve
                 update_ue_para!(RP)
+            end
+            update_Jϕ!(RP)
+            @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP)
+        else
+            # Below the gate the plasma current is not a source of induction: the coils
+            # advance as in vacuum and the induced field is theirs alone (see
+            # set_Eϕ_self_from_coils!). ψ_self stays the field of the present currents, so the
+            # coupled solve starts from it when the gate opens.
+            ΔI_coils = advance_coils!(RP; plasma = false)
+            RP.flags.Ampere && RP.flags.E_para_self_EM && set_Eϕ_self_from_coils!(RP, ΔI_coils)
+            if RP.flags.ud_evolve
+                update_ue_para!(RP)
+            end
+            if RP.flags.Ampere
+                update_Jϕ!(RP)
+                @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP; update_Eϕ_self = false)
             end
         end
 
@@ -171,7 +214,7 @@ Handles time stepping, diagnostics output, and snapshot generation.
   `prepare_timestep!` and `solve_timestep!`: the state is at tⁿ and the step's inputs (the
   reaction counts, the external fields at tⁿ, `Jϕ`) have just been set from it. Nothing
   resets them before the step solves, so what the callback writes to them is what the step
-  uses.
+  uses. The step recomputes `Jϕ` once it has updated u∥.
 - `callback_after_step`: optional `f(RP)`, called at the end of every completed step, at
   tⁿ⁺¹, after that step's snapshots and the controller update.
 
@@ -203,6 +246,10 @@ function run_simulation!(
             RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= zero(FT)
             RP.flags.secondary_electron && RP.flags.update_ni_independently &&
                 @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
+
+            # The coils' memory and the self field start from the initial currents. A resumed
+            # run keeps both: they are state.
+            initialize_coupled_fields!(RP)
         end
 
         # Establish the invariant the loop only maintains: its refresh runs at the END of
@@ -308,7 +355,7 @@ function run_simulation!(
 end
 
 # Export workflow functions
-export advance_timestep!, prepare_timestep!, solve_timestep!, run_simulation!
+export advance_timestep!, prepare_timestep!, solve_timestep!, run_simulation!, initialize_coupled_fields!
 
 # Export timer utilities
 export RAPID_TIMER, print_timer_results, save_timer_results
