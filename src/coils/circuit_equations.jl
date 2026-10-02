@@ -409,6 +409,7 @@ new_coil_I_k = obj.coils.inv_A_LR_circuit*circuit_rhs;
 
 # Side effects
 - Updates the current field of all coils in the system
+- Sets the coils' clock to `t + Δt`, the end of the step taken
 
 # Notes
 - Assumes circuit matrices (A_LR_circuit, inv_A_LR_circuit) are already computed
@@ -435,7 +436,7 @@ function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT = csys.time_s) whe
     # Update coil currents
     set_all_currents!(csys, new_currents)
 
-    csys.time_s += csys.Δt  # Advance time
+    csys.time_s = t + csys.Δt
     return nothing
 end
 
@@ -448,8 +449,9 @@ One backward-Euler step of the coil circuits with the plasma's flux:
     (M + Δt R) Iⁿ⁺¹ = M Iⁿ + Δt V − 2π [ψ_pla(r_c; Jϕ) − ψ_pla,c],
 
 with ψ_pla,c the flux each coil used last (`Coil.ψ_pla`), which this then sets to
-ψ_pla(r_c; Jϕ). Used when the coupled solve does not run. `plasma = false` (below the Ampère
-gate) leaves the plasma term out and only moves ψ_pla,c to ψ_pla(r_c; Jϕ).
+ψ_pla(r_c; Jϕ), and the coils' clock to t + Δt. Used when the coupled solve does not run.
+`plasma = false` (below the Ampère gate) leaves the plasma term out and only moves ψ_pla,c
+to ψ_pla(r_c; Jϕ).
 """
 function advance_LR_circuit_step!(
         csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}, t::FT = csys.time_s;
@@ -465,7 +467,7 @@ function advance_LR_circuit_step!(
     end
     set_all_currents!(csys, csys.inv_A_LR_circuit * circuit_rhs)
     csys.coils.ψ_pla = ψ_now
-    csys.time_s += csys.Δt
+    csys.time_s = t + csys.Δt
     return nothing
 end
 

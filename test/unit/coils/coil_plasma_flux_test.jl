@@ -136,6 +136,30 @@ end
     @test maximum(maximum(abs, flux(k) - flux(1)) / terms(k) for k in eachindex(rec.I)) < 1.0e-10
 end
 
+@testitem "Coils that join a run late keep its time, on every step path" setup = [CoilFluxColumn] begin
+    # A run without coils, then a coil whose voltage ramps, V(t) = 10 V + 10⁶ V/s · t, set up at
+    # 50 µs. The coils' clock, which the 0D snapshots and the calls without a time read, must
+    # read the run's time from then on, below the gate, in the split step and in the coupled
+    # solve: every snapshot records the voltage at its own time.
+    V(t) = 10.0 + 1.0e6 * t
+    for (threshold, ud_evolve) in ((1.0e9, true), (0.0, false), (0.0, true))
+        RP = column_with_loops([]; t_end = 50.0e-6)
+        RP.flags.Ampere_Itor_threshold = threshold
+        RP.flags.ud_evolve = ud_evolve
+        quiet(() -> run_simulation!(RP))
+        add_loops!(RP, [(0.6, 0.0, 1.0e-4, V, "OH")])
+        @test RP.coil_system.time_s ≈ RP.time_s
+
+        nsnap = length(RP.diagnostics.snaps0D)
+        RP.t_end_s = 100.0e-6
+        quiet(() -> run_simulation!(RP))
+        snaps = RP.diagnostics.snaps0D[(nsnap + 1):end]
+        @test RP.coil_system.time_s ≈ RP.time_s
+        @test length(snaps) == 2   # the resumed run's first snapshot, and the one at 100 µs
+        @test all(s.coils_V_ext[1] ≈ V(s.time_s) for s in snaps)
+    end
+end
+
 @testitem "Coupled step: a step taken without run_simulation! sets the memory" setup = [CoilFluxColumn] begin
     RP = column_with_loops([(1.2, 0.8, 1.0e-3, 0.0, "loop")])
     RAPID2D.update_transport_quantities!(RP)
@@ -281,6 +305,28 @@ end
     @test csys.Δt == RP.dt
     @test csys.coils.current[1] ≈ 100.0 * L / (L + RP.dt * R) rtol = 1.0e-12
     @test ΔI[1] ≈ csys.coils.current[1] - 100.0 rtol = 1.0e-12
+end
+
+@testitem "Coil steps: the coils' clock ends at the step's time plus Δt" setup = [CoilFluxColumn] begin
+    using RAPID2D: advance_LR_circuit_step!, solve_combined_momentum_Ampere_equations_with_coils!,
+        solve_coupled_momentum_Ampere_equations_with_coils!
+    # A coil step is taken at the time it is given, the run's. The coils' clock must end at
+    # that time plus Δt whatever it read before; here the run's time is moved past it.
+    t = 40.0e-6
+    steps = (
+        rp -> advance_LR_circuit_step!(rp.coil_system, t),
+        rp -> advance_LR_circuit_step!(rp.coil_system, rp.G, rp.plasma.Jϕ, t),
+        solve_combined_momentum_Ampere_equations_with_coils!,
+        solve_coupled_momentum_Ampere_equations_with_coils!,
+    )
+    for step! in steps
+        RP = column_with_loops([(0.6, 0.0, 1.0e-4, 10.0, "OH")])
+        RAPID2D.update_transport_quantities!(RP)
+        RP.time_s = t
+        prepare_timestep!(RP)
+        step!(RP)
+        @test RP.coil_system.time_s ≈ t + RP.dt
+    end
 end
 
 @testitem "Coupled step: the alternative solver takes the same step as the combined one" setup = [CoilFluxColumn] begin

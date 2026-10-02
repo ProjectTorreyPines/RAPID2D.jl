@@ -14,6 +14,7 @@ function initialize_coil_system!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Initialize empty coil system
 
     csys = RP.coil_system
+    csys.time_s = RP.time_s   # coils set up mid-run start at the run's time
 
     if csys.n_total > 0
         csys.Δt = RP.dt

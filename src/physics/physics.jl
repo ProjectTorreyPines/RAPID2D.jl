@@ -2114,7 +2114,7 @@ function solve_coupled_momentum_Ampere_equations_with_coils!(
 
     # Update coil currents, with the plasma flux they were computed from
     if RP.coil_system.n_total > 0
-        csys.time_s += csys.Δt
+        csys.time_s = RP.time_s + csys.Δt
         set_all_currents!(csys, new_coils_I_k)
         csys.coils.ψ_pla = ψ_pla_coils_k
     end
@@ -2457,7 +2457,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # Update coil currents, with the plasma flux they were computed from
         if RP.coil_system.n_total > 0
-            csys.time_s += csys.Δt
+            csys.time_s = RP.time_s + csys.Δt
             set_all_currents!(csys, new_coils_I_k)
             csys.coils.ψ_pla = ψ_pla_coils_k
         end
