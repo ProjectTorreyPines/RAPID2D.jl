@@ -33,6 +33,7 @@ include("constants.jl")
 include("numerics/exponential_rosenbrock.jl")   # bern(z) coefficients for the local rates
 include("numerics/discretized_operator.jl")
 include("numerics/linear_solvers.jl")
+include("numerics/anderson.jl")              # Anderson mixing for the coupled solve's fixed point
 include("physics/ion_species.jl")   # IonSpecies and the transport policies; types.jl needs both
 include("types.jl")
 
