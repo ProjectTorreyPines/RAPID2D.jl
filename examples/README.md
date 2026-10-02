@@ -16,16 +16,32 @@ of `Project.toml`, which needs Julia 1.11 or later). It also adds `Plots`, which
 the plotting extension; the mp4 uses the FFMPEG that ships with it. Outputs go to
 `examples/output/<name>/`.
 
+### Verdicts
+
+A script with a prediction checks itself against it. It saves its figure as
+`<name>__PASS.png` or `<name>__FAIL.png`, removes the figure of the other verdict, and heads
+the figure with what it checked. The output folder therefore shows the verdict of the last
+run. The scenario scripts have no prediction and save their figures without a verdict.
+
+Known failures, and the work each belongs to:
+
+| figure | what fails | cause |
+|---|---|---|
+| `force_balance_control/position_control__FAIL` | the column is not held; it reaches the wall | the force and velocity model: the global J×B force is an explicit kick on an accumulated velocity. The coupled solve is not the cause. |
+| `coupled_step/coil_driven_column__FAIL` | under the default 1 A gate the first step jumps to about half the final current | the gate: the step that crosses it runs without the plasma's self-inductance |
+| `coupled_step/gate_crossing_dense_column__FAIL` | the same jump, for dense columns at rest | as above |
+| `coupled_step/picard_kstar_inboard_limited__FAIL`, `picard_tight_box__FAIL`, `picard_filament_shell__FAIL`, `picard_regime_map__FAIL` | the coupled solve's default iteration misses the converged step, or diverges | the coupled solve's Picard iteration (below) |
+
 ## Scenarios
 
-| script | field and geometry | physics on | simulated time |
-|---|---|---|---|
-| `townsend_avalanche.jl` | single-quadrupole null, box wall | atomic reactions, transport | 0.8 ms |
-| `selfE_avalanche.jl` | single-quadrupole null, box wall | as `townsend_avalanche.jl`, plus E∥ cancellation, mean E×B, turbulent E×B mixing | 4 ms |
-| `current_diffusion.jl` | pure toroidal field | a current filament with Ampère, with and without the inductive E; single-filament L/R reference with the electrons' kinetic inductance | 2 × 20 ms |
-| `force_balance_control.jl` | pure toroidal field | J×B hoop force; curved vertical-field PID position control | 2 × 2 ms |
-| `full_startup.jl` | single-quadrupole null, box wall | every module except the global J×B force | 10 ms |
-| `kstar_reference.jl` | KSTAR, time-varying external field | self-E model, Ampère off | 40 ms |
+| script | field and geometry | physics on | simulated time | check |
+|---|---|---|---|---|
+| `townsend_avalanche.jl` | single-quadrupole null, box wall | atomic reactions, transport | 0.8 ms | scenario, no verdict |
+| `selfE_avalanche.jl` | single-quadrupole null, box wall | as `townsend_avalanche.jl`, plus E∥ cancellation, mean E×B, turbulent E×B mixing | 4 ms | scenario, no verdict |
+| `current_diffusion.jl` | pure toroidal field | a current filament with Ampère, with and without the inductive E; single-filament L/R reference with the electrons' kinetic inductance | 2 × 20 ms | the current follows the (L + L_kin)/R circuit within 1 % of saturation |
+| `force_balance_control.jl` | pure toroidal field | J×B hoop force; curved vertical-field PID position control | 2 × 2 ms | the controller holds the current centroid within 5 cm of 1.5 m after 1 ms |
+| `full_startup.jl` | single-quadrupole null, box wall | every module except the global J×B force | 10 ms | scenario, no verdict |
+| `kstar_reference.jl` | KSTAR, time-varying external field | self-E model, Ampère off | 40 ms | scenario, no verdict |
 
 ## Coupled-step verification (`coupled_step/`)
 
@@ -47,6 +63,25 @@ flux, and that flux is computed from the simulated current.
 | `density_growth_dt.jl` | as `density_doubling.jl`, with n growing at 200/s; Δt = 5 and 2.5 µs | the loop keeps its flux (lumped model); the error is one step of growth, halving with Δt |
 | `column_pushed_toward_loop.jl` | the column pushed at 200 m/s toward a superconducting loop outside the wall | I_c = −Φ_p/L_c; the loop pushes the column back |
 | `column_shifted_in_shell.jl` | the column moved up one cell inside a shell of 24 superconducting filaments | the shell's flux-conserving currents push it back down |
+
+### The coupled solve's iteration
+
+Within a step the coupled solve iterates on the boundary flux and the coil currents (see
+`coupled_step/common.jl`). These scripts compare the default iteration with the same equations
+iterated to convergence, step by step. Each figure shows four things:
+- where the column and the conductors sit;
+- the plasma current of the two runs;
+- the first step's induced-field error against the number of iterations;
+- that error over the grid.
+
+| script | setup | check |
+|---|---|---|
+| `picard_center_column.jl` | a dense, hot column in the middle of the default domain | the default stays within 1 % of the converged current at every step |
+| `picard_kstar_inboard_limited.jl` | the KSTAR grid and first wall; a dense column 4 cm from the inboard wall | as above |
+| `picard_tight_box.jl` | a column filling a box wall one cell inside the grid | as above |
+| `picard_filament_shell.jl` | a dense column inside a shell of 24 copper filaments | as above |
+| `picard_regime_map.jl` | the KSTAR grid and first wall; inboard-limited columns of radius 0.25–0.45 m, from 1e16 m⁻³ and 2 eV to 1e19 m⁻³ and 20 eV | every case within 1 % |
+| `gate_crossing_dense_column.jl` | dense columns at rest under the default 1 A gate | the run steps as the run with the gate at 0, within 1 % |
 
 Each script writes one figure to `examples/output/coupled_step/`:
 

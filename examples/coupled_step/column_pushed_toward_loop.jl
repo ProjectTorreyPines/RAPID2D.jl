@@ -73,5 +73,9 @@ fig = plot(
     l1, l2, p1, p2, p3;
     layout = @layout([grid(2, 1){0.34w} grid(3, 1)]), size = (1200, 860), margin = 4Plots.mm,
 )
-savefig(fig, joinpath(out, "column_pushed_toward_loop.png"))
+gap = maximum(abs.(rec.Ic .- rec.Ic_flux)) / maximum(abs, rec.Ic_flux)
+save_with_verdict(
+    fig, out, "column_pushed_toward_loop", rec.Rc[end] > 1.6 && gap < 0.02,
+    @sprintf("the loop current follows −Φ_p/L_c within %.2g %% (needs 2 %%) while the column moves to R = %.2f m", 100gap, rec.Rc[end]),
+)
 println("outputs in ", out)

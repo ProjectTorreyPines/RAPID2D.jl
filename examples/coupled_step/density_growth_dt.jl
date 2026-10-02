@@ -74,5 +74,10 @@ for ((dt, run), c) in zip(runs, colors)
     plot!(p2, t, run.rec.err; c, lw = 2, label = "RAPID2D, " * lbl)
     hline!(p2, [γ * dt]; c, ls = :dot, lw = 1.5, label = "one step of growth, γΔt")
 end
-savefig(plot(p1, p2; layout = (2, 1), size = (760, 680), left_margin = 4Plots.mm), joinpath(out, "density_growth_dt.png"))
+fig = plot(p1, p2; layout = (2, 1), size = (760, 720), left_margin = 4Plots.mm, top_margin = 6Plots.mm)
+errs = [run.rec.err[end] for (_, run) in runs]
+save_with_verdict(
+    fig, out, "density_growth_dt", errs[1] < 0.01 && 0.4 < errs[2] / errs[1] < 0.6,
+    @sprintf("loop flux error %.2e at Δt = 5 µs (needs < 1e-2), ×%.3f at half the step (needs 0.4–0.6: first order)", errs[1], errs[2] / errs[1]),
+)
 println("outputs in ", out)

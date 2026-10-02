@@ -198,3 +198,33 @@ function animate2D(runs::Vector{<:Pair}, fields::Vector{Symbol}; file, fps = 10)
     return file
 end
 animate2D(RP::RAPID, fields::Vector{Symbol}; kw...) = animate2D(["" => RP], fields; kw...)
+
+# ── verdicts ───────────────────────────────────────────────────────────────────────
+# An example that checks itself against its prediction saves its figure as <name>__PASS.png
+# or <name>__FAIL.png, and removes the figure of the other verdict (and an unlabelled one), so
+# the output folder shows the last run's verdict. The verdict and `detail` also head the
+# figure and are printed.
+function save_with_verdict(fig, dir::AbstractString, name::AbstractString, pass::Bool, detail::AbstractString)
+    verdict = pass ? "PASS" : "FAIL"
+    for old in ("$name.png", "$(name)__PASS.png", "$(name)__FAIL.png")
+        isfile(joinpath(dir, old)) && rm(joinpath(dir, old))
+    end
+    # the heading wrapped to the figure's width (about 9 px per character at this size)
+    width = fig[:size][1]
+    words, lines = split("$verdict: $detail"), [""]
+    for w in words
+        if isempty(lines[end]) || length(lines[end]) + length(w) + 1 <= width / 9
+            lines[end] = isempty(lines[end]) ? String(w) : lines[end] * " " * w
+        else
+            push!(lines, String(w))
+        end
+    end
+    plot!(
+        fig; plot_title = join(lines, "\n"), plot_titlefontsize = 11, plot_titlefontcolor = pass ? :darkgreen : :red3,
+        plot_titlevspan = min(0.05 + 0.03 * (length(lines) - 1), 0.2),
+    )
+    file = joinpath(dir, "$(name)__$(verdict).png")
+    savefig(fig, file)
+    println(verdict, "  ", name, ": ", detail)
+    return file
+end

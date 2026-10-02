@@ -120,5 +120,15 @@ fig = plot(
     plot_layout(looped.RP; title = "column; the loop is in the second run only"), p1, p2, p3, p4;
     layout = @layout([a{0.25w} grid(2, 2)]), size = (1500, 780), margin = 5Plots.mm,
 )
-savefig(fig, joinpath(out, "density_doubling.png"))
+# The checks of test/regression/coupled_step_test.jl: I_p jumps across the doubling as the
+# lumped model's does, and the loop keeps its flux through it.
+jump_gaps = map(((alone, models[1]), (looped, models[2]))) do (r, m)
+    k = findfirst(==(r.t_d), r.rec.t)
+    abs(r.rec.Ip[k + 1] / r.rec.Ip[k] - m.Ip[k + 2] / m.Ip[k + 1])
+end
+flux_gap = abs(looped.rec.Ic[end] - looped.rec.Ic_flux[end]) / abs(looped.rec.Ic_flux[end])
+save_with_verdict(
+    fig, out, "density_doubling", all(<(0.005), jump_gaps) && flux_gap < 1.0e-2,
+    @sprintf("the jump of I_p within %.1e of the lumped model's (needs 5e-3); the loop holds its flux to %.1e (needs 1e-2)", maximum(jump_gaps), flux_gap),
+)
 println("outputs in ", out)

@@ -54,5 +54,10 @@ p2 = plot(tms, last.(recursion); c = :green, lw = 5, alpha = 0.35, label = "back
 plot!(p2, tms, last.(exact); c = :black, lw = 1, ls = :dot, label = "exact")
 plot!(p2, tms, last.(I_open); c = :royalblue, lw = 2, label = "threshold 0")
 plot!(p2, tms, last.(I_default); c = :crimson, ls = :dot, lw = 2, label = "threshold 1 A")
-savefig(plot(p1, p2; layout = (2, 1), size = (720, 620)), joinpath(out, "two_coils.png"))
+fig = plot(p1, p2; layout = (2, 1), size = (720, 660), top_margin = 6Plots.mm)
+worst = max(dev(I_open), dev(I_default))
+save_with_verdict(
+    fig, out, "two_coils", worst < 1.0e-12,
+    @sprintf("both runs follow the backward-Euler recursion to %.1e of I_start (needs 1e-12)", worst),
+)
 println("outputs in ", out)

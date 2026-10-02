@@ -16,9 +16,10 @@ include(joinpath(@__DIR__, "..", "common.jl"))
 function column(
         name; E0 = 0.3, Te = 1.0, n0 = 1.0e16, cenR = 1.5, cenZ = 0.0, radius = 0.3,
         threshold = 0.0, dt = 5.0e-6, t_end = 1.0e-3, moving = false,
+        manual = pure_toroidal(E0), wall_R = Float64[], wall_Z = Float64[],
     )
     config = SimulationConfig{Float64}(;
-        device_Name = "manual", manual = pure_toroidal(E0), NR = 30, NZ = 50, R0B0 = 3.0,
+        device_Name = "manual", manual, wall_R, wall_Z, NR = 30, NZ = 50, R0B0 = 3.0,
         prefilled_gas_pressure = 0.0,          # vacuum: no neutrals
         dt, t_end_s = t_end, snap0D_Δt_s = 10dt, snap2D_Δt_s = t_end,
         Output_path = output_dir(name),
@@ -119,11 +120,134 @@ function plot_layout(RP; J = current_density(RP), title = "layout")
     p = heatmap(
         G.R1D, G.Z1D, permutedims(Jmax > 0 ? J ./ Jmax : J);
         c = :balance, clims = (-1, 1), aspect_ratio = :equal, colorbar_title = "J / max|J|",
-        xlims = (min(G.R1D[1], minimum(rc) - 0.1), max(G.R1D[end], maximum(rc) + 0.1)),
+        xlims = (min(G.R1D[1], minimum(rc; init = Inf) - 0.1), max(G.R1D[end], maximum(rc; init = -Inf) + 0.1)),
         ylims = extrema(G.Z1D), xlabel = "R (m)", ylabel = "Z (m)", title, titlefontsize = 10,
         framestyle = :box,
     )
     plot!(p, vcat(RP.wall.R, RP.wall.R[1]), vcat(RP.wall.Z, RP.wall.Z[1]); c = :gray40, lw = 1, label = "wall")
-    scatter!(p, rc, zc; c = :orange, ms = 4, msw = 0, label = "loops")
+    isempty(rc) || scatter!(p, rc, zc; c = :orange, ms = 4, msw = 0, label = "loops")
     return p
+end
+
+# ── the coupled solve's Picard iteration ───────────────────────────────────────────────
+# Within a step the coupled solve iterates on the boundary flux and the coil currents: solve
+# u∥ and ψ inside the domain with the boundary flux held, then recompute the boundary flux
+# (Green's functions) and the coil currents (circuits) from the new plasma current, and repeat,
+# the boundary flux relaxed with weight w (default 0.5, at most 10 block solves).
+# CONVERGED_PICARD iterates the same equations to convergence (w = 0.05, up to 3000 solves),
+# which is what the default should reproduce.
+const CONVERGED_PICARD = (tolerance = 1.0e-10, max_iter = 3000, relaxation_w = 0.05)
+
+# Geometries. A KSTAR-like domain: the grid of the KSTAR field files (R 1.2–2.4 m, Z ±1.2 m)
+# with the KSTAR first wall (KSTAR_First_Wall.dat), whose inboard side is 6 cm (1.5 cells at
+# 30×50) inside the grid. A tight box: the default box wall one cell inside a 1.2 × 1.6 m grid.
+const KSTAR_WALL_R = [1.26, 1.632, 1.992, 2.256, 2.256, 1.992, 1.632, 1.26, 1.26]   # closed
+const KSTAR_WALL_Z = [1.13, 1.056, 0.732, 0.456, -0.456, -0.732, -1.056, -1.13, 1.13]
+kstar_like(E0) = ManualSetup{Float64}(R = (1.2, 2.4), Z = (-1.2, 1.2), BR = 0.0, BZ = 0.0, Eϕ = E0)
+tight_box(E0) = ManualSetup{Float64}(R = (1.0, 2.2), Z = (-0.8, 0.8), BR = 0.0, BZ = 0.0, Eϕ = E0, wall_margin_cells = 1)
+
+# A shell of `nfil` copper filaments on a circle of radius `r` around (cenR, 0), each of the
+# square cross-section that tiles the circle: a passive conducting structure inside the grid.
+function filament_shell!(RP; cenR, r, nfil = 24)
+    side = 2π * r / nfil
+    for k in 1:nfil
+        θ = 2π * (k - 0.5) / nfil + 0.05
+        R, Z = cenR + r * cos(θ), r * sin(θ)
+        add_loop!(RP, R, Z; a = side / sqrt(π), R = 1.68e-8 * 2π * R / side^2, name = "shell_$k")
+    end
+    initialize_coil_system!(RP)
+    return RP
+end
+
+quiet(f) = redirect_stdout(() -> redirect_stderr(f, devnull), devnull)
+
+# The column of `make()` run for `nsteps` steps twice, with the default Picard and with
+# CONVERGED_PICARD: the plasma current and the induced field after each step, and the Picard
+# counters.
+function default_vs_converged(make; nsteps)
+    return map((nothing, CONVERGED_PICARD)) do picard
+        RP = make()
+        isnothing(picard) || (RP.flags.ampere_picard = picard)
+        RP.t_end_s = nsteps * RP.dt
+        I, E = Float64[], Matrix{Float64}[]
+        record(rp) = (push!(I, plasma_current(rp, current_density(rp))); push!(E, copy(rp.fields.Eϕ_self)))
+        quiet(() -> run_simulation!(RP; callback_after_step = record))
+        (; RP, I, E, stats = deepcopy(RP.diagnostics.ampere_picard))
+    end
+end
+
+# The first step of the column of `make()`, solved from the same state with the default
+# Picard stopped after L = 1…Lmax block solves, against the converged step: the error of the
+# induced field, max|Eϕ_L − Eϕ*| / max|Eϕ*|.
+function picard_error_by_iteration(make; Lmax = 30)
+    RP = make()
+    pla, F, csys = RP.plasma, RP.fields, RP.coil_system
+    # what run_simulation! does before its first step
+    pla.ne[RP.G.nodes.on_out_wall_nids] .= 0.0
+    pla.ni[RP.G.nodes.on_out_wall_nids] .= 0.0
+    initialize_coupled_fields!(RP)
+    RAPID2D.update_transport_quantities!(RP)
+    prepare_timestep!(RP)
+    saved = (
+        u = copy(pla.ue_para), ψ = copy(F.ψ_self), E = copy(F.Eϕ_self), Ep = copy(F.Eϕ_self_prev),
+        I = csys.n_total > 0 ? copy(get_all_currents(csys)) : Float64[],
+        Φ = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : Float64[], t = csys.time_s,
+    )
+    function trial(; kw...)
+        pla.ue_para .= saved.u; F.ψ_self .= saved.ψ; F.Eϕ_self .= saved.E; F.Eϕ_self_prev .= saved.Ep
+        if csys.n_total > 0
+            set_all_currents!(csys, copy(saved.I)); csys.coils.ψ_pla = copy(saved.Φ); csys.time_s = saved.t
+        end
+        quiet(() -> RAPID2D.solve_combined_momentum_Ampere_equations_with_coils!(RP; kw...))
+        return copy(F.Eϕ_self)
+    end
+    E_star = trial(; CONVERGED_PICARD..., E_floor = 0.0, I_floor = 0.0)
+    errs = [maximum(abs, trial(; tolerance = 0.0, max_iter = L, relaxation_w = 0.5, E_floor = 0.0, I_floor = 0.0) .- E_star) for L in 1:Lmax]
+    return errs ./ maximum(abs, E_star)
+end
+
+# One figure for a Picard case: where the column and the conductors sit, the plasma current
+# step by step with the default and the converged Picard, the first step's induced-field error
+# against the number of block solves, and that error over the grid after the default solve.
+# Passes when the default stays within 1 % of the converged current at every step.
+function picard_case(make, name, title; nsteps = 20)
+    def, conv = default_vs_converged(make; nsteps)
+    errs = picard_error_by_iteration(make)
+    t = (1:nsteps) .* def.RP.dt .* 1.0e6
+    gap = maximum(abs.(def.I .- conv.I)) / maximum(abs, conv.I)
+    pass = isfinite(gap) && gap <= 1.0e-2
+
+    blowup = maximum(abs, def.I) > 100 * maximum(abs, conv.I)
+    p1 = plot!(plot_layout(conv.RP; title); colorbar = false, titlefontsize = 9)
+    p2 = plot(
+        t, blowup ? abs.(conv.I) : conv.I; c = :black, lw = 3, label = "converged (expected)",
+        xlabel = "t (µs)", ylabel = blowup ? "|I_p| (A)" : "I_p (A)", yscale = blowup ? :log10 : :identity,
+        title = "plasma current", legend = :topleft,
+    )
+    plot!(p2, t, blowup ? max.(abs.(def.I), 1.0e-3) : def.I; c = :red3, ls = :dash, lw = 2, m = :circle, ms = 3, label = "default Picard (now)")
+    p3 = plot(
+        1:length(errs), max.(errs, 1.0e-16); yscale = :log10, c = :red3, lw = 2, m = :circle, ms = 3, label = "default Picard",
+        xlabel = "block solves in the first step", ylabel = "max|ΔEϕ| / max|Eϕ*|", title = "first step: error by iteration",
+    )
+    vline!(p3, [10]; c = :gray, ls = :dash, label = "default limit (10)")
+    hline!(p3, [1.0e-3]; c = :green, ls = :dot, label = "tolerance (1e-3)")
+    G = conv.RP.G
+    ΔE = (def.E[1] .- conv.E[1]) ./ maximum(abs, conv.E[1])
+    lim = max(maximum(abs, filter(isfinite, ΔE)), 1.0e-12)
+    p4 = heatmap(
+        G.R1D, G.Z1D, permutedims(ΔE); c = :balance, clims = (-lim, lim), aspect_ratio = :equal,
+        xlabel = "R (m)", ylabel = "Z (m)", title = "step 1: (Eϕ − Eϕ*) / max|Eϕ*|", titlefontsize = 10,
+        framestyle = :box, xlims = extrema(G.R1D), ylims = extrema(G.Z1D),
+    )
+    plot!(p4, vcat(conv.RP.wall.R, conv.RP.wall.R[1]), vcat(conv.RP.wall.Z, conv.RP.wall.Z[1]); c = :gray40, lw = 1, label = "")
+    fig = plot(
+        p1, p2, p3, p4; layout = (1, 4), size = (1800, 540), margin = 5Plots.mm, left_margin = 10Plots.mm,
+        top_margin = 10Plots.mm, bottom_margin = 12Plots.mm,
+    )
+    detail = @sprintf(
+        "default Picard strays up to %.2g %% from the converged current (passes under 1 %%); first step %.3g A vs %.3g A; %.1f solves/step, %d unconverged (converged run: %.0f solves/step)",
+        100gap, def.I[1], conv.I[1], def.stats.niter / def.stats.nsolve, def.stats.nunconverged, conv.stats.niter / conv.stats.nsolve
+    )
+    save_with_verdict(fig, output_dir("coupled_step"), name, pass, detail)
+    return (; def, conv, errs, gap, pass)
 end

@@ -5,7 +5,9 @@
 #   ΔI = −M⁻¹ (Φ(J_shifted) − Φ(J_before)),
 # M the filaments' inductance matrix and Φ the plasma flux through each, and those currents
 # push the column back down: F_Z = −∫ Jϕ B_R dV < 0. This restoring force is how a
-# conducting wall holds a vertical displacement until its currents decay.
+# conducting wall holds a vertical displacement until its currents decay. The column itself
+# answers the shell's currents inductively at first, so the force builds up to that value over
+# about 0.1 ms; the coupled solve iterated to convergence gives the same build-up.
 #
 #   julia --project=examples examples/coupled_step/column_shifted_in_shell.jl
 
@@ -80,5 +82,9 @@ fig = plot(
     plot_layout(RP; title = "column and shell filaments"), p1, p2;
     layout = @layout([a{0.38w} grid(2, 1)]), size = (1200, 680), margin = 4Plots.mm,
 )
-savefig(fig, joinpath(out, "column_shifted_in_shell.png"))
+gap = abs(rec.F[end] - pred.F[]) / abs(pred.F[])
+save_with_verdict(
+    fig, out, "column_shifted_in_shell", pred.F[] < 0 && rec.F[1] < 0 && gap < 0.02,
+    @sprintf("the shell pushes the column back from the first step; %.1f ms after the shift its force is within %.2g %% of the flux-conserving shell's (needs 2 %%)", rec.t[end] * 1.0e3, 100gap),
+)
 println("outputs in ", out)
