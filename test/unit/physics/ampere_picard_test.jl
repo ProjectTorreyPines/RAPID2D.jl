@@ -62,6 +62,20 @@ end
     @test stats.last_E_residual > 0 && isfinite(stats.last_I_residual)
 end
 
+@testitem "Ampère Picard: the run's settings reach the coupled solve" setup = [PicardColumn] begin
+    # flags.ampere_picard is what solve_timestep! hands the coupled solve: a tolerance no
+    # iteration can meet makes every solve run exactly its max_iter block solves.
+    RP = picard_column(; t_end = 20.0e-6)
+    RP.flags.ampere_picard = (tolerance = 1.0e-300, max_iter = 3, relaxation_w = 0.5)
+    redirect_stderr(devnull) do
+        redirect_stdout(() -> run_simulation!(RP), devnull)
+    end
+    stats = RP.diagnostics.ampere_picard
+    @test stats.nsolve == 4
+    @test stats.niter == 3 * stats.nsolve
+    @test stats.nunconverged == stats.nsolve
+end
+
 @testitem "Ampère Picard: the stopping test bounds the induced-field error" setup = [PicardColumn] begin
     using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
     # Two identical columns, a few steps in; then one more step solved with the defaults and
