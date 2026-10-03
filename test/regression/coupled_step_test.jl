@@ -490,6 +490,28 @@ end
     @test gated.plasma.ue_para == open.plasma.ue_para
 end
 
+@testitem "Coupled step: a crossing starts the coupled solve from the coils' remembered flux" tags = [:regression] setup = [CoupledStepSetup] begin
+    # The coils remember a plasma flux that the column at rest no longer makes, as if they last
+    # saw a current that has since gone. The trial below the gate moves that memory to the
+    # flux of the present current; when the crossing is solved again, the circuits must see
+    # the change from the remembered flux, as with the gate at 0.
+    function first_step(threshold)
+        RP = column(; n0 = 1.0e17, Te = 5.0, threshold)
+        add_loop!(RP, 1.2, 0.8; R = 1.0e-3)
+        initialize_coil_system!(RP)
+        RAPID2D.update_transport_quantities!(RP)
+        RP.coil_system.coils.ψ_pla = [2.0e-5]
+        redirect_stdout(() -> advance_timestep!(RP), devnull)
+        return RP
+    end
+    gated, open = first_step(1.0), first_step(0.0)
+
+    @test abs(plasma_current(gated, current_density(gated))) > 1.0   # it crossed the gate
+    @test gated.coil_system.coils.current == open.coil_system.coils.current
+    @test gated.coil_system.coils.ψ_pla == open.coil_system.coils.ψ_pla
+    @test gated.plasma.ue_para == open.plasma.ue_para
+end
+
 @testitem "Coupled step: a run split just before the gate crossing is bit-identical" tags = [:regression] setup = [CoupledStepSetup] begin
     # The loop voltage comes on at 15 µs: the column sits below the gate until then, and the
     # step after crosses it. A run stopped at 10 µs and resumed steps as the whole run.
