@@ -179,7 +179,9 @@ end
 
 # The first step of the column of `make()`, solved from the same state and stopped after
 # L = 1…Lmax block solves, against the converged step: the error of the induced field,
-# max|Eϕ_L − Eϕ*| / max|Eϕ*|, for the relaxed iteration (w = 0.5) and for the default solve.
+# max|Eϕ_L − Eϕ*| / max|Eϕ*|, for the relaxed iteration (anderson_m = 0, w = 0.5) and for the
+# default solve. Both keep the solve's failure policy: a residual that grows a thousandfold restarts
+# from the best iterate with half the mixing, so the relaxed iteration no longer runs away.
 function picard_error_by_iteration(make; Lmax = 30)
     RP = make()
     pla, F, csys = RP.plasma, RP.fields, RP.coil_system
@@ -230,7 +232,7 @@ function picard_case(make, name, title; nsteps = 20)
     plot!(p2, t, blowup ? max.(abs.(def.I), 1.0e-3) : def.I; c = :red3, ls = :dash, lw = 2, m = :circle, ms = 3, label = "default solve")
     p3 = plot(
         1:length(errs.relaxed), max.(errs.relaxed, 1.0e-16); yscale = :log10, c = :gray50, lw = 2, m = :circle, ms = 2,
-        label = "relaxed iteration (w = 0.5)", xlabel = "block solves in the first step", ylabel = "max|ΔEϕ| / max|Eϕ*|",
+        label = "relaxed iteration (w = 0.5, halved when it grows)", xlabel = "block solves in the first step", ylabel = "max|ΔEϕ| / max|Eϕ*|",
         title = "first step: error by iteration", ylims = (1.0e-12, 1.0e6),
     )
     plot!(p3, 1:length(errs.default), max.(errs.default, 1.0e-16); c = :red3, lw = 2, m = :circle, ms = 3, label = "default solve")

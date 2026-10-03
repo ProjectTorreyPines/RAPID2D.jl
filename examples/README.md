@@ -28,9 +28,6 @@ Known failures, and the work each belongs to:
 | figure | what fails | cause |
 |---|---|---|
 | `force_balance_control/position_control__FAIL` | the column is not held; it reaches the wall | the force and velocity model: the global J×B force is an explicit kick on an accumulated velocity. The coupled solve is not the cause. |
-| `coupled_step/coil_driven_column__FAIL` | under the default 1 A gate the first step jumps to about half the final current | the gate: the step that crosses it runs without the plasma's self-inductance |
-| `coupled_step/gate_crossing_dense_column__FAIL` | the same jump, for dense columns at rest | as above |
-| `coupled_step/picard_kstar_inboard_limited__FAIL`, `picard_tight_box__FAIL`, `picard_filament_shell__FAIL`, `picard_regime_map__FAIL` | the coupled solve's default iteration misses the converged step, or diverges | the coupled solve's Picard iteration (below) |
 
 ## Scenarios
 
@@ -67,11 +64,12 @@ flux, and that flux is computed from the simulated current.
 ### The coupled solve's iteration
 
 Within a step the coupled solve iterates on the boundary flux and the coil currents (see
-`coupled_step/common.jl`). These scripts compare the default iteration with the same equations
-iterated to convergence, step by step. Each figure shows four things:
+`coupled_step/common.jl`). These scripts compare the default solve with the same equations
+iterated to convergence by the relaxed iteration, step by step. Each figure shows four things:
 - where the column and the conductors sit;
 - the plasma current of the two runs;
-- the first step's induced-field error against the number of iterations;
+- the first step's induced-field error against the number of iterations, for the relaxed
+  iteration (the default before Anderson mixing) and for the default;
 - that error over the grid.
 
 | script | setup | check |
