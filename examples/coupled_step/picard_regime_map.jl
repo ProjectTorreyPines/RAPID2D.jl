@@ -4,7 +4,8 @@
 # the inboard wall, as an inboard-limited start-up plasma does, at states from a late avalanche
 # (1e16 m⁻³, 2 eV) to a formed plasma (1e19 m⁻³, 20 eV). Each runs 5 steps from rest with the
 # default and with the converged iteration; the map shows the largest gap between their plasma
-# currents at any step, relative to the converged current there, which should stay under 1 %.
+# currents at any step, relative to the converged current there (floored at 1e-3 of its peak),
+# which should stay under 1 %.
 # A column whose converged run did not converge, or whose gap is not finite, fails.
 #
 #   julia --project=examples examples/coupled_step/picard_regime_map.jl

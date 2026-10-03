@@ -66,7 +66,8 @@ flux, and that flux is computed from the simulated current.
 Within a step the coupled solve iterates on the boundary flux and the coil currents (see
 `coupled_step/common.jl`). These scripts compare the default solve with the same equations
 iterated to convergence by the relaxed iteration, step by step, each step against the converged
-current of that step. A case whose converged run did not converge fails. Each figure shows four
+current of that step (floored at 1e-3 of the run's peak). A case whose converged run did not
+converge fails. Each figure shows four
 things:
 - where the column and the conductors sit;
 - the plasma current of the two runs;

@@ -143,8 +143,12 @@ const CONVERGED_PICARD = (
 )
 
 # The largest gap between a plasma current history and the expected one, step by step against
-# the expected current of that step (at least 1e-3 of its peak, where it passes through zero).
-current_gap(I, I_ref) = maximum(abs.(I .- I_ref) ./ max.(abs.(I_ref), 1.0e-3 * maximum(abs, I_ref)))
+# the expected current of that step, floored at 1e-3 of its peak where it passes through zero.
+# Exact agreement is no gap, also where the expected current is zero throughout.
+function current_gap(I, I_ref)
+    scale = max.(abs.(I_ref), 1.0e-3 * maximum(abs, I_ref))
+    return maximum(ifelse(e == 0, 0.0, e / s) for (e, s) in zip(abs.(I .- I_ref), scale))
+end
 
 # Geometries. A KSTAR-like domain: the grid of the KSTAR field files (R 1.2–2.4 m, Z ±1.2 m)
 # with the KSTAR first wall (KSTAR_First_Wall.dat), whose inboard side is 6 cm (1.5 cells at
@@ -259,7 +263,7 @@ function picard_case(make, name, title; nsteps = 20)
         top_margin = 10Plots.mm, bottom_margin = 12Plots.mm,
     )
     detail = @sprintf(
-        "at every step the default solve is within %.2g %% of the converged current (passes under 1 %%); first step %.3g A vs %.3g A; %.1f block solves/step, %d unconverged (converged run: %.0f/step, %d unconverged)",
+        "at every step the default solve is within %.2g %% of that step's converged current (floored at 1e-3 of the peak; passes under 1 %%); first step %.3g A vs %.3g A; %.1f block solves/step, %d unconverged (converged run: %.0f/step, %d unconverged)",
         100gap, def.I[1], conv.I[1], def.stats.niter / def.stats.nsolve, def.stats.nunconverged,
         conv.stats.niter / conv.stats.nsolve, conv.stats.nunconverged
     )
