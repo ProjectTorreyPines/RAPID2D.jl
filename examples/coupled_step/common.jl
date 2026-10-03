@@ -136,8 +136,15 @@ end
 # The default mixes the iterates by Anderson (memory 8, at most 20 block solves); the relaxed
 # iteration (anderson_m = 0, boundary flux weighted by w = 0.5) was the default before.
 # CONVERGED_PICARD iterates the same equations to convergence with the relaxed iteration
-# (w = 0.05, up to 3000 solves), which is what the default should reproduce.
-const CONVERGED_PICARD = (tolerance = 1.0e-10, max_iter = 3000, relaxation_w = 0.05, anderson_m = 0)
+# (w = 0.05), to 1e-10 of the step's field and of each coil's change with no floors: what the
+# default should reproduce. A run whose reference did not converge has no expected result.
+const CONVERGED_PICARD = (
+    tolerance = 1.0e-10, max_iter = 20_000, relaxation_w = 0.05, anderson_m = 0, E_floor = 0.0, I_floor = 0.0,
+)
+
+# The largest gap between a plasma current history and the expected one, step by step against
+# the expected current of that step (at least 1e-3 of its peak, where it passes through zero).
+current_gap(I, I_ref) = maximum(abs.(I .- I_ref) ./ max.(abs.(I_ref), 1.0e-3 * maximum(abs, I_ref)))
 
 # Geometries. A KSTAR-like domain: the grid of the KSTAR field files (R 1.2–2.4 m, Z ±1.2 m)
 # with the KSTAR first wall (KSTAR_First_Wall.dat), whose inboard side is 6 cm (1.5 cells at
@@ -204,7 +211,7 @@ function picard_error_by_iteration(make; Lmax = 30)
         quiet(() -> RAPID2D.solve_combined_momentum_Ampere_equations_with_coils!(RP; kw...))
         return copy(F.Eϕ_self)
     end
-    E_star = trial(; CONVERGED_PICARD..., E_floor = 0.0, I_floor = 0.0)
+    E_star = trial(; CONVERGED_PICARD...)
     err(m, L) = maximum(abs, trial(; tolerance = 0.0, max_iter = L, anderson_m = m, E_floor = 0.0, I_floor = 0.0) .- E_star)
     scale = maximum(abs, E_star)
     return (relaxed = [err(0, L) for L in 1:Lmax] ./ scale, default = [err(RP.flags.ampere_picard.anderson_m, L) for L in 1:Lmax] ./ scale)
@@ -214,13 +221,13 @@ end
 # plasma current step by step with the default and the converged solve, the first step's
 # induced-field error against the number of block solves (relaxed iteration and default), and
 # that error over the grid after the default solve. Passes when the default stays within 1 % of
-# the converged current at every step.
+# the converged current at every step (`current_gap`).
 function picard_case(make, name, title; nsteps = 20)
     def, conv = default_vs_converged(make; nsteps)
     errs = picard_error_by_iteration(make)
     t = (1:nsteps) .* def.RP.dt .* 1.0e6
-    gap = maximum(abs.(def.I .- conv.I)) / maximum(abs, conv.I)
-    pass = isfinite(gap) && gap <= 1.0e-2
+    gap = current_gap(def.I, conv.I)
+    pass = conv.stats.nunconverged == 0 && isfinite(gap) && gap <= 1.0e-2
 
     blowup = maximum(abs, def.I) > 100 * maximum(abs, conv.I)
     p1 = plot!(plot_layout(conv.RP; title); colorbar = false, titlefontsize = 9)
@@ -252,8 +259,9 @@ function picard_case(make, name, title; nsteps = 20)
         top_margin = 10Plots.mm, bottom_margin = 12Plots.mm,
     )
     detail = @sprintf(
-        "the default solve strays up to %.2g %% from the converged current (passes under 1 %%); first step %.3g A vs %.3g A; %.1f block solves/step, %d unconverged (converged run: %.0f/step)",
-        100gap, def.I[1], conv.I[1], def.stats.niter / def.stats.nsolve, def.stats.nunconverged, conv.stats.niter / conv.stats.nsolve
+        "at every step the default solve is within %.2g %% of the converged current (passes under 1 %%); first step %.3g A vs %.3g A; %.1f block solves/step, %d unconverged (converged run: %.0f/step, %d unconverged)",
+        100gap, def.I[1], conv.I[1], def.stats.niter / def.stats.nsolve, def.stats.nunconverged,
+        conv.stats.niter / conv.stats.nsolve, conv.stats.nunconverged
     )
     save_with_verdict(fig, output_dir("coupled_step"), name, pass, detail)
     return (; def, conv, errs, gap, pass)
