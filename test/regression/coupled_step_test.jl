@@ -407,3 +407,118 @@ end
     @test F[1] < 0
     @test abs(F[end] - F_pred[]) < 0.02 * abs(F_pred[])
 end
+
+@testitem "Coupled step: a dense column at rest under the 1 A gate steps as with the gate at 0" tags = [:regression] setup = [CoupledStepSetup] begin
+    # A column already dense (1e17 m⁻³, 5 eV) when the loop voltage comes on. Below the gate it
+    # is not a source of induction, so the step that carries its current across the gate would
+    # accelerate it without its self-inductance, to several hundred amperes. That step is solved
+    # again by the coupled solve, from the same state. The run then steps exactly as the run with
+    # the gate at 0, whose every step is coupled.
+    function steps(threshold)
+        RP = column(; n0 = 1.0e17, Te = 5.0, threshold, t_end = 20.0e-6)
+        rec = (I = Float64[], u = Matrix{Float64}[], ψ = Matrix{Float64}[], E = Matrix{Float64}[])
+        run_quiet!(
+            RP; after = rp -> begin
+                push!(rec.I, plasma_current(rp, current_density(rp)))
+                push!(rec.u, copy(rp.plasma.ue_para))
+                push!(rec.ψ, copy(rp.fields.ψ_self))
+                push!(rec.E, copy(rp.fields.Eϕ_self))
+            end
+        )
+        return rec, RP
+    end
+    (gated, RPg), (open, RPo) = steps(1.0), steps(0.0)
+
+    @test length(gated.I) == RPg.step == 4   # one callback per step
+    @test gated.I == open.I
+    @test gated.u == open.u
+    @test gated.ψ == open.ψ
+    @test gated.E == open.E
+    @test RPg.diagnostics.ampere_picard.nsolve == RPo.diagnostics.ampere_picard.nsolve
+    @test RPg.diagnostics.ampere_picard.niter == RPo.diagnostics.ampere_picard.niter
+end
+
+@testitem "Coupled step: the re-solved crossing leaves the coils as the gate at 0 does" tags = [:regression] setup = [CoupledStepSetup] begin
+    # The same crossing with a coil driven by a voltage that changes in time, a resistive loop,
+    # and circuit matrices built for another time step (the step rebuilds them). The step that
+    # crossed and was solved again leaves the coil currents, their memory and their clock as the
+    # coupled step does.
+    function steps(threshold)
+        RP = column(; n0 = 1.0e17, Te = 5.0, threshold, t_end = 20.0e-6)
+        add_loop!(RP, 0.6, 0.0; a = 0.1, R = 1.0e-4, V = t -> 10.0 + 1.0e6 * t, name = "OH")
+        add_loop!(RP, 1.2, 0.8; R = 1.0e-3, name = "loop")
+        initialize_coil_system!(RP)
+        RP.coil_system.Δt = 2 * RP.dt
+        rec = (I = Float64[], Ic = Vector{Float64}[], ψc = Vector{Float64}[], tc = Float64[])
+        run_quiet!(
+            RP; after = rp -> begin
+                push!(rec.I, plasma_current(rp, current_density(rp)))
+                push!(rec.Ic, copy(rp.coil_system.coils.current))
+                push!(rec.ψc, copy(rp.coil_system.coils.ψ_pla))
+                push!(rec.tc, rp.coil_system.time_s)
+            end
+        )
+        return rec, RP
+    end
+    (gated, RPg), (open, RPo) = steps(1.0), steps(0.0)
+
+    @test abs(gated.I[1]) > 1.0   # the first step crossed the gate
+    @test gated.I == open.I
+    @test gated.Ic == open.Ic
+    @test gated.ψc == open.ψc
+    @test gated.tc == open.tc
+    @test RPg.fields.ψ_self == RPo.fields.ψ_self
+end
+
+@testitem "Coupled step: a crossing taken outside run_simulation! keeps the coils' memory unset until the coupled solve" tags = [:regression] setup = [CoupledStepSetup] begin
+    # Steps taken with advance_timestep! leave Coil.ψ_pla unset until a circuit first uses it.
+    # The trial below the gate sets it; when the crossing is solved again, the coupled solve must
+    # start from the memory as it was before the trial.
+    function first_step(threshold)
+        RP = column(; n0 = 1.0e17, Te = 5.0, threshold)
+        add_loop!(RP, 1.2, 0.8; R = 1.0e-3)
+        initialize_coil_system!(RP)
+        RAPID2D.update_transport_quantities!(RP)
+        @assert all(isnan, RP.coil_system.coils.ψ_pla)
+        redirect_stdout(() -> advance_timestep!(RP), devnull)
+        return RP
+    end
+    gated, open = first_step(1.0), first_step(0.0)
+
+    @test gated.coil_system.coils.ψ_pla == open.coil_system.coils.ψ_pla
+    @test gated.coil_system.coils.current == open.coil_system.coils.current
+    @test gated.plasma.ue_para == open.plasma.ue_para
+end
+
+@testitem "Coupled step: a run split just before the gate crossing is bit-identical" tags = [:regression] setup = [CoupledStepSetup] begin
+    # The loop voltage comes on at 15 µs: the column sits below the gate until then, and the
+    # step after crosses it. A run stopped at 10 µs and resumed steps as the whole run.
+    function switched_on(t_end)
+        RP = column(; n0 = 1.0e17, Te = 5.0, threshold = 1.0, t_end)
+        field = (LV = copy(RP.fields.LV_ext), Eϕ = copy(RP.fields.Eϕ_ext), Epara = copy(RP.fields.E_para_ext))
+        return RP, field
+    end
+    function drive(field)
+        return rp -> if rp.time_s < 15.0e-6 - 1.0e-12
+            fill!(rp.fields.LV_ext, 0.0)
+            fill!(rp.fields.Eϕ_ext, 0.0)
+            fill!(rp.fields.E_para_ext, 0.0)
+        else
+            rp.fields.LV_ext .= field.LV
+            rp.fields.Eϕ_ext .= field.Eϕ
+            rp.fields.E_para_ext .= field.Epara
+        end
+    end
+    whole, fw = switched_on(30.0e-6)
+    run_quiet!(whole; before = drive(fw))
+    split, fs = switched_on(10.0e-6)
+    run_quiet!(split; before = drive(fs))
+    split.t_end_s = 30.0e-6
+    run_quiet!(split; before = drive(fs))
+
+    @test abs(plasma_current(whole, current_density(whole))) > 1.0   # it crossed the gate
+    @test split.step == whole.step
+    @test split.plasma.ue_para == whole.plasma.ue_para
+    @test split.fields.ψ_self == whole.fields.ψ_self
+    @test split.fields.Eϕ_self == whole.fields.Eϕ_self
+end
