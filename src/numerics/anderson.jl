@@ -11,8 +11,9 @@ residual f = g(x) − x, [`anderson_step!`](@ref) steps to
     x + B f − (ΔX + B ΔF) γ,    γ = argmin ‖W (f − ΔF γ)‖₂,
 
 where ΔX and ΔF hold the differences of the last `m` + 1 iterates and residuals, B = Diagonal(β)
-and W = Diagonal(W). With `m = 0` this is the relaxed iteration x + B f. On an affine map it
-works as GMRES on (𝟙 − T) x = c, so it converges where the relaxed iteration diverges.
+and W = Diagonal(W). With `m = 0` this is the relaxed iteration x + B f. On an affine map it is
+a truncated relative of GMRES on (𝟙 − T) x = c, and it can converge where the relaxed
+iteration diverges.
 
 It keeps the iterate with the smallest weighted residual ‖W f‖. A residual that is not finite,
 or larger than `growth` times that smallest one, makes it restart: the history is dropped, B

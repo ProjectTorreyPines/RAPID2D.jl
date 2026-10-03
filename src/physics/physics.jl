@@ -1876,9 +1876,10 @@ Both are measured against `tol` times the field the step induces, max|(ψ_new �
 plus `E_floor` [V/m]. Every coil's current residual must also be under `tol` times its change
 over the step, |I_new − I_old|, plus `I_floor` [A].
 
-A residual that is not finite is not converged. This is a residual test, not an error bound:
-the tests compare the accepted step with the step iterated to convergence. Returns
-`(converged, E_residual, I_residual)`.
+A residual or a step field that is not finite is not converged. This is a residual test, not
+an error bound: the tests compare the accepted step with the step iterated to convergence.
+Returns `(converged, E_residual, I_residual, finite)`, `finite` saying whether both residuals
+and the step field are.
 """
 function coupled_residual_converged(f_ψb, f_I, R_bdy, coil_field, ψ_new, ψ_old, R, I_new, I_old, dt; tol, E_floor, I_floor)
     E_bdy = maximum(abs, f_ψb ./ R_bdy) / dt
@@ -1889,7 +1890,7 @@ function coupled_residual_converged(f_ψb, f_I, R_bdy, coil_field, ψ_new, ψ_ol
     coils_settled = all(abs.(f_I) .<= tol .* abs.(I_new .- I_old) .+ I_floor)
     finite = isfinite(E_residual) && isfinite(I_residual) && isfinite(E_step)
     converged = finite && E_residual <= tol * E_step + E_floor && coils_settled
-    return converged, E_residual, I_residual
+    return converged, E_residual, I_residual, finite
 end
 
 # Count the solve in RP.diagnostics.ampere_picard, and warn at a run's first unconverged one.
@@ -2268,8 +2269,8 @@ x = (boundary flux, coil currents):
 - Green's functions give the boundary flux of J and those coil currents.
 
 That map g(x) is affine. Anderson mixing (`AndersonMixer`, memory `anderson_m`) drives
-f = g(x) − x to zero; it works as GMRES, so it also converges where the relaxed iteration
-x + w f would diverge. `relaxation_w` is the mixing of the boundary flux (the coils' is 1), and
+f = g(x) − x to zero; a relative of GMRES, it can also converge where the relaxed iteration
+x + w f diverges. `relaxation_w` is the mixing of the boundary flux (the coils' is 1), and
 `anderson_m = 0` is that relaxed iteration.
 - **First iterate:** a block solve with the boundary flux of the extrapolated induced field
   and the coil currents at tⁿ.
@@ -2444,12 +2445,12 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             Nc > 0 && (ψ_bdy_new .+= csys.Green_coils2bdy * I_k)
 
             f = vcat(ψ_bdy_new .- ψ_bdy, I_k .- I_in)
-            converged, res_k[1], res_k[2] = coupled_residual_converged(
+            converged, res_k[1], res_k[2], finite = coupled_residual_converged(
                 view(f, 1:Nb), view(f, (Nb + 1):(Nb + Nc)), R_bdy, coil_field, ψ_k, old_ψ_self, G.R2D,
                 I_k, coils_I_n, dt; tol = tolerance, E_floor, I_floor,
             )
-            # the evaluation is accepted whole: u∥ and ψ must be finite where f does not see them
-            return f, converged, all(isfinite, ue_k) && all(isfinite, ψ_k)
+            # the evaluation is accepted whole: its induced field, u∥ and ψ must be finite too
+            return f, converged, finite && all(isfinite, ue_k) && all(isfinite, ψ_k)
         end
         function keep!()
             best.ue .= ue_k
@@ -2469,8 +2470,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
         iter, outcome = anderson_solve!(evaluate!, mixer, vcat(ψ_pred[G.BDY_idx], coils_I_n); max_iter, keep!, restore!)
         outcome === :failed && error(
-            "the coupled solve's first iterate is not finite (step $(RP.step)): " *
-                "u∥, ψ or the coil currents of the block solve hold NaN or Inf"
+            "the coupled solve's first iterate is not finite (step $(RP.step)): u∥, ψ, the field " *
+                "they induce over the step or the coil currents of the block solve hold NaN or Inf"
         )
         record_picard!(RP, iter, outcome === :converged, res_k[1], res_k[2], max_iter)
 

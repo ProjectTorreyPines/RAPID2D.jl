@@ -370,3 +370,54 @@ end
     @test same_as_first(cut, ref)
     @test same_as_first(exhausted, ref)
 end
+
+@testitem "Coupled solve: an evaluation whose induced field overflows is never accepted" begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
+    # A vacuum in a purely poloidal field (bϕ = 0, so u∥ does not see ψ), entering the step with
+    # ψ = 1e305 inside and 0 on the boundary. The block solve's ψ is finite, but the field it
+    # induces over the step, −Δψ/(R Δt), is not. Such an evaluation is not accepted, not even as
+    # the best one: with nothing else to fall back on, the solve throws.
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 0.1, Eϕ = 0.0),
+        NR = 10, NZ = 12, R0B0 = 0.0, prefilled_gas_pressure = 0.0, dt = 1.0e-6, t_end_s = 1.0e-6,
+        snap0D_Δt_s = 1.0e-6, snap2D_Δt_s = 1.0e-6, Output_path = mktempdir(; cleanup = false),
+    )
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags{Float64}(;
+        Ampere = true, Ampere_Itor_threshold = 0.0, E_para_self_EM = true, ud_evolve = true,
+        Coulomb_Collision = true, Atomic_Collision = false, src = false, convec = false, diffu = false,
+        Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
+        Include_ud_convec_term = false, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
+        E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
+    )
+    initialize!(RP)
+    fill!(RP.plasma.Te_eV, 1.0)
+    RAPID2D.update_transport_quantities!(RP)
+    RP.fields.ψ_self[setdiff(eachindex(RP.fields.ψ_self), RP.G.BDY_idx)] .= 1.0e305
+    prepare_timestep!(RP)
+    @test all(iszero, RP.fields.bϕ)
+    @test_throws ErrorException solve_combined_momentum_Ampere_equations_with_coils!(RP; max_iter = 1)
+end
+
+@testitem "Ampère Picard: the run's coil floor reaches the coupled solve" setup = [PicardColumn] begin
+    # The column with a loop, the field part of the stopping test always met (E_floor = 1e30):
+    # whether a solve stops at its first evaluation then depends only on the coils' floor.
+    function stats(I_floor)
+        RP = picard_column(; t_end = 20.0e-6)
+        add_coil!(
+            RP.coil_system, Coil{Float64}(;
+                location = (r = 1.2, z = 0.8), area = π * 0.05^2, resistance = 1.0e-3,
+                self_inductance = 1.2e-6, is_powered = false, is_controllable = false, name = "loop",
+            )
+        )
+        initialize_coil_system!(RP)
+        RP.flags.ampere_picard = merge(RP.flags.ampere_picard, (tolerance = 0.0, max_iter = 3, E_floor = 1.0e30, I_floor))
+        redirect_stderr(devnull) do
+            redirect_stdout(() -> run_simulation!(RP), devnull)
+        end
+        return RP.diagnostics.ampere_picard
+    end
+    loose, tight = stats(1.0e30), stats(0.0)
+    @test loose.niter == loose.nsolve == 4 && loose.nunconverged == 0
+    @test tight.nunconverged == tight.nsolve == 4
+end
