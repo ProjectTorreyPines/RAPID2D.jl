@@ -1887,7 +1887,8 @@ function coupled_residual_converged(f_ψb, f_I, R_bdy, coil_field, ψ_new, ψ_ol
     E_residual = max(E_bdy, E_coil)
     I_residual = isempty(f_I) ? zero(E_bdy) : maximum(abs, f_I)
     coils_settled = all(abs.(f_I) .<= tol .* abs.(I_new .- I_old) .+ I_floor)
-    converged = E_residual <= tol * E_step + E_floor && coils_settled
+    finite = isfinite(E_residual) && isfinite(I_residual) && isfinite(E_step)
+    converged = finite && E_residual <= tol * E_step + E_floor && coils_settled
     return converged, E_residual, I_residual
 end
 
@@ -2274,12 +2275,13 @@ x + w f would diverge. `relaxation_w` is the mixing of the boundary flux (the co
   and the coil currents at tⁿ.
 - **Circuit forcing:** M Iⁿ + Δt V(tⁿ + Δt/2), taken once for the step.
 
-The iteration stops when `coupled_residual_converged` holds. It accepts that evaluation: u∥
-and ψ of its block solve, and the coil currents of its J, with `Coil.ψ_pla` set to ψ_pla(r_c; J).
-The circuits' flux balance then closes every step. A solve that does not converge, after
-`max_iter` block solves or once the mixer's restarts are used up, accepts the evaluation with the
-smallest residual. It is counted in `RP.diagnostics.ampere_picard`, and the run's first one
-warns. An iterate that is not finite is never accepted; with none finite, the solve throws.
+The iteration (`anderson_solve!`) stops when `coupled_residual_converged` holds. It accepts
+that evaluation: u∥ and ψ of its block solve, and the coil currents of its J, with `Coil.ψ_pla`
+set to ψ_pla(r_c; J). The circuits' flux balance then closes every step. A solve that does not
+converge, after `max_iter` block solves or once the mixer's restarts are used up, accepts the
+evaluation with the smallest residual. It is counted in `RP.diagnostics.ampere_picard`, and the
+run's first one warns. An evaluation that is not finite, or that the mixer rejects, is never
+accepted; if the first is not finite, the solve throws.
 
 Coil voltages given as functions are taken to be pure functions of time.
 """
@@ -2413,19 +2415,13 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         for c in csys.inside_domain_indices
             coil_field[c] = coil_L[c] / (2π * coil_R[c] * dt)
         end
-        x = vcat(ψ_pred[G.BDY_idx], coils_I_n)
 
-        # one evaluation of the map, and the best one so far
+        # one evaluation of the map, with its E and I residuals, and the best one so far
         ue_k, ψ_k, Jϕ_k = similar(pla.ue_para), similar(F.ψ_self), similar(pla.ue_para)
-        I_k, Φ_k = similar(coils_I_n), similar(ψ_pla_coils_n)
+        I_k, Φ_k, res_k = similar(coils_I_n), similar(ψ_pla_coils_n), zeros(FT, 2)
         best = (ue = similar(ue_k), ψ = similar(ψ_k), I = similar(I_k), Φ = similar(Φ_k), res = zeros(FT, 2))
 
-        iter = 0
-        converged = false
-        E_residual = zero(FT)
-        I_residual = zero(FT)
-        while true
-            iter += 1
+        function evaluate!(x)
             ψ_bdy, I_in = view(x, 1:Nb), view(x, (Nb + 1):(Nb + Nc))
 
             # u∥ and ψ with the boundary flux held and the coils inside the grid as ψ's source
@@ -2448,35 +2444,35 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             Nc > 0 && (ψ_bdy_new .+= csys.Green_coils2bdy * I_k)
 
             f = vcat(ψ_bdy_new .- ψ_bdy, I_k .- I_in)
-            converged, E_residual, I_residual = coupled_residual_converged(
+            converged, res_k[1], res_k[2] = coupled_residual_converged(
                 view(f, 1:Nb), view(f, (Nb + 1):(Nb + Nc)), R_bdy, coil_field, ψ_k, old_ψ_self, G.R2D,
                 I_k, coils_I_n, dt; tol = tolerance, E_floor, I_floor,
             )
-            x_next, status = anderson_step!(mixer, x, f)
-            status === :failed && error(
-                "the coupled solve's first iterate is not finite (step $(RP.step)): " *
-                    "u∥, ψ or the coil currents of the block solve hold NaN or Inf"
-            )
-            if status === :best
-                best.ue .= ue_k
-                best.ψ .= ψ_k
-                best.I .= I_k
-                best.Φ .= Φ_k
-                best.res .= (E_residual, I_residual)
-            end
-            converged && break
-            if iter >= max_iter || status === :exhausted
-                # accept the evaluation with the smallest residual
-                ue_k .= best.ue
-                ψ_k .= best.ψ
-                I_k .= best.I
-                Φ_k .= best.Φ
-                E_residual, I_residual = best.res
-                break
-            end
-            x = x_next
+            # the evaluation is accepted whole: u∥ and ψ must be finite where f does not see them
+            return f, converged, all(isfinite, ue_k) && all(isfinite, ψ_k)
         end
-        record_picard!(RP, iter, converged, E_residual, I_residual, max_iter)
+        function keep!()
+            best.ue .= ue_k
+            best.ψ .= ψ_k
+            best.I .= I_k
+            best.Φ .= Φ_k
+            best.res .= res_k
+            return nothing
+        end
+        function restore!()
+            ue_k .= best.ue
+            ψ_k .= best.ψ
+            I_k .= best.I
+            Φ_k .= best.Φ
+            res_k .= best.res
+            return nothing
+        end
+        iter, outcome = anderson_solve!(evaluate!, mixer, vcat(ψ_pred[G.BDY_idx], coils_I_n); max_iter, keep!, restore!)
+        outcome === :failed && error(
+            "the coupled solve's first iterate is not finite (step $(RP.step)): " *
+                "u∥, ψ or the coil currents of the block solve hold NaN or Inf"
+        )
+        record_picard!(RP, iter, outcome === :converged, res_k[1], res_k[2], max_iter)
 
         # 7. Final updates of electromagnetic fields
         F.ψ_self .= ψ_k

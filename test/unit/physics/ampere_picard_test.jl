@@ -167,9 +167,12 @@ end
         return add_filament_shell!(RP; cenR = 1.5, r = 0.4)
     end
 
-    # The same equations iterated to convergence: the relaxed iteration with w = 0.05, to 1e-12,
-    # without Anderson mixing, so that the reference does not depend on it.
-    const REFERENCE_PICARD = (tolerance = 1.0e-12, max_iter = 3000, relaxation_w = 0.05, anderson_m = 0)
+    # The same equations iterated to convergence: the relaxed iteration with w = 0.05, without
+    # Anderson mixing so that the reference does not depend on it, to 1e-10 of the step's field
+    # and of each coil's change, with no floors.
+    const REFERENCE_PICARD = (
+        tolerance = 1.0e-10, max_iter = 20_000, relaxation_w = 0.05, anderson_m = 0, E_floor = 0.0, I_floor = 0.0,
+    )
 
     # Runs RP to its end with the run's Picard settings, recording after each step the plasma
     # current, the induced field and the coil currents.
@@ -187,8 +190,16 @@ end
         return rec
     end
 
+    # Each coil's error over the run against its own peak current (1 µA at least), so that a
+    # strong coil does not hide a weak one.
+    function coil_error(ra, rb)
+        isempty(rb.Ic[1]) && return 0.0
+        Ia, Ib = reduce(hcat, ra.Ic), reduce(hcat, rb.Ic)   # coil × step
+        return maximum(maximum(abs, Ia[c, :] .- Ib[c, :]) / max(maximum(abs, Ib[c, :]), 1.0e-6) for c in axes(Ib, 1))
+    end
+
     # The default run against the converged one, step by step: the plasma current, the induced
-    # field over the grid, every coil current, and u∥ and ψ_self at the end.
+    # field over the grid, each coil current, and u∥ and ψ_self at the end.
     function compare_with_converged(make)
         a, b = make(), make()
         b.flags.ampere_picard = merge(b.flags.ampere_picard, REFERENCE_PICARD)
@@ -198,7 +209,7 @@ end
             a, b, unconverged = (a.diagnostics.ampere_picard.nunconverged, b.diagnostics.ampere_picard.nunconverged),
             I = maximum(abs(ra.I[k] - rb.I[k]) / abs(rb.I[k]) for k in eachindex(rb.I)),
             E = maximum(rel(ra.E[k], rb.E[k]) for k in eachindex(rb.E)),
-            Ic = isempty(rb.Ic[1]) ? 0.0 : maximum(rel(ra.Ic[k], rb.Ic[k]) for k in eachindex(rb.Ic)),
+            Ic = coil_error(ra, rb),
             u = rel(a.plasma.ue_para, b.plasma.ue_para), ψ = rel(a.fields.ψ_self, b.fields.ψ_self),
         )
     end
@@ -276,4 +287,86 @@ end
     @test agree(a.fields.ψ_self, b.fields.ψ_self)
     @test agree(a.coil_system.coils.current, b.coil_system.coils.current)
     @test agree(a.coil_system.coils.ψ_pla, b.coil_system.coils.ψ_pla)
+end
+
+@testitem "Coupled solve: a residual that is not finite never converges" begin
+    using RAPID2D: coupled_residual_converged
+    R = fill(1.5, 2, 2)
+    R_b = fill(1.5, 2)
+    check(f_ψb, ψ_new; f_I = Float64[], coil_field = Float64[], I_new = Float64[], I_old = Float64[]) =
+        coupled_residual_converged(
+        f_ψb, f_I, R_b, coil_field, ψ_new, zeros(2, 2), R, I_new, I_old, 1.0e-6; tol = 1.0e-3, E_floor = 1.0e-6, I_floor = 1.0e-6,
+    )[1]
+    @test !check([Inf, 0.0], fill(Inf, 2, 2))   # an infinite residual against an infinite step
+    @test !check([NaN, 0.0], ones(2, 2))
+    @test !check([0.0, 0.0], fill(NaN, 2, 2))
+    @test !check([0.0, 0.0], ones(2, 2); f_I = [Inf], coil_field = [0.0], I_new = [Inf], I_old = [0.0])
+end
+
+@testitem "Coupled solve: each part of the stopping test can hold a solve back" begin
+    using RAPID2D: coupled_residual_converged
+    # A step that induces 1 V/m: the boundary residual is well inside the tolerance, and
+    # either one coil's current or the in-grid source is not.
+    R, R_b, dt = fill(1.5, 2, 2), fill(1.5, 2), 1.0e-6
+    ψ_new = fill(1.5 * dt, 2, 2)                        # E_step = 1 V/m
+    f_ψb = fill(1.0e-9 * 1.5 * dt, 2)                     # 1e-9 V/m
+    conv(f_I, coil_field, I_new, I_old) = coupled_residual_converged(
+        f_ψb, f_I, R_b, coil_field, ψ_new, zeros(2, 2), R, I_new, I_old, dt; tol = 1.0e-3, E_floor = 0.0, I_floor = 0.0,
+    )[1]
+    # two coils outside the grid with the same residual: settled for the one that changes by
+    # 100 A over the step, not for the one that changes by 1 mA
+    @test conv([1.0e-5, 1.0e-5], [0.0, 0.0], [100.0, 1.0e-3], [0.0, 0.0]) == false
+    @test conv([1.0e-5, 1.0e-7], [0.0, 0.0], [100.0, 1.0e-3], [0.0, 0.0]) == true
+    # a coil inside the grid whose current has settled but whose source still moves the field
+    @test conv([1.0e-3], [10.0], [100.0], [0.0]) == false   # 1e-3 A × 10 V/m/A = 1e-2 V/m > 1e-3 V/m
+    @test conv([1.0e-5], [10.0], [100.0], [0.0]) == true
+end
+
+@testitem "Ampère Picard: the run's floors reach the coupled solve" setup = [PicardColumn] begin
+    # Floors so large that the first block solve of every step settles it.
+    RP = picard_column(; t_end = 20.0e-6)
+    RP.flags.ampere_picard = merge(RP.flags.ampere_picard, (tolerance = 0.0, E_floor = 1.0e30, I_floor = 1.0e30))
+    redirect_stdout(() -> run_simulation!(RP), devnull)
+    stats = RP.diagnostics.ampere_picard
+    @test stats.nsolve == 4
+    @test stats.niter == stats.nsolve
+    @test stats.nunconverged == 0
+end
+
+@testitem "Coupled solve: a solve that does not converge keeps its best evaluation" setup = [BoundaryLimitedColumn] begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
+    # The first step of the tight column with a loop outside the grid, relaxed (m = 0) with a
+    # weight of 4, or of 10⁶: every iterate after the first is worse. Cut at max_iter = 3, or
+    # stopped by its exhausted restarts, the solve accepts its first evaluation, as the solve
+    # cut at max_iter = 1 does: u∥, ψ, the coil currents, their memory and the residual.
+    function first_step(; picard...)
+        RP = tight_column()
+        add_coil!(
+            RP.coil_system, Coil{Float64}(;
+                location = (r = 2.4, z = 0.0), area = π * 0.05^2, resistance = 1.0e-3,
+                self_inductance = 1.3e-5, is_powered = false, is_controllable = false, name = "loop",
+            )
+        )
+        initialize_coil_system!(RP)
+        prepare_timestep!(RP)
+        redirect_stderr(devnull) do
+            solve_combined_momentum_Ampere_equations_with_coils!(RP; anderson_m = 0, picard...)
+        end
+        return RP
+    end
+    function same_as_first(RP, ref)
+        a, b = RP.diagnostics.ampere_picard, ref.diagnostics.ampere_picard
+        return a.nunconverged == 1 && RP.plasma.ue_para == ref.plasma.ue_para &&
+            RP.fields.ψ_self == ref.fields.ψ_self && RP.fields.Eϕ_self == ref.fields.Eϕ_self &&
+            RP.coil_system.coils.current == ref.coil_system.coils.current &&
+            RP.coil_system.coils.ψ_pla == ref.coil_system.coils.ψ_pla &&
+            (a.last_E_residual, a.last_I_residual) == (b.last_E_residual, b.last_I_residual)
+    end
+    ref = first_step(; max_iter = 1)
+    cut = first_step(; relaxation_w = 4.0, max_iter = 3)
+    exhausted = first_step(; relaxation_w = 1.0e6, max_iter = 100)
+    @test cut.diagnostics.ampere_picard.last_niter == 3
+    @test 3 < exhausted.diagnostics.ampere_picard.last_niter < 100
+    @test same_as_first(cut, ref)
+    @test same_as_first(exhausted, ref)
 end

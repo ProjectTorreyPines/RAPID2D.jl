@@ -1232,11 +1232,15 @@ Contains boolean flags that control various aspects of the simulation.
     Ampere_Itor_threshold::FT = FT(1.0)      # Current threshold for Ampere equation (Default: 1.0 A)
     # The coupled u∥–Ampère–circuit solve's outer iteration, as solve_timestep! calls it (see
     # solve_combined_momentum_Ampere_equations_with_coils!); same assignment rule as above.
-    ampere_picard::@NamedTuple{tolerance::FT, max_iter::Int, relaxation_w::FT, anderson_m::Int} = (
+    ampere_picard::@NamedTuple{
+        tolerance::FT, max_iter::Int, relaxation_w::FT, anderson_m::Int, E_floor::FT, I_floor::FT,
+    } = (
         tolerance = FT(1.0e-3),               # of the field the step induces
         max_iter = 20,                        # block solves per step at most
         relaxation_w = FT(0.5),               # mixing of the boundary flux
         anderson_m = 8,                       # Anderson memory; 0 is the relaxed iteration
+        E_floor = FT(1.0e-6),                 # absolute floor on the field residual [V/m]
+        I_floor = FT(1.0e-6),                 # and on each coil current's [A]
     )
 end
 

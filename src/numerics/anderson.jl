@@ -45,18 +45,20 @@ function AndersonMixer{FT}(
 end
 
 """
-    anderson_step!(A::AndersonMixer, x, f) -> (x_next, status)
+    anderson_step!(A::AndersonMixer, x, f; valid = true) -> (x_next, status)
 
-The iterate after `x`, whose residual is `f`. `status` says what became of `x`:
+The iterate after `x`, whose residual is `f`. `valid = false` marks an evaluation that is not
+finite somewhere `f` does not see; it counts as a residual that is not finite. `status` says
+what became of `x`:
 - `:best`: finite, and the best so far;
 - `:ok`: finite;
 - `:restart`: not finite, or grown past `growth` times the best; `x_next` restarts from the best;
 - `:exhausted`: as `:restart`, with the restarts used up; `x_next` is the best iterate;
 - `:failed`: not finite, with no finite iterate before it; `x_next` is `x`.
 """
-function anderson_step!(A::AndersonMixer{FT}, x::AbstractVector, f::AbstractVector) where {FT}
+function anderson_step!(A::AndersonMixer{FT}, x::AbstractVector, f::AbstractVector; valid::Bool = true) where {FT}
     r = norm(A.W .* f)
-    if !(isfinite(r) && all(isfinite, x)) || r > A.growth * A.best_r
+    if !(valid && isfinite(r) && all(isfinite, x)) || r > A.growth * A.best_r
         isempty(A.best_x) && return (Vector{FT}(x), :failed)
         A.nrestart >= A.max_restarts && return (copy(A.best_x), :exhausted)
         A.nrestart += 1
@@ -93,14 +95,47 @@ The iterate with the smallest weighted residual so far.
 """
 best_iterate(A::AndersonMixer) = copy(A.best_x)
 
-# argmin ‖M γ − b‖₂ by pivoted QR, the columns whose pivot falls under 1e-10 of the largest
-# left out (γ = 0 there): repeated or dependent differences give no direction.
+"""
+    anderson_solve!(evaluate!, A::AndersonMixer, x; max_iter, keep!, restore!) -> (iter, outcome)
+
+Iterate from `x` with [`anderson_step!`](@ref) until an evaluation converges. `evaluate!(x)`
+evaluates the map at `x` into the caller's state and returns `(f, converged, valid)`: the
+residual, the caller's stopping test, and whether all of the evaluation is finite. `keep!()`
+saves the state of each new best evaluation, and `restore!()` brings the best back.
+
+`outcome` is
+- `:converged`: the last evaluation converged, and the mixer kept it (`:best` or `:ok`); one it
+  rejects is never accepted, whatever its stopping test says;
+- `:stopped`: `max_iter` evaluations, or the restarts used up; the state is the best evaluation;
+- `:failed`: the first evaluation is not finite.
+"""
+function anderson_solve!(evaluate!::E, A::AndersonMixer, x::AbstractVector; max_iter::Integer, keep!::K, restore!::R) where {E, K, R}
+    iter = 0
+    while true
+        iter += 1
+        f, converged, valid = evaluate!(x)
+        x_next, status = anderson_step!(A, x, f; valid)
+        status === :failed && return (iter, :failed)
+        status === :best && keep!()
+        converged && (status === :best || status === :ok) && return (iter, :converged)
+        if iter >= max_iter || status === :exhausted
+            restore!()
+            return (iter, :stopped)
+        end
+        x = x_next
+    end
+    return
+end
+
+# argmin ‖M γ − b‖₂ by pivoted QR, the columns whose pivot falls under max(1e-10, n ε) of the
+# largest left out (γ = 0 there): repeated or dependent differences give no direction. n ε is
+# round-off; 1e-10 bounds the fit's conditioning in double precision.
 function anderson_lstsq(M::AbstractMatrix{FT}, b::AbstractVector{FT}) where {FT}
     γ = zeros(FT, size(M, 2))
     F = qr(M, ColumnNorm())
     d = abs.(diag(F.R))
     (isempty(d) || !(d[1] > 0)) && return γ
-    r = count(>(FT(1.0e-10) * d[1]), d)
+    r = count(>(max(FT(1.0e-10), maximum(size(M)) * eps(FT)) * d[1]), d)
     y = (F.Q' * b)[1:r]
     γ[F.p[1:r]] .= UpperTriangular(F.R[1:r, 1:r]) \ y
     return γ

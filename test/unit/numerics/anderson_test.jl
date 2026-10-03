@@ -102,3 +102,81 @@ end
     @test last.(steps) == [:restart, :restart, :exhausted]
     @test first(steps[end]) == xb
 end
+
+@testitem "Anderson mixing: an evaluation marked invalid is not kept" begin
+    using RAPID2D: AndersonMixer, anderson_step!, best_iterate
+    # The caller may know an evaluation is bad (u∥ or ψ not finite) while x and f look fine.
+    A = AndersonMixer{Float64}(3, 4; β = fill(0.5, 3))
+    xb, fb = [1.0, 2.0, 3.0], [0.1, 0.1, 0.1]
+    anderson_step!(A, xb, fb)
+    x2, s = anderson_step!(A, [1.1, 2.1, 3.1], [0.01, 0.01, 0.01]; valid = false)
+    @test s === :restart
+    @test best_iterate(A) == xb
+    @test x2 == xb .+ 0.25 .* fb
+    @test anderson_step!(AndersonMixer{Float64}(3, 4), [1.0, 1.0, 1.0], zeros(3); valid = false)[2] === :failed
+end
+
+@testitem "Anderson mixing: dependent differences are dropped in single precision too" begin
+    using RAPID2D: anderson_lstsq
+    using LinearAlgebra
+    # Two nonzero, exactly dependent columns: the least-squares fit is the rank-one one, whatever
+    # pivot round-off leaves on the second column.
+    for FT in (Float32, Float64)
+        v = FT[1, 2, 3, 4]
+        M = [v 2v]
+        b = FT[1, -1, 2, 0.5]
+        γ = anderson_lstsq(M, b)
+        rank_one = norm(b - v * (dot(v, b) / dot(v, v)))
+        @test maximum(abs, γ) < 10
+        @test norm(M * γ - b) ≈ rank_one rtol = 10 * sqrt(eps(FT))
+    end
+end
+
+@testitem "Anderson solve: an evaluation the mixer rejects is never accepted" begin
+    using RAPID2D: AndersonMixer, anderson_solve!
+    # g(x) = x/2 + c. The second evaluation passes the caller's stopping test, but a part of it
+    # the residual does not see is not finite: the iteration goes on to a later evaluation.
+    c = [1.0, 2.0]
+    n = Ref(0)
+    function evaluate!(x)
+        n[] += 1
+        f = c .- x ./ 2
+        return f, n[] == 2 || maximum(abs, f) < 1.0e-12, n[] != 2
+    end
+    iter, outcome = anderson_solve!(
+        evaluate!, AndersonMixer{Float64}(2, 2), zeros(2); max_iter = 50, keep! = () -> nothing, restore! = () -> nothing,
+    )
+    @test outcome === :converged
+    @test iter == n[] > 2
+end
+
+@testitem "Anderson solve: a solve that does not converge ends on its best evaluation" begin
+    using RAPID2D: AndersonMixer, anderson_solve!
+    # g(x) = c − 100 x, relaxed (m = 0): every evaluation after the first is worse, at each β
+    # the restarts try. Cut at max_iter, or with its restarts used up, the solve keeps the first
+    # evaluation and restores it once.
+    c = [1.0, -1.0]
+    function solve(max_iter)
+        n, calls = Ref(0), Symbol[]
+        evaluate!(x) = (n[] += 1; (c .- 101 .* x, false, true))
+        keep!() = push!(calls, Symbol(:keep, n[]))
+        restore!() = push!(calls, :restore)
+        iter, outcome = anderson_solve!(evaluate!, AndersonMixer{Float64}(2, 0), zeros(2); max_iter, keep!, restore!)
+        return iter, outcome, calls
+    end
+    @test solve(3) == (3, :stopped, [:keep1, :restore])
+    iter, outcome, calls = solve(100)
+    @test outcome === :stopped && 3 < iter < 100
+    @test calls == [:keep1, :restore]
+end
+
+@testitem "Anderson solve: a first evaluation that is not finite fails" begin
+    using RAPID2D: AndersonMixer, anderson_solve!
+    restored = Ref(false)
+    iter, outcome = anderson_solve!(
+        x -> (fill(NaN, 2), false, true), AndersonMixer{Float64}(2, 2), zeros(2);
+        max_iter = 5, keep! = () -> nothing, restore! = () -> (restored[] = true),
+    )
+    @test (iter, outcome) == (1, :failed)
+    @test !restored[]
+end
