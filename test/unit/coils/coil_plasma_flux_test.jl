@@ -90,7 +90,7 @@ end
     # As above, every coupled solve stopped after two iterations, far from converged: the
     # circuits still close their balance, with the flux of the current each solve accepted.
     RP = column_with_loops([(1.2, 0.8, 1.0e-3, 0.0, "loop"), (0.6, 0.0, 1.0e-4, 10.0, "OH")])
-    RP.flags.ampere_picard = merge(RP.flags.ampere_picard, (tolerance = 1.0e-300, max_iter = 2))
+    RP.flags.ampere_picard = PicardSettings{Float64}(; tolerance = 1.0e-300, max_iter = 2)
     rec = (I = Vector{Float64}[], ψ = Vector{Float64}[])
     quiet() do
         redirect_stderr(devnull) do

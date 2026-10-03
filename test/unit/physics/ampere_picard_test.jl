@@ -66,7 +66,8 @@ end
     # flags.ampere_picard is what solve_timestep! hands the coupled solve: a tolerance no
     # iteration can meet makes every solve run exactly its max_iter block solves.
     RP = picard_column(; t_end = 20.0e-6)
-    RP.flags.ampere_picard = merge(RP.flags.ampere_picard, (tolerance = 1.0e-300, max_iter = 3))
+    RP.flags.ampere_picard.tolerance = 1.0e-300
+    RP.flags.ampere_picard.max_iter = 3
     redirect_stderr(devnull) do
         redirect_stdout(() -> run_simulation!(RP), devnull)
     end
@@ -202,7 +203,7 @@ end
     # field over the grid, each coil current, and u∥ and ψ_self at the end.
     function compare_with_converged(make)
         a, b = make(), make()
-        b.flags.ampere_picard = merge(b.flags.ampere_picard, REFERENCE_PICARD)
+        b.flags.ampere_picard = PicardSettings{Float64}(; REFERENCE_PICARD...)
         ra, rb = run_record(a), run_record(b)
         rel(x, y) = maximum(abs, x .- y) / maximum(abs, y)
         return (;
@@ -325,7 +326,7 @@ end
 @testitem "Ampère Picard: the run's floors reach the coupled solve" setup = [PicardColumn] begin
     # Floors so large that the first block solve of every step settles it.
     RP = picard_column(; t_end = 20.0e-6)
-    RP.flags.ampere_picard = merge(RP.flags.ampere_picard, (tolerance = 0.0, E_floor = 1.0e30, I_floor = 1.0e30))
+    RP.flags.ampere_picard = PicardSettings{Float64}(; tolerance = 0.0, E_floor = 1.0e30, I_floor = 1.0e30)
     redirect_stdout(() -> run_simulation!(RP), devnull)
     stats = RP.diagnostics.ampere_picard
     @test stats.nsolve == 4
@@ -411,7 +412,7 @@ end
             )
         )
         initialize_coil_system!(RP)
-        RP.flags.ampere_picard = merge(RP.flags.ampere_picard, (tolerance = 0.0, max_iter = 3, E_floor = 1.0e30, I_floor))
+        RP.flags.ampere_picard = PicardSettings{Float64}(; tolerance = 0.0, max_iter = 3, E_floor = 1.0e30, I_floor)
         redirect_stderr(devnull) do
             redirect_stdout(() -> run_simulation!(RP), devnull)
         end
@@ -420,4 +421,20 @@ end
     loose, tight = stats(1.0e30), stats(0.0)
     @test loose.niter == loose.nsolve == 4 && loose.nunconverged == 0
     @test tight.nunconverged == tight.nsolve == 4
+end
+
+@testitem "Ampère Picard: the settings are checked where they are written" begin
+    s = PicardSettings{Float64}()
+    @test NamedTuple(s) == (tolerance = 1.0e-3, max_iter = 20, relaxation_w = 0.5, anderson_m = 8, E_floor = 1.0e-6, I_floor = 1.0e-6)
+    @test PicardSettings{Float32}().tolerance isa Float32
+    s.max_iter = 40
+    @test s.max_iter == 40
+    # each out of range on construction and on assignment
+    for (name, bad) in (
+            (:tolerance, -1.0), (:tolerance, NaN), (:max_iter, 0), (:relaxation_w, 0.0), (:relaxation_w, 1.5),
+            (:anderson_m, -1), (:E_floor, -1.0e-6), (:I_floor, Inf),
+        )
+        @test_throws ArgumentError PicardSettings{Float64}(; (name => bad,)...)
+        @test_throws ArgumentError setproperty!(PicardSettings{Float64}(), name, bad)
+    end
 end

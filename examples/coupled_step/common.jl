@@ -179,7 +179,7 @@ quiet(f) = redirect_stdout(() -> redirect_stderr(f, devnull), devnull)
 function default_vs_converged(make; nsteps)
     return map((nothing, CONVERGED_PICARD)) do picard
         RP = make()
-        isnothing(picard) || (RP.flags.ampere_picard = merge(RP.flags.ampere_picard, picard))
+        isnothing(picard) || (RP.flags.ampere_picard = PicardSettings{Float64}(; picard...))
         RP.t_end_s = nsteps * RP.dt
         I, E = Float64[], Matrix{Float64}[]
         record(rp) = (push!(I, plasma_current(rp, current_density(rp))); push!(E, copy(rp.fields.Eϕ_self)))

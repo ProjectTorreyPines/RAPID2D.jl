@@ -158,7 +158,7 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
         above_gate = RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
         if above_gate && RP.flags.E_para_self_EM && RP.flags.ud_evolve
             # u∥, ψ_self and the coil currents together
-            solve_combined_momentum_Ampere_equations_with_coils!(RP; RP.flags.ampere_picard...)
+            solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
         elseif above_gate
             # The coils advance on their own circuits, the plasma entering through the flux
             # each coil remembers
@@ -186,7 +186,7 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
                 update_Jϕ!(RP)
                 if coupled && abs(sum(RP.plasma.Jϕ) * RP.G.dR * RP.G.dZ) >= RP.flags.Ampere_Itor_threshold
                     restore_below_gate_entry_state!(RP, entry)
-                    solve_combined_momentum_Ampere_equations_with_coils!(RP; RP.flags.ampere_picard...)
+                    solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
                 else
                     @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP; update_Eϕ_self = false)
                 end

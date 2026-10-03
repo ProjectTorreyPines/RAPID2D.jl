@@ -2321,7 +2321,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # derived from [E_para_EM = -qe/me * (ψ^(n+1) - ψ^(n))/(R*Δt)  = -facEM * ((ψ^(n+1) - ψ^(n)))/Δt]
         facEM = (qe / me) * (F.bϕ ./ G.R2D)
 
-        # 1. calculate accel_para_tilde using the information at the current time step
+        # accel_para_tilde from the state at the step's start
         accel_para_tilde = zeros(FT, G.NR, G.NZ) # Initialize acceleration field
 
         # pressure gradient contribution: [-∇∥(ne*Te)/(me*ne)]
@@ -2475,7 +2475,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         )
         record_picard!(RP, iter, outcome === :converged, res_k[1], res_k[2], max_iter)
 
-        # 7. Final updates of electromagnetic fields
+        # The accepted evaluation's fields
         F.ψ_self .= ψ_k
         pla.ue_para .= ue_k
 

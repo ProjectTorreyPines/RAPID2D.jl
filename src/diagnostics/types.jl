@@ -264,10 +264,10 @@ end
 """
     PicardStats
 
-Counts kept over a run for the coupled momentum–Ampère solve: solves, Picard iterations
-summed over them, and solves that stopped at `max_iter` short of the tolerance; with the last
-solve's iterations, and the change in its last iteration of the induced field [V/m] and of
-the coil currents [A].
+Counts kept over a run for the coupled momentum–Ampère solve: solves, block solves summed
+over them, and solves that stopped short of the tolerance (at `max_iter`, or with the mixer's
+restarts used up); with the last solve's block solves and the residuals of its accepted
+evaluation, of the induced field [V/m] and of the coil currents [A].
 """
 @kwdef mutable struct PicardStats
     nsolve::Int = 0
