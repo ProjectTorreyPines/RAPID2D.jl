@@ -438,3 +438,46 @@ end
         @test_throws ArgumentError setproperty!(PicardSettings{Float64}(), name, bad)
     end
 end
+
+@testitem "Coupled solve: the u∥–ψ block keeps one sparsity pattern" setup = [PicardColumn] begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
+    # With u∥ advection on, the upwind side each face takes follows the flow. Turning the flow
+    # around between solves changes only the block's values: one symbolic analysis for all.
+    RP = picard_column()
+    RP.flags.Include_ud_convec_term = true
+    for (uR, uZ) in ((1.0e3, 0.0), (-1.0e3, 0.0), (0.0, 5.0e2), (-1.0e3, -5.0e2))
+        prepare_timestep!(RP)
+        fill!(RP.plasma.ueR, uR)
+        fill!(RP.plasma.ueZ, uZ)
+        RAPID2D.cache_electron_operators!(RP)
+        solve_combined_momentum_Ampere_equations_with_coils!(RP)
+    end
+    @test RP.operators.uψ_solver.nfactor == 4
+    @test RP.operators.uψ_solver.nsymbolic == 1
+end
+
+@testitem "Coupled solve: the fixed-pattern block is the matrix it assembled before" setup = [PicardColumn] begin
+    using RAPID2D: CoupledBlock, update_coupled_block!, combine_Au_and_ΔGS_sparse_matrices, uψ_coupling_terms
+    using RAPID2D: set_identity!, add_diagonal!, add_scaled!, ue_Te_operators
+    using RAPID2D.SparseArrays
+    RP = picard_column()
+    RP.flags.Include_ud_convec_term = true
+    fill!(RP.plasma.ueR, 1.0e3)
+    fill!(RP.plasma.ueZ, -4.0e2)
+    RAPID2D.cache_electron_operators!(RP)
+    OP, dt = RP.operators, RP.dt
+    ν = vec(RP.plasma.ν_en_mom_tot + RP.plasma.ν_en_iz_tot + RP.plasma.ν_ei_eff)
+    A_adv = ue_Te_operators(RP).A_adv
+    # the assembly the solve used: 𝟙 + Δt ν + Δt A_adv, then the block by findnz and sparse(I, J, V)
+    A_u_old = OP.II + spdiagm(dt .* ν) + dt * sparse(A_adv)
+    old = combine_Au_and_ΔGS_sparse_matrices(RP, A_u_old, OP.ΔGS.matrix)
+    # the same on the wall pattern and a block built once
+    A_u = similar(OP.A_adv_e)
+    set_identity!(A_u)
+    add_diagonal!(A_u, ν; scale = dt)
+    add_scaled!(A_u, dt, A_adv)
+    B = CoupledBlock(A_u, OP.ΔGS)
+    new = update_coupled_block!(B, A_u, OP.ΔGS, uψ_coupling_terms(RP)...)
+    @test new == old
+    @test nnz(new) > nnz(old)   # the upwind sides a flow does not use are stored zeros
+end

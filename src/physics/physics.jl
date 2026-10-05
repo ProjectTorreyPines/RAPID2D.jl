@@ -2159,6 +2159,21 @@ end
 
 
 """
+    uψ_coupling_terms(RP) -> (c_uψ, c_ψu)
+
+The two coupling diagonals of the u∥–ψ block, per node: ψ's inductive drive on u∥,
+c_uψ = q_e b_ϕ/(m_e R), and the electron current's source in Ampère's law,
+c_ψu = μ0 R n_e q_e b_ϕ, zero on the boundary rows (ψ is set there).
+"""
+function uψ_coupling_terms(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @unpack qe, me, μ0 = RP.config.constants
+    c_uψ = vec(@. qe * RP.fields.bϕ / (me * RP.G.R2D))
+    c_ψu = vec(@. μ0 * RP.G.R2D * RP.plasma.ne * qe * RP.fields.bϕ)
+    c_ψu[RP.G.BDY_idx] .= zero(FT)
+    return c_uψ, c_ψu
+end
+
+"""
     combine_Au_and_ΔGS_sparse_matrices(RP::RAPID{FT}, Au::SparseMatrixCSC{FT,Int}, A_GS::SparseMatrixCSC{FT,Int}) where {FT<:AbstractFloat}
 
 Combine the electron parallel momentum operator and Grad–Shafranov operator into a single block sparse matrix for coupled solves.
@@ -2192,11 +2207,7 @@ function combine_Au_and_ΔGS_sparse_matrices(RP::RAPID{FT}, Au::SparseMatrixCSC{
     # Physical constants
     @unpack qe, me, μ0 = RP.config.constants
 
-    # Calculate coupling terms
-    inductive_term = @. qe * RP.fields.bϕ / (me * RP.G.R2D)
-    electron_current_term = @. μ0 * RP.G.R2D * RP.plasma.ne * qe * RP.fields.bϕ
-    # Zero out boundary terms for proper boundary conditions
-    electron_current_term[RP.G.BDY_idx] .= zero(FT)
+    inductive_term, electron_current_term = uψ_coupling_terms(RP)
 
     # Count non-zero entries for efficient allocation
     # Upper left: A_upara entries
@@ -2259,8 +2270,8 @@ end
 Advance u∥, ψ_self and the coil currents together over one step, the coefficients (n, ν, b)
 held at the step's start.
 
-The block matrix of u∥ and ψ inside the domain (`combine_Au_and_ΔGS_sparse_matrices`) is
-factorized once. The free boundary and the circuits close it by an outer iteration on
+The block matrix of u∥ and ψ inside the domain (`CoupledBlock`, on a pattern fixed for the
+run) is factorized once. The free boundary and the circuits close it by an outer iteration on
 x = (boundary flux, coil currents):
 - a block solve with the boundary flux as Dirichlet values and the coils inside the grid as ψ's
   source gives u∥ and ψ;
@@ -2352,10 +2363,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
                 + pla.ν_ei_eff * pla.ui_para
         )
 
-        A_u = OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
-        if flags.Include_ud_convec_term
-            A_u += dt * θimp * sparse(A_adv)
-        end
+        # A_u = 𝟙 + Δt θ (ν + u·∇), values only, on the wall pattern
+        A_u = OP.A_u
+        set_identity!(A_u)
+        add_diagonal!(A_u, vec(ν_sum_mom_iz_ei); scale = dt * θimp)
+        flags.Include_ud_convec_term && add_scaled!(A_u, dt * θimp, A_adv)
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
         if RP.flags.Coulomb_Collision
@@ -2392,9 +2404,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # iteration solves must not change between its iterations.
         circuit_rhs_n = Nc > 0 ? calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) : FT[]
 
-        A_u_ψ = combine_Au_and_ΔGS_sparse_matrices(RP, A_u, OP.ΔGS.matrix)
-        # A_u_ψ does not change inside the iteration below: factorized once per step here, and
-        # every iteration only back-substitutes.
+        # The u∥–ψ block on its fixed pattern, so the step refactorizes values only. It does not
+        # change inside the iteration below: factorized once per step here, and every iteration
+        # only back-substitutes.
+        isnothing(OP.uψ_block) && (OP.uψ_block = CoupledBlock(A_u, OP.ΔGS))
+        A_u_ψ = update_coupled_block!(OP.uψ_block, A_u, OP.ΔGS, uψ_coupling_terms(RP)...)
         factorize!(OP.uψ_solver, A_u_ψ)
         sol = Vector{FT}(undef, size(A_u_ψ, 1))
         RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde)       # the same for every iteration

@@ -676,8 +676,12 @@ Fields include various matrices for solving different parts of the model.
     # ΔGS never changes during a run, so it is factorized once, on its first solve.
     ΔGS_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
     # The combined momentum–Ampère system: fixed inside a step's Picard loop, so it is
-    # factorized once per step and every iteration only back-substitutes.
+    # factorized once per step and every iteration only back-substitutes. Its matrix is
+    # `uψ_block`, built on its first use with a fixed pattern, so each step refactorizes the
+    # values only; `A_u` (𝟙 + Δt θ (ν + u·∇) on the wall pattern) is its u∥ part.
     uψ_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+    uψ_block::Union{Nothing, CoupledBlock{FT}} = nothing
+    A_u::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
 
     # Cached linear solvers (numerics/linear_solvers.jl) — one per equation, so each
     # sees a step-stable sparsity pattern and the lu! symbolic-reuse path stays valid
