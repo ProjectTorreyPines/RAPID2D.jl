@@ -1969,8 +1969,8 @@ x + w f diverges. `relaxation_w` is the mixing of the boundary flux (the coils' 
 - **Circuit forcing:** M Iⁿ + Δt V(tⁿ + Δt/2), taken once for the step.
 - **`method = :direct`:** no iteration. T is assembled (`coupled_map_jacobian`) and Newton's
   step (`NewtonStepper`) solves (𝟙 − T) x = c from the first iterate at once; later evaluations
-  only remove rounding. The step's equations solved whatever T's eigenvalues: a reference, at
-  N_b + N_c back-substitutions per step.
+  only remove rounding. The step's equations solved whatever T's eigenvalues, so long as none is
+  1: a reference, at N_b + N_c back-substitutions per step.
 
 The iteration (`fixed_point_solve!`) stops when `coupled_residual_converged` holds. It accepts
 that evaluation: u∥ and ψ of its block solve, and the coil currents of its J, with `Coil.ψ_pla`
@@ -1978,7 +1978,8 @@ set to ψ_pla(r_c; J). The circuits' flux balance then closes every step. A solv
 converge (`max_iter` block solves, the mixer's restarts used up, or Newton's step stalled)
 accepts the evaluation with the smallest residual. It is counted in
 `RP.diagnostics.ampere_picard`, and the run's first one warns. An evaluation that is not finite, or that the stepper rejects, is never
-accepted; if the first is not finite, the solve throws and leaves the state as it found it.
+accepted; if the first is not finite, the solve throws and leaves u∥, the fields and the coils
+as it found them (only the step's caches, the block, its LU and the circuit matrices, are rebuilt).
 
 Coil voltages given as functions are taken to be pure functions of time.
 """
@@ -2171,8 +2172,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         )
         record_picard!(RP, iter, outcome === :converged, res_k[1], res_k[2], max_iter)
 
-        # The accepted evaluation's fields. The state is written from here on only, so a solve
-        # that throws leaves it as it found it.
+        # The accepted evaluation's fields. u∥, the fields and the coils are written from here on
+        # only, so a solve that throws leaves them as it found them.
         # Rue_ei (electron-ion momentum exchange rate): its part at tⁿ, before u∥ moves on
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θimp) * pla.ue_para)

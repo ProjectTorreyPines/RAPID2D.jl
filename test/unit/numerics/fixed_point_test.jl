@@ -40,12 +40,12 @@ end
 
 @testitem "Newton's step: a residual that is not finite" setup = [AffineMap] begin
     using RAPID2D: NewtonStepper, fixed_point_step!
-    # the first: nothing to fall back on; a later one: the solve ends on the best
+    # the first: nothing to fall back on; a later one: the solve ends on the best iterate
     S = NewtonStepper(newton_lu(), W)
     @test fixed_point_step!(S, zeros(n), fill(NaN, n))[2] === :failed
     @test fixed_point_step!(S, zeros(n), g(zeros(n)))[2] === :best
-    @test fixed_point_step!(S, ones(n), fill(Inf, n))[2] === :exhausted
-    @test fixed_point_step!(S, ones(n), zeros(n); valid = false)[2] === :exhausted
+    @test fixed_point_step!(S, ones(n), fill(Inf, n)) == (zeros(n), :exhausted)
+    @test fixed_point_step!(S, ones(n), zeros(n); valid = false) == (zeros(n), :exhausted)
 end
 
 @testitem "Fixed-point solve with Newton's step: two evaluations on an affine map" setup = [AffineMap] begin

@@ -289,10 +289,8 @@ function distribute_coil_currents_to_Jϕ!(
         # Use external currents if provided, otherwise use coil's current
         current = currents === nothing ? coil.current : currents[coil_idx]
 
-        # Skip if current is zero
-        if abs(current) < eps(FT)
-            continue
-        end
+        # Skip a zero current; any other deposits its share, so the source is linear in it
+        iszero(current) && continue
 
         # Find grid cell indices (1-based)
         # floor(...) + 1 converts from 0-based to 1-based indexing

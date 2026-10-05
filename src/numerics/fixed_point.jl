@@ -59,20 +59,23 @@ end
 Newton's step for x = g(x), x + (𝟙 − T)⁻¹ f, with T the Jacobian of g and `K` a factorization
 of W (𝟙 − T) W⁻¹. W = Diagonal(`W`) puts the unknowns in one unit, which keeps that matrix well
 conditioned when they come in different units. On an affine map g(x) = T x + c the first step
-lands on the fixed point, and later ones only remove rounding; a residual ‖W f‖ no smaller
-than the best stalls.
+lands on the fixed point if no eigenvalue of T is 1, and later ones only remove rounding; a
+residual ‖W f‖ no smaller than the best stalls.
 """
 mutable struct NewtonStepper{FT <: AbstractFloat, KT}
     K::KT
     W::Vector{FT}
+    best_x::Vector{FT}
     best_r::FT
 end
-NewtonStepper(K, W::AbstractVector{FT}) where {FT <: AbstractFloat} = NewtonStepper{FT, typeof(K)}(K, Vector{FT}(W), FT(Inf))
+NewtonStepper(K, W::AbstractVector{FT}) where {FT <: AbstractFloat} = NewtonStepper{FT, typeof(K)}(K, Vector{FT}(W), FT[], FT(Inf))
 
 function fixed_point_step!(S::NewtonStepper{FT}, x::AbstractVector, f::AbstractVector; valid::Bool = true) where {FT}
     r = norm(S.W .* f)
-    valid && isfinite(r) && all(isfinite, x) || return (Vector{FT}(x), isinf(S.best_r) ? :failed : :exhausted)
+    if !(valid && isfinite(r) && all(isfinite, x))
+        return isempty(S.best_x) ? (Vector{FT}(x), :failed) : (copy(S.best_x), :exhausted)
+    end
     r < S.best_r || return (Vector{FT}(x), :stalled)
-    S.best_r = r
+    S.best_x, S.best_r = Vector{FT}(x), r
     return (x .+ (S.K \ (S.W .* f)) ./ S.W, :best)
 end
