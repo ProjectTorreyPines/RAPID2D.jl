@@ -108,6 +108,38 @@ function prepare_timestep!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return RP
 end
 
+# What a step below the Ampère gate writes before it knows whether its current crosses the gate,
+# put back when the step is solved again by the coupled solve: u∥, Jϕ, the induced field and
+# its parallel projection, and the coils' currents, memory and clock. The rest it writes is
+# assigned afresh by that solve before use (Rue_ei), or is a cache rebuilt from the same state
+# (the u∥ operators and LU, the circuit matrices, the Grad–Shafranov factorization).
+function below_gate_entry_state(RP::RAPID)
+    F, pla, csys = RP.fields, RP.plasma, RP.coil_system
+    return (;
+        ue_para = copy(pla.ue_para), Jϕ = copy(pla.Jϕ),
+        Eϕ_self = copy(F.Eϕ_self), Eϕ_self_prev = copy(F.Eϕ_self_prev),
+        E_para_self_EM = copy(F.E_para_self_EM), E_para_tot = copy(F.E_para_tot),
+        coil_current = csys.n_total > 0 ? copy(get_all_currents(csys)) : nothing,
+        coil_ψ_pla = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : nothing, coil_time = csys.time_s,
+    )
+end
+
+function restore_below_gate_entry_state!(RP::RAPID, entry)
+    F, pla, csys = RP.fields, RP.plasma, RP.coil_system
+    pla.ue_para .= entry.ue_para
+    pla.Jϕ .= entry.Jϕ
+    F.Eϕ_self .= entry.Eϕ_self
+    F.Eϕ_self_prev .= entry.Eϕ_self_prev
+    F.E_para_self_EM .= entry.E_para_self_EM
+    F.E_para_tot .= entry.E_para_tot
+    if csys.n_total > 0
+        set_all_currents!(csys, entry.coil_current)
+        csys.coils.ψ_pla = entry.coil_ψ_pla
+    end
+    csys.time_s = entry.coil_time
+    return RP
+end
+
 """
     solve_timestep!(RP, dt = RP.dt)
 
@@ -115,6 +147,9 @@ Advance the state from tⁿ to tⁿ⁺¹ on the inputs `prepare_timestep!` set: 
 equation and the coil circuits (coupled with Ampère above the current threshold; below it, and
 with Ampère off, the coils advance as vacuum circuits and Ampère only keeps `ψ_self`), the
 densities, the ion velocity and the temperatures, the global J×B force and the neutral gas.
+A step below the threshold whose u∥ update carries the current across it is solved again by
+the coupled solve, from the state it started at, when that solve can run (Ampère, the
+inductive E∥ and u∥ evolution on).
 """
 function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "solve_timestep!" begin
@@ -123,7 +158,7 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
         above_gate = RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
         if above_gate && RP.flags.E_para_self_EM && RP.flags.ud_evolve
             # u∥, ψ_self and the coil currents together
-            solve_combined_momentum_Ampere_equations_with_coils!(RP)
+            solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
         elseif above_gate
             # The coils advance on their own circuits, the plasma entering through the flux
             # each coil remembers
@@ -137,7 +172,11 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
             # Below the gate the plasma current is not a source of induction: the coils
             # advance as in vacuum and the induced field is theirs alone (see
             # set_Eϕ_self_from_coils!). ψ_self stays the field of the present currents, so the
-            # coupled solve starts from it when the gate opens.
+            # coupled solve starts from it when the gate opens. A step whose u∥ update carries
+            # the current across the gate would have accelerated it without its
+            # self-inductance; it is solved again by the coupled solve, from where it started.
+            coupled = RP.flags.Ampere && RP.flags.E_para_self_EM && RP.flags.ud_evolve
+            entry = coupled ? below_gate_entry_state(RP) : nothing
             ΔI_coils = advance_coils!(RP; plasma = false)
             RP.flags.Ampere && RP.flags.E_para_self_EM && set_Eϕ_self_from_coils!(RP, ΔI_coils)
             if RP.flags.ud_evolve
@@ -145,7 +184,12 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
             end
             if RP.flags.Ampere
                 update_Jϕ!(RP)
-                @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP; update_Eϕ_self = false)
+                if coupled && abs(sum(RP.plasma.Jϕ) * RP.G.dR * RP.G.dZ) >= RP.flags.Ampere_Itor_threshold
+                    restore_below_gate_entry_state!(RP, entry)
+                    solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
+                else
+                    @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP; update_Eϕ_self = false)
+                end
             end
         end
 

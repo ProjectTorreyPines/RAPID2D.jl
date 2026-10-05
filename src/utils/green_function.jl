@@ -75,11 +75,11 @@ function calculate_ψ_by_green_function(
 
     # Calculate the Green's function
     # ψ = I_s × 2×10⁻⁷ × √(Rd*Rs/m) × [(2-m)K - 2E]
-    ψ = @. Is * FT(2.0e-7) * sqrt((Rd * Rs) / m) * ((FT(2.0) - m) * K - FT(2.0) * E)
+    ψm = @. Is * FT(2.0e-7) * sqrt((Rd * Rs) / m) * ((FT(2.0) - m) * K - FT(2.0) * E)
 
     # Reshape to match expected output dimensions
     output_size = (size(R_dest)..., size(R_src)...)
-    ψ = reshape(ψ, output_size)
+    ψ = reshape(ψm, output_size)
 
     if !compute_derivatives
         return ψ
@@ -90,16 +90,17 @@ function calculate_ψ_by_green_function(
 
     denominator = @. ((Rd + Rs)^2 + (Zd - Zs)^2)^2
 
-    # Derivatives with respect to destination coordinates
+    # Derivatives with respect to destination coordinates. dψ_dm holds R_d R_s fixed, and ψ is
+    # proportional to √(R_d R_s) at fixed m, so an R-derivative also carries ψ/(2R).
     dmdRd = @. (4.0 * Rs * (-Rd^2 + Rs^2 + (Zd - Zs)^2)) / denominator
-    dψ_dRd = @. dmdRd * dψ_dm
+    dψ_dRd = @. dmdRd * dψ_dm + ψm / (2 * Rd)
 
     dmdZd = @. -8.0 * (Rd * Rs) * (Zd - Zs) / denominator
     dψ_dZd = @. dmdZd * dψ_dm
 
     # Derivatives with respect to source coordinates
     dmdRs = @. (4.0 * Rd * (-Rs^2 + Rd^2 + (Zd - Zs)^2)) / denominator
-    dψ_dRs = @. dmdRs * dψ_dm
+    dψ_dRs = @. dmdRs * dψ_dm + ψm / (2 * Rs)
 
     dmdZs = @. -8.0 * (Rd * Rs) * (Zs - Zd) / denominator
     dψ_dZs = @. dmdZs * dψ_dm

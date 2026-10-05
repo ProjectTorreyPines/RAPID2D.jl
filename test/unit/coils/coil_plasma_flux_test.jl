@@ -86,6 +86,32 @@ end
     @test maximum(maximum(abs, residual(k)) / scale(k) for k in 2:length(rec.I)) < 1.0e-10
 end
 
+@testitem "Coupled step: the circuit's flux balance closes on solves cut short" setup = [CoilFluxColumn] begin
+    # As above, every coupled solve stopped after two iterations, far from converged: the
+    # circuits still close their balance, with the flux of the current each solve accepted.
+    RP = column_with_loops([(1.2, 0.8, 1.0e-3, 0.0, "loop"), (0.6, 0.0, 1.0e-4, 10.0, "OH")])
+    RP.flags.ampere_picard = PicardSettings{Float64}(; tolerance = 1.0e-300, max_iter = 2)
+    rec = (I = Vector{Float64}[], ψ = Vector{Float64}[])
+    quiet() do
+        redirect_stderr(devnull) do
+            run_simulation!(
+                RP; callback_after_step = rp -> begin
+                    push!(rec.I, copy(rp.coil_system.coils.current))
+                    push!(rec.ψ, copy(rp.coil_system.coils.ψ_pla))
+                    grow!(rp)
+                end
+            )
+        end
+    end
+    csys = RP.coil_system
+    M, r_c, V, dt = csys.mutual_inductance, get_all_resistances(csys), get_all_voltages_at_time(csys), RP.dt
+    residual(k) = M * (rec.I[k] - rec.I[k - 1]) + dt * r_c .* rec.I[k] + 2π * (rec.ψ[k] - rec.ψ[k - 1]) - dt * V
+    scale(k) = maximum(abs, M * rec.I[k]) + dt * maximum(abs, V)
+
+    @test RP.diagnostics.ampere_picard.nunconverged == RP.diagnostics.ampere_picard.nsolve
+    @test maximum(maximum(abs, residual(k)) / scale(k) for k in 2:length(rec.I)) < 1.0e-10
+end
+
 @testitem "Coupled step: a run split in two is bit-identical" setup = [CoilFluxColumn] begin
     # The coils' memory is state: resuming a run must not recompute it.
     loops = [(1.2, 0.8, 1.0e-3, 0.0, "loop"), (0.6, 0.0, 1.0e-4, 10.0, "OH")]

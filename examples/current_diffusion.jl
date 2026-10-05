@@ -70,6 +70,13 @@ plot!(fig, RP_noEM.diagnostics.snaps0D.time_s .* 1.0e3, RP_noEM.diagnostics.snap
 plot!(fig, RP_EM.diagnostics.snaps0D.time_s .* 1.0e3, RP_EM.diagnostics.snaps0D.I_tor; lw = 2, label = "with E_ind")
 plot!(fig, t_ref .* 1.0e3, I_ref; lw = 2, ls = :dash, c = :black, label = "analytic (L + L_kin)/R")
 plot!(fig, t_ref .* 1.0e3, I_ref_noLkin; lw = 1.5, ls = :dot, c = :gray40, label = "analytic L/R (no L_kin)")
-savefig(fig, joinpath(out, "current.png"))
+# As test/regression/inductance_test.jl: with the inductive field the current follows the
+# circuit within 1 % of its saturation value at every snapshot.
+gap = maximum(abs.(RP_EM.diagnostics.snaps0D.I_tor .- I_ref)) / maximum(I_ref)
+plot!(fig; top_margin = 6Plots.mm)
+save_with_verdict(
+    fig, out, "current", gap < 0.01,
+    @sprintf("with E_ind the current follows the (L + L_kin)/R circuit within %.2g %% of its saturation at every snapshot (needs 1 %%)", 100gap),
+)
 animate2D(["without E_ind" => RP_noEM, "with E_ind" => RP_EM], [:Jϕ]; file = joinpath(out, "Jphi.mp4"))
 println("outputs in ", out)

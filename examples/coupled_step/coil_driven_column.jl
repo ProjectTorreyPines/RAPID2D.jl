@@ -63,5 +63,12 @@ fig = plot(
     plot_layout(RP; title = "column and driving coil"), p1, p2;
     layout = @layout([a{0.38w} grid(2, 1)]), size = (1200, 620), margin = 4Plots.mm,
 )
-savefig(fig, joinpath(out, "coil_driven_column.png"))
+# The column follows the two-circuit model, and the run under the default gate steps as the
+# run without it.
+model_gap = maximum(abs.(open.Ip .- last.(model))) / maximum(abs, last.(model))
+gate_gap = maximum(abs.(default.Ip .- open.Ip)) / maximum(abs, open.Ip)
+save_with_verdict(
+    fig, out, "coil_driven_column", model_gap < 0.05 && gate_gap < 0.02,
+    @sprintf("threshold 0 strays up to %.1f %% from the two-circuit model (passes under 5 %%); the 1 A gate run strays up to %.1f %% from threshold 0 (passes under 2 %%)", 100model_gap, 100gate_gap),
+)
 println("outputs in ", out)

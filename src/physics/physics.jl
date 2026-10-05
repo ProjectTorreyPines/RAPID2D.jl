@@ -1861,6 +1861,38 @@ function picard_step_converged(ψ_new, ψ_iter, ψ_old, I_new, I_iter, I_old, R,
     return converged, E_iter, I_iter_change
 end
 
+"""
+    coupled_residual_converged(f_ψb, f_I, R_bdy, coil_field, ψ_new, ψ_old, R, I_new, I_old, dt; tol, E_floor, I_floor)
+
+The combined solve's stopping test, on the residual f = g(x) − x of its outer iteration over
+the boundary flux and the coil currents, unweighted. Two parts are in the units of the induced
+field E = −Δψ/(R Δt):
+- the boundary flux, max|f_ψb / R_b| / Δt;
+- the coils inside the grid, whose current enters ψ's interior source, max |f_I,c| · coil_field_c,
+  where coil_field = L_c/(2π R_c Δt) there and 0 for coils outside the grid; those reach the
+  plasma only through the boundary flux.
+
+Both are measured against `tol` times the field the step induces, max|(ψ_new − ψ_old)/R| / Δt,
+plus `E_floor` [V/m]. Every coil's current residual must also be under `tol` times its change
+over the step, |I_new − I_old|, plus `I_floor` [A].
+
+A residual or a step field that is not finite is not converged. This is a residual test, not
+an error bound: the tests compare the accepted step with the step iterated to convergence.
+Returns `(converged, E_residual, I_residual, finite)`, `finite` saying whether both residuals
+and the step field are.
+"""
+function coupled_residual_converged(f_ψb, f_I, R_bdy, coil_field, ψ_new, ψ_old, R, I_new, I_old, dt; tol, E_floor, I_floor)
+    E_bdy = maximum(abs, f_ψb ./ R_bdy) / dt
+    E_coil = isempty(f_I) ? zero(E_bdy) : maximum(abs, f_I .* coil_field)
+    E_step = maximum(abs, (ψ_new .- ψ_old) ./ R) / dt
+    E_residual = max(E_bdy, E_coil)
+    I_residual = isempty(f_I) ? zero(E_bdy) : maximum(abs, f_I)
+    coils_settled = all(abs.(f_I) .<= tol .* abs.(I_new .- I_old) .+ I_floor)
+    finite = isfinite(E_residual) && isfinite(I_residual) && isfinite(E_step)
+    converged = finite && E_residual <= tol * E_step + E_floor && coils_settled
+    return converged, E_residual, I_residual, finite
+end
+
 # Count the solve in RP.diagnostics.ampere_picard, and warn at a run's first unconverged one.
 function record_picard!(RP::RAPID, iter::Int, converged::Bool, E_residual::Real, I_residual::Real, max_iter::Int)
     stats = RP.diagnostics.ampere_picard
@@ -1872,7 +1904,7 @@ function record_picard!(RP::RAPID, iter::Int, converged::Bool, E_residual::Real,
     if !converged
         stats.nunconverged += 1
         stats.nunconverged == 1 &&
-            @warn "Ampère Picard iteration stopped at max_iter = $max_iter short of its tolerance (step $(RP.step)); later ones are only counted in RP.diagnostics.ampere_picard" E_residual I_residual
+            @warn "Ampère Picard iteration stopped short of its tolerance after $iter block solves (max_iter = $max_iter, step $(RP.step)); later ones are only counted in RP.diagnostics.ampere_picard" E_residual I_residual
     end
     return nothing
 end
@@ -2127,6 +2159,21 @@ end
 
 
 """
+    uψ_coupling_terms(RP) -> (c_uψ, c_ψu)
+
+The two coupling diagonals of the u∥–ψ block, per node: ψ's inductive drive on u∥,
+c_uψ = q_e b_ϕ/(m_e R), and the electron current's source in Ampère's law,
+c_ψu = μ0 R n_e q_e b_ϕ, zero on the boundary rows (ψ is set there).
+"""
+function uψ_coupling_terms(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @unpack qe, me, μ0 = RP.config.constants
+    c_uψ = vec(@. qe * RP.fields.bϕ / (me * RP.G.R2D))
+    c_ψu = vec(@. μ0 * RP.G.R2D * RP.plasma.ne * qe * RP.fields.bϕ)
+    c_ψu[RP.G.BDY_idx] .= zero(FT)
+    return c_uψ, c_ψu
+end
+
+"""
     combine_Au_and_ΔGS_sparse_matrices(RP::RAPID{FT}, Au::SparseMatrixCSC{FT,Int}, A_GS::SparseMatrixCSC{FT,Int}) where {FT<:AbstractFloat}
 
 Combine the electron parallel momentum operator and Grad–Shafranov operator into a single block sparse matrix for coupled solves.
@@ -2160,11 +2207,7 @@ function combine_Au_and_ΔGS_sparse_matrices(RP::RAPID{FT}, Au::SparseMatrixCSC{
     # Physical constants
     @unpack qe, me, μ0 = RP.config.constants
 
-    # Calculate coupling terms
-    inductive_term = @. qe * RP.fields.bϕ / (me * RP.G.R2D)
-    electron_current_term = @. μ0 * RP.G.R2D * RP.plasma.ne * qe * RP.fields.bϕ
-    # Zero out boundary terms for proper boundary conditions
-    electron_current_term[RP.G.BDY_idx] .= zero(FT)
+    inductive_term, electron_current_term = uψ_coupling_terms(RP)
 
     # Count non-zero entries for efficient allocation
     # Upper left: A_upara entries
@@ -2221,44 +2264,47 @@ function combine_Au_and_ΔGS_sparse_matrices(RP::RAPID{FT}, Au::SparseMatrixCSC{
 end
 
 """
-    solve_combined_momentum_Ampere_equations_with_coils!(RP::RAPID{FT};
-                                                         tolerance::FT=1e-3,
-                                                         max_iter::Int=10,
-                                                         relaxation_w::FT=0.5) where {FT<:AbstractFloat}
+    solve_combined_momentum_Ampere_equations_with_coils!(RP; tolerance = 1e-3, max_iter = 20,
+        relaxation_w = 0.5, E_floor = 1e-6, I_floor = 1e-6, anderson_m = 8)
 
-Solve the coupled electron momentum and Ampère equations with coil interactions using a single block-sparse solver.
+Advance u∥, ψ_self and the coil currents together over one step, the coefficients (n, ν, b)
+held at the step's start.
 
-This method:
-1. Assembles the combined block matrix via `combine_Au_and_ΔGS_sparse_matrices`.
-2. Constructs a unified linear system for `ue_para` and `ψ_self`.
-3. Performs Picard iteration to update:
-   - `RP.plasma.ue_para`
-   - `RP.fields.ψ_self`
-   - `RP.fields.Eϕ_self`
-   - External coil currents and resulting magnetic fields.
-   The circuits' plasma term d/dt[2π ψ_pla(r_c)] is the change from `Coil.ψ_pla`, the flux
-   each coil last used, which this updates.
+The block matrix of u∥ and ψ inside the domain (`CoupledBlock`, on a pattern fixed for the
+run) is factorized once. The free boundary and the circuits close it by an outer iteration on
+x = (boundary flux, coil currents):
+- a block solve with the boundary flux as Dirichlet values and the coils inside the grid as ψ's
+  source gives u∥ and ψ;
+- from the plasma current J, the circuits give the coil currents, with the plasma term
+  2π[ψ_pla(r_c; J) − `Coil.ψ_pla`];
+- Green's functions give the boundary flux of J and those coil currents.
 
-# Arguments
-- `RP::RAPID{FT}`: Simulation state object, modified in place.
-- `tolerance::FT=1e-3`: Picard stops when an iteration changes the induced field by less
-  than this fraction of what the step induces, plus `E_floor` (see `picard_step_converged`).
-- `max_iter::Int=10`: Maximum number of Picard iterations. A solve that reaches it is counted
-  in `RP.diagnostics.ampere_picard`; the run's first one warns.
-- `relaxation_w::FT=0.5`: Relaxation weight for boundary ψ updates.
-- `E_floor::FT=1e-6`: Absolute floor on that change [V/m].
-- `I_floor::FT=1e-6`: Absolute floor on the coil currents' change [A].
+That map g(x) is affine. Anderson mixing (`AndersonMixer`, memory `anderson_m`) drives
+f = g(x) − x to zero; a relative of GMRES, it can also converge where the relaxed iteration
+x + w f diverges. `relaxation_w` is the mixing of the boundary flux (the coils' is 1), and
+`anderson_m = 0` is that relaxed iteration.
+- **First iterate:** a block solve with the boundary flux of the extrapolated induced field
+  and the coil currents at tⁿ.
+- **Circuit forcing:** M Iⁿ + Δt V(tⁿ + Δt/2), taken once for the step.
 
-# Returns
-- `RP::RAPID{FT}`: The updated simulation object with new plasma and field values.
+The iteration (`anderson_solve!`) stops when `coupled_residual_converged` holds. It accepts
+that evaluation: u∥ and ψ of its block solve, and the coil currents of its J, with `Coil.ψ_pla`
+set to ψ_pla(r_c; J). The circuits' flux balance then closes every step. A solve that does not
+converge, after `max_iter` block solves or once the mixer's restarts are used up, accepts the
+evaluation with the smallest residual. It is counted in `RP.diagnostics.ampere_picard`, and the
+run's first one warns. An evaluation that is not finite, or that the mixer rejects, is never
+accepted; if the first is not finite, the solve throws.
+
+Coil voltages given as functions are taken to be pure functions of time.
 """
 function solve_combined_momentum_Ampere_equations_with_coils!(
         RP::RAPID{FT};
         tolerance::FT = 1.0e-3,
-        max_iter::Int = 10,
+        max_iter::Int = 20,
         relaxation_w::FT = 0.5,
         E_floor::FT = FT(1.0e-6),
         I_floor::FT = FT(1.0e-6),
+        anderson_m::Int = 8,
     ) where {FT <: AbstractFloat}
     _refuse_exprb_decay(
         RP.flags, "solve_combined_momentum_Ampere_equations_with_coils!", "fixes θ = 1 for the u∥ friction"
@@ -2286,7 +2332,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # derived from [E_para_EM = -qe/me * (ψ^(n+1) - ψ^(n))/(R*Δt)  = -facEM * ((ψ^(n+1) - ψ^(n)))/Δt]
         facEM = (qe / me) * (F.bϕ ./ G.R2D)
 
-        # 1. calculate accel_para_tilde using the information at the current time step
+        # accel_para_tilde from the state at the step's start
         accel_para_tilde = zeros(FT, G.NR, G.NZ) # Initialize acceleration field
 
         # pressure gradient contribution: [-∇∥(ne*Te)/(me*ne)]
@@ -2317,10 +2363,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
                 + pla.ν_ei_eff * pla.ui_para
         )
 
-        A_u = OP.II + spdiagm(@views dt * θimp * ν_sum_mom_iz_ei[:])
-        if flags.Include_ud_convec_term
-            A_u += dt * θimp * sparse(A_adv)
-        end
+        # A_u = 𝟙 + Δt θ (ν + u·∇), values only, on the wall pattern
+        A_u = OP.A_u
+        set_identity!(A_u)
+        add_diagonal!(A_u, vec(ν_sum_mom_iz_ei); scale = dt * θimp)
+        flags.Include_ud_convec_term && add_scaled!(A_u, dt * θimp, A_adv)
 
         # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
         if RP.flags.Coulomb_Collision
@@ -2331,119 +2378,120 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # Toroidal current density Jϕ @ t=(n-th step)
         Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
-
-        # 6. Initial guess for ψ_self using θ-implicit scheme with extrapolated Eϕ_self
-        # Predict Eϕ_self(n+1) by linear extrapolation: 2*E(n) - E(n-1)
+        # Predicted ψ: the induced field extrapolated linearly, 2 E(n) − E(n−1), θ-weighted. Its
+        # boundary values start the outer iteration.
         Eϕ_self_np1_pred = @. FT(2.0) * F.Eϕ_self - FT(1.0) * F.Eϕ_self_prev
-        # Apply θ-weighting: (1-θ)*E(n) + θ*E(n+1_predicted)
-        new_ψ_self_k = @. F.ψ_self - dt * G.R2D * ((one(FT) - θimp) * F.Eϕ_self + θimp * Eϕ_self_np1_pred)
+        ψ_pred = @. F.ψ_self - dt * G.R2D * ((one(FT) - θimp) * F.Eϕ_self + θimp * Eϕ_self_np1_pred)
+        F.Eϕ_self_prev .= F.Eϕ_self
+        old_ψ_self = copy(F.ψ_self)
 
-        # Prepare Picard iteration for coupled system
-        F.Eϕ_self_prev .= F.Eϕ_self # Store previous Eϕ_self for self-consistency
-        old_ψ_self = copy(F.ψ_self) # Store old ψ_self for convergence checking
-        coils_I_n = csys.n_total > 0 ? get_all_currents(csys) : FT[]
-        coils_I_iter = copy(coils_I_n)
-
-
-        ue_para_k = zeros(FT, G.NR, G.NZ) # Initialize ue_para for iterationo
-        ue_para_kp1 = zeros(FT, G.NR, G.NZ) # Initialize ue_para for iterationo
-        new_ψ_self_kp1 = zeros(FT, G.NR, G.NZ) # Initialize next ψ_self for iteration
-
-        new_coils_I_k = zeros(FT, csys.n_total) # Initialize coil currents for iteration
-        coil_flux_change_by_plasma = zeros(FT, csys.n_total)
+        N, Nb, Nc = G.NR * G.NZ, length(G.BDY_idx), csys.n_total
+        coils_I_n = Nc > 0 ? get_all_currents(csys) : FT[]
         # The plasma flux each coil last accounted for (Coil.ψ_pla). The circuit's
         # d/dt[2π ψ_pla(r_c)] is taken from it, not from the state at entry: that state already
         # carries what the steps since changed (ionization, transport, losses, motion), which
         # the coils have not seen yet.
-        ψ_pla_coils_n = csys.n_total > 0 ? init_unset_coil_plasma_flux!(csys, G, Jϕ_pla_0) : FT[]
-        ψ_pla_coils_k = copy(ψ_pla_coils_n)
-
-        RHS_u = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS related to u
-        RHS_ψ = zeros(FT, G.NR, G.NZ) # preallocate reusable RHS relatedl to ψ
-        Jϕ_pla_k = zeros(FT, G.NR, G.NZ) # Initialize Jϕ for iteration
+        ψ_pla_coils_n = Nc > 0 ? init_unset_coil_plasma_flux!(csys, G, Jϕ_pla_0) : FT[]
 
         # Prepare coil_system for current calculation
-        if (RP.dt != csys.Δt || θimp != csys.θimp)
+        if Nc > 0 && (RP.dt != csys.Δt || θimp != csys.θimp)
             # If the time step or implicit factor have changed, recalculate the coil system matrices
             csys.Δt = RP.dt
             csys.θimp = θimp
             calculate_circuit_matrices!(csys)
         end
+        # The circuits' forcing, M Iⁿ + Δt V(tⁿ + Δt/2), once for the step: the map the outer
+        # iteration solves must not change between its iterations.
+        circuit_rhs_n = Nc > 0 ? calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) : FT[]
 
-        A_u_ψ = combine_Au_and_ΔGS_sparse_matrices(RP, A_u, OP.ΔGS.matrix)
-        # A_u_ψ does not change inside the Picard loop below: factorized once per step here,
-        # and every iteration only back-substitutes.
+        # The u∥–ψ block on its fixed pattern, so the step refactorizes values only. It does not
+        # change inside the iteration below: factorized once per step here, and every iteration
+        # only back-substitutes.
+        isnothing(OP.uψ_block) && (OP.uψ_block = CoupledBlock(A_u, OP.ΔGS))
+        A_u_ψ = update_coupled_block!(OP.uψ_block, A_u, OP.ΔGS, uψ_coupling_terms(RP)...)
         factorize!(OP.uψ_solver, A_u_ψ)
         sol = Vector{FT}(undef, size(A_u_ψ, 1))
-        @. RHS_u = pla.ue_para + dt * accel_para_tilde - facEM * new_ψ_self_k
-        @views ue_para_k[:] .= A_u \ RHS_u[:] # Solve for ue_para at (k)-th step
+        RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde)       # the same for every iteration
+        RHS_ψ_ions = @. -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
+        RHS_ψ = similar(RHS_ψ_ions)
 
-        iter = 1
-        converged = false
-        E_residual = zero(FT)
-        I_residual = zero(FT)
-        while true
-            # Step #1: Calculate ue_para, Jphi, coils according to new_psi_self_k
-            @. Jϕ_pla_k = (qe * pla.ne * ue_para_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
-
-
-            if csys.n_total > 0
-                ψ_pla_coils_k .= plasma_flux_at_coils(csys, G, Jϕ_pla_k)
-                @. coil_flux_change_by_plasma = 2π * (ψ_pla_coils_k - ψ_pla_coils_n)
-
-                circuit_rhs = calculate_LR_circuit_rhs_by_coils(csys, RP.time_s) - coil_flux_change_by_plasma
-                new_coils_I_k = csys.inv_A_LR_circuit * circuit_rhs  # valid if "dt" is constant
-            end
-
-            # Step #2: Update Boundary psi by both plasma and coils currents using Green's function
-            new_ψ_self_kp1_at_BDY = (G.Green_inWall2bdy * Jϕ_pla_k[G.nodes.in_wall_nids]) * G.dR * G.dZ
-            if csys.n_total > 0
-                new_ψ_self_kp1_at_BDY .+= csys.Green_coils2bdy * new_coils_I_k
-            end
-
-            #  update (k+1)-th boudary psi with some relaxation
-            @views new_ψ_self_kp1_at_BDY .= (
-                relaxation_w * new_ψ_self_kp1_at_BDY
-                    + (one(FT) - relaxation_w) * new_ψ_self_k[G.BDY_idx]
-            )
-
-            # Step #3: Set RHS of the implicit Ampere equation
-            @. RHS_u = pla.ue_para + dt * accel_para_tilde
-
-            @. RHS_ψ = -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
-            if csys.n_total > 0
-                inside_Jϕ_coil_k = distribute_coil_currents_to_Jϕ(csys, RP.G; currents = new_coils_I_k)
-                @. RHS_ψ += -μ0 * G.R2D * inside_Jϕ_coil_k
-            end
-            RHS_ψ[G.BDY_idx] .= new_ψ_self_kp1_at_BDY
-
-            # Step #4: Solve the implicit Ampere equation
-            @views RHS_u_ψ = vcat(RHS_u[:], RHS_ψ[:])
-            solve!(sol, OP.uψ_solver, RHS_u_ψ)
-
-            @views ue_para_kp1[:] .= sol[1:(G.NR * G.NZ)]
-            @views new_ψ_self_kp1[:] .= sol[(G.NR * G.NZ + 1):end]
-
-
-            # Step #5: stop when the iteration has settled (see picard_step_converged)
-            converged, E_residual, I_residual = picard_step_converged(
-                new_ψ_self_kp1, new_ψ_self_k, old_ψ_self, new_coils_I_k, coils_I_iter, coils_I_n, G.R2D, dt;
-                tol = tolerance, E_floor, I_floor,
-            )
-            if converged || iter >= max_iter
-                break
-            else
-                new_ψ_self_k .= new_ψ_self_kp1 # Update for next iteration
-                ue_para_k .= ue_para_kp1
-                coils_I_iter .= new_coils_I_k
-                iter += 1
-            end
+        # The outer unknowns x = (boundary flux, coil currents), mixed as the docstring says. The
+        # least-squares weights put both in flux per unit R; a coil current counts as the flux it
+        # makes on itself, L_c I_c/(2π R_c).
+        R_bdy = G.R2D[G.BDY_idx]
+        coil_R = FT[c.location.r for c in csys.coils]
+        coil_L = FT[c.self_inductance for c in csys.coils]
+        mixer = AndersonMixer{FT}(
+            Nb + Nc, anderson_m;
+            β = vcat(fill(relaxation_w, Nb), ones(FT, Nc)), W = vcat(one(FT) ./ R_bdy, coil_L ./ (2π .* coil_R)),
+        )
+        # the field a coil's current residual makes on itself, for the coils inside the grid
+        coil_field = zeros(FT, Nc)
+        for c in csys.inside_domain_indices
+            coil_field[c] = coil_L[c] / (2π * coil_R[c] * dt)
         end
-        record_picard!(RP, iter, converged, E_residual, I_residual, max_iter)
 
-        # 7. Final updates of electromagnetic fields
-        F.ψ_self .= new_ψ_self_kp1
-        pla.ue_para .= ue_para_kp1
+        # one evaluation of the map, with its E and I residuals, and the best one so far
+        ue_k, ψ_k, Jϕ_k = similar(pla.ue_para), similar(F.ψ_self), similar(pla.ue_para)
+        I_k, Φ_k, res_k = similar(coils_I_n), similar(ψ_pla_coils_n), zeros(FT, 2)
+        best = (ue = similar(ue_k), ψ = similar(ψ_k), I = similar(I_k), Φ = similar(Φ_k), res = zeros(FT, 2))
+
+        function evaluate!(x)
+            ψ_bdy, I_in = view(x, 1:Nb), view(x, (Nb + 1):(Nb + Nc))
+
+            # u∥ and ψ with the boundary flux held and the coils inside the grid as ψ's source
+            RHS_ψ .= RHS_ψ_ions
+            if Nc > 0
+                RHS_ψ .+= -μ0 .* G.R2D .* distribute_coil_currents_to_Jϕ(csys, G; currents = Vector(I_in))
+            end
+            RHS_ψ[G.BDY_idx] .= ψ_bdy
+            solve!(sol, OP.uψ_solver, vcat(RHS_u, vec(RHS_ψ)))
+            vec(ue_k) .= view(sol, 1:N)
+            vec(ψ_k) .= view(sol, (N + 1):(2N))
+
+            # the circuits and the boundary flux of that current
+            @. Jϕ_k = (qe * pla.ne * ue_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+            if Nc > 0
+                Φ_k .= plasma_flux_at_coils(csys, G, Jϕ_k)
+                I_k .= csys.inv_A_LR_circuit * (circuit_rhs_n .- 2π .* (Φ_k .- ψ_pla_coils_n))
+            end
+            ψ_bdy_new = (G.Green_inWall2bdy * Jϕ_k[G.nodes.in_wall_nids]) .* (G.dR * G.dZ)
+            Nc > 0 && (ψ_bdy_new .+= csys.Green_coils2bdy * I_k)
+
+            f = vcat(ψ_bdy_new .- ψ_bdy, I_k .- I_in)
+            converged, res_k[1], res_k[2], finite = coupled_residual_converged(
+                view(f, 1:Nb), view(f, (Nb + 1):(Nb + Nc)), R_bdy, coil_field, ψ_k, old_ψ_self, G.R2D,
+                I_k, coils_I_n, dt; tol = tolerance, E_floor, I_floor,
+            )
+            # the evaluation is accepted whole: its induced field, u∥ and ψ must be finite too
+            return f, converged, finite && all(isfinite, ue_k) && all(isfinite, ψ_k)
+        end
+        function keep!()
+            best.ue .= ue_k
+            best.ψ .= ψ_k
+            best.I .= I_k
+            best.Φ .= Φ_k
+            best.res .= res_k
+            return nothing
+        end
+        function restore!()
+            ue_k .= best.ue
+            ψ_k .= best.ψ
+            I_k .= best.I
+            Φ_k .= best.Φ
+            res_k .= best.res
+            return nothing
+        end
+        iter, outcome = anderson_solve!(evaluate!, mixer, vcat(ψ_pred[G.BDY_idx], coils_I_n); max_iter, keep!, restore!)
+        outcome === :failed && error(
+            "the coupled solve's first iterate is not finite (step $(RP.step)): u∥, ψ, the field " *
+                "they induce over the step or the coil currents of the block solve hold NaN or Inf"
+        )
+        record_picard!(RP, iter, outcome === :converged, res_k[1], res_k[2], max_iter)
+
+        # The accepted evaluation's fields
+        F.ψ_self .= ψ_k
+        pla.ue_para .= ue_k
 
         # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
         @. F.Eϕ_self = -(F.ψ_self - old_ψ_self) / (G.R2D * dt)
@@ -2455,11 +2503,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         update_Jϕ!(RP)
 
-        # Update coil currents, with the plasma flux they were computed from
-        if RP.coil_system.n_total > 0
+        # The coil currents of the accepted current, with that current's flux as their memory
+        if Nc > 0
             csys.time_s = RP.time_s + csys.Δt
-            set_all_currents!(csys, new_coils_I_k)
-            csys.coils.ψ_pla = ψ_pla_coils_k
+            set_all_currents!(csys, I_k)
+            csys.coils.ψ_pla = Φ_k
         end
 
         # Update magnetic fields from ψ_self
@@ -2480,8 +2528,7 @@ is MATLAB's `Ipla_dMcp`.
 Not called. The circuits difference against the plasma flux they last used (`Coil.ψ_pla`),
 which carries the motion one step later; adding this term would count it twice. It is the
 candidate same-step predictor for fast vertical motion, used together with a stored flux
-that includes it. Its R-derivative table misses ψ/(2R) (about 20 % low) and needs fixing
-first. See internal notes, design/coupled-step-coil-flux.md §4.4.
+that includes it. See internal notes, design/coupled-step-coil-flux.md §4.4.
 """
 function coil_flux_change_by_plasma_displacement(
         RP::RAPID{FT}, Jϕ_now::AbstractMatrix{FT}, Jϕ_entry::AbstractMatrix{FT}; θimp::FT = one(FT)

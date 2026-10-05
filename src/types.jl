@@ -676,8 +676,12 @@ Fields include various matrices for solving different parts of the model.
     # ΔGS never changes during a run, so it is factorized once, on its first solve.
     ΔGS_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
     # The combined momentum–Ampère system: fixed inside a step's Picard loop, so it is
-    # factorized once per step and every iteration only back-substitutes.
+    # factorized once per step and every iteration only back-substitutes. Its matrix is
+    # `uψ_block`, built on its first use with a fixed pattern, so each step refactorizes the
+    # values only; `A_u` (𝟙 + Δt θ (ν + u·∇) on the wall pattern) is its u∥ part.
     uψ_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+    uψ_block::Union{Nothing, CoupledBlock{FT}} = nothing
+    A_u::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
 
     # Cached linear solvers (numerics/linear_solvers.jl) — one per equation, so each
     # sees a step-stable sparsity pattern and the lu! symbolic-reuse path stays valid
@@ -967,6 +971,67 @@ function Base.setproperty!(w::ImplicitWeights{FT}, name::Symbol, θ) where {FT <
 end
 
 """
+    PicardSettings{FT}(; tolerance = 1e-3, max_iter = 20, relaxation_w = 0.5, anderson_m = 8,
+                       E_floor = 1e-6, I_floor = 1e-6)
+
+The settings of the coupled solve's outer iteration, `flags.ampere_picard`, which
+`solve_timestep!` hands to `solve_combined_momentum_Ampere_equations_with_coils!` as
+`NamedTuple(settings)...`: the `tolerance` on the residual as a fraction of what the step
+induces, the most block solves per step, the mixing of the boundary flux, the Anderson memory
+(0 is the relaxed iteration), and the absolute floors of the field [V/m] and coil-current [A]
+residuals.
+
+Checked on construction and on assignment, as `ImplicitWeights` is:
+`RP.flags.ampere_picard.max_iter = 0` fails where it is written.
+"""
+mutable struct PicardSettings{FT <: AbstractFloat}
+    tolerance::FT
+    max_iter::Int
+    relaxation_w::FT
+    anderson_m::Int
+    E_floor::FT
+    I_floor::FT
+
+    function PicardSettings{FT}(tolerance, max_iter, relaxation_w, anderson_m, E_floor, I_floor) where {FT <: AbstractFloat}
+        s = (
+            tolerance = FT(tolerance), max_iter = Int(max_iter), relaxation_w = FT(relaxation_w),
+            anderson_m = Int(anderson_m), E_floor = FT(E_floor), I_floor = FT(I_floor),
+        )
+        for (name, v) in pairs(s)
+            _check_picard_setting(FT, name, v)
+        end
+        return new{FT}(s...)
+    end
+end
+
+function PicardSettings{FT}(;
+        tolerance = FT(1.0e-3), max_iter = 20, relaxation_w = FT(0.5), anderson_m = 8,
+        E_floor = FT(1.0e-6), I_floor = FT(1.0e-6),
+    ) where {FT <: AbstractFloat}
+    return PicardSettings{FT}(tolerance, max_iter, relaxation_w, anderson_m, E_floor, I_floor)
+end
+
+function _check_picard_setting(::Type{FT}, name::Symbol, v) where {FT <: AbstractFloat}
+    ok, range = if name === :max_iter
+        v >= 1, "at least 1"
+    elseif name === :anderson_m
+        v >= 0, "at least 0 (0 is the relaxed iteration)"
+    elseif name === :relaxation_w
+        isfinite(v) && zero(FT) < v <= one(FT), "in (0, 1]"
+    else   # tolerance and the floors
+        isfinite(v) && v >= zero(FT), "finite and at least 0"
+    end
+    ok || throw(ArgumentError("ampere_picard.$name = $v is out of range: it must be $range"))
+    return v
+end
+
+function Base.setproperty!(s::PicardSettings{FT}, name::Symbol, v) where {FT <: AbstractFloat}
+    return setfield!(s, name, _check_picard_setting(FT, name, convert(fieldtype(typeof(s), name), v)))
+end
+
+Base.NamedTuple(s::PicardSettings) = NamedTuple{fieldnames(typeof(s))}(ntuple(i -> getfield(s, i), fieldcount(typeof(s))))
+
+"""
     TimeScheme
 
 Which algorithm advances a family of terms. [`ImplicitWeights`](@ref) says *how
@@ -1230,6 +1295,9 @@ Contains boolean flags that control various aspects of the simulation.
 
     # Current threshold for Ampere's equation
     Ampere_Itor_threshold::FT = FT(1.0)      # Current threshold for Ampere equation (Default: 1.0 A)
+    # The coupled u∥–Ampère–circuit solve's outer iteration, as solve_timestep! calls it; see
+    # `PicardSettings`. Set a field (`RP.flags.ampere_picard.max_iter = 40`) or the whole.
+    ampere_picard::PicardSettings{FT} = PicardSettings{FT}()
 end
 
 """
@@ -1580,6 +1648,6 @@ RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
 RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
-export SimulationConfig, InputPaths, ManualSetup, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, RAPID, GridGeometry, NodeState
+export SimulationConfig, InputPaths, ManualSetup, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, PicardSettings, RAPID, GridGeometry, NodeState
 export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags,
     LinearResponseDepth, PartialLinearResponse, FullLinearResponse
