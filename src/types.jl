@@ -972,14 +972,15 @@ end
 
 """
     PicardSettings{FT}(; tolerance = 1e-3, max_iter = 20, relaxation_w = 0.5, anderson_m = 8,
-                       E_floor = 1e-6, I_floor = 1e-6)
+                       E_floor = 1e-6, I_floor = 1e-6, method = :anderson)
 
 The settings of the coupled solve's outer iteration, `flags.ampere_picard`, which
 `solve_timestep!` hands to `solve_combined_momentum_Ampere_equations_with_coils!` as
 `NamedTuple(settings)...`: the `tolerance` on the residual as a fraction of what the step
 induces, the most block solves per step, the mixing of the boundary flux, the Anderson memory
-(0 is the relaxed iteration), and the absolute floors of the field [V/m] and coil-current [A]
-residuals.
+(0 is the relaxed iteration), the absolute floors of the field [V/m] and coil-current [A]
+residuals, and the `method`: `:anderson` iterates, `:direct` solves the step's linear map
+directly (a reference: it costs one back-substitution per boundary node and coil).
 
 Checked on construction and on assignment, as `ImplicitWeights` is:
 `RP.flags.ampere_picard.max_iter = 0` fails where it is written.
@@ -991,11 +992,12 @@ mutable struct PicardSettings{FT <: AbstractFloat}
     anderson_m::Int
     E_floor::FT
     I_floor::FT
+    method::Symbol
 
-    function PicardSettings{FT}(tolerance, max_iter, relaxation_w, anderson_m, E_floor, I_floor) where {FT <: AbstractFloat}
+    function PicardSettings{FT}(tolerance, max_iter, relaxation_w, anderson_m, E_floor, I_floor, method) where {FT <: AbstractFloat}
         s = (
             tolerance = FT(tolerance), max_iter = Int(max_iter), relaxation_w = FT(relaxation_w),
-            anderson_m = Int(anderson_m), E_floor = FT(E_floor), I_floor = FT(I_floor),
+            anderson_m = Int(anderson_m), E_floor = FT(E_floor), I_floor = FT(I_floor), method = Symbol(method),
         )
         for (name, v) in pairs(s)
             _check_picard_setting(FT, name, v)
@@ -1006,9 +1008,9 @@ end
 
 function PicardSettings{FT}(;
         tolerance = FT(1.0e-3), max_iter = 20, relaxation_w = FT(0.5), anderson_m = 8,
-        E_floor = FT(1.0e-6), I_floor = FT(1.0e-6),
+        E_floor = FT(1.0e-6), I_floor = FT(1.0e-6), method = :anderson,
     ) where {FT <: AbstractFloat}
-    return PicardSettings{FT}(tolerance, max_iter, relaxation_w, anderson_m, E_floor, I_floor)
+    return PicardSettings{FT}(tolerance, max_iter, relaxation_w, anderson_m, E_floor, I_floor, method)
 end
 
 function _check_picard_setting(::Type{FT}, name::Symbol, v) where {FT <: AbstractFloat}
@@ -1018,6 +1020,8 @@ function _check_picard_setting(::Type{FT}, name::Symbol, v) where {FT <: Abstrac
         v >= 0, "at least 0 (0 is the relaxed iteration)"
     elseif name === :relaxation_w
         isfinite(v) && zero(FT) < v <= one(FT), "in (0, 1]"
+    elseif name === :method
+        v in (:anderson, :direct), ":anderson or :direct"
     else   # tolerance and the floors
         isfinite(v) && v >= zero(FT), "finite and at least 0"
     end

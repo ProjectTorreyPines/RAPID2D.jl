@@ -168,12 +168,10 @@ end
         return add_filament_shell!(RP; cenR = 1.5, r = 0.4)
     end
 
-    # The same equations iterated to convergence: the relaxed iteration with w = 0.05, without
-    # Anderson mixing so that the reference does not depend on it, to 1e-10 of the step's field
-    # and of each coil's change, with no floors.
-    const REFERENCE_PICARD = (
-        tolerance = 1.0e-10, max_iter = 20_000, relaxation_w = 0.05, anderson_m = 0, E_floor = 0.0, I_floor = 0.0,
-    )
+    # The same equations solved directly, without the iteration: the map's linear part
+    # assembled and Newton's step taken on it, checked to 1e-10 of the step's field and of each
+    # coil's change, with no floors.
+    const REFERENCE_PICARD = (method = :direct, tolerance = 1.0e-10, E_floor = 0.0, I_floor = 0.0)
 
     # Runs RP to its end with the run's Picard settings, recording after each step the plasma
     # current, the induced field and the coil currents.
@@ -199,7 +197,7 @@ end
         return maximum(maximum(abs, Ia[c, :] .- Ib[c, :]) / max(maximum(abs, Ib[c, :]), 1.0e-6) for c in axes(Ib, 1))
     end
 
-    # The default run against the converged one, step by step: the plasma current, the induced
+    # The default run against the direct one, step by step: the plasma current, the induced
     # field over the grid, each coil current, and u∥ and ψ_self at the end.
     function compare_with_converged(make)
         a, b = make(), make()
@@ -262,11 +260,11 @@ end
     end
 end
 
-@testitem "Coupled solve: the fixed point does not depend on the mixing" setup = [PicardColumn] begin
+@testitem "Coupled solve: the fixed point does not depend on the mixing, and the direct solve finds it" setup = [PicardColumn] begin
     using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
-    # The easy column with a loop, one step solved tightly with the relaxed iteration (m = 0)
-    # and with Anderson mixing (m = 8).
-    function solved(m)
+    # The easy column with a loop, one step solved tightly with the relaxed iteration (m = 0),
+    # with Anderson mixing (m = 8), and directly.
+    function solved(m; method = :anderson)
         RP = picard_column(; t_end = 20.0e-6)
         add_coil!(
             RP.coil_system, Coil{Float64}(;
@@ -278,16 +276,37 @@ end
         redirect_stdout(() -> run_simulation!(RP), devnull)
         prepare_timestep!(RP)
         solve_combined_momentum_Ampere_equations_with_coils!(
-            RP; tolerance = 1.0e-13, max_iter = 500, E_floor = 0.0, I_floor = 0.0, anderson_m = m
+            RP; tolerance = 1.0e-13, max_iter = 500, E_floor = 0.0, I_floor = 0.0, anderson_m = m, method
         )
         return RP
     end
-    a, b = solved(0), solved(8)
+    a, b, c = solved(0), solved(8), solved(8; method = :direct)
+    @test c.diagnostics.ampere_picard.last_niter == 2   # the first evaluation, then Newton's step
     agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
-    @test agree(a.plasma.ue_para, b.plasma.ue_para)
-    @test agree(a.fields.ψ_self, b.fields.ψ_self)
-    @test agree(a.coil_system.coils.current, b.coil_system.coils.current)
-    @test agree(a.coil_system.coils.ψ_pla, b.coil_system.coils.ψ_pla)
+    for other in (b, c)
+        @test agree(a.plasma.ue_para, other.plasma.ue_para)
+        @test agree(a.fields.ψ_self, other.fields.ψ_self)
+        @test agree(a.coil_system.coils.current, other.coil_system.coils.current)
+        @test agree(a.coil_system.coils.ψ_pla, other.coil_system.coils.ψ_pla)
+    end
+end
+
+@testitem "Coupled solve: the direct solve takes the step at once where the iteration struggles" setup = [BoundaryLimitedColumn] begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
+    # The first step of each hard column: a mode near −4 (tight box), modes near 1 (shell), coil
+    # inductances over four decades (mixed). Solved directly to 1e-12 of the step, with no
+    # floors: the first evaluation, then Newton's step, which already meets that.
+    for make in (tight_column, shell_column, mixed_column)
+        RP = make()
+        RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= 0.0
+        RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= 0.0
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+        solve_combined_momentum_Ampere_equations_with_coils!(RP; method = :direct, tolerance = 1.0e-12, E_floor = 0.0, I_floor = 0.0)
+        stats = RP.diagnostics.ampere_picard
+        @test stats.nunconverged == 0
+        @test stats.last_niter == 2
+    end
 end
 
 @testitem "Coupled solve: a residual that is not finite never converges" begin
@@ -450,14 +469,17 @@ end
 
 @testitem "Ampère Picard: the settings are checked where they are written" begin
     s = PicardSettings{Float64}()
-    @test NamedTuple(s) == (tolerance = 1.0e-3, max_iter = 20, relaxation_w = 0.5, anderson_m = 8, E_floor = 1.0e-6, I_floor = 1.0e-6)
+    @test NamedTuple(s) == (
+        tolerance = 1.0e-3, max_iter = 20, relaxation_w = 0.5, anderson_m = 8, E_floor = 1.0e-6, I_floor = 1.0e-6,
+        method = :anderson,
+    )
     @test PicardSettings{Float32}().tolerance isa Float32
     s.max_iter = 40
     @test s.max_iter == 40
     # each out of range on construction and on assignment
     for (name, bad) in (
             (:tolerance, -1.0), (:tolerance, NaN), (:max_iter, 0), (:relaxation_w, 0.0), (:relaxation_w, 1.5),
-            (:anderson_m, -1), (:E_floor, -1.0e-6), (:I_floor, Inf),
+            (:anderson_m, -1), (:E_floor, -1.0e-6), (:I_floor, Inf), (:method, :newton),
         )
         @test_throws ArgumentError PicardSettings{Float64}(; (name => bad,)...)
         @test_throws ArgumentError setproperty!(PicardSettings{Float64}(), name, bad)
