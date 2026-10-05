@@ -2,7 +2,7 @@
 # grid (R 1.0–2.2 m, Z ±0.8 m): n = 1e18 m⁻³, Te = 10 eV, radius 0.55 m at R = 1.6 m. The
 # column's own flux returns through the boundary values, which the iteration holds fixed for each
 # solve inside the domain; so close to the grid edge that return overshoots. Each step should
-# match the step iterated to convergence.
+# match the step solved directly.
 #
 #   julia --project=examples examples/coupled_step/picard_tight_box.jl
 

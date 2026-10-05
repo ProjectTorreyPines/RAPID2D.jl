@@ -3,10 +3,10 @@
 # wall). Columns of radius 0.25–0.45 m stand with their inboard edge at R = 1.30 m, 4 cm from
 # the inboard wall, as an inboard-limited start-up plasma does, at states from a late avalanche
 # (1e16 m⁻³, 2 eV) to a formed plasma (1e19 m⁻³, 20 eV). Each runs 5 steps from rest with the
-# default and with the converged iteration; the map shows the largest gap between their plasma
-# currents at any step, relative to the converged current there (floored at 1e-3 of its peak),
-# which should stay under 1 %.
-# A column whose converged run did not converge, or whose gap is not finite, fails.
+# default and with the direct solve; the map shows the largest gap between their plasma currents
+# at any step, relative to the direct solve's current there (floored at 1e-3 of its peak), which
+# should stay under 1 %.
+# A column whose direct run did not converge, or whose gap is not finite, fails.
 #
 #   julia --project=examples examples/coupled_step/picard_regime_map.jl
 
@@ -23,12 +23,12 @@ kstar_column(n0, Te, a) = column(
 
 gaps = fill(NaN, length(STATES), length(RADII))
 for (j, a) in enumerate(RADII), (i, (n0, Te)) in enumerate(STATES)
-    def, conv = default_vs_converged(() -> kstar_column(n0, Te, a); nsteps = NSTEPS)
-    gaps[i, j] = conv.stats.nunconverged == 0 ? current_gap(def.I, conv.I) : NaN
+    def, direct = default_vs_direct(() -> kstar_column(n0, Te, a); nsteps = NSTEPS)
+    gaps[i, j] = direct.stats.nunconverged == 0 ? current_gap(def.I, direct.I) : NaN
     @printf(
-        "a = %.2f m, n = %.0e m⁻³, Te = %4.1f eV: gap %.2e; default %.1f solves/step, %d unconverged; converged %.0f solves/step, %d unconverged\n",
+        "a = %.2f m, n = %.0e m⁻³, Te = %4.1f eV: gap %.2e; default %.1f solves/step, %d unconverged; direct %.0f solves/step, %d unconverged\n",
         a, n0, Te, gaps[i, j], def.stats.niter / def.stats.nsolve, def.stats.nunconverged,
-        conv.stats.niter / conv.stats.nsolve, conv.stats.nunconverged
+        direct.stats.niter / direct.stats.nsolve, direct.stats.nunconverged
     )
 end
 
@@ -42,7 +42,7 @@ logg = log10.(max.(gaps, 1.0e-8))
 p2 = heatmap(
     RADII, 1:length(STATES), logg; c = cgrad([:seagreen, :khaki, :orange, :red3], [0.0, 0.5, 0.75, 1.0]),
     clims = (-6, 2), yticks = (1:length(STATES), state_labels), xlabel = "column radius a (m)",
-    title = "log₁₀ of the current gap, default vs converged (fail above −2)", colorbar_title = "log₁₀ gap",
+    title = "log₁₀ of the current gap, default vs direct (fail above −2)", colorbar_title = "log₁₀ gap",
 )
 failed(g) = !(g <= 1.0e-2)   # NaN fails
 for (j, a) in enumerate(RADII), i in eachindex(STATES)
@@ -54,5 +54,5 @@ fig = plot(p1, p2; layout = @layout([a{0.32w} b]), size = (1400, 560), margin = 
 nfail = count(failed, gaps)
 save_with_verdict(
     fig, output_dir("coupled_step"), "picard_regime_map", nfail == 0,
-    "$nfail of $(length(gaps)) inboard-limited KSTAR-like columns step more than 1 % off the converged solve, or have no converged reference",
+    "$nfail of $(length(gaps)) inboard-limited KSTAR-like columns step more than 1 % off the direct solve, or have no converged reference",
 )

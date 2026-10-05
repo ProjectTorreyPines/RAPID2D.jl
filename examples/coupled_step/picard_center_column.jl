@@ -2,7 +2,7 @@
 # radius 0.3 m at R = 1.5 m, 0.5 m and more from the edge of the grid. Within a step the
 # coupled solve iterates on the boundary flux and the coil currents (common.jl). Here even the
 # relaxed iteration (w = 0.5) halves the error at each block solve, and the default (Anderson
-# mixing, at most 20 block solves) reproduces the step iterated to convergence, step after step.
+# mixing, at most 20 block solves) reproduces the step solved directly, step after step.
 #
 #   julia --project=examples examples/coupled_step/picard_center_column.jl
 
