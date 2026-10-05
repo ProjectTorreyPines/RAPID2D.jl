@@ -400,6 +400,31 @@ end
     @test_throws ErrorException solve_combined_momentum_Ampere_equations_with_coils!(RP; max_iter = 1)
 end
 
+@testitem "Coupled solve: a solve that throws leaves the state as it found it" setup = [PicardColumn] begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
+    # The column a few steps in, with a loop added since (its plasma flux unset), and a drive
+    # that is not finite in one cell: the first evaluation is not finite, so the solve throws.
+    # What the solve writes on acceptance must stay as it was: the induced field the predictor
+    # extrapolates from, the friction and the loop's memory.
+    RP = picard_column(; t_end = 20.0e-6)
+    redirect_stdout(() -> run_simulation!(RP), devnull)
+    add_coil!(
+        RP.coil_system, Coil{Float64}(;
+            location = (r = 1.2, z = 0.8), area = π * 0.05^2, resistance = 1.0e-3,
+            self_inductance = 1.2e-6, is_powered = false, is_controllable = false, name = "loop",
+        )
+    )
+    initialize_coil_system!(RP)
+    prepare_timestep!(RP)
+    RP.fields.E_para_ext[argmax(RP.plasma.ne)] = NaN
+    F, pla, csys = RP.fields, RP.plasma, RP.coil_system
+    state() = (F.ψ_self, F.Eϕ_self, F.Eϕ_self_prev, pla.ue_para, pla.Rue_ei, csys.coils.current, csys.coils.ψ_pla, csys.time_s)
+    before = deepcopy(state())
+    @test !isequal(F.Eϕ_self, F.Eϕ_self_prev) && isnan(csys.coils.ψ_pla[1])
+    @test_throws ErrorException solve_combined_momentum_Ampere_equations_with_coils!(RP)
+    @test all(isequal.(state(), before))
+end
+
 @testitem "Ampère Picard: the run's coil floor reaches the coupled solve" setup = [PicardColumn] begin
     # The column with a loop, the field part of the stopping test always met (E_floor = 1e30):
     # whether a solve stops at its first evaluation then depends only on the coils' floor.

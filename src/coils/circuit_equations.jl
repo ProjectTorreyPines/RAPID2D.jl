@@ -499,6 +499,19 @@ function plasma_flux_at_coils(csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::Ab
 end
 
 """
+    coil_plasma_flux_memory(csys, G, Jϕ)
+
+The coils' `ψ_pla`, with the plasma flux of `Jϕ` for every coil whose `ψ_pla` is unset
+(`NaN`). Writes nothing; [`init_unset_coil_plasma_flux!`](@ref) stores it.
+"""
+function coil_plasma_flux_memory(csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    ψ = csys.coils.ψ_pla   # a new vector
+    unset = isnan.(ψ)
+    any(unset) && (ψ[unset] .= plasma_flux_at_coils(csys, G, Jϕ)[unset])
+    return ψ
+end
+
+"""
     init_unset_coil_plasma_flux!(csys, G, Jϕ)
 
 Give every coil whose `ψ_pla` is unset (`NaN`) the plasma flux of `Jϕ`, and return the
@@ -506,12 +519,8 @@ coils' `ψ_pla`. A coil starts accounting from the plasma current it first meets
 first step, or at the first update after it was added.
 """
 function init_unset_coil_plasma_flux!(csys::CoilSystem{FT}, G::GridGeometry{FT}, Jϕ::AbstractMatrix{FT}) where {FT <: AbstractFloat}
-    ψ = csys.coils.ψ_pla
-    unset = isnan.(ψ)
-    if any(unset)
-        ψ[unset] .= plasma_flux_at_coils(csys, G, Jϕ)[unset]
-        csys.coils.ψ_pla = ψ
-    end
+    ψ = coil_plasma_flux_memory(csys, G, Jϕ)
+    csys.coils.ψ_pla = ψ
     return ψ
 end
 

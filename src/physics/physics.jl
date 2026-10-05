@@ -2293,7 +2293,7 @@ set to ψ_pla(r_c; J). The circuits' flux balance then closes every step. A solv
 converge, after `max_iter` block solves or once the mixer's restarts are used up, accepts the
 evaluation with the smallest residual. It is counted in `RP.diagnostics.ampere_picard`, and the
 run's first one warns. An evaluation that is not finite, or that the mixer rejects, is never
-accepted; if the first is not finite, the solve throws.
+accepted; if the first is not finite, the solve throws and leaves the state as it found it.
 
 Coil voltages given as functions are taken to be pure functions of time.
 """
@@ -2369,12 +2369,6 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         add_diagonal!(A_u, vec(ν_sum_mom_iz_ei); scale = dt * θimp)
         flags.Include_ud_convec_term && add_scaled!(A_u, dt * θimp, A_adv)
 
-        # Calculate Rue_ei (electron-ion momentum exchange rate) - first part (n-th step)
-        if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θimp) * pla.ue_para)
-        end
-
-
         # Toroidal current density Jϕ @ t=(n-th step)
         Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
@@ -2382,7 +2376,6 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # boundary values start the outer iteration.
         Eϕ_self_np1_pred = @. FT(2.0) * F.Eϕ_self - FT(1.0) * F.Eϕ_self_prev
         ψ_pred = @. F.ψ_self - dt * G.R2D * ((one(FT) - θimp) * F.Eϕ_self + θimp * Eϕ_self_np1_pred)
-        F.Eϕ_self_prev .= F.Eϕ_self
         old_ψ_self = copy(F.ψ_self)
 
         N, Nb, Nc = G.NR * G.NZ, length(G.BDY_idx), csys.n_total
@@ -2391,7 +2384,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # d/dt[2π ψ_pla(r_c)] is taken from it, not from the state at entry: that state already
         # carries what the steps since changed (ionization, transport, losses, motion), which
         # the coils have not seen yet.
-        ψ_pla_coils_n = Nc > 0 ? init_unset_coil_plasma_flux!(csys, G, Jϕ_pla_0) : FT[]
+        ψ_pla_coils_n = Nc > 0 ? coil_plasma_flux_memory(csys, G, Jϕ_pla_0) : FT[]
 
         # Prepare coil_system for current calculation
         if Nc > 0 && (RP.dt != csys.Δt || θimp != csys.θimp)
@@ -2489,11 +2482,17 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         )
         record_picard!(RP, iter, outcome === :converged, res_k[1], res_k[2], max_iter)
 
-        # The accepted evaluation's fields
+        # The accepted evaluation's fields. The state is written from here on only, so a solve
+        # that throws leaves it as it found it.
+        # Rue_ei (electron-ion momentum exchange rate): its part at tⁿ, before u∥ moves on
+        if RP.flags.Coulomb_Collision
+            @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θimp) * pla.ue_para)
+        end
         F.ψ_self .= ψ_k
         pla.ue_para .= ue_k
 
         # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
+        F.Eϕ_self_prev .= F.Eϕ_self
         @. F.Eϕ_self = -(F.ψ_self - old_ψ_self) / (G.R2D * dt)
 
         # Complete the Rue_ei calculation with second part (n+1 step contribution)
