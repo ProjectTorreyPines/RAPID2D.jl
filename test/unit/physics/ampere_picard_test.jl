@@ -503,8 +503,8 @@ end
     @test RP.operators.uψ_solver.nsymbolic == 1
 end
 
-@testitem "Coupled solve: the fixed-pattern block is the matrix it assembled before" setup = [PicardColumn] begin
-    using RAPID2D: CoupledBlock, update_coupled_block!, combine_Au_and_ΔGS_sparse_matrices, uψ_coupling_terms
+@testitem "Coupled solve: the fixed-pattern block is the block matrix sparse algebra assembles" setup = [PicardColumn] begin
+    using RAPID2D: CoupledBlock, update_coupled_block!, uψ_coupling_terms
     using RAPID2D: set_identity!, add_diagonal!, add_scaled!, ue_Te_operators
     using RAPID2D.SparseArrays
     RP = picard_column()
@@ -515,16 +515,17 @@ end
     OP, dt = RP.operators, RP.dt
     ν = vec(RP.plasma.ν_en_mom_tot + RP.plasma.ν_en_iz_tot + RP.plasma.ν_ei_eff)
     A_adv = ue_Te_operators(RP).A_adv
-    # the assembly the solve used: 𝟙 + Δt ν + Δt A_adv, then the block by findnz and sparse(I, J, V)
-    A_u_old = OP.II + spdiagm(dt .* ν) + dt * sparse(A_adv)
-    old = combine_Au_and_ΔGS_sparse_matrices(RP, A_u_old, OP.ΔGS.matrix)
+    # 𝟙 + Δt ν + Δt A_adv and the coupling diagonals, put together by sparse algebra
+    c_uψ, c_ψu = uψ_coupling_terms(RP)
+    A_u_ref = OP.II + spdiagm(dt .* ν) + dt * sparse(A_adv)
+    ref = [A_u_ref spdiagm(c_uψ); spdiagm(c_ψu) OP.ΔGS.matrix]
     # the same on the wall pattern and a block built once
     A_u = similar(OP.A_adv_e)
     set_identity!(A_u)
     add_diagonal!(A_u, ν; scale = dt)
     add_scaled!(A_u, dt, A_adv)
     B = CoupledBlock(A_u, OP.ΔGS)
-    new = update_coupled_block!(B, A_u, OP.ΔGS, uψ_coupling_terms(RP)...)
-    @test new == old
-    @test nnz(new) > nnz(old)   # the upwind sides a flow does not use are stored zeros
+    new = update_coupled_block!(B, A_u, OP.ΔGS, c_uψ, c_ψu)
+    @test new == ref
+    @test nnz(new) > nnz(ref)   # the upwind sides a flow does not use are stored zeros
 end

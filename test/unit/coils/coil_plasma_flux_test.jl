@@ -334,8 +334,7 @@ end
 end
 
 @testitem "Coil steps: the coils' clock ends at the step's time plus Δt" setup = [CoilFluxColumn] begin
-    using RAPID2D: advance_LR_circuit_step!, solve_combined_momentum_Ampere_equations_with_coils!,
-        solve_coupled_momentum_Ampere_equations_with_coils!
+    using RAPID2D: advance_LR_circuit_step!, solve_combined_momentum_Ampere_equations_with_coils!
     # A coil step is taken at the time it is given, the run's. The coils' clock must end at
     # that time plus Δt whatever it read before; here the run's time is moved past it.
     t = 40.0e-6
@@ -343,7 +342,7 @@ end
         rp -> advance_LR_circuit_step!(rp.coil_system, t),
         rp -> advance_LR_circuit_step!(rp.coil_system, rp.G, rp.plasma.Jϕ, t),
         solve_combined_momentum_Ampere_equations_with_coils!,
-        solve_coupled_momentum_Ampere_equations_with_coils!,
+        rp -> solve_combined_momentum_Ampere_equations_with_coils!(rp; method = :direct),
     )
     for step! in steps
         RP = column_with_loops([(0.6, 0.0, 1.0e-4, 10.0, "OH")])
@@ -355,11 +354,10 @@ end
     end
 end
 
-@testitem "Coupled step: the alternative solver takes the same step as the combined one" setup = [CoilFluxColumn] begin
-    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!, solve_coupled_momentum_Ampere_equations_with_coils!
-    # The two coupled solvers assemble the same equations differently. Two identical columns
-    # with a resistive loop and a powered coil, a few steps in; then one step with each, both
-    # iterated to a tight tolerance without floors.
+@testitem "Coupled step: the direct solve takes the step the iteration converges to" setup = [CoilFluxColumn] begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
+    # Two identical columns with a resistive loop and a powered coil, a few steps in; then one
+    # step iterated to a tight tolerance without floors, and one solved directly.
     loops = [(1.2, 0.8, 1.0e-3, 0.0, "loop"), (0.6, 0.0, 1.0e-4, 10.0, "OH")]
     a, b = column_with_loops(loops; t_end = 50.0e-6), column_with_loops(loops; t_end = 50.0e-6)
     for RP in (a, b)
@@ -369,7 +367,7 @@ end
     end
     tight = (tolerance = 1.0e-12, max_iter = 200, E_floor = 0.0, I_floor = 0.0)
     solve_combined_momentum_Ampere_equations_with_coils!(a; tight...)
-    solve_coupled_momentum_Ampere_equations_with_coils!(b; tight...)
+    solve_combined_momentum_Ampere_equations_with_coils!(b; tight..., method = :direct)
     agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
 
     @test a.diagnostics.ampere_picard.nunconverged == 0 && b.diagnostics.ampere_picard.nunconverged == 0
