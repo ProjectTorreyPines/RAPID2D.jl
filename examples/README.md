@@ -65,7 +65,7 @@ flux, and that flux is computed from the simulated current.
 
 Within a step the coupled solve iterates on the boundary flux and the coil currents (see
 `coupled_step/common.jl`). These scripts compare the default solve with the same equations
-solved directly (`method = :direct`, no iteration), step by step, each step against the direct
+solved directly (`DirectOuterSolve()`, no iteration), step by step, each step against the direct
 solve's current of that step (floored at 1e-3 of the run's peak). A case whose direct run did
 not converge fails. Each figure shows four things:
 - where the column and the conductors sit;

@@ -133,13 +133,13 @@ end
 # Within a step the coupled solve iterates on the boundary flux and the coil currents: solve
 # u∥ and ψ inside the domain with the boundary flux held, then recompute the boundary flux
 # (Green's functions) and the coil currents (circuits) from the new plasma current, and repeat.
-# The default mixes the iterates by Anderson (memory 8, at most 20 block solves); the relaxed
-# iteration (anderson_m = 0, boundary flux weighted by w = 0.5) was the default before.
-# DIRECT_PICARD solves the same equations without iterating (method = :direct: the map's
-# linear part assembled, then Newton's step on it), checked to 1e-10 of the step's field and of
-# each coil's change with no floors: what the default should reproduce. A run whose direct solve
-# did not meet that has no expected result.
-const DIRECT_PICARD = (method = :direct, tolerance = 1.0e-10, E_floor = 0.0, I_floor = 0.0)
+# The default mixes the iterates by Anderson (AndersonOuterSolve(): memory 8, at most 20 block
+# solves); the relaxed iteration (memory 0, the edge flux weighted by w = 0.5) was the default
+# before. DIRECT_PICARD solves the same equations without iterating (DirectOuterSolve(): the
+# map's linear part assembled, then Newton's step on it), checked to 1e-10 of the step's field
+# and of each coil's change with no floors: what the default should reproduce. A run whose
+# direct solve did not meet that has no expected result.
+const DIRECT_PICARD = (method = DirectOuterSolve(), tolerance = 1.0e-10, E_floor = 0.0, I_floor = 0.0)
 
 # The largest gap between a plasma current history and the expected one, step by step against
 # the expected current of that step, floored at 1e-3 of its peak where it passes through zero.
@@ -189,7 +189,7 @@ end
 
 # The first step of the column of `make()`, solved from the same state and stopped after
 # L = 1…Lmax block solves, against the step solved directly: the error of the induced field,
-# max|Eϕ_L − Eϕ*| / max|Eϕ*|, for the relaxed iteration (anderson_m = 0, w = 0.5) and for the
+# max|Eϕ_L − Eϕ*| / max|Eϕ*|, for the relaxed iteration (memory 0, w = 0.5) and for the
 # default solve. Both keep the solve's failure policy: a residual that grows a thousandfold restarts
 # from the best iterate with half the mixing, so the relaxed iteration no longer runs away.
 function picard_error_by_iteration(make; Lmax = 30)
@@ -215,9 +215,10 @@ function picard_error_by_iteration(make; Lmax = 30)
         return copy(F.Eϕ_self)
     end
     E_star = trial(; DIRECT_PICARD...)
-    err(m, L) = maximum(abs, trial(; tolerance = 0.0, max_iter = L, anderson_m = m, E_floor = 0.0, I_floor = 0.0) .- E_star)
+    err(method, L) = maximum(abs, trial(; method, tolerance = 0.0, max_iter = L, E_floor = 0.0, I_floor = 0.0) .- E_star)
     scale = maximum(abs, E_star)
-    return (relaxed = [err(0, L) for L in 1:Lmax] ./ scale, default = [err(RP.flags.ampere_picard.anderson_m, L) for L in 1:Lmax] ./ scale)
+    relaxed, default = AndersonOuterSolve(; memory = 0), RP.flags.ampere_picard.method
+    return (relaxed = [err(relaxed, L) for L in 1:Lmax] ./ scale, default = [err(default, L) for L in 1:Lmax] ./ scale)
 end
 
 # One figure for a case of the coupled solve: where the column and the conductors sit, the

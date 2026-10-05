@@ -971,33 +971,70 @@ function Base.setproperty!(w::ImplicitWeights{FT}, name::Symbol, θ) where {FT <
 end
 
 """
-    PicardSettings{FT}(; tolerance = 1e-3, max_iter = 20, relaxation_w = 0.5, anderson_m = 8,
-                       E_floor = 1e-6, I_floor = 1e-6, method = :anderson)
+    OuterSolvePolicy
+
+How the coupled solve closes its outer unknowns, the edge flux and the coil currents. The
+choice is a type, resolved where the solve builds its stepper (`outer_stepper`); the
+evaluation, the stopping test and the acceptance are written once and never learn which policy
+runs. [`AndersonOuterSolve`](@ref) is the default; [`DirectOuterSolve`](@ref) is the reference.
+"""
+abstract type OuterSolvePolicy end
+
+"""
+    AndersonOuterSolve(; memory = 8, relaxation_w = 0.5)
+
+Iterate the outer map with Anderson mixing over the last `memory` iterates. `memory = 0` is the
+relaxed iteration x + w f, the edge flux weighted by `relaxation_w` (the coils by 1; a weight
+above 1 over-relaxes). **The default:** a few block solves per step.
+"""
+struct AndersonOuterSolve <: OuterSolvePolicy
+    memory::Int
+    relaxation_w::Float64
+
+    function AndersonOuterSolve(memory::Integer, relaxation_w::Real)
+        memory >= 0 || throw(ArgumentError("AndersonOuterSolve: memory = $memory; it must be at least 0 (0 is the relaxed iteration)"))
+        (isfinite(relaxation_w) && relaxation_w > 0) ||
+            throw(ArgumentError("AndersonOuterSolve: relaxation_w = $relaxation_w; it must be finite and positive"))
+        return new(Int(memory), Float64(relaxation_w))
+    end
+end
+AndersonOuterSolve(; memory::Integer = 8, relaxation_w::Real = 0.5) = AndersonOuterSolve(memory, relaxation_w)
+
+"""
+    DirectOuterSolve()
+
+Solve the step's outer map without iterating: its linear part T assembled
+(`coupled_map_jacobian`) and Newton's step taken on it (`NewtonStepper`). Exact for the step's
+equations whatever T's eigenvalues, so long as none is 1, so it is the reference against which
+[`AndersonOuterSolve`](@ref) is measured. It costs N_b + N_c back-substitutions per step (edge
+nodes and coils), which suits tests and coarse grids.
+"""
+struct DirectOuterSolve <: OuterSolvePolicy end
+
+"""
+    PicardSettings{FT}(; method = AndersonOuterSolve(), tolerance = 1e-3, max_iter = 20,
+                       E_floor = 1e-6, I_floor = 1e-6)
 
 The settings of the coupled solve's outer iteration, `flags.ampere_picard`, which
 `solve_timestep!` hands to `solve_combined_momentum_Ampere_equations_with_coils!` as
-`NamedTuple(settings)...`: the `tolerance` on the residual as a fraction of what the step
-induces, the most block solves per step, the mixing of the boundary flux, the Anderson memory
-(0 is the relaxed iteration), the absolute floors of the field [V/m] and coil-current [A]
-residuals, and the `method`: `:anderson` iterates, `:direct` solves the step's linear map
-directly (a reference: it costs one back-substitution per boundary node and coil).
+`NamedTuple(settings)...`: the [`OuterSolvePolicy`](@ref), the `tolerance` on the residual as a
+fraction of what the step induces, the most block solves per step, and the absolute floors of
+the field [V/m] and coil-current [A] residuals.
 
 Checked on construction and on assignment, as `ImplicitWeights` is:
 `RP.flags.ampere_picard.max_iter = 0` fails where it is written.
 """
 mutable struct PicardSettings{FT <: AbstractFloat}
+    method::OuterSolvePolicy
     tolerance::FT
     max_iter::Int
-    relaxation_w::FT
-    anderson_m::Int
     E_floor::FT
     I_floor::FT
-    method::Symbol
 
-    function PicardSettings{FT}(tolerance, max_iter, relaxation_w, anderson_m, E_floor, I_floor, method) where {FT <: AbstractFloat}
+    function PicardSettings{FT}(method, tolerance, max_iter, E_floor, I_floor) where {FT <: AbstractFloat}
         s = (
-            tolerance = FT(tolerance), max_iter = Int(max_iter), relaxation_w = FT(relaxation_w),
-            anderson_m = Int(anderson_m), E_floor = FT(E_floor), I_floor = FT(I_floor), method = Symbol(method),
+            method = method, tolerance = FT(tolerance), max_iter = Int(max_iter),
+            E_floor = FT(E_floor), I_floor = FT(I_floor),
         )
         for (name, v) in pairs(s)
             _check_picard_setting(FT, name, v)
@@ -1007,21 +1044,16 @@ mutable struct PicardSettings{FT <: AbstractFloat}
 end
 
 function PicardSettings{FT}(;
-        tolerance = FT(1.0e-3), max_iter = 20, relaxation_w = FT(0.5), anderson_m = 8,
-        E_floor = FT(1.0e-6), I_floor = FT(1.0e-6), method = :anderson,
+        method = AndersonOuterSolve(), tolerance = FT(1.0e-3), max_iter = 20, E_floor = FT(1.0e-6), I_floor = FT(1.0e-6),
     ) where {FT <: AbstractFloat}
-    return PicardSettings{FT}(tolerance, max_iter, relaxation_w, anderson_m, E_floor, I_floor, method)
+    return PicardSettings{FT}(method, tolerance, max_iter, E_floor, I_floor)
 end
 
 function _check_picard_setting(::Type{FT}, name::Symbol, v) where {FT <: AbstractFloat}
-    ok, range = if name === :max_iter
+    ok, range = if name === :method
+        v isa OuterSolvePolicy, "an OuterSolvePolicy, such as AndersonOuterSolve() or DirectOuterSolve()"
+    elseif name === :max_iter
         v >= 1, "at least 1"
-    elseif name === :anderson_m
-        v >= 0, "at least 0 (0 is the relaxed iteration)"
-    elseif name === :relaxation_w
-        isfinite(v) && zero(FT) < v <= one(FT), "in (0, 1]"
-    elseif name === :method
-        v in (:anderson, :direct), ":anderson or :direct"
     else   # tolerance and the floors
         isfinite(v) && v >= zero(FT), "finite and at least 0"
     end
@@ -1030,6 +1062,8 @@ function _check_picard_setting(::Type{FT}, name::Symbol, v) where {FT <: Abstrac
 end
 
 function Base.setproperty!(s::PicardSettings{FT}, name::Symbol, v) where {FT <: AbstractFloat}
+    # a policy is checked before conversion: converting a Symbol to one would only fail obscurely
+    name === :method && return setfield!(s, name, _check_picard_setting(FT, name, v))
     return setfield!(s, name, _check_picard_setting(FT, name, convert(fieldtype(typeof(s), name), v)))
 end
 
@@ -1652,6 +1686,6 @@ RAPID(NR::Int, NZ::Int; kwargs...) = RAPID{Float64}(NR, NZ; kwargs...)
 RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(config)
 
 # Export types
-export SimulationConfig, InputPaths, ManualSetup, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, PicardSettings, RAPID, GridGeometry, NodeState
+export SimulationConfig, InputPaths, ManualSetup, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, OuterSolvePolicy, AndersonOuterSolve, DirectOuterSolve, PicardSettings, RAPID, GridGeometry, NodeState
 export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags,
     LinearResponseDepth, PartialLinearResponse, FullLinearResponse

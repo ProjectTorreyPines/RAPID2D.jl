@@ -171,7 +171,7 @@ end
     # The same equations solved directly, without the iteration: the map's linear part
     # assembled and Newton's step taken on it, checked to 1e-10 of the step's field and of each
     # coil's change, with no floors.
-    const REFERENCE_PICARD = (method = :direct, tolerance = 1.0e-10, E_floor = 0.0, I_floor = 0.0)
+    const REFERENCE_PICARD = (method = DirectOuterSolve(), tolerance = 1.0e-10, E_floor = 0.0, I_floor = 0.0)
 
     # Runs RP to its end with the run's Picard settings, recording after each step the plasma
     # current, the induced field and the coil currents.
@@ -262,9 +262,9 @@ end
 
 @testitem "Coupled solve: the fixed point does not depend on the mixing, and the direct solve finds it" setup = [PicardColumn] begin
     using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!
-    # The easy column with a loop, one step solved tightly with the relaxed iteration (m = 0),
-    # with Anderson mixing (m = 8), and directly.
-    function solved(m; method = :anderson)
+    # The easy column with a loop, one step solved tightly with the relaxed iteration (memory 0),
+    # with Anderson mixing (memory 8), and directly.
+    function solved(method)
         RP = picard_column(; t_end = 20.0e-6)
         add_coil!(
             RP.coil_system, Coil{Float64}(;
@@ -276,11 +276,11 @@ end
         redirect_stdout(() -> run_simulation!(RP), devnull)
         prepare_timestep!(RP)
         solve_combined_momentum_Ampere_equations_with_coils!(
-            RP; tolerance = 1.0e-13, max_iter = 500, E_floor = 0.0, I_floor = 0.0, anderson_m = m, method
+            RP; method, tolerance = 1.0e-13, max_iter = 500, E_floor = 0.0, I_floor = 0.0,
         )
         return RP
     end
-    a, b, c = solved(0), solved(8), solved(8; method = :direct)
+    a, b, c = solved(AndersonOuterSolve(; memory = 0)), solved(AndersonOuterSolve()), solved(DirectOuterSolve())
     @test c.diagnostics.ampere_picard.last_niter == 2   # the first evaluation, then Newton's step
     agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
     for other in (b, c)
@@ -302,7 +302,9 @@ end
         RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= 0.0
         initialize_coupled_fields!(RP)
         prepare_timestep!(RP)
-        solve_combined_momentum_Ampere_equations_with_coils!(RP; method = :direct, tolerance = 1.0e-12, E_floor = 0.0, I_floor = 0.0)
+        solve_combined_momentum_Ampere_equations_with_coils!(
+            RP; method = DirectOuterSolve(), tolerance = 1.0e-12, E_floor = 0.0, I_floor = 0.0,
+        )
         stats = RP.diagnostics.ampere_picard
         @test stats.nunconverged == 0
         @test stats.last_niter == 2
@@ -359,7 +361,7 @@ end
     # weight of 4, or of 10⁶: every iterate after the first is worse. Cut at max_iter = 3, or
     # stopped by its exhausted restarts, the solve accepts its first evaluation, as the solve
     # cut at max_iter = 1 does: u∥, ψ, the coil currents, their memory and the residual.
-    function first_step(; picard...)
+    function first_step(; relaxation_w = 0.5, picard...)
         RP = tight_column()
         add_coil!(
             RP.coil_system, Coil{Float64}(;
@@ -370,7 +372,9 @@ end
         initialize_coil_system!(RP)
         prepare_timestep!(RP)
         redirect_stderr(devnull) do
-            solve_combined_momentum_Ampere_equations_with_coils!(RP; anderson_m = 0, picard...)
+            solve_combined_momentum_Ampere_equations_with_coils!(
+                RP; method = AndersonOuterSolve(; memory = 0, relaxation_w), picard...,
+            )
         end
         return RP
     end
@@ -470,20 +474,26 @@ end
 @testitem "Ampère Picard: the settings are checked where they are written" begin
     s = PicardSettings{Float64}()
     @test NamedTuple(s) == (
-        tolerance = 1.0e-3, max_iter = 20, relaxation_w = 0.5, anderson_m = 8, E_floor = 1.0e-6, I_floor = 1.0e-6,
-        method = :anderson,
+        method = AndersonOuterSolve(; memory = 8, relaxation_w = 0.5), tolerance = 1.0e-3, max_iter = 20,
+        E_floor = 1.0e-6, I_floor = 1.0e-6,
     )
     @test PicardSettings{Float32}().tolerance isa Float32
     s.max_iter = 40
-    @test s.max_iter == 40
-    # each out of range on construction and on assignment
+    s.method = DirectOuterSolve()
+    @test (s.max_iter, s.method) == (40, DirectOuterSolve())
+    # each out of range on construction and on assignment; a method is a policy, not a name
     for (name, bad) in (
-            (:tolerance, -1.0), (:tolerance, NaN), (:max_iter, 0), (:relaxation_w, 0.0), (:relaxation_w, 1.5),
-            (:anderson_m, -1), (:E_floor, -1.0e-6), (:I_floor, Inf), (:method, :newton),
+            (:tolerance, -1.0), (:tolerance, NaN), (:max_iter, 0), (:E_floor, -1.0e-6), (:I_floor, Inf),
+            (:method, :direct),
         )
         @test_throws ArgumentError PicardSettings{Float64}(; (name => bad,)...)
         @test_throws ArgumentError setproperty!(PicardSettings{Float64}(), name, bad)
     end
+    # the policy checks its own parameters; a weight above 1 over-relaxes
+    @test_throws ArgumentError AndersonOuterSolve(; memory = -1)
+    @test_throws ArgumentError AndersonOuterSolve(; relaxation_w = 0.0)
+    @test_throws ArgumentError AndersonOuterSolve(; relaxation_w = NaN)
+    @test AndersonOuterSolve(; relaxation_w = 1.5).relaxation_w == 1.5
 end
 
 @testitem "Coupled solve: the u∥–ψ block keeps one sparsity pattern" setup = [PicardColumn] begin

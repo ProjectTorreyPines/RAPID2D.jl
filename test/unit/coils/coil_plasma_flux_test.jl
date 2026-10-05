@@ -342,7 +342,7 @@ end
         rp -> advance_LR_circuit_step!(rp.coil_system, t),
         rp -> advance_LR_circuit_step!(rp.coil_system, rp.G, rp.plasma.Jϕ, t),
         solve_combined_momentum_Ampere_equations_with_coils!,
-        rp -> solve_combined_momentum_Ampere_equations_with_coils!(rp; method = :direct),
+        rp -> solve_combined_momentum_Ampere_equations_with_coils!(rp; method = DirectOuterSolve()),
     )
     for step! in steps
         RP = column_with_loops([(0.6, 0.0, 1.0e-4, 10.0, "OH")])
@@ -367,7 +367,7 @@ end
     end
     tight = (tolerance = 1.0e-12, max_iter = 200, E_floor = 0.0, I_floor = 0.0)
     solve_combined_momentum_Ampere_equations_with_coils!(a; tight...)
-    solve_combined_momentum_Ampere_equations_with_coils!(b; tight..., method = :direct)
+    solve_combined_momentum_Ampere_equations_with_coils!(b; tight..., method = DirectOuterSolve())
     agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
 
     @test a.diagnostics.ampere_picard.nunconverged == 0 && b.diagnostics.ampere_picard.nunconverged == 0

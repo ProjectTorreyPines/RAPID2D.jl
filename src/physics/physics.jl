@@ -1906,47 +1906,8 @@ function uψ_coupling_terms(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    coupled_map_jacobian(RP, solver) -> T
-
-The linear part T of the coupled solve's map g(x) = T x + c, x = (boundary flux, coil currents),
-by columns: what a unit of each x_j gives back through the block solve (`solver`, factorized
-for the step), as the boundary flux and coil currents of the electron current it makes. The ions
-and every forcing are in c. Costs N_b + N_c back-substitutions.
-"""
-function coupled_map_jacobian(RP::RAPID{FT}, solver::AbstractLinearSolver{FT}) where {FT <: AbstractFloat}
-    G, csys = RP.G, RP.coil_system
-    @unpack qe, μ0 = RP.config.constants
-    N, Nb, Nc = G.NR * G.NZ, length(G.BDY_idx), csys.n_total
-    dA = G.dR * G.dZ
-    u_to_J = vec(@. qe * RP.plasma.ne * RP.fields.bϕ)   # the electron current of a unit u∥
-    T = zeros(FT, Nb + Nc, Nb + Nc)
-    for cols in Iterators.partition(1:(Nb + Nc), 64)
-        # the block's right-hand sides: a unit flux on a boundary node, or a coil's unit current
-        # as ψ's source inside the grid
-        B = zeros(FT, 2N, length(cols))
-        for (i, j) in enumerate(cols)
-            if j <= Nb
-                B[N + G.BDY_idx[j], i] = one(FT)
-            else
-                unit = zeros(FT, Nc)
-                unit[j - Nb] = one(FT)
-                B[(N + 1):(2N), i] .= -μ0 .* vec(G.R2D) .* vec(distribute_coil_currents_to_Jϕ(csys, G; currents = unit))
-                B[N .+ G.BDY_idx, i] .= zero(FT)
-            end
-        end
-        J = u_to_J .* view(solve!(similar(B), solver, B), 1:N, :)
-        I_c = Nc > 0 ? csys.inv_A_LR_circuit * (-2π .* (csys.Green_grid2coils * J) .* dA) : zeros(FT, 0, length(cols))
-        ψ_b = (G.Green_inWall2bdy * J[G.nodes.in_wall_nids, :]) .* dA
-        Nc > 0 && (ψ_b .+= csys.Green_coils2bdy * I_c)
-        T[1:Nb, cols] .= ψ_b
-        T[(Nb + 1):end, cols] .= I_c
-    end
-    return T
-end
-
-"""
-    solve_combined_momentum_Ampere_equations_with_coils!(RP; tolerance = 1e-3, max_iter = 20,
-        relaxation_w = 0.5, E_floor = 1e-6, I_floor = 1e-6, anderson_m = 8, method = :anderson)
+    solve_combined_momentum_Ampere_equations_with_coils!(RP; method = AndersonOuterSolve(),
+        tolerance = 1e-3, max_iter = 20, E_floor = 1e-6, I_floor = 1e-6)
 
 Advance u∥, ψ_self and the coil currents together over one step, the coefficients (n, ν, b)
 held at the step's start.
@@ -1960,43 +1921,38 @@ x = (boundary flux, coil currents):
   2π[ψ_pla(r_c; J) − `Coil.ψ_pla`];
 - Green's functions give the boundary flux of J and those coil currents.
 
-That map is affine, g(x) = T x + c. Anderson mixing (`AndersonMixer`, memory `anderson_m`) drives
-f = g(x) − x to zero; a relative of GMRES, it can also converge where the relaxed iteration
-x + w f diverges. `relaxation_w` is the mixing of the boundary flux (the coils' is 1), and
-`anderson_m = 0` is that relaxed iteration.
+That map is affine, g(x) = T x + c. The default `method`, [`AndersonOuterSolve`](@ref), drives
+f = g(x) − x to zero by Anderson mixing (`AndersonMixer`); a relative of GMRES, it can also
+converge where the relaxed iteration x + w f diverges.
 - **First iterate:** a block solve with the boundary flux of the extrapolated induced field
   and the coil currents at tⁿ.
 - **Circuit forcing:** M Iⁿ + Δt V(tⁿ + Δt/2), taken once for the step.
-- **`method = :direct`:** no iteration. T is assembled (`coupled_map_jacobian`) and Newton's
-  step (`NewtonStepper`) solves (𝟙 − T) x = c from the first iterate at once; later evaluations
-  only remove rounding. The step's equations solved whatever T's eigenvalues, so long as none is
-  1: a reference, at N_b + N_c back-substitutions per step.
+
+[`DirectOuterSolve`](@ref) is the reference: T assembled and (𝟙 − T) x = c solved at once.
 
 The iteration (`fixed_point_solve!`) stops when `coupled_residual_converged` holds. It accepts
 that evaluation: u∥ and ψ of its block solve, and the coil currents of its J, with `Coil.ψ_pla`
 set to ψ_pla(r_c; J). The circuits' flux balance then closes every step. A solve that does not
 converge (`max_iter` block solves, the mixer's restarts used up, or Newton's step stalled)
 accepts the evaluation with the smallest residual. It is counted in
-`RP.diagnostics.ampere_picard`, and the run's first one warns. An evaluation that is not finite, or that the stepper rejects, is never
-accepted; if the first is not finite, the solve throws and leaves u∥, the fields and the coils
-as it found them (only the step's caches, the block, its LU and the circuit matrices, are rebuilt).
+`RP.diagnostics.ampere_picard`, and the run's first one warns. An evaluation that is not
+finite, or that the stepper rejects, is never accepted; if the first is not finite, the solve
+throws and leaves u∥, the fields and the coils as it found them (only the step's caches, the
+block, its LU and the circuit matrices, are rebuilt).
 
 Coil voltages given as functions are taken to be pure functions of time.
 """
 function solve_combined_momentum_Ampere_equations_with_coils!(
         RP::RAPID{FT};
+        method::OuterSolvePolicy = AndersonOuterSolve(),
         tolerance::FT = 1.0e-3,
         max_iter::Int = 20,
-        relaxation_w::FT = 0.5,
         E_floor::FT = FT(1.0e-6),
         I_floor::FT = FT(1.0e-6),
-        anderson_m::Int = 8,
-        method::Symbol = :anderson,
     ) where {FT <: AbstractFloat}
     _refuse_exprb_decay(
         RP.flags, "solve_combined_momentum_Ampere_equations_with_coils!", "fixes θ = 1 for the u∥ friction"
     )
-    method in (:anderson, :direct) || throw(ArgumentError("the coupled solve's method is :anderson or :direct, got :$method"))
     @timeit RAPID_TIMER "solve_combined_momentum_Ampere_equations_with_coils!" begin
         # Aliases for readability
         pla = RP.plasma
@@ -2103,11 +2059,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         coil_R = FT[c.location.r for c in csys.coils]
         coil_L = FT[c.self_inductance for c in csys.coils]
         W = vcat(one(FT) ./ R_bdy, coil_L ./ (2π .* coil_R))
-        stepper = if method === :direct
-            NewtonStepper(lu(Diagonal(W) * (LinearAlgebra.I - coupled_map_jacobian(RP, OP.uψ_solver)) / Diagonal(W)), W)
-        else
-            AndersonMixer{FT}(Nb + Nc, anderson_m; β = vcat(fill(relaxation_w, Nb), ones(FT, Nc)), W)
-        end
+        stepper = outer_stepper(method, RP, W)
         # the field a coil's current residual makes on itself, for the coils inside the grid
         coil_field = zeros(FT, Nc)
         for c in csys.inside_domain_indices
@@ -2204,6 +2156,58 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         return RP
     end # @timeit
+end
+
+# The outer iteration's stepper, by policy. W puts its unknowns in one unit: the edge flux per
+# unit R, and a coil current as the flux it makes on itself, L_c I_c/(2π R_c).
+function outer_stepper(p::AndersonOuterSolve, RP::RAPID{FT}, W::Vector{FT}) where {FT <: AbstractFloat}
+    Nb, Nc = length(RP.G.BDY_idx), RP.coil_system.n_total
+    return AndersonMixer{FT}(Nb + Nc, p.memory; β = vcat(fill(FT(p.relaxation_w), Nb), ones(FT, Nc)), W)
+end
+
+# ── The reference (DirectOuterSolve): the outer map's linear part assembled, and solved ─────
+function outer_stepper(::DirectOuterSolve, RP::RAPID{FT}, W::Vector{FT}) where {FT <: AbstractFloat}
+    T = coupled_map_jacobian(RP, RP.operators.uψ_solver)
+    return NewtonStepper(lu(Diagonal(W) * (LinearAlgebra.I - T) / Diagonal(W)), W)
+end
+
+"""
+    coupled_map_jacobian(RP, solver) -> T
+
+The linear part T of the coupled solve's map g(x) = T x + c, x = (boundary flux, coil currents),
+by columns: what a unit of each x_j gives back through the block solve (`solver`, factorized
+for the step), as the boundary flux and coil currents of the electron current it makes. The ions
+and every forcing are in c. Costs N_b + N_c back-substitutions.
+"""
+function coupled_map_jacobian(RP::RAPID{FT}, solver::AbstractLinearSolver{FT}) where {FT <: AbstractFloat}
+    G, csys = RP.G, RP.coil_system
+    @unpack qe, μ0 = RP.config.constants
+    N, Nb, Nc = G.NR * G.NZ, length(G.BDY_idx), csys.n_total
+    dA = G.dR * G.dZ
+    u_to_J = vec(@. qe * RP.plasma.ne * RP.fields.bϕ)   # the electron current of a unit u∥
+    T = zeros(FT, Nb + Nc, Nb + Nc)
+    for cols in Iterators.partition(1:(Nb + Nc), 64)
+        # the block's right-hand sides: a unit flux on a boundary node, or a coil's unit current
+        # as ψ's source inside the grid
+        B = zeros(FT, 2N, length(cols))
+        for (i, j) in enumerate(cols)
+            if j <= Nb
+                B[N + G.BDY_idx[j], i] = one(FT)
+            else
+                unit = zeros(FT, Nc)
+                unit[j - Nb] = one(FT)
+                B[(N + 1):(2N), i] .= -μ0 .* vec(G.R2D) .* vec(distribute_coil_currents_to_Jϕ(csys, G; currents = unit))
+                B[N .+ G.BDY_idx, i] .= zero(FT)
+            end
+        end
+        J = u_to_J .* view(solve!(similar(B), solver, B), 1:N, :)
+        I_c = Nc > 0 ? csys.inv_A_LR_circuit * (-2π .* (csys.Green_grid2coils * J) .* dA) : zeros(FT, 0, length(cols))
+        ψ_b = (G.Green_inWall2bdy * J[G.nodes.in_wall_nids, :]) .* dA
+        Nc > 0 && (ψ_b .+= csys.Green_coils2bdy * I_c)
+        T[1:Nb, cols] .= ψ_b
+        T[(Nb + 1):end, cols] .= I_c
+    end
+    return T
 end
 
 """
