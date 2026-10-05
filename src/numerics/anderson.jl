@@ -96,37 +96,7 @@ The iterate with the smallest weighted residual so far.
 """
 best_iterate(A::AndersonMixer) = copy(A.best_x)
 
-"""
-    anderson_solve!(evaluate!, A::AndersonMixer, x; max_iter, keep!, restore!) -> (iter, outcome)
-
-Iterate from `x` with [`anderson_step!`](@ref) until an evaluation converges. `evaluate!(x)`
-evaluates the map at `x` into the caller's state and returns `(f, converged, valid)`: the
-residual, the caller's stopping test, and whether all of the evaluation is finite. `keep!()`
-saves the state of each new best evaluation, and `restore!()` brings the best back.
-
-`outcome` is
-- `:converged`: the last evaluation converged, and the mixer kept it (`:best` or `:ok`); one it
-  rejects is never accepted, whatever its stopping test says;
-- `:stopped`: `max_iter` evaluations, or the restarts used up; the state is the best evaluation;
-- `:failed`: the first evaluation is not finite.
-"""
-function anderson_solve!(evaluate!::E, A::AndersonMixer, x::AbstractVector; max_iter::Integer, keep!::K, restore!::R) where {E, K, R}
-    iter = 0
-    while true
-        iter += 1
-        f, converged, valid = evaluate!(x)
-        x_next, status = anderson_step!(A, x, f; valid)
-        status === :failed && return (iter, :failed)
-        status === :best && keep!()
-        converged && (status === :best || status === :ok) && return (iter, :converged)
-        if iter >= max_iter || status === :exhausted
-            restore!()
-            return (iter, :stopped)
-        end
-        x = x_next
-    end
-    return
-end
+fixed_point_step!(A::AndersonMixer, x::AbstractVector, f::AbstractVector; valid::Bool = true) = anderson_step!(A, x, f; valid)
 
 # argmin ‖M γ − b‖₂ by pivoted QR, the columns whose pivot falls under max(1e-10, n ε) of the
 # largest left out (γ = 0 there): repeated or dependent differences give no direction. n ε is

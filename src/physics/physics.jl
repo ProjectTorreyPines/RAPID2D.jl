@@ -2287,7 +2287,7 @@ x + w f diverges. `relaxation_w` is the mixing of the boundary flux (the coils' 
   and the coil currents at tⁿ.
 - **Circuit forcing:** M Iⁿ + Δt V(tⁿ + Δt/2), taken once for the step.
 
-The iteration (`anderson_solve!`) stops when `coupled_residual_converged` holds. It accepts
+The iteration (`fixed_point_solve!`) stops when `coupled_residual_converged` holds. It accepts
 that evaluation: u∥ and ψ of its block solve, and the coil currents of its J, with `Coil.ψ_pla`
 set to ψ_pla(r_c; J). The circuits' flux balance then closes every step. A solve that does not
 converge, after `max_iter` block solves or once the mixer's restarts are used up, accepts the
@@ -2475,7 +2475,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             res_k .= best.res
             return nothing
         end
-        iter, outcome = anderson_solve!(evaluate!, mixer, vcat(ψ_pred[G.BDY_idx], coils_I_n); max_iter, keep!, restore!)
+        iter, outcome = fixed_point_solve!(evaluate!, mixer, vcat(ψ_pred[G.BDY_idx], coils_I_n); max_iter, keep!, restore!)
         outcome === :failed && error(
             "the coupled solve's first iterate is not finite (step $(RP.step)): u∥, ψ, the field " *
                 "they induce over the step or the coil currents of the block solve hold NaN or Inf"
