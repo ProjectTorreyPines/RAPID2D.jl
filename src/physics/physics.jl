@@ -35,7 +35,9 @@ export update_ue_para!,
 """
     update_ue_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update the parallel electron velocity.
+Update the parallel electron velocity: the θ-scheme, with `θ_imp.decay` on the friction and on
+the nonlocal operators (advection, diffusion). With `Implicit = false` those operators are
+explicit (θ = 0), and the update divides by the friction's diagonal instead of solving.
 """
 function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_ue_para!" begin
@@ -64,9 +66,11 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # `θu` weights the FRICTION and the ledger that records it (per-cell under
         # ExpRB); `θ_op` weights the nonlocal operators, which the fit does not reach
         # and which keep today's constant either way. Splitting them keeps
-        # `scheme.decay` from silently changing the transport treatment.
-        θ_op = RP.flags.θ_imp.decay
-        θu = decay_is_exprb ? exprb_theta.(decay_exponent) : θ_op
+        # `scheme.decay` from silently changing the transport treatment. `Implicit = false`
+        # steps the nonlocal operators explicitly, θ_op = 0: the same equation, whose matrix
+        # is then the friction's diagonal and needs no solve. The friction keeps its weight.
+        θ_op = RP.flags.Implicit ? RP.flags.θ_imp.decay : zero(FT)
+        θu = decay_is_exprb ? exprb_theta.(decay_exponent) : RP.flags.θ_imp.decay
 
         # (u·∇)u∥ from the face mass flux and the reflective in-wall viscosity: rows on
         # in-wall nodes only, nothing read outside the wall (`electron_operators.jl`).
@@ -78,81 +82,68 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one_FT - θu) * pla.ue_para)
         end
 
+        # The right-hand side, every term from uⁿ
+        # #1: Electric acceleration term [qe*E_para_tot/me]
+        accel_para_tilde = qe * F.E_para_tot / me
+
+        # #2: Advection term (1-θ_op)*[-(𝐮⋅∇)*ue_para]. θ_op, not θu: the fitted
+        # weight belongs to the friction's eigenvalue, not to a nonlocal operator.
+        if RP.flags.Include_ud_convec_term
+            accel_para_tilde .+= (one_FT - θ_op) * (-(pops.A_adv * pla.ue_para))
+        end
+
+        # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
+        if RP.flags.Include_ud_pressure_term
+            accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
+        end
+
+        # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]. Under
+        # ExpRB uⁿ carries bern(−z) instead, applied to the RHS below.
+        if !decay_is_exprb
+            @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
+        end
+
+        # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
+        @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
+
+        # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
+        if RP.flags.Include_ud_diffu_term
+            accel_para_tilde .+= (one_FT - θ_op) * (pops.A_diffu * pla.ue_para)
+        end
+
+        # bern(−z) formed as bern(z) + z, not the algebraically equal
+        # 1 − (1−θ)νΔt: that subtraction cancels to nothing exactly where the
+        # true value is small but meaningful.
+        OP = RP.operators
+        if decay_is_exprb
+            @. OP.RHS = (bern_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
+        else
+            @. OP.RHS = pla.ue_para + dt * accel_para_tilde
+        end
+
         if RP.flags.Implicit
-            OP = RP.operators
             # The shared LHS buffer on the wall pattern: values only, so the cached solver
             # keeps its symbolic analysis from step to step.
             A = OP.A_LHS
             set_identity!(A)
-
-            # #1: Electric acceleration term [qe*E_para_tot/me]
-            accel_para_tilde = qe * F.E_para_tot / me
-
-            # #2: Advection term (1-θ_op)*[-(𝐮⋅∇)*ue_para]. θ_op, not θu: the fitted
-            # weight belongs to the friction's eigenvalue, not to a nonlocal operator.
-            if RP.flags.Include_ud_convec_term
-                accel_para_tilde .+= (one_FT - θ_op) * (-(pops.A_adv * pla.ue_para))
-                add_scaled!(A, θ_op * dt, pops.A_adv)
-            end
-
-            # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
-            if RP.flags.Include_ud_pressure_term
-                accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
-            end
-
-            # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]
+            RP.flags.Include_ud_convec_term && add_scaled!(A, θ_op * dt, pops.A_adv)
             if decay_is_exprb
-                # uⁿ carries bern(−z), applied to the RHS below rather than here.
                 add_diagonal!(A, vec(bern_decay) .- one_FT)
             else
-                @. accel_para_tilde += (one_FT - θu) * (-ν_sum_mom_iz_ei * pla.ue_para)
                 add_diagonal!(A, vec(ν_sum_mom_iz_ei); scale = θu * dt)
             end
-
-            # #5: momentum source from electron-ion collision [+sptz_fac*νei*ui_para]
-            @. accel_para_tilde += (pla.ν_ei_eff * pla.ui_para)
-
-            # #6: turbulent Diffusive term by ExB mixing (nonlocal — θ_op)
-            if RP.flags.Include_ud_diffu_term
-                accel_para_tilde .+= (one_FT - θ_op) * (pops.A_diffu * pla.ue_para)
-                add_scaled!(A, -θ_op * dt, pops.A_diffu)
-            end
-
-            # bern(−z) formed as bern(z) + z, not the algebraically equal
-            # 1 − (1−θ)νΔt: that subtraction cancels to nothing exactly where the
-            # true value is small but meaningful.
-            if decay_is_exprb
-                @. OP.RHS = (bern_decay + decay_exponent) * pla.ue_para + dt * accel_para_tilde
-            else
-                @. OP.RHS = pla.ue_para + dt * accel_para_tilde
-            end
+            RP.flags.Include_ud_diffu_term && add_scaled!(A, -θ_op * dt, pops.A_diffu)
 
             @timeit RAPID_TIMER "ue_para LinearSolve" begin
                 factorize!(OP.ue_solver, A)
                 solve!(view(pla.ue_para, :), OP.ue_solver, view(OP.RHS, :))
             end
         else
-            # Same two coefficients as the assembled path: 1/bern(z) divides the
-            # increment, and bern(−z) = bern(z) + z scales uⁿ.
-            inv_factor = decay_is_exprb ?
-                (@. one_FT / bern_decay) :
-                (@. one_FT / (one_FT + θu * ν_sum_mom_iz_ei * dt))
-            u_coeff = decay_is_exprb ?
-                (@. bern_decay + decay_exponent) :
-                (@. one_FT - (one_FT - θu) * dt * ν_sum_mom_iz_ei)
-            @. pla.ue_para = inv_factor * (
-                pla.ue_para * u_coeff
-                    + dt * (qe * F.E_para_tot / me + pla.ν_ei_eff * pla.ui_para)
-            )
-
-            if RP.flags.Include_ud_pressure_term
-                accel_by_pressure = calculate_electron_acceleration_by_pressure(RP)
-                @. pla.ue_para += inv_factor * dt * (accel_by_pressure)
-            end
-
-            if RP.flags.Include_ud_convec_term
-                accel_by_grad_ud = -(pops.A_adv * pla.ue_para)
-                @. pla.ue_para += inv_factor * dt * (accel_by_grad_ud)
+            # θ_op = 0: the matrix is the friction's diagonal, bern(z) under ExpRB
+            if decay_is_exprb
+                @. pla.ue_para = OP.RHS / bern_decay
+            else
+                @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt)
             end
         end
 
@@ -1912,8 +1903,9 @@ end
 
 Advance u∥, ψ_self and the coil currents together over one step, the coefficients (n, ν, b)
 held at the step's start. u∥'s equation is [`update_ue_para!`](@ref)'s, term by term and with
-its θ-weight `θ_imp.decay`; the induced field is the step's mean, −(ψⁿ⁺¹ − ψⁿ)/(RΔt), which
-carries no θ. The circuits take `θ_imp.circuit`, as below the gate.
+its θ-weights (`θ_imp.decay`; advection and diffusion explicit when `Implicit = false`). The
+induced field is the step's mean, −(ψⁿ⁺¹ − ψⁿ)/(RΔt), which carries no θ. The circuits take
+`θ_imp.circuit`, as below the gate.
 
 The block matrix of u∥ and ψ inside the domain (`CoupledBlock`, on a pattern fixed for the
 run) is factorized once. The free boundary and the circuits close it by an outer iteration on
@@ -1970,7 +1962,10 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         @unpack ee, me, μ0, qe = RP.config.constants
         Z_i = FT(bulk_ion_charge(RP))   # scalar: `@.` would call it per element
 
-        θimp = flags.θ_imp.decay   # u∥'s θ-weight, as in update_ue_para!
+        # u∥'s θ-weights, as in update_ue_para!: θu on the friction and its ledger, θ_op on the
+        # nonlocal operators (advection, diffusion), 0 when Implicit = false
+        θu = flags.θ_imp.decay
+        θ_op = flags.Implicit ? θu : zero(FT)
 
         # Factor for EM drive contribution
         # derived from [E_para_EM = -qe/me * (ψ^(n+1) - ψ^(n))/(R*Δt)  = -facEM * ((ψ^(n+1) - ψ^(n)))/Δt]
@@ -1989,10 +1984,10 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # each inside A_u below
         pops = flags.Include_ud_convec_term || flags.Include_ud_diffu_term ? ue_Te_operators(RP) : nothing
         if flags.Include_ud_convec_term
-            accel_para_tilde .+= (one(FT) - θimp) * (-(pops.A_adv * pla.ue_para))
+            accel_para_tilde .+= (one(FT) - θ_op) * (-(pops.A_adv * pla.ue_para))
         end
         if flags.Include_ud_diffu_term
-            accel_para_tilde .+= (one(FT) - θimp) * (pops.A_diffu * pla.ue_para)
+            accel_para_tilde .+= (one(FT) - θ_op) * (pops.A_diffu * pla.ue_para)
         end
 
         # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
@@ -2007,16 +2002,16 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         @. accel_para_tilde += (
             facEM / dt * F.ψ_self
-                - (one(FT) - θimp) * ν_sum_mom_iz_ei * pla.ue_para
+                - (one(FT) - θu) * ν_sum_mom_iz_ei * pla.ue_para
                 + pla.ν_ei_eff * pla.ui_para
         )
 
         # A_u = 𝟙 + Δt θ (ν + u·∇ − ∇·D∇), values only, on the wall pattern
         A_u = OP.A_u
         set_identity!(A_u)
-        add_diagonal!(A_u, vec(ν_sum_mom_iz_ei); scale = dt * θimp)
-        flags.Include_ud_convec_term && add_scaled!(A_u, dt * θimp, pops.A_adv)
-        flags.Include_ud_diffu_term && add_scaled!(A_u, -dt * θimp, pops.A_diffu)
+        add_diagonal!(A_u, vec(ν_sum_mom_iz_ei); scale = dt * θu)
+        flags.Include_ud_convec_term && add_scaled!(A_u, dt * θ_op, pops.A_adv)
+        flags.Include_ud_diffu_term && add_scaled!(A_u, -dt * θ_op, pops.A_diffu)
 
         # Toroidal current density Jϕ @ t=(n-th step)
         Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
@@ -2134,7 +2129,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # only, so a solve that throws leaves them as it found them.
         # Rue_ei (electron-ion momentum exchange rate): its part at tⁿ, before u∥ moves on
         if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θimp) * pla.ue_para)
+            @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θu) * pla.ue_para)
         end
         F.ψ_self .= ψ_k
         pla.ue_para .= ue_k
@@ -2145,7 +2140,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # Complete the Rue_ei calculation with second part (n+1 step contribution)
         if RP.flags.Coulomb_Collision
-            @. pla.Rue_ei += pla.ν_ei_eff * (-θimp * pla.ue_para)
+            @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
 
         update_Jϕ!(RP)
