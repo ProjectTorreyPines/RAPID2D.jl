@@ -165,7 +165,10 @@ end
     # drift with ν_en_iz_tot (both ionization channels) instead of ν_en_iz alone, and
     # dissociative ionization is non-zero at this operating point — a small extra
     # momentum-randomizing channel pulls the drift down slightly further.
-    @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -430695.500813412
+    # Re-baselined 2026-10-06: the explicit update (Implicit = false) now carries u∥'s
+    # diffusion (Include_ud_diffu_term, on by default), as the implicit one does. With it off
+    # the previous value -430695.500813412 is reproduced to 1e-16.
+    @test mean(RP.plasma.ue_para[RP.G.nodes.in_wall_nids]) ≈ -430693.9292242401
 
     update_RRCs!(RP)
 

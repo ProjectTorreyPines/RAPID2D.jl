@@ -223,15 +223,17 @@ Note: Individual coil currents and voltages are stored in each Coil object.
 - `controllable_indices::Vector{Int}`: Indices of controllable coils in the coils vector
 - `passive_indices::Vector{Int}`: Indices of passive elements in the coils vector
 
-## System matrices
-- `mutual_inductance::Matrix{FT}`: Mutual inductance matrix between all coils [H]
-- `circuit_matrix::Matrix{FT}`: Circuit matrix for powered coils (L + R*dt) [H]
-- `inv_circuit_matrix::Matrix{FT}`: Inverse of circuit matrix [H^-1]
+## Circuit state and matrices
+- `mutual_inductance::Matrix{FT}`: Mutual inductance matrix M between all coils [H]
+- `time_s::FT`: The coils' clock, the end of the last step taken [s]
+- `Δt::FT`, `θimp::FT`: The step and the resistive θ-weight `A_LR_circuit` was built with;
+  the solvers set them from `RP.dt` and `flags.θ_imp.circuit`
+- `A_LR_circuit::Matrix{FT}`: Circuit matrix M + θimp Δt R [H]
+- `inv_A_LR_circuit::Matrix{FT}`: Its inverse [H^-1]
 
 ## Green function coupling matrices
 - `Green_coils2bdy::Matrix{FT}`: Green function from coils to boundary points
-- `Green_grid2coils::Matrix{FT}`: Green function from coils to plasma grid
-- `green_from_grid::Matrix{FT}`: Green function from plasma grid to coils
+- `Green_grid2coils::Matrix{FT}`: Green function from the plasma grid to the coils
 - `dGreen_dRg_grid2coils::Matrix{FT}`: Derivative of Green function w.r.t. R_grid
 - `dGreen_dZg_grid2coils::Matrix{FT}`: Derivative of Green function w.r.t. Z_grid
 
@@ -302,7 +304,7 @@ mutable struct CoilSystem{FT <: AbstractFloat}
         mutual_inductance = zeros(FT, n_total, n_total)
         time_s = FT(0.0) # Simulation time, to be set later
         Δt = FT(0.0)  # Time step for solving circuit equations, to be set later
-        θimp = FT(1.0) # Implicit factor for circuit equations (θimp=1.0 for implicit Euler)
+        θimp = FT(1.0) # resistive θ-weight of A_LR_circuit; the solvers set it from flags.θ_imp.circuit
         A_LR_circuit = zeros(FT, n_total, n_total)
         inv_A_LR_circuit = zeros(FT, n_total, n_total)
 
