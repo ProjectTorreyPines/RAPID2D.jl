@@ -2,7 +2,7 @@
 # filaments on a circle of radius 0.35 m around a column of radius 0.3 m at R = 1.5 m
 # (n = 1e18 m⁻³, Te = 10 eV), inside the grid, as a vessel wall modelled by filaments would be.
 # The filaments carry the eddy currents that hold the plasma's flux; each step should match the
-# step iterated to convergence.
+# step solved directly.
 #
 #   julia --project=examples examples/coupled_step/picard_filament_shell.jl
 

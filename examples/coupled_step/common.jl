@@ -133,14 +133,13 @@ end
 # Within a step the coupled solve iterates on the boundary flux and the coil currents: solve
 # u∥ and ψ inside the domain with the boundary flux held, then recompute the boundary flux
 # (Green's functions) and the coil currents (circuits) from the new plasma current, and repeat.
-# The default mixes the iterates by Anderson (memory 8, at most 20 block solves); the relaxed
-# iteration (anderson_m = 0, boundary flux weighted by w = 0.5) was the default before.
-# CONVERGED_PICARD iterates the same equations to convergence with the relaxed iteration
-# (w = 0.05), to 1e-10 of the step's field and of each coil's change with no floors: what the
-# default should reproduce. A run whose reference did not converge has no expected result.
-const CONVERGED_PICARD = (
-    tolerance = 1.0e-10, max_iter = 20_000, relaxation_w = 0.05, anderson_m = 0, E_floor = 0.0, I_floor = 0.0,
-)
+# The default mixes the iterates by Anderson (AndersonOuterSolve(): memory 8, at most 20 block
+# solves); the relaxed iteration (memory 0, the edge flux weighted by w = 0.5) was the default
+# before. DIRECT_PICARD solves the same equations without iterating (DirectOuterSolve(): the
+# map's linear part assembled, then Newton's step on it), checked to 1e-10 of the step's field
+# and of each coil's change with no floors: what the default should reproduce. A run whose
+# direct solve did not meet that has no expected result.
+const DIRECT_PICARD = (method = DirectOuterSolve(), tolerance = 1.0e-10, E_floor = 0.0, I_floor = 0.0)
 
 # The largest gap between a plasma current history and the expected one, step by step against
 # the expected current of that step, floored at 1e-3 of its peak where it passes through zero.
@@ -174,10 +173,10 @@ end
 quiet(f) = redirect_stdout(() -> redirect_stderr(f, devnull), devnull)
 
 # The column of `make()` run for `nsteps` steps twice, with the default Picard and with
-# CONVERGED_PICARD: the plasma current and the induced field after each step, and the Picard
+# DIRECT_PICARD: the plasma current and the induced field after each step, and the Picard
 # counters.
-function default_vs_converged(make; nsteps)
-    return map((nothing, CONVERGED_PICARD)) do picard
+function default_vs_direct(make; nsteps)
+    return map((nothing, DIRECT_PICARD)) do picard
         RP = make()
         isnothing(picard) || (RP.flags.ampere_picard = PicardSettings{Float64}(; picard...))
         RP.t_end_s = nsteps * RP.dt
@@ -189,8 +188,8 @@ function default_vs_converged(make; nsteps)
 end
 
 # The first step of the column of `make()`, solved from the same state and stopped after
-# L = 1…Lmax block solves, against the converged step: the error of the induced field,
-# max|Eϕ_L − Eϕ*| / max|Eϕ*|, for the relaxed iteration (anderson_m = 0, w = 0.5) and for the
+# L = 1…Lmax block solves, against the step solved directly: the error of the induced field,
+# max|Eϕ_L − Eϕ*| / max|Eϕ*|, for the relaxed iteration (memory 0, w = 0.5) and for the
 # default solve. Both keep the solve's failure policy: a residual that grows a thousandfold restarts
 # from the best iterate with half the mixing, so the relaxed iteration no longer runs away.
 function picard_error_by_iteration(make; Lmax = 30)
@@ -215,28 +214,29 @@ function picard_error_by_iteration(make; Lmax = 30)
         quiet(() -> RAPID2D.solve_combined_momentum_Ampere_equations_with_coils!(RP; kw...))
         return copy(F.Eϕ_self)
     end
-    E_star = trial(; CONVERGED_PICARD...)
-    err(m, L) = maximum(abs, trial(; tolerance = 0.0, max_iter = L, anderson_m = m, E_floor = 0.0, I_floor = 0.0) .- E_star)
+    E_star = trial(; DIRECT_PICARD...)
+    err(method, L) = maximum(abs, trial(; method, tolerance = 0.0, max_iter = L, E_floor = 0.0, I_floor = 0.0) .- E_star)
     scale = maximum(abs, E_star)
-    return (relaxed = [err(0, L) for L in 1:Lmax] ./ scale, default = [err(RP.flags.ampere_picard.anderson_m, L) for L in 1:Lmax] ./ scale)
+    relaxed, default = AndersonOuterSolve(; memory = 0), RP.flags.ampere_picard.method
+    return (relaxed = [err(relaxed, L) for L in 1:Lmax] ./ scale, default = [err(default, L) for L in 1:Lmax] ./ scale)
 end
 
 # One figure for a case of the coupled solve: where the column and the conductors sit, the
-# plasma current step by step with the default and the converged solve, the first step's
+# plasma current step by step with the default and the direct solve, the first step's
 # induced-field error against the number of block solves (relaxed iteration and default), and
 # that error over the grid after the default solve. Passes when the default stays within 1 % of
-# the converged current at every step (`current_gap`).
+# the direct solve's current at every step (`current_gap`).
 function picard_case(make, name, title; nsteps = 20)
-    def, conv = default_vs_converged(make; nsteps)
+    def, direct = default_vs_direct(make; nsteps)
     errs = picard_error_by_iteration(make)
     t = (1:nsteps) .* def.RP.dt .* 1.0e6
-    gap = current_gap(def.I, conv.I)
-    pass = conv.stats.nunconverged == 0 && isfinite(gap) && gap <= 1.0e-2
+    gap = current_gap(def.I, direct.I)
+    pass = direct.stats.nunconverged == 0 && isfinite(gap) && gap <= 1.0e-2
 
-    blowup = maximum(abs, def.I) > 100 * maximum(abs, conv.I)
-    p1 = plot!(plot_layout(conv.RP; title); colorbar = false, titlefontsize = 9)
+    blowup = maximum(abs, def.I) > 100 * maximum(abs, direct.I)
+    p1 = plot!(plot_layout(direct.RP; title); colorbar = false, titlefontsize = 9)
     p2 = plot(
-        t, blowup ? abs.(conv.I) : conv.I; c = :black, lw = 3, label = "converged (expected)",
+        t, blowup ? abs.(direct.I) : direct.I; c = :black, lw = 3, label = "direct solve (expected)",
         xlabel = "t (µs)", ylabel = blowup ? "|I_p| (A)" : "I_p (A)", yscale = blowup ? :log10 : :identity,
         title = "plasma current", legend = :topleft,
     )
@@ -249,24 +249,24 @@ function picard_case(make, name, title; nsteps = 20)
     plot!(p3, 1:length(errs.default), max.(errs.default, 1.0e-16); c = :red3, lw = 2, m = :circle, ms = 3, label = "default solve")
     vline!(p3, [def.RP.flags.ampere_picard.max_iter]; c = :gray, ls = :dash, label = "default limit")
     hline!(p3, [1.0e-3]; c = :green, ls = :dot, label = "tolerance (1e-3)")
-    G = conv.RP.G
-    ΔE = (def.E[1] .- conv.E[1]) ./ maximum(abs, conv.E[1])
+    G = direct.RP.G
+    ΔE = (def.E[1] .- direct.E[1]) ./ maximum(abs, direct.E[1])
     lim = max(maximum(abs, filter(isfinite, ΔE)), 1.0e-12)
     p4 = heatmap(
         G.R1D, G.Z1D, permutedims(ΔE); c = :balance, clims = (-lim, lim), aspect_ratio = :equal,
         xlabel = "R (m)", ylabel = "Z (m)", title = "step 1: (Eϕ − Eϕ*) / max|Eϕ*|", titlefontsize = 10,
         framestyle = :box, xlims = extrema(G.R1D), ylims = extrema(G.Z1D),
     )
-    plot!(p4, vcat(conv.RP.wall.R, conv.RP.wall.R[1]), vcat(conv.RP.wall.Z, conv.RP.wall.Z[1]); c = :gray40, lw = 1, label = "")
+    plot!(p4, vcat(direct.RP.wall.R, direct.RP.wall.R[1]), vcat(direct.RP.wall.Z, direct.RP.wall.Z[1]); c = :gray40, lw = 1, label = "")
     fig = plot(
         p1, p2, p3, p4; layout = (1, 4), size = (1800, 540), margin = 5Plots.mm, left_margin = 10Plots.mm,
         top_margin = 10Plots.mm, bottom_margin = 12Plots.mm,
     )
     detail = @sprintf(
-        "at every step the default solve is within %.2g %% of that step's converged current (floored at 1e-3 of the peak; passes under 1 %%); first step %.3g A vs %.3g A; %.1f block solves/step, %d unconverged (converged run: %.0f/step, %d unconverged)",
-        100gap, def.I[1], conv.I[1], def.stats.niter / def.stats.nsolve, def.stats.nunconverged,
-        conv.stats.niter / conv.stats.nsolve, conv.stats.nunconverged
+        "at every step the default solve is within %.2g %% of that step's direct-solve current (floored at 1e-3 of the peak; passes under 1 %%); first step %.3g A vs %.3g A; %.1f block solves/step, %d unconverged (direct run: %.0f/step, %d unconverged)",
+        100gap, def.I[1], direct.I[1], def.stats.niter / def.stats.nsolve, def.stats.nunconverged,
+        direct.stats.niter / direct.stats.nsolve, direct.stats.nunconverged
     )
     save_with_verdict(fig, output_dir("coupled_step"), name, pass, detail)
-    return (; def, conv, errs, gap, pass)
+    return (; def, direct, errs, gap, pass)
 end

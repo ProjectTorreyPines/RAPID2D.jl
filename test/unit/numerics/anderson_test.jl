@@ -132,8 +132,8 @@ end
     end
 end
 
-@testitem "Anderson solve: an evaluation the mixer rejects is never accepted" begin
-    using RAPID2D: AndersonMixer, anderson_solve!
+@testitem "Fixed-point solve with Anderson mixing: an evaluation the mixer rejects is never accepted" begin
+    using RAPID2D: AndersonMixer, fixed_point_solve!
     # g(x) = x/2 + c. The second evaluation passes the caller's stopping test, but a part of it
     # the residual does not see is not finite: the iteration goes on to a later evaluation.
     c = [1.0, 2.0]
@@ -143,15 +143,15 @@ end
         f = c .- x ./ 2
         return f, n[] == 2 || maximum(abs, f) < 1.0e-12, n[] != 2
     end
-    iter, outcome = anderson_solve!(
+    iter, outcome = fixed_point_solve!(
         evaluate!, AndersonMixer{Float64}(2, 2), zeros(2); max_iter = 50, keep! = () -> nothing, restore! = () -> nothing,
     )
     @test outcome === :converged
     @test iter == n[] > 2
 end
 
-@testitem "Anderson solve: a solve that does not converge ends on its best evaluation" begin
-    using RAPID2D: AndersonMixer, anderson_solve!
+@testitem "Fixed-point solve with Anderson mixing: a solve that does not converge ends on its best evaluation" begin
+    using RAPID2D: AndersonMixer, fixed_point_solve!
     # g(x) = c − 100 x, relaxed (m = 0): every evaluation after the first is worse, at each β
     # the restarts try. Cut at max_iter, or with its restarts used up, the solve keeps the first
     # evaluation and restores it once.
@@ -161,7 +161,7 @@ end
         evaluate!(x) = (n[] += 1; (c .- 101 .* x, false, true))
         keep!() = push!(calls, Symbol(:keep, n[]))
         restore!() = push!(calls, :restore)
-        iter, outcome = anderson_solve!(evaluate!, AndersonMixer{Float64}(2, 0), zeros(2); max_iter, keep!, restore!)
+        iter, outcome = fixed_point_solve!(evaluate!, AndersonMixer{Float64}(2, 0), zeros(2); max_iter, keep!, restore!)
         return iter, outcome, calls
     end
     @test solve(3) == (3, :stopped, [:keep1, :restore])
@@ -170,10 +170,10 @@ end
     @test calls == [:keep1, :restore]
 end
 
-@testitem "Anderson solve: a first evaluation that is not finite fails" begin
-    using RAPID2D: AndersonMixer, anderson_solve!
+@testitem "Fixed-point solve with Anderson mixing: a first evaluation that is not finite fails" begin
+    using RAPID2D: AndersonMixer, fixed_point_solve!
     restored = Ref(false)
-    iter, outcome = anderson_solve!(
+    iter, outcome = fixed_point_solve!(
         x -> (fill(NaN, 2), false, true), AndersonMixer{Float64}(2, 2), zeros(2);
         max_iter = 5, keep! = () -> nothing, restore! = () -> (restored[] = true),
     )

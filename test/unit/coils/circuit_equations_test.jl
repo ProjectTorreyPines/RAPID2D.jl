@@ -147,6 +147,17 @@
     end
 end
 
+@testitem "Current distribution is linear in the current, however small" setup = [CoilGridHelpers] begin
+    # The coupled solve's direct method takes the source of the coils inside the grid to be
+    # linear in their currents: a current far below 1 A deposits its share too.
+    grid = make_grid(5, 5, (1.0, 5.0), (1.0, 5.0))
+    coil_system = place_coils(grid, unit_coil(2.3, 2.6, "c"))
+    unit = distribute_coil_currents_to_Jϕ(coil_system, grid; currents = [1.0])
+    for I in (1.0e-17, -3.0e-20, 0.0)
+        @test isapprox(distribute_coil_currents_to_Jϕ(coil_system, grid; currents = [I]), I .* unit; rtol = 1.0e-14)
+    end
+end
+
 @testitem "Current Distribution Functions" setup = [CoilGridHelpers] begin
     FT = Float64
 

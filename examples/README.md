@@ -65,10 +65,9 @@ flux, and that flux is computed from the simulated current.
 
 Within a step the coupled solve iterates on the boundary flux and the coil currents (see
 `coupled_step/common.jl`). These scripts compare the default solve with the same equations
-iterated to convergence by the relaxed iteration, step by step, each step against the converged
-current of that step (floored at 1e-3 of the run's peak). A case whose converged run did not
-converge fails. Each figure shows four
-things:
+solved directly (`DirectOuterSolve()`, no iteration), step by step, each step against the direct
+solve's current of that step (floored at 1e-3 of the run's peak). A case whose direct run did
+not converge fails. Each figure shows four things:
 - where the column and the conductors sit;
 - the plasma current of the two runs;
 - the first step's induced-field error against the number of iterations, for the relaxed
@@ -77,7 +76,7 @@ things:
 
 | script | setup | check |
 |---|---|---|
-| `picard_center_column.jl` | a dense, hot column in the middle of the default domain | the default stays within 1 % of the converged current at every step |
+| `picard_center_column.jl` | a dense, hot column in the middle of the default domain | the default stays within 1 % of the direct solve's current at every step |
 | `picard_kstar_inboard_limited.jl` | the KSTAR grid and first wall; a dense column 4 cm from the inboard wall | as above |
 | `picard_tight_box.jl` | a column filling a box wall one cell inside the grid | as above |
 | `picard_filament_shell.jl` | a dense column inside a shell of 24 copper filaments | as above |

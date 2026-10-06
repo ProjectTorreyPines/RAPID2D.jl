@@ -69,11 +69,17 @@
             true, true, "test", 1000.0, 50000.0
         )
 
-        # Test invalid self-inductance
+        # Test invalid self-inductance: negative, zero, or left out (it would be zero). A coil
+        # without self-inductance makes the coils' inductance matrix indefinite.
         @test_throws AssertionError Coil(
             pos, area, resistance, -1.0e-6,
             true, true, "test", 1000.0, 50000.0
         )
+        @test_throws AssertionError Coil(
+            pos, area, resistance, 0.0,
+            true, true, "test", 1000.0, 50000.0
+        )
+        @test_throws AssertionError Coil{Float64}(; location = pos, area, resistance, name = "no_L")
 
         # Test invalid R coordinate
         invalid_position = (r = -1.0, z = 0.0)

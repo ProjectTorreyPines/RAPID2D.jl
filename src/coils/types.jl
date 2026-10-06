@@ -13,7 +13,7 @@ Represents a single toroidal current loop, which can be either a powered coil or
 - `location::NamedTuple{(:r, :z), Tuple{FT, FT}}`: Position in (R, Z) coordinates
 - `area::FT`: Cross-sectional area of the conductor
 - `resistance::FT`: Electrical resistance
-- `self_inductance::FT`: Self-inductance
+- `self_inductance::FT`: Self-inductance [H], positive
 - `is_powered::Bool`: Whether this coil has a voltage source (true) or is passive conductor (false)
 - `is_controllable::Bool`: Whether this coil is available for feedback control (subset of powered coils)
 - `name::String`: Identifier name (e.g., "PF1", "CS", "wall_segment_1")
@@ -55,7 +55,7 @@ Represents a single toroidal current loop, which can be either a powered coil or
     function Coil{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage = nothing, max_current = nothing, current = zero(FT), voltage_ext = zero(FT), ψ_pla = FT(NaN)) where {FT <: AbstractFloat}
         @assert area > 0 "Coil area must be positive"
         @assert resistance >= 0 "Coil resistance must be non-negative"
-        @assert self_inductance >= 0 "Self-inductance must be non-negative"
+        @assert self_inductance > 0 "Self-inductance must be positive: a toroidal loop always has some, and without it the coils' inductance matrix is indefinite"
         @assert location.r > 0 "R coordinate must be positive (toroidal geometry)"
         @assert !is_controllable || is_powered "Controllable coils must be powered (is_powered=true)"
 
