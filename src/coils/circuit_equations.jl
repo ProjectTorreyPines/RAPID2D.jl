@@ -116,17 +116,22 @@ end
 
 
 """
-    calculate_circuit_matrices!(csys::CoilSystem{FT}, dt::FT) where FT<:AbstractFloat
+    calculate_circuit_matrices!(csys::CoilSystem{FT}) where FT<:AbstractFloat
 
 Calculate the circuit matrices A_LR_circuit and inv_A_LR_circuit for time-stepping.
 
-This function ports the MATLAB calculation:
+This function ports the MATLAB calculation (there θ = 1):
 ```matlab
 obj.A_LR_circuit = obj.LM_matrix + diag(input_dt*obj.res_R(:));
 obj.inv_A_LR_circuit = inv(obj.A_LR_circuit);
 ```
 
-The circuit equation is: (L + R*dt) * I_new = L * I_old + dt * (V_ext - other_terms)
+The circuits are the θ-scheme, θ = `csys.θimp` on the resistive term:
+
+    (M + θ Δt R) Iⁿ⁺¹ = M Iⁿ − (1 − θ) Δt R Iⁿ + Δt V(tⁿ + Δt/2) − (plasma flux term),
+
+and A_LR_circuit = M + θ Δt R. The solvers set `csys.Δt` and `csys.θimp` (from
+`flags.θ_imp.circuit`) and rebuild these whenever either changes.
 
 # Arguments
 - `csys::CoilSystem{FT}`: The coil system to update
@@ -393,9 +398,10 @@ end
 """
     advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT) where FT
 
-Advance one time step of the circuit equation without plasma contribution.
+Advance one time step of the circuit equation without plasma contribution, the θ-scheme of
+[`calculate_circuit_matrices!`](@ref) with θ = `csys.θimp`.
 
-This function implements the MATLAB circuit equation:
+This function implements the MATLAB circuit equation (there θ = 1):
 ```matlab
 circuit_rhs = obj.coils.LM_matrix*obj.coils.I + obj.dt*obj.coils.LV_ext;
 new_coil_I_k = obj.coils.inv_A_LR_circuit*circuit_rhs;
@@ -425,7 +431,7 @@ function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT = csys.time_s) whe
     currents = get_all_currents(csys)
     resistances = get_all_resistances(csys)
 
-    # Circuit equation: (L + R*dt) * I_new = L * I_old + dt * V_ext
+    # Circuit equation: (L + θ R dt) * I_new = L * I_old + dt * (V_ext - (1-θ) * R * I_old)
     circuit_rhs = csys.mutual_inductance * currents .+ csys.Δt * (voltages - (one(FT) - csys.θimp) * resistances .* currents)
 
     # Solve for new currents
@@ -442,9 +448,9 @@ end
 """
     advance_LR_circuit_step!(csys, G, Jϕ, t = csys.time_s; plasma = true)
 
-One backward-Euler step of the coil circuits with the plasma's flux:
+One θ-step of the coil circuits with the plasma's flux, θ = `csys.θimp` (`flags.θ_imp.circuit`):
 
-    (M + Δt R) Iⁿ⁺¹ = M Iⁿ + Δt V − 2π [ψ_pla(r_c; Jϕ) − ψ_pla,c],
+    (M + θ Δt R) Iⁿ⁺¹ = M Iⁿ − (1 − θ) Δt R Iⁿ + Δt V(t + Δt/2) − 2π [ψ_pla(r_c; Jϕ) − ψ_pla,c],
 
 with ψ_pla,c the flux each coil used last (`Coil.ψ_pla`), which this then sets to
 ψ_pla(r_c; Jϕ), and the coils' clock to t + Δt. Used when the coupled solve does not run.

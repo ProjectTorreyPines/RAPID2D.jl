@@ -18,7 +18,7 @@ function initialize_coil_system!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     if csys.n_total > 0
         csys.Δt = RP.dt
-        csys.θimp = FT(1.0) # Fully implicit by default
+        csys.θimp = RP.flags.θ_imp.circuit
 
         calculate_mutual_inductance_matrix!(csys)
         calculate_circuit_matrices!(csys)

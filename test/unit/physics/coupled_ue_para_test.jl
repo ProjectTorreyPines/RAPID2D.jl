@@ -54,9 +54,10 @@ end
     # coupled solve's u∥ satisfies its own row of the block exactly for the ψ it accepts;
     # update_ue_para! with that step's induced field, bϕ Eϕ_self, must give the same u∥, and the
     # same friction ledger Rue_ei, to rounding if the two hold the same terms with the same θ,
-    # with Implicit on or off. The circuits stay backward Euler, as below the gate.
-    for implicit in (true, false), θ in (0.0, 0.5, 1.0)
-        a, b = (diffusive_column(; n0 = 1.0e17, θ, implicit) for _ in 1:2)
+    # with Implicit on or off. Diffusion off is the control: both paths then drop the term. The
+    # circuits stay backward Euler, as below the gate.
+    for implicit in (true, false), θ in (0.0, 0.5, 1.0), diffusion in (false, true)
+        a, b = (diffusive_column(; n0 = 1.0e17, θ, implicit, diffusion) for _ in 1:2)
         prepare_timestep!(a)
         prepare_timestep!(b)
         u0 = copy(a.plasma.ue_para)
