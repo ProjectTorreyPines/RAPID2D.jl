@@ -1771,9 +1771,10 @@ advance as in vacuum (see `set_Eϕ_self_from_coils!`).
 function advance_coils!(RP::RAPID{FT}; plasma::Bool = true) where {FT <: AbstractFloat}
     csys = RP.coil_system
     csys.n_total == 0 && return FT[]
-    if RP.dt != csys.Δt || csys.θimp != one(FT)
+    θ_circuit = RP.flags.θ_imp.circuit
+    if RP.dt != csys.Δt || csys.θimp != θ_circuit
         csys.Δt = RP.dt
-        csys.θimp = one(FT)
+        csys.θimp = θ_circuit
         calculate_circuit_matrices!(csys)
     end
     I_before = get_all_currents(csys)
@@ -1910,7 +1911,9 @@ end
         tolerance = 1e-3, max_iter = 20, E_floor = 1e-6, I_floor = 1e-6)
 
 Advance u∥, ψ_self and the coil currents together over one step, the coefficients (n, ν, b)
-held at the step's start.
+held at the step's start. u∥'s equation is [`update_ue_para!`](@ref)'s, term by term and with
+its θ-weight `θ_imp.decay`; the induced field is the step's mean, −(ψⁿ⁺¹ − ψⁿ)/(RΔt), which
+carries no θ. The circuits take `θ_imp.circuit`, as below the gate.
 
 The block matrix of u∥ and ψ inside the domain (`CoupledBlock`, on a pattern fixed for the
 run) is factorized once. The free boundary and the circuits close it by an outer iteration on
@@ -1951,7 +1954,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         I_floor::FT = FT(1.0e-6),
     ) where {FT <: AbstractFloat}
     _refuse_exprb_decay(
-        RP.flags, "solve_combined_momentum_Ampere_equations_with_coils!", "fixes θ = 1 for the u∥ friction"
+        RP.flags, "solve_combined_momentum_Ampere_equations_with_coils!", "takes the constant θ_imp.decay for the u∥ friction"
     )
     @timeit RAPID_TIMER "solve_combined_momentum_Ampere_equations_with_coils!" begin
         # Aliases for readability
@@ -1963,14 +1966,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         dt = RP.dt
         csys = RP.coil_system
 
-
-        # TODO: diffusion term
-
         # Physical constants
         @unpack ee, me, μ0, qe = RP.config.constants
         Z_i = FT(bulk_ion_charge(RP))   # scalar: `@.` would call it per element
 
-        θimp = FT(1.0)  # Explicit(=0), Crank-Nicholson(=0.5), Backward Euler(=1)
+        θimp = flags.θ_imp.decay   # u∥'s θ-weight, as in update_ue_para!
 
         # Factor for EM drive contribution
         # derived from [E_para_EM = -qe/me * (ψ^(n+1) - ψ^(n))/(R*Δt)  = -facEM * ((ψ^(n+1) - ψ^(n)))/Δt]
@@ -1984,11 +1984,15 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
         end
 
-        # convection: (1-θ)*[-(𝐮⋅∇)u∥] explicitly here, θ*(𝐮⋅∇) inside A_u below — both from
-        # the same in-wall operator (`electron_operators.jl`)
-        A_adv = flags.Include_ud_convec_term ? ue_Te_operators(RP).A_adv : nothing
+        # convection -(𝐮⋅∇)u∥ and diffusion ∇⋅(D∇u∥), from the in-wall operators
+        # update_ue_para! takes (`electron_operators.jl`): (1-θ) of each explicitly here, θ of
+        # each inside A_u below
+        pops = flags.Include_ud_convec_term || flags.Include_ud_diffu_term ? ue_Te_operators(RP) : nothing
         if flags.Include_ud_convec_term
-            accel_para_tilde .+= (one(FT) - θimp) * (-(A_adv * pla.ue_para))
+            accel_para_tilde .+= (one(FT) - θimp) * (-(pops.A_adv * pla.ue_para))
+        end
+        if flags.Include_ud_diffu_term
+            accel_para_tilde .+= (one(FT) - θimp) * (pops.A_diffu * pla.ue_para)
         end
 
         # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
@@ -2007,19 +2011,20 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
                 + pla.ν_ei_eff * pla.ui_para
         )
 
-        # A_u = 𝟙 + Δt θ (ν + u·∇), values only, on the wall pattern
+        # A_u = 𝟙 + Δt θ (ν + u·∇ − ∇·D∇), values only, on the wall pattern
         A_u = OP.A_u
         set_identity!(A_u)
         add_diagonal!(A_u, vec(ν_sum_mom_iz_ei); scale = dt * θimp)
-        flags.Include_ud_convec_term && add_scaled!(A_u, dt * θimp, A_adv)
+        flags.Include_ud_convec_term && add_scaled!(A_u, dt * θimp, pops.A_adv)
+        flags.Include_ud_diffu_term && add_scaled!(A_u, -dt * θimp, pops.A_diffu)
 
         # Toroidal current density Jϕ @ t=(n-th step)
         Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
 
-        # Predicted ψ: the induced field extrapolated linearly, 2 E(n) − E(n−1), θ-weighted. Its
+        # Predicted ψ: the step's mean induced field extrapolated linearly, 2 E(n) − E(n−1). Its
         # boundary values start the outer iteration.
         Eϕ_self_np1_pred = @. FT(2.0) * F.Eϕ_self - FT(1.0) * F.Eϕ_self_prev
-        ψ_pred = @. F.ψ_self - dt * G.R2D * ((one(FT) - θimp) * F.Eϕ_self + θimp * Eϕ_self_np1_pred)
+        ψ_pred = @. F.ψ_self - dt * G.R2D * Eϕ_self_np1_pred
         old_ψ_self = copy(F.ψ_self)
 
         N, Nb, Nc = G.NR * G.NZ, length(G.BDY_idx), csys.n_total
@@ -2030,11 +2035,12 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # the coils have not seen yet.
         ψ_pla_coils_n = Nc > 0 ? coil_plasma_flux_memory(csys, G, Jϕ_pla_0) : FT[]
 
-        # Prepare coil_system for current calculation
-        if Nc > 0 && (RP.dt != csys.Δt || θimp != csys.θimp)
-            # If the time step or implicit factor have changed, recalculate the coil system matrices
+        # The circuit matrices for this Δt and the circuits' own θ-weight, as advance_coils! builds
+        # them below the gate
+        θ_circuit = flags.θ_imp.circuit
+        if Nc > 0 && (RP.dt != csys.Δt || θ_circuit != csys.θimp)
             csys.Δt = RP.dt
-            csys.θimp = θimp
+            csys.θimp = θ_circuit
             calculate_circuit_matrices!(csys)
         end
         # The circuits' forcing, M Iⁿ + Δt V(tⁿ + Δt/2), once for the step: the map the outer

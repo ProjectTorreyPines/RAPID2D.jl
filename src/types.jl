@@ -867,7 +867,7 @@ const REACTION_STOICHIOMETRY = (
 )
 
 """
-    ImplicitWeights{FT}(; transport, growth, decay, gas)
+    ImplicitWeights{FT}(; transport, growth, decay, gas, circuit)
 
 The `θ` of the θ-scheme `(𝐈 − θΔt𝐀)fⁿ⁺¹ = fⁿ + (1−θ)Δt𝐀fⁿ`, one per family of
 terms — `0` forward Euler, `½` Crank-Nicolson, `1` backward Euler.
@@ -881,6 +881,7 @@ of its eigenvalue**, because that is what decides which scheme is right:
 | `growth` | ionization — the `+ν_en_iz_tot` source | **`> 0`** | `½` |
 | `decay` | the parallel momentum equation, which its friction dominates | `< 0`, stiff | `1` |
 | `gas` | neutral-gas diffusion | `< 0`, stiff | `1` |
+| `circuit` | the coils' resistive term `R I`, below and above the Ampère gate | `< 0` | `1` |
 
 **Decay (`λ < 0`) wants BE.** With `g(z) = (1 + (1−θ)z)/(1 − θz)`, `z = λΔt`:
 `g → 0` as `z → −∞` for BE (L-stable) but `g → −1` for CN, so a stiff mode rings
@@ -922,7 +923,11 @@ not implemented. Measurements: `internal/docs/figs/theta_atomic_be_vs_cn.jl`.
 electron equation and a source in the ion equation; both read `growth`, so one
 ionization event cannot make an electron and an ion at different rates. That
 identity is exact in the continuous equations and it is this struct's job to
-keep it exact in the discrete ones — see `ionization_source_density`.
+keep it exact in the discrete ones — see `ionization_source_density`. Likewise u∥
+reads `decay` and the coils read `circuit` on both sides of the Ampère gate, in
+`update_ue_para!` and `advance_coils!` below it and in the coupled solve above it.
+The circuits take the applied voltage at mid-step, so `circuit = ½` makes them
+second order.
 
 Terms that are not θ-weighted at all do not appear here. `Tₑ`'s dilution and
 atomic power terms are wholly explicit inside `ePowers.tot`; were they made
@@ -937,11 +942,12 @@ mutable struct ImplicitWeights{FT <: AbstractFloat}
     growth::FT
     decay::FT
     gas::FT
+    circuit::FT
 
-    function ImplicitWeights{FT}(transport, growth, decay, gas) where {FT <: AbstractFloat}
+    function ImplicitWeights{FT}(transport, growth, decay, gas, circuit) where {FT <: AbstractFloat}
         w = (
             transport = FT(transport), growth = FT(growth),
-            decay = FT(decay), gas = FT(gas),
+            decay = FT(decay), gas = FT(gas), circuit = FT(circuit),
         )
         for (name, θ) in pairs(w)
             _check_implicit_weight(FT, name, θ)
@@ -961,9 +967,9 @@ function _check_implicit_weight(::Type{FT}, name::Symbol, θ) where {FT <: Abstr
 end
 
 function ImplicitWeights{FT}(;
-        transport = FT(0.5), growth = FT(0.5), decay = FT(1.0), gas = FT(1.0)
+        transport = FT(0.5), growth = FT(0.5), decay = FT(1.0), gas = FT(1.0), circuit = FT(1.0)
     ) where {FT <: AbstractFloat}
-    return ImplicitWeights{FT}(transport, growth, decay, gas)
+    return ImplicitWeights{FT}(transport, growth, decay, gas, circuit)
 end
 
 function Base.setproperty!(w::ImplicitWeights{FT}, name::Symbol, θ) where {FT <: AbstractFloat}
@@ -1379,8 +1385,8 @@ function validate_scheme_flags(flags::SimulationFlags)
                 "scheme.decay = ExpRB is not available with Ampere = true, " *
                     "E_para_self_EM = true and ud_evolve = true: " *
                     "above Ampere_Itor_threshold that combination solves u∥ in the " *
-                    "combined momentum–Ampère block, which fixes θ = 1 and would " *
-                    "silently revert to backward Euler mid-run. Only update_ue_para! " *
+                    "combined momentum–Ampère block, which takes the constant θ_imp.decay " *
+                    "and would silently revert to the Theta scheme mid-run. Only update_ue_para! " *
                     "carries bern(z) today. Turn one of those flags off, or use " *
                     "scheme.decay = Theta."
             )
