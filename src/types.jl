@@ -993,9 +993,9 @@ struct AndersonOuterSolve <: OuterSolvePolicy
 
     function AndersonOuterSolve(memory::Integer, relaxation_w::Real)
         memory >= 0 || throw(ArgumentError("AndersonOuterSolve: memory = $memory; it must be at least 0 (0 is the relaxed iteration)"))
-        (isfinite(relaxation_w) && relaxation_w > 0) ||
-            throw(ArgumentError("AndersonOuterSolve: relaxation_w = $relaxation_w; it must be finite and positive"))
-        return new(Int(memory), Float64(relaxation_w))
+        w = Float64(relaxation_w)   # checked as stored
+        (isfinite(w) && w > 0) || throw(ArgumentError("AndersonOuterSolve: relaxation_w = $relaxation_w; it must be finite and positive"))
+        return new(Int(memory), w)
     end
 end
 AndersonOuterSolve(; memory::Integer = 8, relaxation_w::Real = 0.5) = AndersonOuterSolve(memory, relaxation_w)

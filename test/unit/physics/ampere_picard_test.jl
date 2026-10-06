@@ -493,6 +493,8 @@ end
     @test_throws ArgumentError AndersonOuterSolve(; memory = -1)
     @test_throws ArgumentError AndersonOuterSolve(; relaxation_w = 0.0)
     @test_throws ArgumentError AndersonOuterSolve(; relaxation_w = NaN)
+    @test_throws ArgumentError AndersonOuterSolve(; relaxation_w = big"1e400")    # Inf as a Float64
+    @test_throws ArgumentError AndersonOuterSolve(; relaxation_w = big"1e-400")   # 0.0 as a Float64
     @test AndersonOuterSolve(; relaxation_w = 1.5).relaxation_w == 1.5
 end
 
