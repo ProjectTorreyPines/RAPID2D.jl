@@ -203,6 +203,12 @@ function _adios_put_recursive!(Afile::AdiosFile, data, data_name::AbstractString
                 adios_put!(Afile, new_path, field_value)
             end
         elseif isstructtype(field_type)
+            # A policy slot (a field declared with an abstract type) also records WHICH
+            # concrete type it holds: its parameters alone cannot say, and a policy without
+            # parameters would otherwise leave no trace at all.
+            if isabstracttype(fieldtype(obj_type, fname))
+                adios_put!(Afile, new_path * "/type", string(nameof(field_type)); global_value = true)
+            end
             # Recursively traverse nested structs
             _adios_put_recursive!(Afile, field_value, new_path)
         end
