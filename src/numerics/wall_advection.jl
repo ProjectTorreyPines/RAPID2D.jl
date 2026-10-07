@@ -43,38 +43,14 @@ end
     advection_operator!(A_adv, A_conv, n; n_floor, work = similar(n)) -> A_adv
 
 `advection_operator` written into `A_adv`, an operator on the same wall pattern as `A_conv`:
-off the diagonal `inv_n_i·(A_ij·n_j)`, on it `inv_n_i·((A_ii·n_i) − (A_conv·n)_i)` — the
-assembled product's own expressions. Rows with `n_i ≤ n_floor` are zero; `work` receives
-`A_conv·n`.
+[`per_particle_operator!`](@ref) on the face-flux divergence, so u∥ and Te ride the mass flux
+the continuity equation uses. Rows with `n_i ≤ n_floor` are zero; `work` receives `A_conv·n`.
 """
 function advection_operator!(
         A_adv::DiscretizedOperator{FT}, A_conv::DiscretizedOperator{FT}, n::AbstractVector{FT};
         n_floor::FT, work::AbstractVector{FT} = similar(n),
     ) where {FT <: AbstractFloat}
-    check_wall_pattern(A_adv)
-    check_wall_pattern(A_conv)
-    C, U = A_conv.matrix, A_adv.matrix
-    (C.colptr == U.colptr && C.rowval == U.rowval) ||
-        throw(ArgumentError("advection_operator!: A_adv and A_conv do not share a pattern"))
-    length(n) == size(C, 2) == length(work) ||
-        throw(DimensionMismatch("advection_operator!: n and work must have one entry per node"))
-    mul!(work, C, n)
-    nzU, nzC, rows = nonzeros(U), nonzeros(C), rowvals(C)
-    @inbounds for j in 1:size(C, 2)
-        nj = n[j]
-        for k in nzrange(C, j)
-            i = rows[k]
-            inv_ni = n[i] > n_floor ? one(FT) / n[i] : zero(FT)
-            nzU[k] = inv_ni * (nzC[k] * nj)
-        end
-    end
-    k2c = A_conv.k2csc
-    @inbounds for i in eachindex(n)
-        inv_ni = n[i] > n_floor ? one(FT) / n[i] : zero(FT)
-        kd = slot_position(k2c, i, SLOT_C)
-        nzU[kd] = inv_ni * ((nzC[kd] * n[i]) - work[i])
-    end
-    return A_adv
+    return per_particle_operator!(A_adv, A_conv, n; n_floor, work)
 end
 
 apply_advection(A_conv::DiscretizedOperator{FT}, n::AbstractVector{FT}, f::AbstractVector{FT}; n_floor::FT) where {FT <: AbstractFloat} =
