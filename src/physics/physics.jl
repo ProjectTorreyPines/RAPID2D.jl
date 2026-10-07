@@ -506,7 +506,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.diss_iz .= zero_FT
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
-        ePowers.mix_heat .= zero_FT
+        ePowers.visc_heat .= zero_FT
 
         # The electron in-wall operators, cached once per step (`operators.A_conv_e`, `A_diffu_e`,
         # `div_ue`; rows on in-wall nodes only, so the excluded band is never read) and
@@ -525,11 +525,12 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             ePowers.diffu .= ee * FT(1.5) * (ue_Te_operators(RP).A_diffu * pla.Te_eV)
         end
 
-        # The mixing's own heating, mₑ Γ_M(u∥) per electron: the kinetic energy of the parallel
-        # flow the exchange of momentum erased, from the operator Te diffuses with and the
-        # step's u∥ (`electron_operators.jl`). The reference policy heats nothing.
-        if RP.flags.Include_Te_mix_heat_term
-            mixing_heating!(ePowers.mix_heat, RP, RP.flags.mixing_policy)
+        # The viscous heating, mₑ Γ_M(u∥) per electron (−Π:∇u with Π = −mₑ nₑ D ∇u∥): the
+        # kinetic energy of the parallel flow the diffusion of momentum erased, from the
+        # operator Te diffuses with and the step's u∥ (`electron_operators.jl`). The
+        # reference policy heats nothing.
+        if RP.flags.Include_Te_visc_heat_term
+            viscous_heating!(ePowers.visc_heat, RP, RP.flags.mixing_policy)
         end
 
         # If convection term is included in temperature equation
@@ -687,7 +688,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
         # Calculate total power (sum of all components)
         @. ePowers.tot = (
-            ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu + ePowers.mix_heat
+            ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu + ePowers.visc_heat
                 - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.diss_iz
                 - ePowers.exc - ePowers.diss_exc - ePowers.equi
         )
@@ -707,7 +708,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             @views ePowers.diss_exc[on_out_wall_nids] .= zero_FT
             @views ePowers.equi[on_out_wall_nids] .= zero_FT
             @views ePowers.heat[on_out_wall_nids] .= zero_FT
-            @views ePowers.mix_heat[on_out_wall_nids] .= zero_FT
+            @views ePowers.visc_heat[on_out_wall_nids] .= zero_FT
         end
 
         return RP
@@ -725,7 +726,7 @@ Term for term against [`update_electron_heating_powers!`](@ref) — **edit them
 together**. `test/unit/physics/power_jacobian_test.jl` finite-differences the real
 assembled power, which is what catches a term present there and missing here.
 
-Not in `λ` at either depth: `P_mix_heat` depends on u∥, not on Tₑ, so its derivative is
+Not in `λ` at either depth: `P_visc_heat` depends on u∥, not on Tₑ, so its derivative is
 zero; `P_diffu` and `P_conv` are nonlocal and keep
 `θ_imp.transport`; `P_heat` is nonlocal with no implicit half at all, so it stays
 forward Euler — warned about here, since it is the dispatch's omission and not one

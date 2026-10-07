@@ -162,7 +162,7 @@ end
             callback_before_step = rp -> (held[] &= enforce_pure_mixing!(rp)),
             callback_after_step = rp -> begin
                 held[] &= all(>(1.0), rp.plasma.ne[inw]) &&
-                    rp.plasma.ePowers.tot[inw] ≈ rp.plasma.ePowers.diffu[inw] .+ rp.plasma.ePowers.mix_heat[inw]
+                    rp.plasma.ePowers.tot[inw] ≈ rp.plasma.ePowers.diffu[inw] .+ rp.plasma.ePowers.visc_heat[inw]
                 push!(clipped, count(==(rp.config.min_Te), rp.plasma.Te_eV[inw]))
             end,
         )

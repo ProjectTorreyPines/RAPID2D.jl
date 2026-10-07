@@ -64,7 +64,7 @@
         pla, inw, cfg = RP.plasma, RP.G.nodes.in_wall_nids, RP.config
         return all(>(1.0), pla.ne[inw]) &&
             all(T -> cfg.min_Te < T < cfg.max_Te, pla.Te_eV[inw]) &&
-            pla.ePowers.tot[inw] ≈ pla.ePowers.diffu[inw] .+ pla.ePowers.mix_heat[inw]
+            pla.ePowers.tot[inw] ≈ pla.ePowers.diffu[inw] .+ pla.ePowers.visc_heat[inw]
     end
 
     "Run to `t_end_s` under the contract; returns whether it held on every step."
@@ -240,9 +240,9 @@ end
     pla.ne[inw] .= 1.0e14 .* (1 .+ 0.4 .* sin.(3 .* vec(G.R2D)[inw]) .* cos.(2 .* vec(G.Z2D)[inw]))
     pla.ue_para .= 2.0e6 .* (1 .+ 0.5 .* sin.(2 .* G.R2D) .* cos.(3 .* G.Z2D))
     enforce_pure_mixing!(RP)
-    @test RP.flags.Include_Te_mix_heat_term            # on by default
+    @test RP.flags.Include_Te_visc_heat_term            # on by default
     update_electron_heating_powers!(RP)
-    P = pla.ePowers.mix_heat
+    P = pla.ePowers.visc_heat
     # the formula: the dissipation rate of the operator Te diffuses with, times the mass
     Γ = dissipation_rate!(zeros(length(pla.ne)), ue_Te_operators(RP).A_diffu, vec(pla.ue_para))
     @test vec(P)[inw] ≈ me .* Γ[inw] rtol = 1.0e-12
@@ -251,23 +251,23 @@ end
     @test pla.ePowers.tot ≈ pla.ePowers.diffu .+ P      # the only other power on this fixture
     # the snapshots carry it
     snap2D = RAPID2D.measure_snap2D(RP)
-    @test snap2D.Pe_mix_heat == P
+    @test snap2D.Pe_visc_heat == P
     snap0D = RAPID2D.measure_snap0D(RP)
     Ne = vec(pla.ne .* G.inVol2D)
-    @test snap0D.Pe_mix_heat ≈ sum(vec(P) .* Ne) / sum(Ne)
+    @test snap0D.Pe_visc_heat ≈ sum(vec(P) .* Ne) / sum(Ne)
     # uniform u: nothing to dissipate
     pla.ue_para .= 1.5e6
     update_electron_heating_powers!(RP)
-    @test all(iszero, pla.ePowers.mix_heat)
+    @test all(iszero, pla.ePowers.visc_heat)
     # off by flag: zero, and the total is diffusion alone
     pla.ue_para .= 2.0e6 .* (1 .+ 0.5 .* sin.(2 .* G.R2D) .* cos.(3 .* G.Z2D))
-    RP.flags.Include_Te_mix_heat_term = false
+    RP.flags.Include_Te_visc_heat_term = false
     update_electron_heating_powers!(RP)
-    @test all(iszero, pla.ePowers.mix_heat)
+    @test all(iszero, pla.ePowers.visc_heat)
     @test pla.ePowers.tot ≈ pla.ePowers.diffu
     # the reference policy heats nothing, as before this work
-    RP.flags.Include_Te_mix_heat_term = true
+    RP.flags.Include_Te_visc_heat_term = true
     RP.flags.mixing_policy = VelocityDiffusion()
     update_electron_heating_powers!(RP)
-    @test all(iszero, pla.ePowers.mix_heat)
+    @test all(iszero, pla.ePowers.visc_heat)
 end
