@@ -161,8 +161,8 @@ end
     # the default: M = N⁻¹(A N − diag(A n)) on the cached density operator and the CURRENT ne,
     # in its own buffer on the wall pattern; n (M f) + f (A n) = A (n f) row by row
     pops = ue_Te_operators(RP)
-    @test pops.A_diffu === op.A_mix_e
-    @test is_on_wall_pattern(op.A_mix_e)
+    @test pops.A_diffu === op.A_visc_drift_e
+    @test is_on_wall_pattern(op.A_visc_drift_e)
     @test n .* (pops.A_diffu * f) .+ f .* (A * n) ≈ A * (n .* f) rtol = 1.0e-12
     @test pops.A_diffu.matrix.nzval != A.matrix.nzval
     # rebuilt from the density of the call: a changed ne gives a changed M

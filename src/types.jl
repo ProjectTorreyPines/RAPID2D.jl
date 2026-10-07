@@ -153,6 +153,10 @@ Which operator diffuses the per-particle variables u∥ and Te. [`ParticleMixing
 default; [`VelocityDiffusion`](@ref) is the reference, the operator the code used before.
 Resolved in `ue_Te_operators` and nowhere else: every consumer of its `A_diffu` — the u∥ solve
 on both sides of the Ampère gate and the Te solve — sees the same operator.
+
+Not the turbulent E×B channel: that is one part of the diffusion tensor `D`
+(`flags.turb_ExB_mixing`, [`PlasmaTensor`](@ref)). This policy is how the whole tensor, whatever
+its channels, carries u∥ and Te — whether the particles it moves take their u∥ and Te with them.
 """
 abstract type MixingPolicy end
 
@@ -792,10 +796,12 @@ Fields include various matrices for solving different parts of the model.
     A_conv_e_upwind::Bool = true
     A_diffu_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     A_adv_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
-    # The particle-weighted mixing operator of `A_diffu_e` and the CURRENT ne, what u∥ and Te
-    # diffuse with under `ParticleMixing` (`ue_Te_operators`); `ne_work` is the `A·n` scratch
-    # of the per-particle constructions.
-    A_mix_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    # The particle-weighted operator of `A_diffu_e` and the CURRENT ne, what u∥ and Te diffuse
+    # with under `ParticleMixing` (`ue_Te_operators`). The name is its two parts: the viscosity
+    # (conduction for Te), (1/n)∇·(nD∇f), plus advection by the diffusive drift, −v_D·∇f with
+    # v_D = −D∇n/n; the first alone is `A_diffu_e`, exact only at uniform ne. `ne_work` is
+    # the `A·n` scratch of the per-particle constructions.
+    A_visc_drift_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     ne_work::Vector{FT} = zeros(FT, prod(dims))
     div_ue::Matrix{FT} = zeros(FT, dims)
 

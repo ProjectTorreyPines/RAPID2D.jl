@@ -126,7 +126,7 @@ end
     @test op.div_ue == wall_divergence(G, pla.ueR, pla.ueZ)
     # every reused operator, and the LHS buffer, sits on the one pattern: values only change
     P = build_wall_pattern(G)
-    for A in (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_mix_e, op.A_LHS)
+    for A in (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_visc_drift_e, op.A_LHS)
         @test A.matrix.colptr == P.matrix.colptr && A.matrix.rowval == P.matrix.rowval && A.k2csc == P.k2csc
     end
 end

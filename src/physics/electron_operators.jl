@@ -30,7 +30,7 @@ end
 
 # The electron operators must have been allocated on the wall pattern by `initialize!`.
 function check_electron_operators(op::Operators)
-    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_mix_e, op.A_LHS)) || throw(
+    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_visc_drift_e, op.A_LHS)) || throw(
         ArgumentError(
             "RP.operators was not built by initialize!: the electron in-wall operators " *
                 "are not allocated on the wall pattern"
@@ -78,8 +78,9 @@ The operators the u∥ and Te equations solve with, from the per-step cache on `
   [`apply_advection`](@ref) on `A_conv_e`.
 - `A_diffu`: what u∥ and Te diffuse with, by `flags.mixing_policy` ([`MixingPolicy`](@ref)):
   the particle-weighted operator of the reflective in-wall `∇·D∇` (`A_diffu_e`) and the
-  CURRENT `ne`, written into `A_mix_e` on every call (`per_particle_operator!`), or the
-  density operator itself.
+  CURRENT `ne`, written into `A_visc_drift_e` on every call (`per_particle_operator!`), or the
+  density operator itself. `A_visc_drift_e` is the viscosity (conduction for Te) plus the
+  advection by the diffusive drift, in one matrix; the solves only ever need their sum.
 - `div_u`: `∇·u` on in-wall nodes (`div_ue`).
 
 All three are buffers, overwritten by the next refresh or call.
@@ -88,17 +89,20 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op = RP.plasma, electron_operator_cache(RP)
     n = vec(pla.ne)
     advection_operator!(op.A_adv_e, op.A_conv_e, n; n_floor = FT(1.0), work = op.ne_work)
-    A_diffu = mixing_operator!(op, n, RP.flags.mixing_policy)
+    A_diffu = visc_drift_operator!(op, n, RP.flags.mixing_policy)
     return (A_adv = op.A_adv_e, A_diffu = A_diffu, div_u = op.div_ue)
 end
 
-# The default: u∥ and Te ride the particles the density diffusion moves.
-function mixing_operator!(op::Operators{FT}, n::AbstractVector{FT}, ::ParticleMixing) where {FT <: AbstractFloat}
-    return per_particle_operator!(op.A_mix_e, op.A_diffu_e, n; n_floor = FT(1.0), work = op.ne_work)
+# The default: u∥ and Te ride the particles the density diffusion moves. One matrix holds the
+# viscosity (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
+# A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
+# the second (electron-diffusive-transport.md §4).
+function visc_drift_operator!(op::Operators{FT}, n::AbstractVector{FT}, ::ParticleMixing) where {FT <: AbstractFloat}
+    return per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, n; n_floor = FT(1.0), work = op.ne_work)
 end
 
 # ── the reference: the density operator applied to the variable itself ────────────────────
-mixing_operator!(op::Operators, ::AbstractVector, ::VelocityDiffusion) = op.A_diffu_e
+visc_drift_operator!(op::Operators, ::AbstractVector, ::VelocityDiffusion) = op.A_diffu_e
 
 """
     viscous_heating!(P, RP, policy) -> P
