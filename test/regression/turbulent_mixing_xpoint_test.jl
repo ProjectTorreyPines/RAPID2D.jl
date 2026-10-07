@@ -119,3 +119,66 @@ end
     @test all(heats[33]) && all(heats[49])
     @test energy_kept[33] && energy_kept[49]
 end
+
+@testitem "a blob beside the X-point fills the lines through it: the particles stay on their band and branch, more so on a finer grid" tags = [:regression] setup = [PureMixingRun, XPointMixing] begin
+    # A Gaussian of plasma at (x, y) = (0.17, 0) m from the null, σ = 6 cm, on a 1e12
+    # background, carrying u∥ = u0. Along-line mixing spreads it over the ψ > 0, x > 0 lines it
+    # sits on; what leaves that band and branch is the 9-point stencil's leakage across the
+    # lines, a discretization error that falls with refinement. The wall is reflective, so the
+    # particles themselves are conserved. The blob must be resolved: at σ = 3 cm on the 49² grid
+    # the cross-term stencil undershoots below zero at its edge and the run blows up.
+    σ, xb, yb, n_bg, u0 = 0.06, 0.17, 0.0, 1.0e12, 2.0e6
+    ψ_b = XP.Bprime / 2 * (xb^2 - yb^2)
+    half = 2 * XP.Bprime * σ * (abs(xb) + abs(yb) + σ)
+    kept = Dict{Int, Float64}()
+    for N in (33, 49)
+        RP = pure_mixing_RP(; NR = N, NZ = N, t_end_s = 2.5e-4, D_along = 500.0, poloidal = XPointPoloidal(; XP...))
+        G, pla = RP.G, RP.plasma
+        inw = G.nodes.in_wall_nids
+        co = xpoint_coordinates(G)
+        gauss = @. exp(-((co.x - xb)^2 + (co.y - yb)^2) / (2 * σ^2))
+        n = n_bg .+ 1.0e14 .* gauss
+        pla.ne .= 0.0
+        pla.ne[inw] .= n[inw]
+        pla.ue_para .= reshape(u0 .* (1.0e14 .* gauss) ./ n, G.NR, G.NZ)
+        pla.Te_eV .= 10.0
+        V = vec(G.inVol2D)
+        inband = [abs(co.ψ[k] - ψ_b) <= half && co.x[k] > 0 && co.ψ[k] > 0 for k in eachindex(co.ψ)]
+        particles(nv) = sum(V[inw] .* nv[inw])
+        fraction(nv) = sum(V[inw] .* nv[inw] .* inband[inw]) / particles(nv)
+        n_i = vec(copy(pla.ne))
+        @test fraction(n_i) > 0.8                           # the blob starts on its lines (85 %: the ±2σ band)
+        P_i = sum(V[inw] .* n_i[inw] .* vec(pla.ue_para)[inw])
+        # The fixture's "Te never clipped" clause does not hold here, and the reason is worth
+        # pinning: at the blob's edge a background node (1e12) beside a blob node (1e14) has
+        # M_kl = A_kl n_l / n_k a hundred times larger, and the cross-term entries carry the
+        # wrong sign, so the dissipation rate cools a few such nodes to the floor for a few
+        # steps (step 9 on 33², step 14 on 49²) before the mixing of Te restores them. So:
+        # friction-free and positive on every step, the clipping bounded, and none at the end.
+        clipped = Int[]
+        held = Ref(true)
+        run_simulation!(
+            RP;
+            callback_before_step = rp -> (held[] &= enforce_pure_mixing!(rp)),
+            callback_after_step = rp -> begin
+                held[] &= all(>(1.0), rp.plasma.ne[inw]) &&
+                    rp.plasma.ePowers.tot[inw] ≈ rp.plasma.ePowers.diffu[inw] .+ rp.plasma.ePowers.mix_heat[inw]
+                push!(clipped, count(==(rp.config.min_Te), rp.plasma.Te_eV[inw]))
+            end,
+        )
+        @test held[]
+        @test maximum(clipped) <= 0.05 * length(inw)
+        @test maximum(clipped) > 0                          # the artifact is there, and recorded
+        @test clipped[end] == 0
+        n_f, u_f = vec(pla.ne), vec(pla.ue_para)
+        @test particles(n_f) ≈ particles(n_i) rtol = 1.0e-10   # reflective wall
+        # it spread along its lines: the n-weighted spread of the along-line coordinate grew
+        along(nv) = (m = sum(V[inw] .* nv[inw] .* co.χ[inw]) / particles(nv); sqrt(sum(V[inw] .* nv[inw] .* (co.χ[inw] .- m) .^ 2) / particles(nv)))
+        @test along(n_f) > 1.5 * along(n_i)                 # measured 2×: these lines leave through the wall early
+        # and mostly stayed on them; the momentum it carries is kept (particle mixing)
+        kept[N] = fraction(n_f)
+        @test kept[N] > 0.4                                 # measured 48 % (33²), 54 % (49²), 65 % (97²)
+        @test abs(sum(V[inw] .* n_f[inw] .* u_f[inw]) - P_i) <= 2.0e-2 * abs(P_i)
+    end
+    @test kept[49] > kept[33]
+end

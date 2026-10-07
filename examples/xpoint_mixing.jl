@@ -6,9 +6,11 @@
 # reference policy VelocityDiffusion diffuses u∥ and Tₑ as fields and settles to volume means
 # without heating.
 #
-# Two fields: straight vertical lines, where every R column is one line and the prediction is
-# exact per column; and an analytic X-point (XPointPoloidal), where the prediction is per flux
-# tube and the 9-point stencil also spreads along-line structure across the lines.
+# Three scenarios: straight vertical lines, where every R column is one line and the prediction
+# is exact per column; an analytic X-point (XPointPoloidal), where the prediction is per flux
+# tube and the 9-point stencil also spreads along-line structure across the lines; and a small
+# Gaussian blob of plasma beside the X-point, which should fill the field lines through it and
+# no others, up to that same numerical leakage across the lines.
 #
 # The initial state correlates n and u along each line (what separates the particle-weighted
 # mean from the volume mean) and keeps Tₑ uniform, so any change in Tₑ is the heating.
@@ -16,8 +18,9 @@
 #   julia --project=examples examples/xpoint_mixing.jl
 #
 # Outputs, in examples/output/xpoint_mixing/: the verdict figure (xpoint_mixing__PASS/FAIL.png),
-# the time traces (traces.png), 2-D frames of u∥ and Tₑ in time under both policies
-# (*_frames.png), an mp4 of the X-point runs, and each run's snapshot files in its own folder.
+# the time traces (traces.png, blob_traces.png), 2-D frames of n, u∥ and Tₑ in time under both
+# policies (*_frames.png), mp4s of the X-point and blob runs, and each run's snapshot files in
+# its own folder.
 
 include("common.jl")
 using RAPID2D: PrescribedTensor, ParticleMixing, VelocityDiffusion, XPointPoloidal, UniformPoloidal
@@ -127,11 +130,11 @@ end
 straight = Dict{String, Any}()
 for (label, policy) in POLICIES
     RP = mixing_RP("straight_" * replace(label, " " => "_"); N = 41, t_end_s = 6τ, poloidal = UniformPoloidal(), policy)
-    G = RP.G
-    shape = @. 1 + 0.5 * cos(2π * G.Z2D / L)   # n and u correlated along the line, one period
+    Gl = RP.G
+    shape = @. 1 + 0.5 * cos(2π * Gl.Z2D / L)   # n and u correlated along the line, one period
     n = 1.0e14 .* vec(shape)
     u = u0 .* shape
-    rec = run_mixing!(RP, n, u, collect(values(wall_columns(G))))
+    rec = run_mixing!(RP, n, u, collect(values(wall_columns(Gl))))
     straight[label] = (RP = RP, n0 = n, u0 = vec(u), rec = rec)
 end
 RPs = straight["particle mixing"].RP
@@ -171,11 +174,11 @@ t_x = 2.5e-4                                  # ≈ two crossing times of the lo
 xpoint = Dict{String, Any}()
 for (label, policy) in POLICIES
     RP = mixing_RP("xpoint_" * replace(label, " " => "_"); N = 49, t_end_s = t_x, poloidal = XPointPoloidal(; XP...), policy)
-    G = RP.G
-    tubes, χ = tubes_of(G)
+    Gl = RP.G
+    tubes, χ = tubes_of(Gl)
     along = @. 1 + 0.5 * cos(2π * χ / 0.09)       # two oscillations along each line
     n = 1.0e14 .* along
-    u = reshape(u0 .* along, G.NR, G.NZ)
+    u = reshape(u0 .* along, Gl.NR, Gl.NZ)
     rec = run_mixing!(RP, n, u, collect(values(tubes)))
     xpoint[label] = (RP = RP, tubes = tubes, n0 = n, u0 = vec(u), rec = rec)
 end
@@ -188,6 +191,56 @@ for (label, r) in xpoint
     @printf("X-point, %s: particle momentum %+.2f %%, energy %+.2f %%\n", label, 100 * dP[label], 100 * dE[label])
 end
 xpoint_ok = abs(dP["particle mixing"]) < 1.0e-2 && abs(dE["particle mixing"]) < 1.0e-2
+
+# ── 3. a blob beside the X-point: the particles fill the lines through it ──────────────────
+# n is a Gaussian at (x, y) = (0.17, 0) m from the null, σ = 6 cm (three cells on the 49² grid:
+# a blob the 9-point cross-term stencil cannot resolve undershoots below zero at its edge), on
+# a 1e12 background, two σ from the separatrix and from the wall; it carries u∥ = u0 (the
+# background is at rest) and a uniform Tₑ. The lines through the blob are the ψ > 0, x > 0
+# branch within |ψ − ψ_blob| of two σ; what ends up outside that band and branch is the
+# stencil's leakage across the lines. At the blob's edge the same cross terms cool a few
+# low-density nodes to the Tₑ floor for a few steps (the dissipation rate's wrong-signed
+# entries, a hundred times amplified by the density contrast) before the mixing restores them.
+const BLOB = (x = 0.17, y = 0.0, σ = 0.06, n_bg = 1.0e12)
+function blob_band(G)
+    x = vec(G.R2D) .- XP.R0
+    y = vec(G.Z2D) .- XP.Z0
+    ψ = XP.Bprime / 2 .* (x .^ 2 .- y .^ 2)
+    ψ_b = XP.Bprime / 2 * (BLOB.x^2 - BLOB.y^2)
+    # the ψ half-width the blob covers: dψ = B′ (x dx − y dy) over ±2σ in both directions
+    half = 2 * XP.Bprime * BLOB.σ * (abs(BLOB.x) + abs(BLOB.y) + BLOB.σ)
+    inband = [abs(ψ[k] - ψ_b) <= half && x[k] > 0 && ψ[k] > 0 for k in eachindex(ψ)]
+    return inband, ψ_b, half
+end
+t_b = 2.5e-4
+blob = Dict{String, Any}()
+for (label, policy) in POLICIES
+    RP = mixing_RP("blob_" * replace(label, " " => "_"); N = 49, t_end_s = t_b, poloidal = XPointPoloidal(; XP...), policy)
+    Gb = RP.G
+    inw = Gb.nodes.in_wall_nids
+    x = vec(Gb.R2D) .- XP.R0
+    y = vec(Gb.Z2D) .- XP.Z0
+    gauss = @. exp(-((x - BLOB.x)^2 + (y - BLOB.y)^2) / (2 * BLOB.σ^2))
+    n = BLOB.n_bg .+ 1.0e14 .* gauss
+    u = reshape(u0 .* (1.0e14 .* gauss) ./ n, Gb.NR, Gb.NZ)     # the blob moves, the background does not
+    inband, ψ_b, half = blob_band(Gb)
+    Vb = vec(Gb.inVol2D)
+    kept = Float64[]
+    record_band!(rp) = push!(kept, sum(Vb[inw] .* vec(rp.plasma.ne)[inw] .* inband[inw]) / sum(Vb[inw] .* vec(rp.plasma.ne)[inw]))
+    RP.plasma.ne .= 0.0
+    RP.plasma.ne[inw] .= n[inw]
+    RP.plasma.ue_para .= u
+    RP.plasma.Te_eV .= T0
+    record_band!(RP)
+    rec = MixingRecord()
+    record!(rec, RP, [inw])
+    run!(RP; callback_before_step = no_friction!, callback_after_step = rp -> (record!(rec, rp, [inw]); record_band!(rp)))
+    blob[label] = (RP = RP, rec = rec, kept = kept, inband = inband, ψ_b = ψ_b, half = half)
+    @printf(
+        "blob, %s: particles kept in the blob's band and branch %.1f %% → %.1f %%; particle momentum %+.2f %%\n",
+        label, 100 * kept[1], 100 * kept[end], 100 * (rec.P[end] / rec.P[1] - 1)
+    )
+end
 
 # ── figures ────────────────────────────────────────────────────────────────────────────
 # the summary, with the verdict: one column, the X-point maps, the tubes
@@ -252,9 +305,9 @@ savefig(plot(q1, q2, q3, q4; layout = (2, 2), size = (1100, 800), left_margin = 
 # field lines (ψ contours) drawn on the X-point frames
 function frame(RP, snap, field, title; clims, contours)
     F = getfield(snap, field)
-    scale = field === :ue_para ? 1.0e6 : 1.0
-    p = heatmap(RP.G.R1D, RP.G.Z1D, F' ./ scale; xlabel = "R (m)", ylabel = "Z (m)", title, c = :viridis, clims, aspect_ratio = :equal, colorbar = false, titlefontsize = 9)
-    contours && contour!(p, RP.G.R1D, RP.G.Z1D, ψx'; levels = 12, c = :white, lw = 0.4, colorbar_entry = false)
+    Fp = field === :ue_para ? F ./ 1.0e6 : field === :ne ? log10.(max.(F, 1.0)) : F
+    p = heatmap(RP.G.R1D, RP.G.Z1D, Fp'; xlabel = "R (m)", ylabel = "Z (m)", title, c = :viridis, clims, aspect_ratio = :equal, colorbar = false, titlefontsize = 9)
+    contours && contour!(p, RP.G.R1D, RP.G.Z1D, ψx'; levels = 16, c = :white, lw = 0.8, alpha = 0.6, colorbar_entry = false)
     plot!(p, RP.wall.R, RP.wall.Z; c = :black, lw = 1.5, label = false)
     return p
 end
@@ -279,5 +332,18 @@ frames_figure(xruns, :ue_para, collect(range(0, 1.0e3 * t_x; length = 5)); clims
 frames_figure(xruns, :Te_eV, collect(range(0, 1.0e3 * t_x; length = 5)); clims = (9.9, 11.0), contours = true, file = joinpath(out, "xpoint_Te_frames.png"), unit = "Tₑ (eV)")
 frames_figure(sruns, :ue_para, collect(range(0, 1.0e3 * 6τ; length = 5)); clims = (0.8, 3.2), contours = false, file = joinpath(out, "straight_ue_para_frames.png"), unit = "u∥ (10⁶ m/s)")
 frames_figure(sruns, :Te_eV, collect(range(0, 1.0e3 * 6τ; length = 5)); clims = (9.9, 11.0), contours = false, file = joinpath(out, "straight_Te_frames.png"), unit = "Tₑ (eV)")
+bruns = [label => blob[label].RP for (label, _) in POLICIES]
+frames_figure(bruns, :ne, collect(range(0, 1.0e3 * t_b; length = 5)); clims = (10.0, 14.0), contours = true, file = joinpath(out, "blob_ne_frames.png"), unit = "log10 n")
+frames_figure(bruns, :ue_para, collect(range(0, 1.0e3 * t_b; length = 5)); clims = (0.0, 2.0), contours = true, file = joinpath(out, "blob_ue_para_frames.png"), unit = "u∥ (10⁶ m/s)")
+# the blob: what stays on its own lines, and the momentum it carries
+b1 = plot(xlabel = "t (ms)", ylabel = "particles in the blob's band and branch (%)", legend = :topright, title = "filling its own lines; the rest is leakage across them")
+b2 = plot(xlabel = "t (ms)", ylabel = "Σ V n u∥ / initial − 1 (%)", legend = :bottomleft, title = "the blob's momentum")
+for (label, r) in blob
+    t = r.rec.t .* 1.0e3
+    plot!(b1, t, 100 .* r.kept; lw = 2, label)
+    plot!(b2, t, 100 .* (r.rec.P ./ r.rec.P[1] .- 1); lw = 2, label)
+end
+savefig(plot(b1, b2; layout = (1, 2), size = (1100, 420), left_margin = 8Plots.mm), joinpath(out, "blob_traces.png"))
 animate2D(["particle mixing" => RPx, "velocity diffusion" => xpoint["velocity diffusion"].RP], [:ue_para, :Te_eV]; file = joinpath(out, "xpoint_snaps2D.mp4"), fps = 4)
+animate2D(["particle mixing" => blob["particle mixing"].RP, "velocity diffusion" => blob["velocity diffusion"].RP], [:ne, :ue_para]; file = joinpath(out, "blob_snaps2D.mp4"), fps = 4)
 println("outputs in ", out)
