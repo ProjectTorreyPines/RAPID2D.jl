@@ -30,7 +30,7 @@ end
 
 # The electron operators must have been allocated on the wall pattern by `initialize!`.
 function check_electron_operators(op::Operators)
-    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_LHS)) || throw(
+    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_mix_e, op.A_LHS)) || throw(
         ArgumentError(
             "RP.operators was not built by initialize!: the electron in-wall operators " *
                 "are not allocated on the wall pattern"
@@ -76,13 +76,26 @@ The operators the u∥ and Te equations solve with, from the per-step cache on `
   place into `A_adv_e` (`advection_operator!`; rows with `ne ≤ 1 m⁻³` are empty) on every
   call, because `ne` moves within the step. A right-hand side only wants
   [`apply_advection`](@ref) on `A_conv_e`.
-- `A_diffu`: the reflective in-wall `∇·D∇` (`A_diffu_e`).
+- `A_diffu`: what u∥ and Te diffuse with, by `flags.mixing_policy` ([`MixingPolicy`](@ref)):
+  the particle-weighted operator of the reflective in-wall `∇·D∇` (`A_diffu_e`) and the
+  CURRENT `ne`, written into `A_mix_e` on every call (`per_particle_operator!`), or the
+  density operator itself.
 - `div_u`: `∇·u` on in-wall nodes (`div_ue`).
 
 All three are buffers, overwritten by the next refresh or call.
 """
 function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op = RP.plasma, electron_operator_cache(RP)
-    advection_operator!(op.A_adv_e, op.A_conv_e, vec(pla.ne); n_floor = FT(1.0))
-    return (A_adv = op.A_adv_e, A_diffu = op.A_diffu_e, div_u = op.div_ue)
+    n = vec(pla.ne)
+    advection_operator!(op.A_adv_e, op.A_conv_e, n; n_floor = FT(1.0), work = op.ne_work)
+    A_diffu = mixing_operator!(op, n, RP.flags.mixing_policy)
+    return (A_adv = op.A_adv_e, A_diffu = A_diffu, div_u = op.div_ue)
 end
+
+# The default: u∥ and Te ride the particles the density diffusion moves.
+function mixing_operator!(op::Operators{FT}, n::AbstractVector{FT}, ::ParticleMixing) where {FT <: AbstractFloat}
+    return per_particle_operator!(op.A_mix_e, op.A_diffu_e, n; n_floor = FT(1.0), work = op.ne_work)
+end
+
+# ── the reference: the density operator applied to the variable itself ────────────────────
+mixing_operator!(op::Operators, ::AbstractVector, ::VelocityDiffusion) = op.A_diffu_e

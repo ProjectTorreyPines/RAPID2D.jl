@@ -135,12 +135,67 @@ end
         # homogenized along the line (6τ: the first mode is down to e⁻⁶)
         @test maximum(u1[nodes]) - minimum(u1[nodes]) < 1.0e-2 * u0
         @test maximum(T1[nodes]) - minimum(T1[nodes]) < 1.0e-2 * T0
-        # the column's particle-weighted momentum is what it started with, and the line
-        # settled to it (6.1); the volume-weighted operator loses ~10 % here
-        @test_broken sum(V[nodes] .* n1[nodes] .* u1[nodes]) / sum(V[nodes] .* n1[nodes]) ≈ expected[i].u rtol = 1.0e-3
-        @test_broken all(x -> isapprox(x, expected[i].u; rtol = 1.0e-2), u1[nodes])
+        # the column's particle-weighted momentum is what it started with, up to the O(Δt)
+        # of the split between the continuity and the momentum solve, and the line settled
+        # to it (6.1); the volume-weighted operator lost ~10 % here
+        @test sum(V[nodes] .* n1[nodes] .* u1[nodes]) / sum(V[nodes] .* n1[nodes]) ≈ expected[i].u rtol = 1.0e-2
+        @test all(x -> isapprox(x, expected[i].u; rtol = 1.0e-2), u1[nodes])
         # the sheared flow's kinetic energy became heat (6.2); without the heating T stays T0
         @test_broken all(x -> isapprox(x, expected[i].T; rtol = 1.0e-3), T1[nodes])
         @test expected[i].T > T0 + 0.5
     end
+end
+
+@testitem "ue_Te_operators: A_diffu is the particle-weighted mixing operator by policy, the density operator by the reference policy" setup = [PureMixingRun] begin
+    using RAPID2D: ue_Te_operators, is_on_wall_pattern
+    @test SimulationFlags{Float64}().mixing_policy isa ParticleMixing
+    @test ParticleMixing <: MixingPolicy && VelocityDiffusion <: MixingPolicy
+    RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along = 50.0, D_across = 5.0)
+    G, pla, op = RP.G, RP.plasma, RP.operators
+    inw = G.nodes.in_wall_nids
+    pla.ne .= 0.0
+    pla.ne[inw] .= 1.0e14 .* (1 .+ 0.4 .* sin.(3 .* vec(G.R2D)[inw]) .* cos.(2 .* vec(G.Z2D)[inw]))
+    n = vec(pla.ne)
+    f = 1.0e5 .* (1 .+ 0.5 .* sin.(2 .* vec(G.R2D)) .* cos.(3 .* vec(G.Z2D)))
+    A = op.A_diffu_e
+    # the default: M = N⁻¹(A N − diag(A n)) on the cached density operator and the CURRENT ne,
+    # in its own buffer on the wall pattern; n (M f) + f (A n) = A (n f) row by row
+    pops = ue_Te_operators(RP)
+    @test pops.A_diffu === op.A_mix_e
+    @test is_on_wall_pattern(op.A_mix_e)
+    @test n .* (pops.A_diffu * f) .+ f .* (A * n) ≈ A * (n .* f) rtol = 1.0e-12
+    @test pops.A_diffu.matrix.nzval != A.matrix.nzval
+    # rebuilt from the density of the call: a changed ne gives a changed M
+    pla.ne[inw] .*= 2 .+ sin.(vec(G.Z2D)[inw])
+    n2 = vec(pla.ne)
+    @test n2 .* (ue_Te_operators(RP).A_diffu * f) .+ f .* (A * n2) ≈ A * (n2 .* f) rtol = 1.0e-12
+    # the reference: the density operator itself, as before this work
+    RP.flags.mixing_policy = VelocityDiffusion()
+    @test ue_Te_operators(RP).A_diffu === op.A_diffu_e
+end
+
+@testitem "mixing along straight field lines: the column momentum converges to first order in Δt" setup = [PureMixingRun] begin
+    # The continuity and the momentum solve are split, so Σ V n u drifts by O(Δt) over a run;
+    # halving Δt halves it. The volume-weighted operator's defect −2∫∇n·D∇u does not shrink.
+    D, L = 500.0, 0.6
+    t_end = 1.0e-4                            # ≈ 1.4 τ: the mixing is well under way
+    errs = Float64[]
+    for dt in (4.0e-6, 2.0e-6, 1.0e-6)
+        RP = pure_mixing_RP(; dt = dt, t_end_s = t_end, D_along = D)
+        G, pla = RP.G, RP.plasma
+        inw = G.nodes.in_wall_nids
+        shape = @. 1 + 0.5 * cos(2π * G.Z2D / L)
+        pla.ne .= 0.0
+        pla.ne[inw] .= 1.0e14 .* vec(shape)[inw]
+        pla.ue_para .= 2.0e6 .* shape
+        pla.Te_eV .= 10.0
+        V = vec(G.inVol2D)
+        P0 = sum(V[inw] .* vec(pla.ne)[inw] .* vec(pla.ue_para)[inw])
+        @test run_pure_mixing!(RP)
+        P1 = sum(V[inw] .* vec(pla.ne)[inw] .* vec(pla.ue_para)[inw])
+        push!(errs, abs(P1 - P0) / abs(P0))
+    end
+    @test errs[end] < 1.0e-2
+    @test 0.35 < errs[2] / errs[1] < 0.65
+    @test 0.35 < errs[3] / errs[2] < 0.65
 end

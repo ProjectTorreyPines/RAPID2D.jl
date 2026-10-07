@@ -147,6 +147,37 @@ PrescribedTensor(; D_along::Real, D_across::Real = 0) =
     PrescribedTensor{float(promote_type(typeof(D_along), typeof(D_across)))}(D_along, D_across)
 
 """
+    MixingPolicy
+
+Which operator diffuses the per-particle variables u∥ and Te. [`ParticleMixing`](@ref) is the
+default; [`VelocityDiffusion`](@ref) is the reference, the operator the code used before.
+Resolved in `ue_Te_operators` and nowhere else: every consumer of its `A_diffu` — the u∥ solve
+on both sides of the Ampère gate and the Te solve — sees the same operator.
+"""
+abstract type MixingPolicy end
+
+"""
+    ParticleMixing()
+
+u∥ and Te are carried by the electrons the density diffusion moves: the operator is
+`M = N⁻¹ (A N − diag(A n))` of the density operator `A` and the current `ne`
+(`per_particle_operator!`), so that `n (M f) + f (A n) = A (n f)` and the momentum and energy
+the particles carry are conserved. **The default.**
+internal/docs/src/reference/electron-diffusive-transport.md.
+"""
+struct ParticleMixing <: MixingPolicy end
+
+"""
+    VelocityDiffusion()
+
+The density operator `A = ∇·(D∇)` applied to u∥ and Te themselves, as before this work. It
+settles a field line to volume means rather than particle means and conserves neither the
+momentum nor the energy the particles carry (the defect is `−2∫∇n·D∇u`). Kept as the
+reference and the switch back.
+"""
+struct VelocityDiffusion <: MixingPolicy end
+
+"""
     SimulationConfig{FT<:AbstractFloat}
 
 Contains simulation configuration parameters.
@@ -756,6 +787,11 @@ Fields include various matrices for solving different parts of the model.
     A_conv_e_upwind::Bool = true
     A_diffu_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     A_adv_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    # The particle-weighted mixing operator of `A_diffu_e` and the CURRENT ne, what u∥ and Te
+    # diffuse with under `ParticleMixing` (`ue_Te_operators`); `ne_work` is the `A·n` scratch
+    # of the per-particle constructions.
+    A_mix_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    ne_work::Vector{FT} = zeros(FT, prod(dims))
     div_ue::Matrix{FT} = zeros(FT, dims)
 
     # Basic differential operators (2nd-order central difference)
@@ -1328,6 +1364,9 @@ Contains boolean flags that control various aspects of the simulation.
     # Where the bulk electron diffusion tensor comes from (see `DiffusionTensorModel`). A
     # TYPE: it dispatches in `update_diffusion_tensor!` and nowhere else.
     diffusion_tensor::DiffusionTensorModel = PlasmaTensor()
+    # Which operator diffuses u∥ and Te (see `MixingPolicy`). A TYPE: it dispatches in
+    # `ue_Te_operators` and nowhere else.
+    mixing_policy::MixingPolicy = ParticleMixing()
     E_para_self_ES::Bool = true               # Include self-electrostatic parallel E-field
     E_para_self_EM::Bool = true               # Include self-electromagnetic parallel E-field
     negative_n_correction::Bool = true             # Correct negative densities
@@ -1789,5 +1828,6 @@ RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(conf
 # Export types
 export SimulationConfig, InputPaths, ManualSetup, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, OuterSolvePolicy, AndersonOuterSolve, DirectOuterSolve, PicardSettings, RAPID, GridGeometry, NodeState
 export ManualPoloidalField, UniformPoloidal, XPointPoloidal, DiffusionTensorModel, PlasmaTensor, PrescribedTensor
+export MixingPolicy, ParticleMixing, VelocityDiffusion
 export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags,
     LinearResponseDepth, PartialLinearResponse, FullLinearResponse

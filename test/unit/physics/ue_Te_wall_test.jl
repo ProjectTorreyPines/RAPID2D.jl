@@ -74,14 +74,28 @@ end
     RP = ue_Te_one_step()
     G = RP.G
     inw = G.nodes.in_wall_nids
-    # a non-uniform Te so the operator actually does something
+    # a non-uniform Te so the operator actually does something; a uniform density first, where
+    # the particle-weighted operator is the density operator itself and Σ vol·(A Te) = 0 says
+    # the wall is reflective (the run left a gradient at the absorbing wall)
     Te = 10.0 .+ 5.0 .* sin.(3 .* G.R2D) .* cos.(2 .* G.Z2D)
+    pla = RP.plasma
+    pla.ne .= 0.0
+    pla.ne[inw] .= 1.0e14
     ops = ue_Te_operators(RP)
     LTe = ops.A_diffu * vec(Te)
     vol = vec(G.inVol2D)
     @test sum(abs.(LTe[inw]) .* vol[inw]) > 0
     @test abs(sum(LTe[inw] .* vol[inw])) < 1.0e-10 * sum(abs.(LTe[inw]) .* vol[inw])
     @test all(iszero, LTe[G.nodes.on_out_wall_nids])
+    # with a non-uniform density the operator is the particle-weighted one: what it conserves
+    # is Σ vol·n·Te, so Σ vol·n·(M Te) is what the density's own diffusion moves, −Σ vol·Te·(A n)
+    pla.ne[inw] .*= 1 .+ 0.3 .* sin.(2 .* G.R2D[inw]) .* cos.(3 .* G.Z2D[inw])
+    n = vec(pla.ne)
+    MTe = ue_Te_operators(RP).A_diffu * vec(Te)
+    An = RP.operators.A_diffu_e * n
+    carried = sum(vol[inw] .* n[inw] .* MTe[inw])
+    @test abs(carried + sum(vol[inw] .* vec(Te)[inw] .* An[inw])) < 1.0e-10 * sum(vol[inw] .* n[inw] .* abs.(MTe[inw]))
+    @test abs(carried) > 1.0e-6 * sum(vol[inw] .* n[inw] .* abs.(MTe[inw]))   # and it is not zero itself
 end
 
 @testitem "the heat-flux term reads nothing outside the wall" setup = [UeTeWallDriver] begin
@@ -112,7 +126,7 @@ end
     @test op.div_ue == wall_divergence(G, pla.ueR, pla.ueZ)
     # every reused operator, and the LHS buffer, sits on the one pattern: values only change
     P = build_wall_pattern(G)
-    for A in (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_LHS)
+    for A in (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_mix_e, op.A_LHS)
         @test A.matrix.colptr == P.matrix.colptr && A.matrix.rowval == P.matrix.rowval && A.k2csc == P.k2csc
     end
 end

@@ -519,8 +519,9 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
-            # P_diffu = 1.5*∇·D∇Te
-            ePowers.diffu .= ee * FT(1.5) * (op_e.A_diffu_e * pla.Te_eV)
+            # P_diffu = 1.5*(A_diffu Te): the operator `update_Te!` puts on its left-hand side,
+            # so the explicit and the implicit halves of the θ-scheme agree
+            ePowers.diffu .= ee * FT(1.5) * (ue_Te_operators(RP).A_diffu * pla.Te_eV)
         end
 
         # If convection term is included in temperature equation
