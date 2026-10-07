@@ -53,6 +53,7 @@ Contains volume-averaged quantities
 
     # Electron Heating Powers
     Pe_diffu::FT = zero(FT)       # Diffusion power
+    Pe_mix_heat::FT = zero(FT)    # Heating by the u∥ mixing
     Pe_conv::FT = zero(FT)        # Convection power
     Pe_drag::FT = zero(FT)        # Drag power
     Pe_iz::FT = zero(FT)          # Ionization power
@@ -217,6 +218,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Electron Heating Powers
     Pe_diffu::Matrix{FT} = zeros(FT, dims_RZ)       # Diffusion power
+    Pe_mix_heat::Matrix{FT} = zeros(FT, dims_RZ)    # Heating by the u∥ mixing
     Pe_conv::Matrix{FT} = zeros(FT, dims_RZ)        # Convection power
     Pe_drag::Matrix{FT} = zeros(FT, dims_RZ)        # Drag power
     Pe_iz::Matrix{FT} = zeros(FT, dims_RZ)          # Ionization power

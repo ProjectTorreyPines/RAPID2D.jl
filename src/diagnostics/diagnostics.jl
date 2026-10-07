@@ -122,6 +122,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     # Calculate density-weighted averages for electron power components
     if total_Ne > 0
         snap0D.Pe_diffu = sum(@. ePowers.diffu * Ne2D) / total_Ne
+        snap0D.Pe_mix_heat = sum(@. ePowers.mix_heat * Ne2D) / total_Ne
         snap0D.Pe_conv = sum(@. ePowers.conv * Ne2D) / total_Ne
         snap0D.Pe_drag = sum(@. ePowers.drag * Ne2D) / total_Ne
         snap0D.Pe_iz = sum(@. ePowers.iz * Ne2D) / total_Ne
@@ -372,6 +373,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     # Store electron power components
     snap2D.Pe_tot .= pla.ePowers.tot
     snap2D.Pe_diffu .= pla.ePowers.diffu
+    snap2D.Pe_mix_heat .= pla.ePowers.mix_heat
     snap2D.Pe_conv .= pla.ePowers.conv
     snap2D.Pe_drag .= pla.ePowers.drag
     snap2D.Pe_dilution .= pla.ePowers.dilution

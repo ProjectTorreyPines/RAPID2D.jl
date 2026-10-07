@@ -59,12 +59,12 @@
         return all(iszero, RP.fields.E_para_tot)
     end
 
-    "After each step: plasma above the floor everywhere in-wall, Te never clipped, no power but diffusion."
+    "After each step: plasma above the floor everywhere in-wall, Te never clipped, no power but the mixing's own."
     function pure_mixing_holds(RP)
         pla, inw, cfg = RP.plasma, RP.G.nodes.in_wall_nids, RP.config
         return all(>(1.0), pla.ne[inw]) &&
             all(T -> cfg.min_Te < T < cfg.max_Te, pla.Te_eV[inw]) &&
-            pla.ePowers.tot[inw] ≈ pla.ePowers.diffu[inw]
+            pla.ePowers.tot[inw] ≈ pla.ePowers.diffu[inw] .+ pla.ePowers.mix_heat[inw]
     end
 
     "Run to `t_end_s` under the contract; returns whether it held on every step."
@@ -140,8 +140,8 @@ end
         # to it (6.1); the volume-weighted operator lost ~10 % here
         @test sum(V[nodes] .* n1[nodes] .* u1[nodes]) / sum(V[nodes] .* n1[nodes]) ≈ expected[i].u rtol = 1.0e-2
         @test all(x -> isapprox(x, expected[i].u; rtol = 1.0e-2), u1[nodes])
-        # the sheared flow's kinetic energy became heat (6.2); without the heating T stays T0
-        @test_broken all(x -> isapprox(x, expected[i].T; rtol = 1.0e-3), T1[nodes])
+        # the sheared flow's kinetic energy became heat (6.2), up to the O(Δt) of the split
+        @test all(x -> isapprox(x, expected[i].T; rtol = 1.0e-2), T1[nodes])
         @test expected[i].T > T0 + 0.5
     end
 end
@@ -198,4 +198,76 @@ end
     @test errs[end] < 1.0e-2
     @test 0.35 < errs[2] / errs[1] < 0.65
     @test 0.35 < errs[3] / errs[2] < 0.65
+end
+
+@testitem "mixing along straight field lines: the column energy converges to first order in Δt" setup = [PureMixingRun] begin
+    # With the heating P_mix = mₑ Γ_M(u∥) credited to Te, Σ V n (3/2 e T + ½ mₑ u²) drifts by
+    # the split's O(Δt) over a run, so halving Δt at least halves it (measured: the energy
+    # drift falls faster, by 0.29–0.32 per halving, the momentum drift by 0.4–0.6). Without
+    # the heating the shear's kinetic energy is lost, ~3 % here, at every Δt.
+    D, L = 500.0, 0.6
+    t_end = 1.0e-4
+    me, ee = 9.1093837015e-31, 1.602176634e-19
+    errs = Float64[]
+    for dt in (4.0e-6, 2.0e-6, 1.0e-6)
+        RP = pure_mixing_RP(; dt = dt, t_end_s = t_end, D_along = D)
+        G, pla = RP.G, RP.plasma
+        inw = G.nodes.in_wall_nids
+        shape = @. 1 + 0.5 * cos(2π * G.Z2D / L)
+        pla.ne .= 0.0
+        pla.ne[inw] .= 1.0e14 .* vec(shape)[inw]
+        pla.ue_para .= 2.0e6 .* shape
+        pla.Te_eV .= 10.0
+        V = vec(G.inVol2D)
+        energy() = sum(V[inw] .* vec(pla.ne)[inw] .* (1.5 .* ee .* vec(pla.Te_eV)[inw] .+ 0.5 .* me .* vec(pla.ue_para)[inw] .^ 2))
+        E0 = energy()
+        @test run_pure_mixing!(RP)
+        push!(errs, abs(energy() - E0) / E0)
+    end
+    @test errs[end] < 1.0e-2
+    @test errs[2] / errs[1] < 0.6
+    @test errs[3] / errs[2] < 0.6
+end
+
+@testitem "mixing heating: mₑ Γ_M(u∥) per electron, in the ledger, the total and the snapshots; zero at uniform u, off by flag, none under the reference policy" setup = [PureMixingRun] begin
+    using RAPID2D: ue_Te_operators, dissipation_rate!, update_electron_heating_powers!
+    me = 9.1093837015e-31
+    RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along = 50.0, D_across = 5.0)
+    G, pla = RP.G, RP.plasma
+    inw = G.nodes.in_wall_nids
+    out = G.nodes.on_out_wall_nids
+    pla.ne .= 0.0
+    pla.ne[inw] .= 1.0e14 .* (1 .+ 0.4 .* sin.(3 .* vec(G.R2D)[inw]) .* cos.(2 .* vec(G.Z2D)[inw]))
+    pla.ue_para .= 2.0e6 .* (1 .+ 0.5 .* sin.(2 .* G.R2D) .* cos.(3 .* G.Z2D))
+    enforce_pure_mixing!(RP)
+    @test RP.flags.Include_Te_mix_heat_term            # on by default
+    update_electron_heating_powers!(RP)
+    P = pla.ePowers.mix_heat
+    # the formula: the dissipation rate of the operator Te diffuses with, times the mass
+    Γ = dissipation_rate!(zeros(length(pla.ne)), ue_Te_operators(RP).A_diffu, vec(pla.ue_para))
+    @test vec(P)[inw] ≈ me .* Γ[inw] rtol = 1.0e-12
+    @test sum(vec(P)[inw]) > 0
+    @test all(iszero, vec(P)[out])                      # masked like every other power
+    @test pla.ePowers.tot ≈ pla.ePowers.diffu .+ P      # the only other power on this fixture
+    # the snapshots carry it
+    snap2D = RAPID2D.measure_snap2D(RP)
+    @test snap2D.Pe_mix_heat == P
+    snap0D = RAPID2D.measure_snap0D(RP)
+    Ne = vec(pla.ne .* G.inVol2D)
+    @test snap0D.Pe_mix_heat ≈ sum(vec(P) .* Ne) / sum(Ne)
+    # uniform u: nothing to dissipate
+    pla.ue_para .= 1.5e6
+    update_electron_heating_powers!(RP)
+    @test all(iszero, pla.ePowers.mix_heat)
+    # off by flag: zero, and the total is diffusion alone
+    pla.ue_para .= 2.0e6 .* (1 .+ 0.5 .* sin.(2 .* G.R2D) .* cos.(3 .* G.Z2D))
+    RP.flags.Include_Te_mix_heat_term = false
+    update_electron_heating_powers!(RP)
+    @test all(iszero, pla.ePowers.mix_heat)
+    @test pla.ePowers.tot ≈ pla.ePowers.diffu
+    # the reference policy heats nothing, as before this work
+    RP.flags.Include_Te_mix_heat_term = true
+    RP.flags.mixing_policy = VelocityDiffusion()
+    update_electron_heating_powers!(RP)
+    @test all(iszero, pla.ePowers.mix_heat)
 end

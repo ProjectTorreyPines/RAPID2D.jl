@@ -309,6 +309,7 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
 - `dilution`: Redistribution when newborn electrons enter at rest; not a loss of total
   electron energy
 - `equi`: Temperature equilibration with the ions
+- `mix_heat`: the heating by the mixing of u∥, `mₑ Γ_M(u∥)` (`mixing_heating!`)
 """
 @kwdef mutable struct ElectronHeatingPowers{FT <: AbstractFloat}
     dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
@@ -326,6 +327,9 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
     diss_iz::Matrix{FT} = zeros(FT, dims)    # Power lost to dissociative ionization (35 eV/event)
     dilution::Matrix{FT} = zeros(FT, dims)   # Power from density dilution
     equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
+    # The mixing's own heating: mₑ Γ_M(u∥), the kinetic energy of the parallel flow that the
+    # exchange of momentum between parcels erased (electron-diffusive-transport.md §4)
+    mix_heat::Matrix{FT} = zeros(FT, dims)
 end
 
 # Constructor with dimensions
@@ -1416,6 +1420,7 @@ Contains boolean flags that control various aspects of the simulation.
     Include_ud_diffu_term::Bool = true        # Include diffusion term in drift velocity equation
     Include_Te_convec_term::Bool = true       # Include convection term in Te equation
     Include_Te_diffu_term::Bool = true        # Include diffusion term in Te equation
+    Include_Te_mix_heat_term::Bool = true     # Credit the heating of the u∥ mixing to Te (mₑ Γ_M(u∥))
 
     # Artificial limiters to avoid numerical instabilities.
     #

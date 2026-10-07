@@ -99,3 +99,23 @@ end
 
 # ── the reference: the density operator applied to the variable itself ────────────────────
 mixing_operator!(op::Operators, ::AbstractVector, ::VelocityDiffusion) = op.A_diffu_e
+
+"""
+    mixing_heating!(P, RP, policy) -> P
+
+The heating of the u∥ mixing, W per electron, into `P`: `mₑ Γ_M(u∥)` with `Γ_M` the
+dissipation rate ([`dissipation_rate!`](@ref)) of the operator Te diffuses with
+(`ue_Te_operators(RP).A_diffu`) and the current `ue_para`. With this credited to Te, the
+energy per electron `3/2 k_B Te + ½ mₑ u∥²` is mixed by the same operator as u∥ and Te, so
+the energy the particles carry is conserved (electron-diffusive-transport.md §4–5). The
+reference policy heats nothing, as before this work.
+"""
+function mixing_heating!(P::AbstractMatrix{FT}, RP::RAPID{FT}, ::ParticleMixing) where {FT <: AbstractFloat}
+    M = ue_Te_operators(RP).A_diffu
+    dissipation_rate!(vec(P), M, vec(RP.plasma.ue_para))
+    P .*= RP.config.constants.me
+    return P
+end
+
+# ── the reference: no exchange heating ───────────────────────────────────────────────────
+mixing_heating!(P::AbstractMatrix{FT}, ::RAPID{FT}, ::VelocityDiffusion) where {FT <: AbstractFloat} = fill!(P, zero(FT))
