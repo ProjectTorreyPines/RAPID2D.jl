@@ -19,7 +19,8 @@
 #
 # Outputs, in examples/output/xpoint_mixing/: the verdict figure (xpoint_mixing__PASS/FAIL.png),
 # the time traces (traces.png, blob_traces.png), 2-D frames of n, u∥ and Tₑ in time under both
-# policies (*_frames.png), mp4s of the X-point and blob runs, and each run's snapshot files in
+# policies (*_frames.png; the blob's n on a log and on a linear scale), mp4s of the X-point and
+# blob runs, and each run's snapshot files in
 # its own folder.
 
 include("common.jl")
@@ -303,15 +304,15 @@ savefig(plot(q1, q2, q3, q4; layout = (2, 2), size = (1100, 800), left_margin = 
 
 # 2-D frames in time: rows = policies, columns = times, one colour range per field, with the
 # field lines (ψ contours) drawn on the X-point frames
-function frame(RP, snap, field, title; clims, contours)
+function frame(RP, snap, field, title; clims, contours, linear = false)
     F = getfield(snap, field)
-    Fp = field === :ue_para ? F ./ 1.0e6 : field === :ne ? log10.(max.(F, 1.0)) : F
+    Fp = field === :ue_para ? F ./ 1.0e6 : field === :ne ? (linear ? F ./ 1.0e13 : log10.(max.(F, 1.0))) : F
     p = heatmap(RP.G.R1D, RP.G.Z1D, Fp'; xlabel = "R (m)", ylabel = "Z (m)", title, c = :viridis, clims, aspect_ratio = :equal, colorbar = false, titlefontsize = 9)
     contours && contour!(p, RP.G.R1D, RP.G.Z1D, ψx'; levels = 16, c = :white, lw = 0.8, alpha = 0.6, colorbar_entry = false)
     plot!(p, RP.wall.R, RP.wall.Z; c = :black, lw = 1.5, label = false)
     return p
 end
-function frames_figure(runs, field, times_ms; clims, contours, file, unit)
+function frames_figure(runs, field, times_ms; clims, contours, file, unit, linear = false)
     panels = []
     for (label, RP) in runs
         s2 = RP.diagnostics.snaps2D
@@ -319,7 +320,7 @@ function frames_figure(runs, field, times_ms; clims, contours, file, unit)
         for (j, t) in enumerate(times_ms)
             k = argmin(abs.(t_ms .- t))
             title = j == 1 ? @sprintf("%s\n%s  %.2f ms", label, unit, t_ms[k]) : @sprintf("%.2f ms", t_ms[k])
-            push!(panels, frame(RP, s2[k], field, title; clims, contours))
+            push!(panels, frame(RP, s2[k], field, title; clims, contours, linear))
         end
     end
     n = length(times_ms)
@@ -334,6 +335,7 @@ frames_figure(sruns, :ue_para, collect(range(0, 1.0e3 * 6τ; length = 5)); clims
 frames_figure(sruns, :Te_eV, collect(range(0, 1.0e3 * 6τ; length = 5)); clims = (9.9, 11.0), contours = false, file = joinpath(out, "straight_Te_frames.png"), unit = "Tₑ (eV)")
 bruns = [label => blob[label].RP for (label, _) in POLICIES]
 frames_figure(bruns, :ne, collect(range(0, 1.0e3 * t_b; length = 5)); clims = (10.0, 14.0), contours = true, file = joinpath(out, "blob_ne_frames.png"), unit = "log10 n")
+frames_figure(bruns, :ne, collect(range(0, 1.0e3 * t_b; length = 5)); clims = (0.0, 3.0), contours = true, file = joinpath(out, "blob_ne_linear_frames.png"), unit = "n (10¹³ m⁻³; the initial peak, 10, saturates)", linear = true)
 frames_figure(bruns, :ue_para, collect(range(0, 1.0e3 * t_b; length = 5)); clims = (0.0, 2.0), contours = true, file = joinpath(out, "blob_ue_para_frames.png"), unit = "u∥ (10⁶ m/s)")
 # the blob: what stays on its own lines, and the momentum it carries
 b1 = plot(xlabel = "t (ms)", ylabel = "particles in the blob's band and branch (%)", legend = :topright, title = "filling its own lines; the rest is leakage across them")
