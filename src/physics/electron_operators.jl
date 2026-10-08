@@ -30,7 +30,7 @@ end
 
 # The electron operators must have been allocated on the wall pattern by `initialize!`.
 function check_electron_operators(op::Operators)
-    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_LHS)) || throw(
+    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_visc_drift_e, op.A_LHS)) || throw(
         ArgumentError(
             "RP.operators was not built by initialize!: the electron in-wall operators " *
                 "are not allocated on the wall pattern"
@@ -76,13 +76,44 @@ The operators the u∥ and Te equations solve with, from the per-step cache on `
   place into `A_adv_e` (`advection_operator!`; rows with `ne ≤ 1 m⁻³` are empty) on every
   call, because `ne` moves within the step. A right-hand side only wants
   [`apply_advection`](@ref) on `A_conv_e`.
-- `A_diffu`: the reflective in-wall `∇·D∇` (`A_diffu_e`).
+- `A_diffu`: what u∥ and Te diffuse with: the particle-weighted operator of the reflective
+  in-wall `∇·D∇` (`A_diffu_e`) and the CURRENT `ne`, written into `A_visc_drift_e` on every
+  call (`per_particle_operator!`). It is the viscosity (conduction for Te) plus the advection
+  by the diffusive drift, in one matrix; the solves only ever need their sum.
 - `div_u`: `∇·u` on in-wall nodes (`div_ue`).
 
 All three are buffers, overwritten by the next refresh or call.
 """
 function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op = RP.plasma, electron_operator_cache(RP)
-    advection_operator!(op.A_adv_e, op.A_conv_e, vec(pla.ne); n_floor = FT(1.0))
-    return (A_adv = op.A_adv_e, A_diffu = op.A_diffu_e, div_u = op.div_ue)
+    advection_operator!(op.A_adv_e, op.A_conv_e, pla.ne; n_floor = FT(1.0))
+    # u∥ and Te ride the particles the density diffusion moves. One matrix holds the viscosity
+    # (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
+    # A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
+    # the second (electron-diffusive-transport.md §4).
+    per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, pla.ne; n_floor = FT(1.0))
+    return (A_adv = op.A_adv_e, A_diffu = op.A_visc_drift_e, div_u = op.div_ue)
+end
+
+
+"""
+    viscous_heating!(P, RP; M = ue_Te_operators(RP).A_diffu) -> P
+
+The viscous heating of u∥, W per electron, into `P`: `mₑ Γ_M(u∥)` with `Γ_M` the
+dissipation rate ([`dissipation_rate!`](@ref)) of the operator Te diffuses with
+(`ue_Te_operators(RP).A_diffu`) and the current `ue_para`. In the continuum it is
+`−Π:∇u / nₑ = mₑ ∇u∥·D∇u∥` with the stress `Π = −mₑ nₑ D ∇u∥`: Braginskii's viscous heating
+with the anomalous viscosity `mₑ nₑ D`. `M` also carries u∥ with the diffusive drift, which
+in the continuum moves `½u²` without loss; on the grid its share of `Γ_M` is a small
+discretization error, and the energy identity holds for the full `M`, which is what is used
+(electron-diffusive-transport.md §4). With it credited to Te, the energy per electron
+`3/2 k_B Te + ½ mₑ u∥²` is mixed by the same operator as u∥ and Te, so the energy the
+particles carry is conserved (§5). Pass `M` when the caller has just built it.
+"""
+function viscous_heating!(
+        P::AbstractMatrix{FT}, RP::RAPID{FT}; M::DiscretizedOperator{FT} = ue_Te_operators(RP).A_diffu,
+    ) where {FT <: AbstractFloat}
+    dissipation_rate!(P, M, RP.plasma.ue_para)
+    P .*= RP.config.constants.me
+    return P
 end

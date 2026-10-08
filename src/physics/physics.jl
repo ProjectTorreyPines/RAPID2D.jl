@@ -506,6 +506,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.diss_iz .= zero_FT
         ePowers.dilution .= zero_FT
         ePowers.equi .= zero_FT
+        ePowers.visc_heat .= zero_FT
 
         # The electron in-wall operators, cached once per step (`operators.A_conv_e`, `A_diffu_e`,
         # `div_ue`; rows on in-wall nodes only, so the excluded band is never read) and
@@ -517,10 +518,25 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         n_floor = one(FT)
         u∇(f) = reshape(apply_advection(op_e.A_conv_e, n_e, vec(f); n_floor), size(f))
 
+        # The viscous heating is the energy partner of u∥'s diffusion, so it follows that and has
+        # no switch of its own: on exactly when u∥ is diffused (off, no kinetic energy is erased;
+        # on without it, the erased energy would be lost).
+        visc_heat_on = RP.flags.ud_evolve && RP.flags.Include_ud_diffu_term
+        # one build of the operator Te diffuses with, for both powers below
+        A_diffu = RP.flags.Include_Te_diffu_term || visc_heat_on ? ue_Te_operators(RP).A_diffu : nothing
+
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
-            # P_diffu = 1.5*∇·D∇Te
-            ePowers.diffu .= ee * FT(1.5) * (op_e.A_diffu_e * pla.Te_eV)
+            # P_diffu = 1.5*(A_diffu Te): the operator `update_Te!` puts on its left-hand side,
+            # so the explicit and the implicit halves of the θ-scheme agree
+            ePowers.diffu .= ee * FT(1.5) * (A_diffu * pla.Te_eV)
+        end
+
+        # The viscous heating, mₑ Γ_M(u∥) per electron (−Π:∇u / nₑ with Π = −mₑ nₑ D ∇u∥): the
+        # kinetic energy of the parallel flow the diffusion of momentum erased, from the
+        # operator Te diffuses with and the step's u∥ (`electron_operators.jl`).
+        if visc_heat_on
+            viscous_heating!(ePowers.visc_heat, RP; M = A_diffu)
         end
 
         # If convection term is included in temperature equation
@@ -678,7 +694,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
         # Calculate total power (sum of all components)
         @. ePowers.tot = (
-            ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu
+            ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu + ePowers.visc_heat
                 - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.diss_iz
                 - ePowers.exc - ePowers.diss_exc - ePowers.equi
         )
@@ -698,6 +714,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             @views ePowers.diss_exc[on_out_wall_nids] .= zero_FT
             @views ePowers.equi[on_out_wall_nids] .= zero_FT
             @views ePowers.heat[on_out_wall_nids] .= zero_FT
+            @views ePowers.visc_heat[on_out_wall_nids] .= zero_FT
         end
 
         return RP
@@ -715,7 +732,8 @@ Term for term against [`update_electron_heating_powers!`](@ref) — **edit them
 together**. `test/unit/physics/power_jacobian_test.jl` finite-differences the real
 assembled power, which is what catches a term present there and missing here.
 
-Not in `λ` at either depth: `P_diffu` and `P_conv` are nonlocal and keep
+Not in `λ` at either depth: `P_visc_heat` depends on u∥, not on Tₑ, so its derivative is
+zero; `P_diffu` and `P_conv` are nonlocal and keep
 `θ_imp.transport`; `P_heat` is nonlocal with no implicit half at all, so it stays
 forward Euler — warned about here, since it is the dispatch's omission and not one
 branch's. `FullLinearResponse` additionally warns about `∂ν_ei/∂Tₑ`, the one

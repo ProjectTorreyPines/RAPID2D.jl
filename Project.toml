@@ -5,6 +5,7 @@ authors = ["Min-Gu Yoo <mgyoo86@gmail.com>"]
 
 [deps]
 ADIOS2 = "e0ce9d3b-0dbd-416f-8264-ccca772f60ec"
+AdaptiveArrayPools = "4f381ef7-9af0-4cbe-99d4-cf36d7b0f233"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 DiscretePIDs = "c1363496-6848-4723-8758-079b737f6baf"
@@ -30,6 +31,7 @@ RAPID2DPlotsExt = "Plots"
 
 [compat]
 ADIOS2 = "1.5"
+AdaptiveArrayPools = "0.3.11"
 FastInterpolations = "0.4.16"
 
 [extras]

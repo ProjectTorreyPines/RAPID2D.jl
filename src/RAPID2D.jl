@@ -22,6 +22,7 @@ using FastInterpolations
 using SimpleUnPack
 using ADIOS2
 using TimerOutputs
+using AdaptiveArrayPools: @with_pool, acquire!, zeros!
 
 LinearAlgebra.BLAS.set_num_threads(1)
 
@@ -49,6 +50,7 @@ include("physics/reactions.jl")             # event rates -> per-species sources
 include("physics/neutral_gas.jl")
 include("physics/wall.jl")   # wall face geometry; shares the Maxwellian speeds
 include("numerics/wall_pattern.jl")        # the one sparsity pattern of the in-wall operators, in-place arithmetic on it
+include("numerics/per_particle_operators.jl") # M = N⁻¹(AN − diag(An)): a density operator carried to a per-particle variable; its dissipation rate
 include("physics/transport_channels.jl")   # the (v∥, λ∥, v⊥, λ⊥) basis
 include("numerics/wall_diffusion.jl")      # wall-aware 9-point tensor operator
 include("numerics/face_flux.jl")           # ∇·(u f) on cell faces, wall-aware

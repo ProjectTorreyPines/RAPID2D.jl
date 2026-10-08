@@ -256,6 +256,7 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.operators.A_conv_e = similar(pattern)
     RP.operators.A_diffu_e = similar(pattern)
     RP.operators.A_adv_e = similar(pattern)
+    RP.operators.A_visc_drift_e = similar(pattern)
     RP.operators.A_u = similar(pattern)
 
     # Construct basic differntial operators

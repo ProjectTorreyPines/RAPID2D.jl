@@ -54,6 +54,7 @@ The analytic setup used when no field file is given (`device_Name = "manual"` an
     wall_margin_cells::Int = 3
 end
 
+
 """
     SimulationConfig{FT<:AbstractFloat}
 
@@ -186,6 +187,8 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
 - `dilution`: Redistribution when newborn electrons enter at rest; not a loss of total
   electron energy
 - `equi`: Temperature equilibration with the ions
+- `visc_heat`: the viscous heating of u∥ per electron, `mₑ Γ_M(u∥)` = −Π:∇u / nₑ with Π = −mₑ nₑ D ∇u∥; the
+  kinetic energy of the parallel flow the diffusion erases (`viscous_heating!`)
 """
 @kwdef mutable struct ElectronHeatingPowers{FT <: AbstractFloat}
     dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
@@ -203,6 +206,9 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
     diss_iz::Matrix{FT} = zeros(FT, dims)    # Power lost to dissociative ionization (35 eV/event)
     dilution::Matrix{FT} = zeros(FT, dims)   # Power from density dilution
     equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
+    # The mixing's own heating: mₑ Γ_M(u∥), the kinetic energy of the parallel flow that the
+    # exchange of momentum between parcels erased (electron-diffusive-transport.md §4)
+    visc_heat::Matrix{FT} = zeros(FT, dims)
 end
 
 # Constructor with dimensions
@@ -664,6 +670,11 @@ Fields include various matrices for solving different parts of the model.
     A_conv_e_upwind::Bool = true
     A_diffu_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     A_adv_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    # The particle-weighted operator of `A_diffu_e` and the CURRENT ne, what u∥ and Te diffuse
+    # with (`ue_Te_operators`). The name is its two parts: the viscosity
+    # (conduction for Te), (1/n)∇·(nD∇f), plus advection by the diffusive drift, −v_D·∇f with
+    # v_D = −D∇n/n. `A_diffu_e`, ∇·(D∇f), equals the sum only at uniform ne.
+    A_visc_drift_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     div_ue::Matrix{FT} = zeros(FT, dims)
 
     # Basic differential operators (2nd-order central difference)
