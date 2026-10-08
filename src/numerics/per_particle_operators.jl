@@ -49,16 +49,16 @@ function per_particle_operator!(
         @inbounds for k in 1:Ng
             inv_n[k] = n[k] > n_floor ? one(FT) / n[k] : zero(FT)
         end
-        # the off-diagonals A_kl n_l / n_k, and A n accumulated in the same column sweep (the
-        # order `mul!` adds in); the diagonal slots written here are overwritten below
+        # the off-diagonals A_kl n_l / n_k, and A n accumulated in the same column sweep, with
+        # `muladd` in the order `mul!` adds, so the result is `mul!`'s bit for bit; the diagonal
+        # slots written here are overwritten below
         An = zeros!(pool, FT, Ng)
         @inbounds for l in 1:Ng
             nl = n[l]
             for s in nzrange(C, l)
                 k = rows[s]
-                a = nzC[s] * nl
-                An[k] += a
-                nzU[s] = inv_n[k] * a
+                An[k] = muladd(nzC[s], nl, An[k])
+                nzU[s] = inv_n[k] * (nzC[s] * nl)
             end
         end
         # the diagonal (A_kk n_k − (A n)_k) / n_k
@@ -79,7 +79,8 @@ end
 energy per particle into heat, so that `Σ_k V_k n_k Γ_k` is what `Σ V ½ n u²` loses under
 `dn/dt = A n`. The edge sum is exactly zero at uniform `u` and non-negative when the
 off-diagonals of `M` are; the 9-point cross terms can make it negative on a node. `Γ` and `u`
-are node vectors or `(NR, NZ)` grids, in node order. Nothing is allocated.
+are node vectors or `(NR, NZ)` grids, in node order, and must not overlap: each row reads
+its neighbours' `u`. Nothing is allocated.
 """
 function dissipation_rate!(
         Γ::AbstractVecOrMat{FT}, M::DiscretizedOperator{FT}, u::AbstractVecOrMat{FT},
@@ -89,6 +90,7 @@ function dissipation_rate!(
     Ng = size(M.matrix, 1)
     length(u) == Ng == length(Γ) ||
         throw(DimensionMismatch("dissipation_rate!: u and Γ must have one entry per node"))
+    Base.mightalias(Γ, u) && throw(ArgumentError("dissipation_rate!: Γ must not overlap u"))
     nz, k2c = nonzeros(M.matrix), M.k2csc
     half = FT(0.5)
     @inbounds for r in 1:Ng

@@ -518,18 +518,24 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         n_floor = one(FT)
         u∇(f) = reshape(apply_advection(op_e.A_conv_e, n_e, vec(f); n_floor), size(f))
 
+        # The viscous heating is credited only where u∥ is actually diffused: without that, no
+        # kinetic energy of the parallel flow is erased.
+        visc_heat_on = RP.flags.Include_Te_visc_heat_term && RP.flags.ud_evolve && RP.flags.Include_ud_diffu_term
+        # one build of the operator Te diffuses with, for both powers below
+        A_diffu = RP.flags.Include_Te_diffu_term || visc_heat_on ? ue_Te_operators(RP).A_diffu : nothing
+
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
             # P_diffu = 1.5*(A_diffu Te): the operator `update_Te!` puts on its left-hand side,
             # so the explicit and the implicit halves of the θ-scheme agree
-            ePowers.diffu .= ee * FT(1.5) * (ue_Te_operators(RP).A_diffu * pla.Te_eV)
+            ePowers.diffu .= ee * FT(1.5) * (A_diffu * pla.Te_eV)
         end
 
         # The viscous heating, mₑ Γ_M(u∥) per electron (−Π:∇u with Π = −mₑ nₑ D ∇u∥): the
         # kinetic energy of the parallel flow the diffusion of momentum erased, from the
         # operator Te diffuses with and the step's u∥ (`electron_operators.jl`).
-        if RP.flags.Include_Te_visc_heat_term
-            viscous_heating!(ePowers.visc_heat, RP)
+        if visc_heat_on
+            viscous_heating!(ePowers.visc_heat, RP; M = A_diffu)
         end
 
         # If convection term is included in temperature equation

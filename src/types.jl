@@ -673,7 +673,7 @@ Fields include various matrices for solving different parts of the model.
     # The particle-weighted operator of `A_diffu_e` and the CURRENT ne, what u∥ and Te diffuse
     # with (`ue_Te_operators`). The name is its two parts: the viscosity
     # (conduction for Te), (1/n)∇·(nD∇f), plus advection by the diffusive drift, −v_D·∇f with
-    # v_D = −D∇n/n; the first alone is `A_diffu_e`, exact only at uniform ne.
+    # v_D = −D∇n/n. `A_diffu_e`, ∇·(D∇f), equals the sum only at uniform ne.
     A_visc_drift_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     div_ue::Matrix{FT} = zeros(FT, dims)
 

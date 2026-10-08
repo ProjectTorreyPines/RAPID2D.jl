@@ -40,24 +40,25 @@
     end
 
     """
-    In-wall nodes grouped into tubes: a ψ interval on one branch (sign of x for ψ > 0, of y
-    for ψ < 0), over the inner half of the ψ range. Lines within `ψ_cut` of the null are left
+    In-wall nodes grouped into tubes: a ψ interval on one of the four families of lines (the
+    sign of ψ, then the sign of x for ψ > 0 or of y for ψ < 0), over the inner half of the ψ
+    range. Lines within `ψ_cut` of the null are left
     out, since the tensor vanishes there; the outer half is left out because its short,
     strongly curved corner lines leak across ψ several times more than the long ones
-    (measured 2–4 % of u0 against 0.1–0.9 %). Returns `Dict((bin, branch) => nodes)`.
+    (measured 2–4 % of u0 against 0.1–0.9 %). Returns `Dict((bin, sign(ψ), branch) => nodes)`.
     """
     function flux_tubes(G, co; ψ_cut, n_bins = 3)
         inw = G.nodes.in_wall_nids
         ψ_max = XP.Bprime / 2 * 0.3^2         # the box half-width: the same tubes on every grid
         edges = range(ψ_cut, ψ_max / 2; length = n_bins + 1)
-        tubes = Dict{Tuple{Int, Int}, Vector{Int}}()
+        tubes = Dict{Tuple{Int, Int, Int}, Vector{Int}}()
         for nid in inw
             a = abs(co.ψ[nid])
             edges[1] <= a < edges[end] || continue
             bin = searchsortedlast(edges, a)
             branch = co.ψ[nid] > 0 ? sign(co.x[nid]) : sign(co.y[nid])
             branch == 0 && continue
-            push!(get!(tubes, (bin, Int(branch)), Int[]), nid)
+            push!(get!(tubes, (bin, Int(sign(co.ψ[nid])), Int(branch)), Int[]), nid)
         end
         return tubes
     end
@@ -74,19 +75,17 @@
 end
 
 @testitem "mixing along X-point field lines: the particle momentum is kept, tube deviations fall with the grid, the shear heats" tags = [:regression] setup = [PureMixingRun, XPointMixing] begin
-    # Measured (33² and 49², 250 steps). The volume-weighted operator loses 9.2 % of the
-    # global particle momentum on both grids; the particle-weighted one keeps it to 0.25 %,
-    # the O(Δt) of the split between the continuity and the momentum solve, on both grids.
-    # Tube by tube, the particle-weighted operator's deviation from (6.1) falls with
-    # refinement (3 → 0.3 %, 10 → 8 %, 5 → 1.5 % of u0): what remains is the 9-point stencil's
-    # cross-line diffusion of along-line structure, ∝ D (k h)². The volume-weighted one's
-    # deviation grows with refinement (8 → 12 %, 1 → 4 %, 7 → 10 %), since it converges to the
-    # wrong limit. (6.2) predicts 0.65–0.9 eV of heating in every tube.
+    # Measured (33² and 49², 250 steps): the particle-weighted operator keeps the global
+    # particle momentum to 0.25 %, the O(Δt) of the split between the continuity and the
+    # momentum solve; the volume-weighted operator before this work lost 9.2 %. Tube by tube
+    # (three ψ bins on each of the four families of lines), the deviation from (6.1) falls with
+    # refinement: what remains is the 9-point stencil's cross-line diffusion of along-line
+    # structure, ∝ D (k h)². (6.2) predicts 0.65–0.9 eV of heating in every tube.
     D = 500.0
     t_end = 2.5e-4                            # ≈ 2 crossing times of the longest inner line
     u0, T0 = 2.0e6, 10.0
     me, ee = 9.1093837015e-31, 1.602176634e-19
-    deviation = Dict{Int, Dict{Tuple{Int, Int}, Float64}}()
+    deviation = Dict{Int, Dict{Tuple{Int, Int, Int}, Float64}}()
     heats = Dict{Int, Vector{Bool}}()
     energy_kept = Dict{Int, Bool}()
     for N in (33, 49)
@@ -108,7 +107,7 @@ end
         n_i, u_i, T_i = vec(copy(pla.ne)), vec(copy(pla.ue_para)), vec(copy(pla.Te_eV))
         ψ_cut = XP.Bprime / 2 * (3 / 32)^2    # three cells of the coarse grid from the null
         tubes = flux_tubes(G, co; ψ_cut)
-        @test length(tubes) == 6
+        @test length(tubes) == 12                     # three ψ bins on each of the four families
         expected = Dict(key => mixed_state(nodes, V, n_i, u_i, T_i) for (key, nodes) in tubes)
         energy(n, u, T) = sum(V[inw] .* n[inw] .* (1.5 .* ee .* T[inw] .+ 0.5 .* me .* u[inw] .^ 2))
         P_i, E_i = sum(V[inw] .* n_i[inw] .* u_i[inw]), energy(n_i, u_i, T_i)

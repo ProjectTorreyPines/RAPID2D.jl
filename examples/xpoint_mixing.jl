@@ -183,13 +183,13 @@ function tubes_of(G; n_bins = 3)
     ψ = XP.Bprime / 2 .* (x .^ 2 .- y .^ 2)
     ψ_cut = XP.Bprime / 2 * (3 * G.dR)^2
     edges = range(ψ_cut, XP.Bprime / 2 * 0.3^2 / 2; length = n_bins + 1)
-    tubes = Dict{Tuple{Int, Int}, Vector{Int}}()
+    tubes = Dict{Tuple{Int, Int, Int}, Vector{Int}}()
     for nid in G.nodes.in_wall_nids
         a = abs(ψ[nid])
         edges[1] <= a < edges[end] || continue
         branch = ψ[nid] > 0 ? sign(x[nid]) : sign(y[nid])
         branch == 0 && continue
-        push!(get!(tubes, (searchsortedlast(edges, a), Int(branch)), Int[]), nid)
+        push!(get!(tubes, (searchsortedlast(edges, a), Int(sign(ψ[nid])), Int(branch)), Int[]), nid)
     end
     return tubes, x .* y
 end
@@ -273,7 +273,7 @@ end
 m1 = umap(RPx, reshape(u_x0, Gx.NR, Gx.NZ), "u∥ initial")
 m2 = umap(RPx, RPx.plasma.ue_para, @sprintf("u∥ at t = %.2f ms", 1.0e3 * t_x))
 keys_sorted = sort(collect(keys(tubes)))
-p4 = plot(xlabel = "flux tube (ψ bin, branch)", ylabel = "u∥ (10⁶ m/s)", legend = :topright, xticks = (1:length(keys_sorted), string.(keys_sorted)), xrotation = 30)
+p4 = plot(xlabel = "flux tube (ψ bin, sign ψ, branch)", ylabel = "u∥ (10⁶ m/s)", legend = :topright, xticks = (1:length(keys_sorted), string.(keys_sorted)), xrotation = 30)
 vals = [wmean(tubes[k], Vx, vec(RPx.plasma.ne), vec(RPx.plasma.ue_para)) for k in keys_sorted] ./ 1.0e6
 scatter!(p4, 1:length(keys_sorted), vals; ms = 6, label = "final tube mean")
 preds = [mixed_state(tubes[k], Vx, n_x0, u_x0).u for k in keys_sorted] ./ 1.0e6

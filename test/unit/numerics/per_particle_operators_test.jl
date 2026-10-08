@@ -228,6 +228,7 @@ end
 
 @testitem "dissipation rate: the kinetic energy the exchange removes, node by node and in total" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!, dissipation_rate!
+    negative_seen = Ref(false)
     for c in mixing_cases()
         (; G, A, V, n) = c
         M = per_particle_operator!(similar(A), A, n; n_floor = 1.0)
@@ -246,9 +247,14 @@ end
         @test lhs ≈ rhs rtol = 1.0e-12
         # uniform u: nothing to dissipate, exactly
         @test all(iszero, dissipation_rate!(similar(u), M, fill(3.0e5, length(u))))
-        # with cross terms the discrete rate can go negative locally: counted, never clipped
-        @test isfinite(count(<(0), Γ) / length(G.nodes.in_wall_nids))
+        @test all(isfinite, Γ)
+        negative_seen[] |= any(<(0), Γ)
+        # each row reads its neighbours' u, so the output must not overlap it
+        @test_throws ArgumentError dissipation_rate!(u, M, u)
     end
+    # with cross terms the discrete rate goes negative on some nodes, and the edge-sum identity
+    # above holds there too: it is not clipped
+    @test negative_seen[]
     # no cross term: the off-diagonals of M are ≥ 0, so Γ ≥ 0 on every node
     RP = walled_RP(:box)
     G = RP.G
@@ -262,8 +268,31 @@ end
     @test sum(cell_volume(G) .* n .* Γ) > 0
 end
 
-@testitem "advection operator: the per-particle construction on the face-flux divergence, bit for bit" setup = [PerParticleFixtures] begin
-    using RAPID2D: per_particle_operator!, advection_operator!, build_face_flux_divergence!, build_wall_pattern
+@testitem "advection operator: the per-particle construction on the face-flux divergence, bit for bit with its former assembly" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!, advection_operator!, build_face_flux_divergence!, build_wall_pattern,
+        slot_position, SLOT_C
+    using RAPID2D.SparseArrays: nonzeros, rowvals, nzrange
+    using RAPID2D.LinearAlgebra: mul!
+    # `advection_operator!` as it was assembled before it delegated: A n by `mul!`, then the
+    # reciprocal of the row's density on every slot
+    function former_assembly(C, n; n_floor)
+        A = C.matrix
+        nzU = zeros(length(nonzeros(A)))
+        An = similar(n)
+        mul!(An, A, n)
+        nzA, rows = nonzeros(A), rowvals(A)
+        for j in 1:size(A, 2), s in nzrange(A, j)
+            i = rows[s]
+            r = n[i] > n_floor ? 1 / n[i] : 0.0
+            nzU[s] = r * (nzA[s] * n[j])
+        end
+        for i in eachindex(n)
+            r = n[i] > n_floor ? 1 / n[i] : 0.0
+            s = slot_position(C.k2csc, i, SLOT_C)
+            nzU[s] = r * ((nzA[s] * n[i]) - An[i])
+        end
+        return nzU
+    end
     for RP in (walled_RP(:box), walled_RP(:lshape))
         G = RP.G
         uR = @. 1.0e5 * sin(5 * G.Z2D) * (1 + 0.2 * G.R2D)
@@ -272,7 +301,6 @@ end
         build_face_flux_divergence!(C, G, uR, uZ)
         n = plasma_density(G; floor_nodes = 4)
         U = advection_operator!(similar(C), C, n; n_floor = 1.0)
-        M = per_particle_operator!(similar(C), C, n; n_floor = 1.0)
-        @test U.matrix.nzval == M.matrix.nzval
+        @test U.matrix.nzval == former_assembly(C, n; n_floor = 1.0)
     end
 end

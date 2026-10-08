@@ -286,6 +286,16 @@ end
     update_electron_heating_powers!(RP)
     @test all(iszero, pla.ePowers.visc_heat)
     @test pla.ePowers.tot ≈ pla.ePowers.diffu
+    # and none where u∥ is not diffused, since then no kinetic energy is erased
+    RP.flags.Include_Te_visc_heat_term = true
+    for (flag, off) in ((:Include_ud_diffu_term, false), (:ud_evolve, false))
+        setfield!(RP.flags, flag, off)
+        update_electron_heating_powers!(RP)
+        @test all(iszero, pla.ePowers.visc_heat)
+        setfield!(RP.flags, flag, true)
+    end
+    update_electron_heating_powers!(RP)
+    @test sum(vec(pla.ePowers.visc_heat)[inw]) > 0
 end
 
 @testitem "the prescribed tensor: aligned with the field line, no Bohm or D∥ in it, put back before every step" setup = [PureMixingRun] begin

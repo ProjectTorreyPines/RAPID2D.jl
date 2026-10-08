@@ -97,20 +97,22 @@ end
 
 
 """
-    viscous_heating!(P, RP) -> P
+    viscous_heating!(P, RP; M = ue_Te_operators(RP).A_diffu) -> P
 
 The viscous heating of u∥, W per electron, into `P`: `mₑ Γ_M(u∥)` with `Γ_M` the
 dissipation rate ([`dissipation_rate!`](@ref)) of the operator Te diffuses with
 (`ue_Te_operators(RP).A_diffu`) and the current `ue_para`. In the continuum it is
 `−Π:∇u / nₑ = mₑ ∇u∥·D∇u∥` with the stress `Π = −mₑ nₑ D ∇u∥`: Braginskii's viscous heating
-with the anomalous viscosity `mₑ nₑ D`. The operator `M` also carries u∥ with the diffusive
-drift, but that advection moves `½u²` without loss, so the heating is the viscous part only
+with the anomalous viscosity `mₑ nₑ D`. `M` also carries u∥ with the diffusive drift, which
+in the continuum moves `½u²` without loss; on the grid its share of `Γ_M` is a small
+discretization error, and the energy identity holds for the full `M`, which is what is used
 (electron-diffusive-transport.md §4). With it credited to Te, the energy per electron
 `3/2 k_B Te + ½ mₑ u∥²` is mixed by the same operator as u∥ and Te, so the energy the
-particles carry is conserved (§5).
+particles carry is conserved (§5). Pass `M` when the caller has just built it.
 """
-function viscous_heating!(P::AbstractMatrix{FT}, RP::RAPID{FT}) where {FT <: AbstractFloat}
-    M = ue_Te_operators(RP).A_diffu
+function viscous_heating!(
+        P::AbstractMatrix{FT}, RP::RAPID{FT}; M::DiscretizedOperator{FT} = ue_Te_operators(RP).A_diffu,
+    ) where {FT <: AbstractFloat}
     dissipation_rate!(P, M, RP.plasma.ue_para)
     P .*= RP.config.constants.me
     return P
