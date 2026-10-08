@@ -21,12 +21,13 @@ off the diagonal `A_kl n_l / n_k`, on it `(A_kk n_k − (A n)_k) / n_k`. It depe
 off-diagonals of `A` alone, so a Robin debit on `A`'s diagonal cancels: the wall drains
 particles, not the variable they carry. Rows with `n_k ≤ n_floor` are empty (the variable is
 frozen where there is no plasma; [`floor_defect`](@ref) measures what that costs). Every slot
-of the pattern is rewritten and a stored zero of `A` stays one. The scratch `A n` comes from
-the task's array pool, so nothing is allocated after the first call. `M` must not alias `A`,
-and `n` must be finite.
+of the pattern is rewritten and a stored zero of `A` stays one. `n` is the node vector or the
+`(NR, NZ)` grid itself, read in node order, and must be finite; `M` must not alias `A`. The
+scratch (`1/n` and `A n`) comes from the task's array pool, so nothing is allocated after the
+first call.
 """
 function per_particle_operator!(
-        M::DiscretizedOperator{FT}, A::DiscretizedOperator{FT}, n::AbstractVector{FT};
+        M::DiscretizedOperator{FT}, A::DiscretizedOperator{FT}, n::AbstractVecOrMat{FT};
         n_floor::FT,
     ) where {FT <: AbstractFloat}
     check_wall_pattern(M)
@@ -39,24 +40,31 @@ function per_particle_operator!(
     length(n) == size(C, 2) ||
         throw(DimensionMismatch("per_particle_operator!: n must have one entry per node"))
     all(isfinite, n) || throw(ArgumentError("per_particle_operator!: n must be finite"))
-    nzU, nzC, rows = nonzeros(U), nonzeros(C), rowvals(C)
-    @inbounds for j in 1:size(C, 2)
-        nj = n[j]
-        for k in nzrange(C, j)
-            i = rows[k]
-            inv_ni = n[i] > n_floor ? one(FT) / n[i] : zero(FT)
-            nzU[k] = inv_ni * (nzC[k] * nj)
-        end
-    end
-    k2c = A.k2csc
-    # the checks above throw; the pool block below does not, since it has no `finally`
+    nzU, nzC, rows, k2c = nonzeros(U), nonzeros(C), rowvals(C), A.k2csc
+    Ng = length(n)
+    # the checks above throw; the pool block below must not, since it has no `finally`
     @with_pool pool begin
-        An = acquire!(pool, FT, length(n))
-        mul!(An, C, n)
-        @inbounds for i in eachindex(n)
-            inv_ni = n[i] > n_floor ? one(FT) / n[i] : zero(FT)
-            kd = slot_position(k2c, i, SLOT_C)
-            nzU[kd] = inv_ni * ((nzC[kd] * n[i]) - An[i])
+        # 1/n_k once per row, zero on the floor rows
+        inv_n = acquire!(pool, FT, Ng)
+        @inbounds for k in 1:Ng
+            inv_n[k] = n[k] > n_floor ? one(FT) / n[k] : zero(FT)
+        end
+        # the off-diagonals A_kl n_l / n_k, and A n accumulated in the same column sweep (the
+        # order `mul!` adds in); the diagonal slots written here are overwritten below
+        An = zeros!(pool, FT, Ng)
+        @inbounds for l in 1:Ng
+            nl = n[l]
+            for s in nzrange(C, l)
+                k = rows[s]
+                a = nzC[s] * nl
+                An[k] += a
+                nzU[s] = inv_n[k] * a
+            end
+        end
+        # the diagonal (A_kk n_k − (A n)_k) / n_k
+        @inbounds for k in 1:Ng
+            s = slot_position(k2c, k, SLOT_C)
+            nzU[s] = inv_n[k] * ((nzC[s] * n[k]) - An[k])
         end
         nothing
     end
@@ -70,11 +78,11 @@ end
 `½ (M u²)_k − u_k (M u)_k`: the rate at which the exchange `du/dt = M u` turns the kinetic
 energy per particle into heat, so that `Σ_k V_k n_k Γ_k` is what `Σ V ½ n u²` loses under
 `dn/dt = A n`. The edge sum is exactly zero at uniform `u` and non-negative when the
-off-diagonals of `M` are; the 9-point cross terms can make it negative on a node. Nothing is
-allocated.
+off-diagonals of `M` are; the 9-point cross terms can make it negative on a node. `Γ` and `u`
+are node vectors or `(NR, NZ)` grids, in node order. Nothing is allocated.
 """
 function dissipation_rate!(
-        Γ::AbstractVector{FT}, M::DiscretizedOperator{FT}, u::AbstractVector{FT},
+        Γ::AbstractVecOrMat{FT}, M::DiscretizedOperator{FT}, u::AbstractVecOrMat{FT},
     ) where {FT <: AbstractFloat}
     check_wall_pattern(M)
     NR = M.dims_rz[1]

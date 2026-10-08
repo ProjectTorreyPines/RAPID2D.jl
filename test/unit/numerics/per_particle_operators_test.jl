@@ -207,6 +207,13 @@ end
     alloc(M, A, n) = @allocated per_particle_operator!(M, A, n; n_floor = 1.0)
     alloc(M, A, n)
     @test alloc(M, A, n) == 0
+    # the (NR, NZ) grid itself, read in node order, gives the same operator, also without allocating
+    Mg = per_particle_operator!(similar(A), A, reshape(n, G.NR, G.NZ); n_floor = 1.0)
+    @test Mg.matrix.nzval == M.matrix.nzval
+    ng = reshape(copy(n), G.NR, G.NZ)
+    alloc_grid(M, A, ng) = @allocated per_particle_operator!(M, A, ng; n_floor = 1.0)
+    alloc_grid(M, A, ng)
+    @test alloc_grid(M, A, ng) == 0
     # rewritten, not accumulated
     M2 = per_particle_operator!(similar(A), A, 2 .* n; n_floor = 1.0)
     per_particle_operator!(M, A, 2 .* n; n_floor = 1.0)

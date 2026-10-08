@@ -47,7 +47,7 @@ end
 the continuity equation uses. Rows with `n_i ≤ n_floor` are zero.
 """
 function advection_operator!(
-        A_adv::DiscretizedOperator{FT}, A_conv::DiscretizedOperator{FT}, n::AbstractVector{FT};
+        A_adv::DiscretizedOperator{FT}, A_conv::DiscretizedOperator{FT}, n::AbstractVecOrMat{FT};
         n_floor::FT,
     ) where {FT <: AbstractFloat}
     return per_particle_operator!(A_adv, A_conv, n; n_floor)
