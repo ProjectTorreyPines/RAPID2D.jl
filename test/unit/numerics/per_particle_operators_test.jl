@@ -197,19 +197,19 @@ end
     using RAPID2D: per_particle_operator!
     (; G, A, n) = mixing_cases()[1]
     M = similar(A)
-    work = similar(n)
-    per_particle_operator!(M, A, n; n_floor = 1.0, work)
+    per_particle_operator!(M, A, n; n_floor = 1.0)
     @test M.matrix.colptr == A.matrix.colptr
     @test M.matrix.rowval == A.matrix.rowval
     stored_zeros = findall(iszero, A.matrix.nzval)
     @test !isempty(stored_zeros)
     @test all(iszero, M.matrix.nzval[stored_zeros])
-    alloc(M, A, n, work) = @allocated per_particle_operator!(M, A, n; n_floor = 1.0, work)
-    alloc(M, A, n, work)
-    @test alloc(M, A, n, work) == 0
+    # the scratch A n comes from the task's pool: nothing after the first call
+    alloc(M, A, n) = @allocated per_particle_operator!(M, A, n; n_floor = 1.0)
+    alloc(M, A, n)
+    @test alloc(M, A, n) == 0
     # rewritten, not accumulated
     M2 = per_particle_operator!(similar(A), A, 2 .* n; n_floor = 1.0)
-    per_particle_operator!(M, A, 2 .* n; n_floor = 1.0, work)
+    per_particle_operator!(M, A, 2 .* n; n_floor = 1.0)
     @test M.matrix.nzval == M2.matrix.nzval
     @test_throws ArgumentError per_particle_operator!(A, A, n; n_floor = 1.0)
     for bad in (NaN, Inf)

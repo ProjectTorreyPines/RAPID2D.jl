@@ -14,19 +14,20 @@
 # internal/docs/src/reference/electron-diffusive-transport.md §5.
 
 """
-    per_particle_operator!(M, A, n; n_floor, work = similar(n)) -> M
+    per_particle_operator!(M, A, n; n_floor) -> M
 
 `M = N⁻¹ (A N − diag(A n))` written into `M`, an operator on the same wall pattern as `A`:
 off the diagonal `A_kl n_l / n_k`, on it `(A_kk n_k − (A n)_k) / n_k`. It depends on the
 off-diagonals of `A` alone, so a Robin debit on `A`'s diagonal cancels: the wall drains
 particles, not the variable they carry. Rows with `n_k ≤ n_floor` are empty (the variable is
 frozen where there is no plasma; [`floor_defect`](@ref) measures what that costs). Every slot
-of the pattern is rewritten and a stored zero of `A` stays one. `work` receives `A n`; given,
-nothing is allocated. `M` must not alias `A`, and `n` must be finite.
+of the pattern is rewritten and a stored zero of `A` stays one. The scratch `A n` comes from
+the task's array pool, so nothing is allocated after the first call. `M` must not alias `A`,
+and `n` must be finite.
 """
 function per_particle_operator!(
         M::DiscretizedOperator{FT}, A::DiscretizedOperator{FT}, n::AbstractVector{FT};
-        n_floor::FT, work::AbstractVector{FT} = similar(n),
+        n_floor::FT,
     ) where {FT <: AbstractFloat}
     check_wall_pattern(M)
     check_wall_pattern(A)
@@ -35,10 +36,9 @@ function per_particle_operator!(
         throw(ArgumentError("per_particle_operator!: M must not alias A"))
     (C.colptr == U.colptr && C.rowval == U.rowval) ||
         throw(ArgumentError("per_particle_operator!: M and A do not share a pattern"))
-    length(n) == size(C, 2) == length(work) ||
-        throw(DimensionMismatch("per_particle_operator!: n and work must have one entry per node"))
+    length(n) == size(C, 2) ||
+        throw(DimensionMismatch("per_particle_operator!: n must have one entry per node"))
     all(isfinite, n) || throw(ArgumentError("per_particle_operator!: n must be finite"))
-    mul!(work, C, n)
     nzU, nzC, rows = nonzeros(U), nonzeros(C), rowvals(C)
     @inbounds for j in 1:size(C, 2)
         nj = n[j]
@@ -49,10 +49,16 @@ function per_particle_operator!(
         end
     end
     k2c = A.k2csc
-    @inbounds for i in eachindex(n)
-        inv_ni = n[i] > n_floor ? one(FT) / n[i] : zero(FT)
-        kd = slot_position(k2c, i, SLOT_C)
-        nzU[kd] = inv_ni * ((nzC[kd] * n[i]) - work[i])
+    # the checks above throw; the pool block below does not, since it has no `finally`
+    @with_pool pool begin
+        An = acquire!(pool, FT, length(n))
+        mul!(An, C, n)
+        @inbounds for i in eachindex(n)
+            inv_ni = n[i] > n_floor ? one(FT) / n[i] : zero(FT)
+            kd = slot_position(k2c, i, SLOT_C)
+            nzU[kd] = inv_ni * ((nzC[kd] * n[i]) - An[i])
+        end
+        nothing
     end
     return M
 end

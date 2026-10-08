@@ -40,17 +40,17 @@ function apply_advection(
 end
 
 """
-    advection_operator!(A_adv, A_conv, n; n_floor, work = similar(n)) -> A_adv
+    advection_operator!(A_adv, A_conv, n; n_floor) -> A_adv
 
 `advection_operator` written into `A_adv`, an operator on the same wall pattern as `A_conv`:
 [`per_particle_operator!`](@ref) on the face-flux divergence, so u∥ and Te ride the mass flux
-the continuity equation uses. Rows with `n_i ≤ n_floor` are zero; `work` receives `A_conv·n`.
+the continuity equation uses. Rows with `n_i ≤ n_floor` are zero.
 """
 function advection_operator!(
         A_adv::DiscretizedOperator{FT}, A_conv::DiscretizedOperator{FT}, n::AbstractVector{FT};
-        n_floor::FT, work::AbstractVector{FT} = similar(n),
+        n_floor::FT,
     ) where {FT <: AbstractFloat}
-    return per_particle_operator!(A_adv, A_conv, n; n_floor, work)
+    return per_particle_operator!(A_adv, A_conv, n; n_floor)
 end
 
 apply_advection(A_conv::DiscretizedOperator{FT}, n::AbstractVector{FT}, f::AbstractVector{FT}; n_floor::FT) where {FT <: AbstractFloat} =

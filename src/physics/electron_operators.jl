@@ -87,12 +87,12 @@ All three are buffers, overwritten by the next refresh or call.
 function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op = RP.plasma, electron_operator_cache(RP)
     n = vec(pla.ne)
-    advection_operator!(op.A_adv_e, op.A_conv_e, n; n_floor = FT(1.0), work = op.ne_work)
+    advection_operator!(op.A_adv_e, op.A_conv_e, n; n_floor = FT(1.0))
     # u∥ and Te ride the particles the density diffusion moves. One matrix holds the viscosity
     # (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
     # A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
     # the second (electron-diffusive-transport.md §4).
-    per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, n; n_floor = FT(1.0), work = op.ne_work)
+    per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, n; n_floor = FT(1.0))
     return (A_adv = op.A_adv_e, A_diffu = op.A_visc_drift_e, div_u = op.div_ue)
 end
 

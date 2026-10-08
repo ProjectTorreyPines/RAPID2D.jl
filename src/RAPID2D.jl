@@ -22,6 +22,7 @@ using FastInterpolations
 using SimpleUnPack
 using ADIOS2
 using TimerOutputs
+using AdaptiveArrayPools: @with_pool, acquire!
 
 LinearAlgebra.BLAS.set_num_threads(1)
 
