@@ -250,7 +250,7 @@ end
     @test errs[3] / errs[2] < 0.6
 end
 
-@testitem "viscous heating: mₑ Γ_M(u∥) per electron, in the ledger, the total and the snapshots; zero at uniform u, off by flag" setup = [PureMixingRun] begin
+@testitem "viscous heating: mₑ Γ_M(u∥) per electron, in the ledger, the total and the snapshots; zero at uniform u and where u∥ is not diffused" setup = [PureMixingRun] begin
     using RAPID2D: ue_Te_operators, dissipation_rate!, update_electron_heating_powers!
     me = 9.1093837015e-31
     RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along = 50.0, D_across = 5.0)
@@ -261,7 +261,6 @@ end
     pla.ne[inw] .= 1.0e14 .* (1 .+ 0.4 .* sin.(3 .* vec(G.R2D)[inw]) .* cos.(2 .* vec(G.Z2D)[inw]))
     pla.ue_para .= 2.0e6 .* (1 .+ 0.5 .* sin.(2 .* G.R2D) .* cos.(3 .* G.Z2D))
     enforce_pure_mixing!(RP)
-    @test RP.flags.Include_Te_visc_heat_term            # on by default
     update_electron_heating_powers!(RP)
     P = pla.ePowers.visc_heat
     # the formula: the dissipation rate of the operator Te diffuses with, times the mass
@@ -280,18 +279,14 @@ end
     pla.ue_para .= 1.5e6
     update_electron_heating_powers!(RP)
     @test all(iszero, pla.ePowers.visc_heat)
-    # off by flag: zero, and the total is diffusion alone
+    # none where u∥ is not diffused, since then no kinetic energy is erased; the total is
+    # diffusion alone
     pla.ue_para .= 2.0e6 .* (1 .+ 0.5 .* sin.(2 .* G.R2D) .* cos.(3 .* G.Z2D))
-    RP.flags.Include_Te_visc_heat_term = false
-    update_electron_heating_powers!(RP)
-    @test all(iszero, pla.ePowers.visc_heat)
-    @test pla.ePowers.tot ≈ pla.ePowers.diffu
-    # and none where u∥ is not diffused, since then no kinetic energy is erased
-    RP.flags.Include_Te_visc_heat_term = true
-    for (flag, off) in ((:Include_ud_diffu_term, false), (:ud_evolve, false))
-        setfield!(RP.flags, flag, off)
+    for flag in (:Include_ud_diffu_term, :ud_evolve)
+        setfield!(RP.flags, flag, false)
         update_electron_heating_powers!(RP)
         @test all(iszero, pla.ePowers.visc_heat)
+        @test pla.ePowers.tot ≈ pla.ePowers.diffu
         setfield!(RP.flags, flag, true)
     end
     update_electron_heating_powers!(RP)

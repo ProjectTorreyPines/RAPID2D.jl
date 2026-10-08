@@ -518,9 +518,10 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         n_floor = one(FT)
         u∇(f) = reshape(apply_advection(op_e.A_conv_e, n_e, vec(f); n_floor), size(f))
 
-        # The viscous heating is credited only where u∥ is actually diffused: without that, no
-        # kinetic energy of the parallel flow is erased.
-        visc_heat_on = RP.flags.Include_Te_visc_heat_term && RP.flags.ud_evolve && RP.flags.Include_ud_diffu_term
+        # The viscous heating is the energy partner of u∥'s diffusion, so it follows that and has
+        # no switch of its own: on exactly when u∥ is diffused (off, no kinetic energy is erased;
+        # on without it, the erased energy would be lost).
+        visc_heat_on = RP.flags.ud_evolve && RP.flags.Include_ud_diffu_term
         # one build of the operator Te diffuses with, for both powers below
         A_diffu = RP.flags.Include_Te_diffu_term || visc_heat_on ? ue_Te_operators(RP).A_diffu : nothing
 

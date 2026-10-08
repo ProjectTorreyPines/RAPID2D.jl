@@ -1293,7 +1293,6 @@ Contains boolean flags that control various aspects of the simulation.
     Include_ud_diffu_term::Bool = true        # Include diffusion term in drift velocity equation
     Include_Te_convec_term::Bool = true       # Include convection term in Te equation
     Include_Te_diffu_term::Bool = true        # Include diffusion term in Te equation
-    Include_Te_visc_heat_term::Bool = true     # Credit the viscous heating of u∥ to Te (mₑ Γ_M(u∥))
 
     # Artificial limiters to avoid numerical instabilities.
     #
