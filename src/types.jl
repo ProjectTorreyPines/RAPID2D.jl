@@ -187,7 +187,7 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
 - `dilution`: Redistribution when newborn electrons enter at rest; not a loss of total
   electron energy
 - `equi`: Temperature equilibration with the ions
-- `visc_heat`: the viscous heating of u∥, `mₑ Γ_M(u∥)` = −Π:∇u with Π = −mₑ nₑ D ∇u∥; the
+- `visc_heat`: the viscous heating of u∥ per electron, `mₑ Γ_M(u∥)` = −Π:∇u / nₑ with Π = −mₑ nₑ D ∇u∥; the
   kinetic energy of the parallel flow the diffusion erases (`viscous_heating!`)
 """
 @kwdef mutable struct ElectronHeatingPowers{FT <: AbstractFloat}

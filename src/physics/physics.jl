@@ -532,7 +532,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             ePowers.diffu .= ee * FT(1.5) * (A_diffu * pla.Te_eV)
         end
 
-        # The viscous heating, mₑ Γ_M(u∥) per electron (−Π:∇u with Π = −mₑ nₑ D ∇u∥): the
+        # The viscous heating, mₑ Γ_M(u∥) per electron (−Π:∇u / nₑ with Π = −mₑ nₑ D ∇u∥): the
         # kinetic energy of the parallel flow the diffusion of momentum erased, from the
         # operator Te diffuses with and the step's u∥ (`electron_operators.jl`).
         if visc_heat_on
