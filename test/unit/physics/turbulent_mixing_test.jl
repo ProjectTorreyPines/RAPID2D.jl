@@ -307,7 +307,9 @@ end
 
 @testitem "the X-point field: R B_R = B' y, R B_Z = B' x, divergence-free, ψ analytic and tangent, FLF completes" setup = [PureMixingRun, XPointMixing] begin
     using RAPID2D: calculate_divergence, calculate_B_from_ψ, wall_gradient
-    RP = xpoint_RP(; N = 41, t_end_s = 1.0e-6, D_along = 50.0)
+    RP = pure_mixing_RP(; NR = 41, NZ = 41, t_end_s = 1.0e-6, D_along = 50.0)
+    xpoint_field!(RP; XP...)
+    prescribe_aligned_tensor!(RP; D_along = 50.0)
     G, F = RP.G, RP.fields
     x = G.R2D .- XP.R0
     y = G.Z2D .- XP.Z0

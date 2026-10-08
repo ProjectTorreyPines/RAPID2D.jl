@@ -16,7 +16,9 @@
     The hyperbolic field of a null at (R0, Z0), ψ = (B′/2)(x² − y²), R B_R = B′ y, R B_Z = B′ x in
     the sign convention of `calculate_B_from_ψ!`, written as the external field of a set-up run
     (Ampère off): the step recombines B from it. The derived quantities and the field-line
-    analysis are redone here, as `initialize!` did them on the setup's uniform field.
+    analysis are redone here, as `initialize!` did them on the setup's uniform field. Call it on a
+    `pure_mixing_RP`, then `prescribe_aligned_tensor!` again, since the tensor follows `b_pol`
+    (snippets do not see each other's functions, so no helper here does both).
     """
     function xpoint_field!(RP; R0, Z0, Bprime)
         G, F = RP.G, RP.fields
@@ -27,14 +29,6 @@
         F.ψ_ext .= Bprime / 2 .* (x .^ 2 .- y .^ 2)
         RAPID2D.combine_external_and_self_fields!(RP)
         RAPID2D.flf_analysis_field_lines_rz_plane!(RP)
-        return RP
-    end
-
-    "A pure-mixing run on the X-point field `XP`, the tensor aligned with its lines."
-    function xpoint_RP(; N, t_end_s, D_along)
-        RP = pure_mixing_RP(; NR = N, NZ = N, t_end_s, D_along)
-        xpoint_field!(RP; XP...)
-        prescribe_aligned_tensor!(RP; D_along)
         return RP
     end
 
@@ -98,7 +92,9 @@ end
     for N in (33, 49)
         # n and u correlated along the line (two oscillations in χ across the box), uniform
         # across it; T uniform
-        RP = xpoint_RP(; N, t_end_s = t_end, D_along = D)
+        RP = pure_mixing_RP(; NR = N, NZ = N, t_end_s = t_end, D_along = D)
+        xpoint_field!(RP; XP...)
+        prescribe_aligned_tensor!(RP; D_along = D)
         G, pla = RP.G, RP.plasma
         inw = G.nodes.in_wall_nids
         co = xpoint_coordinates(G)
@@ -156,7 +152,9 @@ end
     half = 2 * XP.Bprime * σ * (abs(xb) + abs(yb) + σ)
     kept = Dict{Int, Float64}()
     for N in (33, 49)
-        RP = xpoint_RP(; N, t_end_s = 2.5e-4, D_along = 500.0)
+        RP = pure_mixing_RP(; NR = N, NZ = N, t_end_s = 2.5e-4, D_along = 500.0)
+        xpoint_field!(RP; XP...)
+        prescribe_aligned_tensor!(RP; D_along = 500.0)
         G, pla = RP.G, RP.plasma
         inw = G.nodes.in_wall_nids
         co = xpoint_coordinates(G)
