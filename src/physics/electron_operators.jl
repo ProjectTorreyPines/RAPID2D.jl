@@ -76,11 +76,10 @@ The operators the u∥ and Te equations solve with, from the per-step cache on `
   place into `A_adv_e` (`advection_operator!`; rows with `ne ≤ 1 m⁻³` are empty) on every
   call, because `ne` moves within the step. A right-hand side only wants
   [`apply_advection`](@ref) on `A_conv_e`.
-- `A_diffu`: what u∥ and Te diffuse with, by `flags.mixing_policy` ([`MixingPolicy`](@ref)):
-  the particle-weighted operator of the reflective in-wall `∇·D∇` (`A_diffu_e`) and the
-  CURRENT `ne`, written into `A_visc_drift_e` on every call (`per_particle_operator!`), or the
-  density operator itself. `A_visc_drift_e` is the viscosity (conduction for Te) plus the
-  advection by the diffusive drift, in one matrix; the solves only ever need their sum.
+- `A_diffu`: what u∥ and Te diffuse with: the particle-weighted operator of the reflective
+  in-wall `∇·D∇` (`A_diffu_e`) and the CURRENT `ne`, written into `A_visc_drift_e` on every
+  call (`per_particle_operator!`). It is the viscosity (conduction for Te) plus the advection
+  by the diffusive drift, in one matrix; the solves only ever need their sum.
 - `div_u`: `∇·u` on in-wall nodes (`div_ue`).
 
 All three are buffers, overwritten by the next refresh or call.
@@ -89,23 +88,17 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op = RP.plasma, electron_operator_cache(RP)
     n = vec(pla.ne)
     advection_operator!(op.A_adv_e, op.A_conv_e, n; n_floor = FT(1.0), work = op.ne_work)
-    A_diffu = visc_drift_operator!(op, n, RP.flags.mixing_policy)
-    return (A_adv = op.A_adv_e, A_diffu = A_diffu, div_u = op.div_ue)
+    # u∥ and Te ride the particles the density diffusion moves. One matrix holds the viscosity
+    # (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
+    # A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
+    # the second (electron-diffusive-transport.md §4).
+    per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, n; n_floor = FT(1.0), work = op.ne_work)
+    return (A_adv = op.A_adv_e, A_diffu = op.A_visc_drift_e, div_u = op.div_ue)
 end
 
-# The default: u∥ and Te ride the particles the density diffusion moves. One matrix holds the
-# viscosity (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
-# A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
-# the second (electron-diffusive-transport.md §4).
-function visc_drift_operator!(op::Operators{FT}, n::AbstractVector{FT}, ::ParticleMixing) where {FT <: AbstractFloat}
-    return per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, n; n_floor = FT(1.0), work = op.ne_work)
-end
-
-# ── the reference: the density operator applied to the variable itself ────────────────────
-visc_drift_operator!(op::Operators, ::AbstractVector, ::VelocityDiffusion) = op.A_diffu_e
 
 """
-    viscous_heating!(P, RP, policy) -> P
+    viscous_heating!(P, RP) -> P
 
 The viscous heating of u∥, W per electron, into `P`: `mₑ Γ_M(u∥)` with `Γ_M` the
 dissipation rate ([`dissipation_rate!`](@ref)) of the operator Te diffuses with
@@ -115,14 +108,11 @@ with the anomalous viscosity `mₑ nₑ D`. The operator `M` also carries u∥ w
 drift, but that advection moves `½u²` without loss, so the heating is the viscous part only
 (electron-diffusive-transport.md §4). With it credited to Te, the energy per electron
 `3/2 k_B Te + ½ mₑ u∥²` is mixed by the same operator as u∥ and Te, so the energy the
-particles carry is conserved (§5). The reference policy heats nothing, as before this work.
+particles carry is conserved (§5).
 """
-function viscous_heating!(P::AbstractMatrix{FT}, RP::RAPID{FT}, ::ParticleMixing) where {FT <: AbstractFloat}
+function viscous_heating!(P::AbstractMatrix{FT}, RP::RAPID{FT}) where {FT <: AbstractFloat}
     M = ue_Te_operators(RP).A_diffu
     dissipation_rate!(vec(P), M, vec(RP.plasma.ue_para))
     P .*= RP.config.constants.me
     return P
 end
-
-# ── the reference: no exchange heating ───────────────────────────────────────────────────
-viscous_heating!(P::AbstractMatrix{FT}, ::RAPID{FT}, ::VelocityDiffusion) where {FT <: AbstractFloat} = fill!(P, zero(FT))

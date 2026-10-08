@@ -272,62 +272,45 @@ end
 """
     update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-The bulk electron diffusion tensor `(DRR, DRZ, DZZ)` and its coefficient tensor `CT*`, by
-`flags.diffusion_tensor` ([`DiffusionTensorModel`](@ref)): the plasma's own tensor, or a
-prescribed one aligned with the poloidal field line.
+The bulk electron diffusion tensor `(DRR, DRZ, DZZ)` from the plasma's diffusivities and the
+field, and its coefficient tensor `CT*`. With `flags.freeze_diffusion_tensor` the tensor is
+left as it is and only `CT*` is recomputed from it.
 """
 function update_diffusion_tensor!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    update_diffusion_tensor!(RP, RP.flags.diffusion_tensor)
-
+    F = RP.fields
     tp = RP.transport
+
+    if !RP.flags.freeze_diffusion_tensor
+        # compute RR, RZ, ZZ components of the diffusivity tensor
+        @. tp.DRR = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bR^2
+        @. tp.DRZ = (tp.Dpara - tp.Dperp) * F.bR * F.bZ
+        @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bZ^2
+
+        # Add turbulent diffusion if enabled
+        if RP.flags.turb_ExB_mixing
+            # In a real implementation, turbulent diffusion would be calculated based on
+            # field line connection length, ExB drifts, etc.
+
+            fpara = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
+            fperp = one(FT) - fpara
+
+            # 𝐃 = [ (f⟂ 𝐈) + (f∥ - f⟂) * 𝐛𝐛]
+            @. tp.DRR_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_R^2)
+            @. tp.DRZ_turb = (tp.Dpol_turb) * (fpara - fperp) * (F.bpol_R * F.bpol_Z)
+            @. tp.DZZ_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_Z^2)
+
+            # Add turbulent diffusion to base diffusion
+            @. tp.DRR .+= tp.DRR_turb
+            @. tp.DRZ .+= tp.DRZ_turb
+            @. tp.DZZ .+= tp.DZZ_turb
+        end
+    end
+
     dR, dZ = RP.G.dR, RP.G.dZ
     @. tp.CTRR = RP.G.Jacob * tp.DRR / (dR * dR)
     @. tp.CTRZ = RP.G.Jacob * tp.DRZ / (dR * dZ)
     @. tp.CTZZ = RP.G.Jacob * tp.DZZ / (dZ * dZ)
 
-    return RP
-end
-
-function update_diffusion_tensor!(RP::RAPID{FT}, ::PlasmaTensor) where {FT <: AbstractFloat}
-    # compute RR, RZ, ZZ components of the diffusivity tensor
-    F = RP.fields
-    tp = RP.transport
-    @. tp.DRR = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bR^2
-    @. tp.DRZ = (tp.Dpara - tp.Dperp) * F.bR * F.bZ
-    @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bZ^2
-
-    # Add turbulent diffusion if enabled
-    if RP.flags.turb_ExB_mixing
-        # In a real implementation, turbulent diffusion would be calculated based on
-        # field line connection length, ExB drifts, etc.
-
-        fpara = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
-        fperp = one(FT) - fpara
-
-        # 𝐃 = [ (f⟂ 𝐈) + (f∥ - f⟂) * 𝐛𝐛]
-        @. tp.DRR_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_R^2)
-        @. tp.DRZ_turb = (tp.Dpol_turb) * (fpara - fperp) * (F.bpol_R * F.bpol_Z)
-        @. tp.DZZ_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_Z^2)
-
-        # Add turbulent diffusion to base diffusion
-        @. tp.DRR .+= tp.DRR_turb
-        @. tp.DRZ .+= tp.DRZ_turb
-        @. tp.DZZ .+= tp.DZZ_turb
-    end
-
-    return RP
-end
-
-# ── the prescribed tensor: a reference model, not the plasma's ────────────────────────────
-# `D_across 𝟙 + (D_along − D_across) b_pol b_polᵀ` on every node; `b_pol` is zero at a null,
-# where the tensor is therefore isotropic. Nothing the plasma computes enters it.
-function update_diffusion_tensor!(RP::RAPID{FT}, model::PrescribedTensor) where {FT <: AbstractFloat}
-    F = RP.fields
-    tp = RP.transport
-    Da, Dx = FT(model.D_along), FT(model.D_across)
-    @. tp.DRR = Dx + (Da - Dx) * F.bpol_R^2
-    @. tp.DRZ = (Da - Dx) * F.bpol_R * F.bpol_Z
-    @. tp.DZZ = Dx + (Da - Dx) * F.bpol_Z^2
     return RP
 end
 

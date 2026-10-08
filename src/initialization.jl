@@ -331,7 +331,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     Z_min, Z_max = something(RP.config.Z_min, manual.Z[1]), something(RP.config.Z_max, manual.Z[2])
 
     RP.G = initialize_grid_geometry(NR, NZ, (R_min, R_max), (Z_min, Z_max))
-    @info "External field from the manual setup (config.manual)" R = (R_min, R_max) Z = (Z_min, Z_max) poloidal = manual.poloidal BR = manual.BR BZ = manual.BZ Eϕ = manual.Eϕ
+    @info "External field from the manual setup (config.manual)" R = (R_min, R_max) Z = (Z_min, Z_max) BR = manual.BR BZ = manual.BZ Eϕ = manual.Eϕ
     set_wall_geometry_from_config!(RP)
 
     # Initialize fields if not already created
@@ -341,11 +341,10 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     RP.fields.R0B0 = RP.config.R0B0
 
-    # Create fields: the poloidal field and its flux by the setup's policy
+    # Create fields: a uniform poloidal field from config.manual
     RP.fields.Bϕ = RP.fields.R0B0 ./ RP.G.R2D
-    BR, BZ, ψ_ext = manual_poloidal_field(RP.G, manual)
-    RP.fields.BR = BR
-    RP.fields.BZ = BZ
+    RP.fields.BR = fill(manual.BR, NR, NZ)
+    RP.fields.BZ = fill(manual.BZ, NR, NZ)
 
     # Compute derived field quantities
     RP.fields.Bpol = sqrt.(RP.fields.BR .^ 2 .+ RP.fields.BZ .^ 2)
@@ -367,37 +366,13 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Initialize other field components
     RP.fields.BR_ext = copy(RP.fields.BR)
     RP.fields.BZ_ext = copy(RP.fields.BZ)
-    RP.fields.ψ_ext = ψ_ext
+    RP.fields.ψ_ext = zeros(FT, NR, NZ)
 
     # Copy external fields to total fields initially
     RP.fields.E_para_tot = copy(RP.fields.E_para_ext)
 
 
     return RP
-end
-
-"""
-    manual_poloidal_field(G, manual) -> (BR, BZ, ψ_ext)
-
-The poloidal field and its flux the manual setup prescribes, by `manual.poloidal`: the uniform
-`(manual.BR, manual.BZ)` with `ψ_ext = 0` for [`UniformPoloidal`](@ref), the analytic null of
-[`XPointPoloidal`](@ref) with its `ψ`.
-"""
-manual_poloidal_field(G::GridGeometry{FT}, manual::ManualSetup{FT}) where {FT <: AbstractFloat} =
-    manual_poloidal_field(G, manual, manual.poloidal)
-
-function manual_poloidal_field(G::GridGeometry{FT}, manual::ManualSetup{FT}, ::UniformPoloidal) where {FT <: AbstractFloat}
-    return fill(manual.BR, G.NR, G.NZ), fill(manual.BZ, G.NR, G.NZ), zeros(FT, G.NR, G.NZ)
-end
-
-function manual_poloidal_field(G::GridGeometry{FT}, ::ManualSetup{FT}, p::XPointPoloidal) where {FT <: AbstractFloat}
-    Bp = FT(p.Bprime)
-    x = @. G.R2D - FT(p.R0)
-    y = @. G.Z2D - FT(p.Z0)
-    BR = @. Bp * y / G.R2D
-    BZ = @. Bp * x / G.R2D
-    ψ = @. Bp / 2 * (x^2 - y^2)
-    return BR, BZ, ψ
 end
 
 """

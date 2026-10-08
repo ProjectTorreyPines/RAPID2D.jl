@@ -34,53 +34,7 @@ lookup under `Input_path`, or to the manual setup for `device_Name = "manual"`.
 end
 
 """
-    ManualPoloidalField
-
-Which poloidal field the manual setup prescribes. [`UniformPoloidal`](@ref) is the default;
-[`XPointPoloidal`](@ref) is the analytic null the mixing tests run on. Resolved in
-`set_RZ_B_E_manually!` (`manual_poloidal_field`) and nowhere else.
-"""
-abstract type ManualPoloidalField end
-
-"""
-    UniformPoloidal()
-
-The uniform field `(BR, BZ)` of the [`ManualSetup`](@ref) it sits in, with `ψ_ext = 0`.
-**The default.** It carries no parameters of its own because `BR` and `BZ` predate the policy.
-"""
-struct UniformPoloidal <: ManualPoloidalField end
-
-"""
-    XPointPoloidal(; R0, Z0, Bprime)
-
-The poloidal field of an X-point at `(R0, Z0)`, with `x = R − R0`, `y = Z − Z0`:
-
-    ψ = (B′/2) (x² − y²),    R B_R = −∂ψ/∂Z = B′ y,    R B_Z = ∂ψ/∂R = B′ x
-
-in the sign convention of `calculate_B_from_ψ!`. `ψ` is in Wb/rad, so `Bprime` is in tesla:
-it is the field one metre from the null at R = 1 m, not a gradient. `∇·B = 0` holds exactly,
-and `B_pol` vanishes at the null, where the poloidal unit vector is set to zero. `R0 > 0`,
-and `Bprime ≠ 0` (a zero gradient is no poloidal field at all).
-"""
-struct XPointPoloidal{FT <: AbstractFloat} <: ManualPoloidalField
-    R0::FT
-    Z0::FT
-    Bprime::FT
-
-    function XPointPoloidal{FT}(R0, Z0, Bprime) where {FT <: AbstractFloat}
-        r0, z0, bp = FT(R0), FT(Z0), FT(Bprime)
-        (isfinite(r0) && r0 > 0) || throw(ArgumentError("XPointPoloidal: R0 = $R0; the null sits at a finite R > 0"))
-        isfinite(z0) || throw(ArgumentError("XPointPoloidal: Z0 = $Z0; it must be finite"))
-        (isfinite(bp) && bp != 0) || throw(ArgumentError("XPointPoloidal: Bprime = $Bprime; it must be finite and non-zero"))
-        return new{FT}(r0, z0, bp)
-    end
-end
-
-XPointPoloidal(; R0::Real, Z0::Real, Bprime::Real) =
-    XPointPoloidal{float(promote_type(typeof(R0), typeof(Z0), typeof(Bprime)))}(R0, Z0, Bprime)
-
-"""
-    ManualSetup{FT}(; R = (0.8, 2.4), Z = (-1.2, 1.2), BR = 0.0, BZ = 5.0e-3, Eϕ = 0.3, wall_margin_cells = 3, poloidal = UniformPoloidal())
+    ManualSetup{FT}(; R = (0.8, 2.4), Z = (-1.2, 1.2), BR = 0.0, BZ = 5.0e-3, Eϕ = 0.3, wall_margin_cells = 3)
 
 The analytic setup used when no field file is given (`device_Name = "manual"` and an empty
 `inputs.field`), all its values in one place:
@@ -90,8 +44,6 @@ The analytic setup used when no field file is given (`device_Name = "manual"` an
 - `Eϕ`: the toroidal electric field at the mean R [V/m], falling as 1/R.
 - `wall_margin_cells`: the default box wall sits this many cells inside the domain; it is
   also the wall of a run that is given a field file but no wall.
-- `poloidal`: the [`ManualPoloidalField`](@ref) policy. `UniformPoloidal()` uses `BR`, `BZ`;
-  `XPointPoloidal(; R0, Z0, Bprime)` prescribes an analytic null and its `ψ_ext`.
 """
 @kwdef mutable struct ManualSetup{FT <: AbstractFloat}
     R::Tuple{FT, FT} = (0.8, 2.4)
@@ -100,86 +52,8 @@ The analytic setup used when no field file is given (`device_Name = "manual"` an
     BZ::FT = 5.0e-3
     Eϕ::FT = 0.3
     wall_margin_cells::Int = 3
-    poloidal::ManualPoloidalField = UniformPoloidal()
 end
 
-"""
-    DiffusionTensorModel
-
-Where the bulk electron diffusion tensor `(DRR, DRZ, DZZ)` comes from. [`PlasmaTensor`](@ref)
-is the default; [`PrescribedTensor`](@ref) isolates pure mixing along field lines for tests
-and examples. Resolved in `update_diffusion_tensor!` and nowhere else; the wall channels
-(`electron_wall_channels`) and the ion tensor keep their own models either way.
-"""
-abstract type DiffusionTensorModel end
-
-"""
-    PlasmaTensor()
-
-The plasma's own tensor: `D⊥ 𝟙 + (D∥ − D⊥) b bᵀ` from the collisional, ambipolar, Bohm and
-base diffusivities, plus the turbulent E×B tensor along the poloidal field when
-`flags.turb_ExB_mixing` is on. **The default.**
-"""
-struct PlasmaTensor <: DiffusionTensorModel end
-
-"""
-    PrescribedTensor(; D_along, D_across = 0)
-
-`D_across 𝟙 + (D_along − D_across) b_pol b_polᵀ` [m²/s], aligned with the poloidal field line
-and isotropic (`D_across`) where `B_pol = 0`. It replaces the bulk electron tensor entirely:
-Bohm, D∥ and the turbulent tensor are still computed as diagnostics but do not enter it, so a
-field-aligned mixing experiment sees only what it prescribes. Both coefficients are finite
-and non-negative.
-"""
-struct PrescribedTensor{FT <: AbstractFloat} <: DiffusionTensorModel
-    D_along::FT
-    D_across::FT
-
-    function PrescribedTensor{FT}(D_along, D_across) where {FT <: AbstractFloat}
-        da, dx = FT(D_along), FT(D_across)
-        (isfinite(da) && da >= 0) || throw(ArgumentError("PrescribedTensor: D_along = $D_along; a diffusivity is finite and non-negative"))
-        (isfinite(dx) && dx >= 0) || throw(ArgumentError("PrescribedTensor: D_across = $D_across; a diffusivity is finite and non-negative"))
-        return new{FT}(da, dx)
-    end
-end
-
-PrescribedTensor(; D_along::Real, D_across::Real = 0) =
-    PrescribedTensor{float(promote_type(typeof(D_along), typeof(D_across)))}(D_along, D_across)
-
-"""
-    MixingPolicy
-
-Which operator diffuses the per-particle variables u∥ and Te. [`ParticleMixing`](@ref) is the
-default; [`VelocityDiffusion`](@ref) is the reference, the operator the code used before.
-Resolved in `ue_Te_operators` and nowhere else: every consumer of its `A_diffu` — the u∥ solve
-on both sides of the Ampère gate and the Te solve — sees the same operator.
-
-Not the turbulent E×B channel: that is one part of the diffusion tensor `D`
-(`flags.turb_ExB_mixing`, [`PlasmaTensor`](@ref)). This policy is how the whole tensor, whatever
-its channels, carries u∥ and Te — whether the particles it moves take their u∥ and Te with them.
-"""
-abstract type MixingPolicy end
-
-"""
-    ParticleMixing()
-
-u∥ and Te are carried by the electrons the density diffusion moves: the operator is
-`M = N⁻¹ (A N − diag(A n))` of the density operator `A` and the current `ne`
-(`per_particle_operator!`), so that `n (M f) + f (A n) = A (n f)` and the momentum and energy
-the particles carry are conserved. **The default.**
-internal/docs/src/reference/electron-diffusive-transport.md.
-"""
-struct ParticleMixing <: MixingPolicy end
-
-"""
-    VelocityDiffusion()
-
-The density operator `A = ∇·(D∇)` applied to u∥ and Te themselves, as before this work. It
-settles a field line to volume means rather than particle means and conserves neither the
-momentum nor the energy the particles carry (the defect is `−2∫∇n·D∇u`). Kept as the
-reference and the switch back.
-"""
-struct VelocityDiffusion <: MixingPolicy end
 
 """
     SimulationConfig{FT<:AbstractFloat}
@@ -797,7 +671,7 @@ Fields include various matrices for solving different parts of the model.
     A_diffu_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     A_adv_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     # The particle-weighted operator of `A_diffu_e` and the CURRENT ne, what u∥ and Te diffuse
-    # with under `ParticleMixing` (`ue_Te_operators`). The name is its two parts: the viscosity
+    # with (`ue_Te_operators`). The name is its two parts: the viscosity
     # (conduction for Te), (1/n)∇·(nD∇f), plus advection by the diffusive drift, −v_D·∇f with
     # v_D = −D∇n/n; the first alone is `A_diffu_e`, exact only at uniform ne. `ne_work` is
     # the `A·n` scratch of the per-particle constructions.
@@ -1372,12 +1246,10 @@ Contains boolean flags that control various aspects of the simulation.
     mean_ExB::Bool = true                     # Include mean ExB drift
     diaMag_drift::Bool = false                # Include diamagnetic drift
     turb_ExB_mixing::Bool = true              # Include turbulent ExB mixing
-    # Where the bulk electron diffusion tensor comes from (see `DiffusionTensorModel`). A
-    # TYPE: it dispatches in `update_diffusion_tensor!` and nowhere else.
-    diffusion_tensor::DiffusionTensorModel = PlasmaTensor()
-    # Which operator diffuses u∥ and Te (see `MixingPolicy`). A TYPE: it dispatches in
-    # `ue_Te_operators` and nowhere else.
-    mixing_policy::MixingPolicy = ParticleMixing()
+    # Keep the bulk electron diffusion tensor `(DRR, DRZ, DZZ)` as it is: the per-step refresh
+    # recomputes only its coefficient tensor `CT*` from it, not the tensor from the plasma.
+    # For experiments that set the tensor themselves (`update_diffusion_tensor!`).
+    freeze_diffusion_tensor::Bool = false
     E_para_self_ES::Bool = true               # Include self-electrostatic parallel E-field
     E_para_self_EM::Bool = true               # Include self-electromagnetic parallel E-field
     negative_n_correction::Bool = true             # Correct negative densities
@@ -1839,7 +1711,5 @@ RAPID(config::SimulationConfig{FT}) where {FT <: AbstractFloat} = RAPID{FT}(conf
 
 # Export types
 export SimulationConfig, InputPaths, ManualSetup, WallGeometry, PlasmaState, Fields, Transport, Operators, SimulationFlags, ImplicitWeights, OuterSolvePolicy, AndersonOuterSolve, DirectOuterSolve, PicardSettings, RAPID, GridGeometry, NodeState
-export ManualPoloidalField, UniformPoloidal, XPointPoloidal, DiffusionTensorModel, PlasmaTensor, PrescribedTensor
-export MixingPolicy, ParticleMixing, VelocityDiffusion
 export TimeScheme, TimeSchemes, ForwardEuler, Theta, ExpRB, validate_scheme_flags,
     LinearResponseDepth, PartialLinearResponse, FullLinearResponse

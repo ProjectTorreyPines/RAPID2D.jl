@@ -10,9 +10,33 @@
 # notes/design/turbulent-mixing-u-T.md §6.2; PLAN_turbulent-mixing-u-T.md Phase 2b.
 
 @testsnippet XPointMixing begin
-    using RAPID2D: XPointPoloidal
-
     const XP = (R0 = 1.5, Z0 = 0.0, Bprime = 0.02)
+
+    """
+    The hyperbolic field of a null at (R0, Z0), ψ = (B′/2)(x² − y²), R B_R = B′ y, R B_Z = B′ x in
+    the sign convention of `calculate_B_from_ψ!`, written as the external field of a set-up run
+    (Ampère off): the step recombines B from it. The derived quantities and the field-line
+    analysis are redone here, as `initialize!` did them on the setup's uniform field.
+    """
+    function xpoint_field!(RP; R0, Z0, Bprime)
+        G, F = RP.G, RP.fields
+        x = G.R2D .- R0
+        y = G.Z2D .- Z0
+        F.BR_ext .= Bprime .* y ./ G.R2D
+        F.BZ_ext .= Bprime .* x ./ G.R2D
+        F.ψ_ext .= Bprime / 2 .* (x .^ 2 .- y .^ 2)
+        RAPID2D.combine_external_and_self_fields!(RP)
+        RAPID2D.flf_analysis_field_lines_rz_plane!(RP)
+        return RP
+    end
+
+    "A pure-mixing run on the X-point field `XP`, the tensor aligned with its lines."
+    function xpoint_RP(; N, t_end_s, D_along)
+        RP = pure_mixing_RP(; NR = N, NZ = N, t_end_s, D_along)
+        xpoint_field!(RP; XP...)
+        prescribe_aligned_tensor!(RP; D_along)
+        return RP
+    end
 
     "ψ of the X-point field, and χ = x y, which runs along each line, on every node."
     function xpoint_coordinates(G)
@@ -74,7 +98,7 @@ end
     for N in (33, 49)
         # n and u correlated along the line (two oscillations in χ across the box), uniform
         # across it; T uniform
-        RP = pure_mixing_RP(; NR = N, NZ = N, t_end_s = t_end, D_along = D, poloidal = XPointPoloidal(; XP...))
+        RP = xpoint_RP(; N, t_end_s = t_end, D_along = D)
         G, pla = RP.G, RP.plasma
         inw = G.nodes.in_wall_nids
         co = xpoint_coordinates(G)
@@ -132,7 +156,7 @@ end
     half = 2 * XP.Bprime * σ * (abs(xb) + abs(yb) + σ)
     kept = Dict{Int, Float64}()
     for N in (33, 49)
-        RP = pure_mixing_RP(; NR = N, NZ = N, t_end_s = 2.5e-4, D_along = 500.0, poloidal = XPointPoloidal(; XP...))
+        RP = xpoint_RP(; N, t_end_s = 2.5e-4, D_along = 500.0)
         G, pla = RP.G, RP.plasma
         inw = G.nodes.in_wall_nids
         co = xpoint_coordinates(G)

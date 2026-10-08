@@ -4,23 +4,37 @@
 # each field line settles to the n-weighted means of what it started with (design (6.1)),
 # and the kinetic energy of the sheared flow it erased reappears as heat (6.2). The operator
 # RAPID2D used until this work diffused u∥ and Te as if every node held the same number of
-# electrons, so it settles to volume means and heats nothing: the checks marked broken here
-# are the ones Phase 3 (u∥) and Phase 4 (Te) turn on.
+# electrons, so it settled to volume means and heated nothing.
 # internal/docs/src/reference/electron-diffusive-transport.md; notes/design/turbulent-mixing-u-T.md §6.
 
 @testsnippet PureMixingRun begin
-    using RAPID2D: PrescribedTensor, UniformPoloidal
+    """
+    The bulk electron tensor `D_across 𝟙 + (D_along − D_across) b_pol b_polᵀ` on every node,
+    isotropic where B_pol = 0, frozen for the run (`flags.freeze_diffusion_tensor`): the per-step
+    refresh then recomputes only `CT*` from it, so neither Bohm nor D∥ enters. The transport
+    refresh is redone at once, so the electron operators carry the tensor from here on.
+    """
+    function prescribe_aligned_tensor!(RP; D_along, D_across = 0.0)
+        F, tp = RP.fields, RP.transport
+        @. tp.DRR = D_across + (D_along - D_across) * F.bpol_R^2
+        @. tp.DRZ = (D_along - D_across) * F.bpol_R * F.bpol_Z
+        @. tp.DZZ = D_across + (D_along - D_across) * F.bpol_Z^2
+        RP.flags.freeze_diffusion_tensor = true
+        RAPID2D.update_transport_quantities!(RP)
+        return RP
+    end
 
     """
     A run in which nothing but mixing acts on u∥ and Te: E = 0, no sources, no convection, no
     pressure, a reflective wall (albedo 1), the ions and the gas frozen, and the bulk tensor
-    prescribed along the poloidal field line. The stored collision rates are zeroed on every
-    step by `enforce_pure_mixing!`, because the momentum equation reads them whatever the
-    flags say. The caller sets the initial state after this returns.
+    prescribed along the poloidal field line, which is the setup's uniform vertical field. The
+    stored collision rates are zeroed on every step by `enforce_pure_mixing!`, because the
+    momentum equation reads them whatever the flags say. The caller sets the initial state after
+    this returns.
     """
     function pure_mixing_RP(;
             NR = 21, NZ = 47, dt = 1.0e-6, t_end_s, D_along, D_across = 0.0,
-            poloidal = UniformPoloidal(), Implicit = true, θ_transport = 0.5,
+            Implicit = true, θ_transport = 0.5,
         )
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = NR, NZ = NZ,
@@ -31,7 +45,6 @@
             electron_wall_albedo = 1.0,
         )
         config.manual.Eϕ = 0.0
-        config.manual.poloidal = poloidal
         config.Output_path = mktempdir()
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
@@ -42,11 +55,11 @@
             update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
             Include_ud_pressure_term = false, Include_ud_convec_term = false, Include_ud_diffu_term = true,
             Include_Te_convec_term = false, Include_Te_diffu_term = true, Include_heat_flux_term = false,
-            diffusion_tensor = PrescribedTensor(D_along = D_along, D_across = D_across),
         )
         RP.flags.θ_imp.transport = θ_transport
         RP.flags.θ_imp.decay = θ_transport
         initialize!(RP)
+        prescribe_aligned_tensor!(RP; D_along, D_across)
         return RP
     end
 
@@ -146,10 +159,8 @@ end
     end
 end
 
-@testitem "ue_Te_operators: A_diffu is the particle-weighted mixing operator by policy, the density operator by the reference policy" setup = [PureMixingRun] begin
+@testitem "ue_Te_operators: A_diffu is the particle-weighted operator of the density operator and the current ne" setup = [PureMixingRun] begin
     using RAPID2D: ue_Te_operators, is_on_wall_pattern
-    @test SimulationFlags{Float64}().mixing_policy isa ParticleMixing
-    @test ParticleMixing <: MixingPolicy && VelocityDiffusion <: MixingPolicy
     RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along = 50.0, D_across = 5.0)
     G, pla, op = RP.G, RP.plasma, RP.operators
     inw = G.nodes.in_wall_nids
@@ -158,7 +169,7 @@ end
     n = vec(pla.ne)
     f = 1.0e5 .* (1 .+ 0.5 .* sin.(2 .* vec(G.R2D)) .* cos.(3 .* vec(G.Z2D)))
     A = op.A_diffu_e
-    # the default: M = N⁻¹(A N − diag(A n)) on the cached density operator and the CURRENT ne,
+    # M = N⁻¹(A N − diag(A n)) on the cached density operator and the CURRENT ne,
     # in its own buffer on the wall pattern; n (M f) + f (A n) = A (n f) row by row
     pops = ue_Te_operators(RP)
     @test pops.A_diffu === op.A_visc_drift_e
@@ -169,9 +180,6 @@ end
     pla.ne[inw] .*= 2 .+ sin.(vec(G.Z2D)[inw])
     n2 = vec(pla.ne)
     @test n2 .* (ue_Te_operators(RP).A_diffu * f) .+ f .* (A * n2) ≈ A * (n2 .* f) rtol = 1.0e-12
-    # the reference: the density operator itself, as before this work
-    RP.flags.mixing_policy = VelocityDiffusion()
-    @test ue_Te_operators(RP).A_diffu === op.A_diffu_e
 end
 
 @testitem "mixing along straight field lines: the column momentum converges to first order in Δt" setup = [PureMixingRun] begin
@@ -229,7 +237,7 @@ end
     @test errs[3] / errs[2] < 0.6
 end
 
-@testitem "mixing heating: mₑ Γ_M(u∥) per electron, in the ledger, the total and the snapshots; zero at uniform u, off by flag, none under the reference policy" setup = [PureMixingRun] begin
+@testitem "viscous heating: mₑ Γ_M(u∥) per electron, in the ledger, the total and the snapshots; zero at uniform u, off by flag" setup = [PureMixingRun] begin
     using RAPID2D: ue_Te_operators, dissipation_rate!, update_electron_heating_powers!
     me = 9.1093837015e-31
     RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along = 50.0, D_across = 5.0)
@@ -265,9 +273,79 @@ end
     update_electron_heating_powers!(RP)
     @test all(iszero, pla.ePowers.visc_heat)
     @test pla.ePowers.tot ≈ pla.ePowers.diffu
-    # the reference policy heats nothing, as before this work
-    RP.flags.Include_Te_visc_heat_term = true
-    RP.flags.mixing_policy = VelocityDiffusion()
-    update_electron_heating_powers!(RP)
-    @test all(iszero, pla.ePowers.visc_heat)
+end
+
+@testitem "the prescribed tensor: aligned with the field line, no Bohm or D∥ in it, kept through a step" setup = [PureMixingRun] begin
+    D_along, D_across = 50.0, 0.5
+    # a straight vertical field: D_ZZ = D_along, D_RR = D_across, no cross term
+    RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along, D_across)
+    G, tp = RP.G, RP.transport
+    check_straight(tp) = all(==(D_along), tp.DZZ) && all(==(D_across), tp.DRR) && all(iszero, tp.DRZ)
+    @test check_straight(tp)
+    @test tp.CTZZ ≈ G.Jacob .* D_along ./ G.dZ^2
+    @test tp.CTRR ≈ G.Jacob .* D_across ./ G.dR^2
+    # the plasma's own D⊥ (Bohm) and D∥ are computed and differ from the prescription; they
+    # are not applied
+    inw = G.nodes.in_wall_nids
+    @test !all(==(D_across), tp.Dperp[inw])
+    @test !all(==(D_along), tp.Dpara[inw])
+    @test maximum(tp.Dpara[inw]) > D_along
+    # the step's end rebuilds the transport; the prescription survives it
+    run_simulation!(RP)
+    @test RP.step == 1
+    @test check_straight(RP.transport)
+    # and the electron operator carries it: a uniform density diffuses nothing, a Z-ramp does
+    pla = RP.plasma
+    pla.ne .= 0.0
+    pla.ne[inw] .= 1.0e14
+    @test maximum(abs, (RP.operators.A_diffu_e * vec(pla.ne))[inw]) <= 1.0e-6 * 1.0e14 * D_along / G.dZ^2
+    # thawed, the refresh puts the plasma tensor back
+    RP.flags.freeze_diffusion_tensor = false
+    RAPID2D.update_transport_quantities!(RP)
+    @test !check_straight(RP.transport)
+end
+
+@testitem "the X-point field: R B_R = B' y, R B_Z = B' x, divergence-free, ψ analytic and tangent, FLF completes" setup = [PureMixingRun, XPointMixing] begin
+    using RAPID2D: calculate_divergence, calculate_B_from_ψ, wall_gradient
+    RP = xpoint_RP(; N = 41, t_end_s = 1.0e-6, D_along = 50.0)
+    G, F = RP.G, RP.fields
+    x = G.R2D .- XP.R0
+    y = G.Z2D .- XP.Z0
+    # the field, on every node, as the external field the step recombines from
+    @test G.R2D .* F.BR ≈ XP.Bprime .* y
+    @test G.R2D .* F.BZ ≈ XP.Bprime .* x
+    @test F.BR_ext == F.BR && F.BZ_ext == F.BZ
+    # the null sits on a grid node, and B_pol vanishes there
+    i0, j0 = argmin(abs.(G.R1D .- XP.R0)), argmin(abs.(G.Z1D .- XP.Z0))
+    @test F.Bpol[i0, j0] <= 1.0e-12 * XP.Bprime
+    @test F.bpol_R[i0, j0] == 0 && F.bpol_Z[i0, j0] == 0
+    # ∇·B = 0, exactly for central differences since R B_R is constant in R and B_Z in Z
+    div = calculate_divergence(G, F.BR, F.BZ)
+    @test maximum(abs, div[2:(end - 1), 2:(end - 1)]) <= 1.0e-12 * XP.Bprime / minimum(G.R1D) / G.dR
+    # ψ_ext is the analytic flux of this field, in the code's sign convention
+    @test F.ψ_ext ≈ XP.Bprime / 2 .* (x .^ 2 .- y .^ 2)
+    BRψ, BZψ = calculate_B_from_ψ(G, F.ψ_ext)
+    @test BRψ[2:(end - 1), 2:(end - 1)] ≈ F.BR[2:(end - 1), 2:(end - 1)] rtol = 1.0e-10
+    @test BZψ[2:(end - 1), 2:(end - 1)] ≈ F.BZ[2:(end - 1), 2:(end - 1)] rtol = 1.0e-10
+    # field lines follow the contours of ψ: B·∇ψ = 0 where the gradient is central
+    gR, gZ = wall_gradient(G, F.ψ_ext)
+    deep = [
+        nid for nid in G.nodes.in_wall_nids if all(
+                RAPID2D.is_in_wall(G, G.nodes.rid[nid] + di, G.nodes.zid[nid] + dj) for di in -1:1, dj in -1:1
+            )
+    ]
+    tangent = (F.BR .* gR .+ F.BZ .* gZ)[deep]
+    scale = (F.Bpol .* hypot.(gR, gZ))[deep]
+    @test maximum(abs, tangent) <= 1.0e-12 * maximum(scale)
+    # the field-line analysis was redone on the hyperbolic field, and the tensor follows it:
+    # isotropic at the null, D_along along b_pol elsewhere
+    inw = G.nodes.in_wall_nids
+    @test all(isfinite, RP.flf.Lpol_tot[inw])
+    tp = RP.transport
+    @test tp.DRR[i0, j0] == 0 && tp.DZZ[i0, j0] == 0 && tp.DRZ[i0, j0] == 0
+    @test tp.DRR ≈ 50.0 .* F.bpol_R .^ 2
+    @test tp.DRZ ≈ 50.0 .* F.bpol_R .* F.bpol_Z
+    # the step keeps the field: Ampère is off, and the external field is what it recombines
+    run_simulation!(RP)
+    @test G.R2D .* RP.fields.BR ≈ XP.Bprime .* y
 end

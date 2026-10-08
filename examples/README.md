@@ -38,7 +38,7 @@ Known failures, and the work each belongs to:
 | `current_diffusion.jl` | pure toroidal field | a current filament with Ampère, with and without the inductive E; single-filament L/R reference with the electrons' kinetic inductance | 2 × 20 ms | the current follows the (L + L_kin)/R circuit within 1 % of saturation |
 | `force_balance_control.jl` | pure toroidal field | J×B hoop force; curved vertical-field PID position control | 2 × 2 ms | the controller holds the current centroid within 5 cm of 1.5 m after 1 ms |
 | `full_startup.jl` | single-quadrupole null, box wall | every module except the global J×B force | 10 ms | scenario, no verdict |
-| `xpoint_mixing.jl` | straight vertical lines, then an analytic X-point (`XPointPoloidal`); box wall | mixing of u∥ and Tₑ along the lines alone: a prescribed field-aligned tensor, no field, no collisions, reflective wall; `ParticleMixing` against the reference `VelocityDiffusion` | 6 crossing times; 0.25 ms | a column settles within 1 % of its particle-weighted mean and energy-conserving temperature; on the X-point the particle momentum and energy are kept within 1 % |
+| `xpoint_mixing.jl` | straight vertical lines, then an analytic X-point written as the external field; box wall | mixing of u∥ and Tₑ along the lines alone: a frozen field-aligned tensor, no field, no collisions, reflective wall; then a blob beside the null | 6 crossing times; 0.25 ms | a column settles within 1 % of its particle-weighted mean and energy-conserving temperature; on the X-point the particle momentum and energy are kept within 1 % |
 | `kstar_reference.jl` | KSTAR, time-varying external field | self-E model, Ampère off | 40 ms | scenario, no verdict |
 
 ## Coupled-step verification (`coupled_step/`)

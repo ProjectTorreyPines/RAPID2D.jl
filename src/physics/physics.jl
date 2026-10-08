@@ -527,10 +527,9 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
         # The viscous heating, mₑ Γ_M(u∥) per electron (−Π:∇u with Π = −mₑ nₑ D ∇u∥): the
         # kinetic energy of the parallel flow the diffusion of momentum erased, from the
-        # operator Te diffuses with and the step's u∥ (`electron_operators.jl`). The
-        # reference policy heats nothing.
+        # operator Te diffuses with and the step's u∥ (`electron_operators.jl`).
         if RP.flags.Include_Te_visc_heat_term
-            viscous_heating!(ePowers.visc_heat, RP, RP.flags.mixing_policy)
+            viscous_heating!(ePowers.visc_heat, RP)
         end
 
         # If convection term is included in temperature equation
