@@ -272,41 +272,37 @@ end
 """
     update_diffusion_tensor!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-The bulk electron diffusion tensor `(DRR, DRZ, DZZ)` from the plasma's diffusivities and the
-field, and its coefficient tensor `CT*`. With `flags.freeze_diffusion_tensor` the tensor is
-left as it is and only `CT*` is recomputed from it.
+Calculate diffusion coefficients based on field configuration and turbulence models.
 """
 function update_diffusion_tensor!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    # compute RR, RZ, ZZ components of the diffusivity tensor
     F = RP.fields
     tp = RP.transport
+    @. tp.DRR = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bR^2
+    @. tp.DRZ = (tp.Dpara - tp.Dperp) * F.bR * F.bZ
+    @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bZ^2
 
-    if !RP.flags.freeze_diffusion_tensor
-        # compute RR, RZ, ZZ components of the diffusivity tensor
-        @. tp.DRR = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bR^2
-        @. tp.DRZ = (tp.Dpara - tp.Dperp) * F.bR * F.bZ
-        @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bZ^2
+    # Add turbulent diffusion if enabled
+    if RP.flags.turb_ExB_mixing
+        # In a real implementation, turbulent diffusion would be calculated based on
+        # field line connection length, ExB drifts, etc.
 
-        # Add turbulent diffusion if enabled
-        if RP.flags.turb_ExB_mixing
-            # In a real implementation, turbulent diffusion would be calculated based on
-            # field line connection length, ExB drifts, etc.
+        fpara = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
+        fperp = one(FT) - fpara
 
-            fpara = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
-            fperp = one(FT) - fpara
+        # 𝐃 = [ (f⟂ 𝐈) + (f∥ - f⟂) * 𝐛𝐛]
+        @. tp.DRR_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_R^2)
+        @. tp.DRZ_turb = (tp.Dpol_turb) * (fpara - fperp) * (F.bpol_R * F.bpol_Z)
+        @. tp.DZZ_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_Z^2)
 
-            # 𝐃 = [ (f⟂ 𝐈) + (f∥ - f⟂) * 𝐛𝐛]
-            @. tp.DRR_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_R^2)
-            @. tp.DRZ_turb = (tp.Dpol_turb) * (fpara - fperp) * (F.bpol_R * F.bpol_Z)
-            @. tp.DZZ_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_Z^2)
-
-            # Add turbulent diffusion to base diffusion
-            @. tp.DRR .+= tp.DRR_turb
-            @. tp.DRZ .+= tp.DRZ_turb
-            @. tp.DZZ .+= tp.DZZ_turb
-        end
+        # Add turbulent diffusion to base diffusion
+        @. tp.DRR .+= tp.DRR_turb
+        @. tp.DRZ .+= tp.DRZ_turb
+        @. tp.DZZ .+= tp.DZZ_turb
     end
 
     dR, dZ = RP.G.dR, RP.G.dZ
+
     @. tp.CTRR = RP.G.Jacob * tp.DRR / (dR * dR)
     @. tp.CTRZ = RP.G.Jacob * tp.DRZ / (dR * dZ)
     @. tp.CTZZ = RP.G.Jacob * tp.DZZ / (dZ * dZ)

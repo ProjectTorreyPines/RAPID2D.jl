@@ -179,9 +179,10 @@ end
         # friction-free and positive on every step, the clipping bounded, and none at the end.
         clipped = Int[]
         held = Ref(true)
+        keep! = tensor_keeper(RP)
         run_simulation!(
             RP;
-            callback_before_step = rp -> (held[] &= enforce_pure_mixing!(rp)),
+            callback_before_step = rp -> (keep!(rp); held[] &= enforce_pure_mixing!(rp)),
             callback_after_step = rp -> begin
                 held[] &= all(>(1.0), rp.plasma.ne[inw]) &&
                     rp.plasma.ePowers.tot[inw] ≈ rp.plasma.ePowers.diffu[inw] .+ rp.plasma.ePowers.visc_heat[inw]

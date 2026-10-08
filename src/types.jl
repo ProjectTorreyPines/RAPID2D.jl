@@ -1244,10 +1244,6 @@ Contains boolean flags that control various aspects of the simulation.
     mean_ExB::Bool = true                     # Include mean ExB drift
     diaMag_drift::Bool = false                # Include diamagnetic drift
     turb_ExB_mixing::Bool = true              # Include turbulent ExB mixing
-    # Keep the bulk electron diffusion tensor `(DRR, DRZ, DZZ)` as it is: the per-step refresh
-    # recomputes only its coefficient tensor `CT*` from it, not the tensor from the plasma.
-    # For experiments that set the tensor themselves (`update_diffusion_tensor!`).
-    freeze_diffusion_tensor::Bool = false
     E_para_self_ES::Bool = true               # Include self-electrostatic parallel E-field
     E_para_self_EM::Bool = true               # Include self-electromagnetic parallel E-field
     negative_n_correction::Bool = true             # Correct negative densities

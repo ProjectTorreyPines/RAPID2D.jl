@@ -10,18 +10,30 @@
 @testsnippet PureMixingRun begin
     """
     The bulk electron tensor `D_across 𝟙 + (D_along − D_across) b_pol b_polᵀ` on every node,
-    isotropic where B_pol = 0, frozen for the run (`flags.freeze_diffusion_tensor`): the per-step
-    refresh then recomputes only `CT*` from it, so neither Bohm nor D∥ enters. The transport
-    refresh is redone at once, so the electron operators carry the tensor from here on.
+    isotropic where B_pol = 0, written over the plasma's and carried into the electron operators.
+    The refresh at every step's end rebuilds the plasma tensor (Bohm cannot be switched off), so
+    a run puts this one back before each solve with `tensor_keeper`.
     """
     function prescribe_aligned_tensor!(RP; D_along, D_across = 0.0)
         F, tp = RP.fields, RP.transport
         @. tp.DRR = D_across + (D_along - D_across) * F.bpol_R^2
         @. tp.DRZ = (D_along - D_across) * F.bpol_R * F.bpol_Z
         @. tp.DZZ = D_across + (D_along - D_across) * F.bpol_Z^2
-        RP.flags.freeze_diffusion_tensor = true
-        RAPID2D.update_transport_quantities!(RP)
+        RAPID2D.cache_electron_operators!(RP)
         return RP
+    end
+
+    "A `callback_before_step` that puts back the tensor `RP` holds now, and rebuilds the electron operators from it."
+    function tensor_keeper(RP)
+        tp = RP.transport
+        DRR, DRZ, DZZ = copy(tp.DRR), copy(tp.DRZ), copy(tp.DZZ)
+        return function (rp)
+            rp.transport.DRR .= DRR
+            rp.transport.DRZ .= DRZ
+            rp.transport.DZZ .= DZZ
+            RAPID2D.cache_electron_operators!(rp)
+            return nothing
+        end
     end
 
     """
@@ -83,9 +95,10 @@
     "Run to `t_end_s` under the contract; returns whether it held on every step."
     function run_pure_mixing!(RP)
         held = Ref(true)
+        keep! = tensor_keeper(RP)
         run_simulation!(
             RP;
-            callback_before_step = rp -> (held[] &= enforce_pure_mixing!(rp)),
+            callback_before_step = rp -> (keep!(rp); held[] &= enforce_pure_mixing!(rp)),
             callback_after_step = rp -> (held[] &= pure_mixing_holds(rp)),
         )
         return held[]
@@ -275,34 +288,33 @@ end
     @test pla.ePowers.tot ≈ pla.ePowers.diffu
 end
 
-@testitem "the prescribed tensor: aligned with the field line, no Bohm or D∥ in it, kept through a step" setup = [PureMixingRun] begin
+@testitem "the prescribed tensor: aligned with the field line, no Bohm or D∥ in it, put back before every step" setup = [PureMixingRun] begin
+    using RAPID2D: build_wall_diffusion_matrix
     D_along, D_across = 50.0, 0.5
     # a straight vertical field: D_ZZ = D_along, D_RR = D_across, no cross term
     RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along, D_across)
-    G, tp = RP.G, RP.transport
+    G, tp, op = RP.G, RP.transport, RP.operators
     check_straight(tp) = all(==(D_along), tp.DZZ) && all(==(D_across), tp.DRR) && all(iszero, tp.DRZ)
     @test check_straight(tp)
-    @test tp.CTZZ ≈ G.Jacob .* D_along ./ G.dZ^2
-    @test tp.CTRR ≈ G.Jacob .* D_across ./ G.dR^2
+    # the electron operator is built from it
+    prescribed = build_wall_diffusion_matrix(G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    @test op.A_diffu_e.matrix ≈ prescribed rtol = 1.0e-12
     # the plasma's own D⊥ (Bohm) and D∥ are computed and differ from the prescription; they
     # are not applied
     inw = G.nodes.in_wall_nids
     @test !all(==(D_across), tp.Dperp[inw])
     @test !all(==(D_along), tp.Dpara[inw])
     @test maximum(tp.Dpara[inw]) > D_along
-    # the step's end rebuilds the transport; the prescription survives it
+    # the refresh at the step's end rebuilds the plasma tensor and the operators with it, and
+    # the keeper puts the prescription back, as `run_pure_mixing!` does before every solve
+    keep! = tensor_keeper(RP)
     run_simulation!(RP)
     @test RP.step == 1
-    @test check_straight(RP.transport)
-    # and the electron operator carries it: a uniform density diffuses nothing, a Z-ramp does
-    pla = RP.plasma
-    pla.ne .= 0.0
-    pla.ne[inw] .= 1.0e14
-    @test maximum(abs, (RP.operators.A_diffu_e * vec(pla.ne))[inw]) <= 1.0e-6 * 1.0e14 * D_along / G.dZ^2
-    # thawed, the refresh puts the plasma tensor back
-    RP.flags.freeze_diffusion_tensor = false
-    RAPID2D.update_transport_quantities!(RP)
     @test !check_straight(RP.transport)
+    @test !isapprox(op.A_diffu_e.matrix, prescribed; rtol = 1.0e-6)
+    keep!(RP)
+    @test check_straight(RP.transport)
+    @test op.A_diffu_e.matrix ≈ prescribed rtol = 1.0e-12
 end
 
 @testitem "the X-point field: R B_R = B' y, R B_Z = B' x, divergence-free, ψ analytic and tangent, FLF completes" setup = [PureMixingRun, XPointMixing] begin

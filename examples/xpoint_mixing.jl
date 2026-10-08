@@ -37,16 +37,29 @@ function xpoint_field!(RP; R0, Z0, Bprime)
     return RP
 end
 
-# D_across 𝟙 + (D_along − D_across) b_pol b_polᵀ on every node, frozen for the run: the per-step
-# refresh keeps it and recomputes only its coefficient tensor, so neither Bohm nor D∥ enters.
+# D_across 𝟙 + (D_along − D_across) b_pol b_polᵀ on every node, written over the plasma's and
+# carried into the electron operators. The refresh at every step's end rebuilds the plasma
+# tensor (Bohm cannot be switched off), so the runs put this one back before each solve.
 function prescribe_aligned_tensor!(RP; D_along, D_across = 0.0)
     F, tp = RP.fields, RP.transport
     @. tp.DRR = D_across + (D_along - D_across) * F.bpol_R^2
     @. tp.DRZ = (D_along - D_across) * F.bpol_R * F.bpol_Z
     @. tp.DZZ = D_across + (D_along - D_across) * F.bpol_Z^2
-    RP.flags.freeze_diffusion_tensor = true
-    RAPID2D.update_transport_quantities!(RP)
+    RAPID2D.cache_electron_operators!(RP)
     return RP
+end
+
+# a `callback_before_step` that puts back the tensor `RP` holds now, with its electron operators
+function tensor_keeper(RP)
+    tp = RP.transport
+    DRR, DRZ, DZZ = copy(tp.DRR), copy(tp.DRZ), copy(tp.DZZ)
+    return function (rp)
+        rp.transport.DRR .= DRR
+        rp.transport.DRZ .= DRZ
+        rp.transport.DZZ .= DZZ
+        RAPID2D.cache_electron_operators!(rp)
+        return nothing
+    end
 end
 
 # ── the pure-mixing run ────────────────────────────────────────────────────────────────
@@ -120,7 +133,8 @@ function run_mixing!(RP, n, u, lines)
     RP.plasma.Te_eV .= T0
     rec = MixingRecord()
     record!(rec, RP, lines)
-    run!(RP; callback_before_step = no_friction!, callback_after_step = rp -> record!(rec, rp, lines))
+    keep! = tensor_keeper(RP)
+    run!(RP; callback_before_step = rp -> (keep!(rp); no_friction!(rp)), callback_after_step = rp -> record!(rec, rp, lines))
     return rec
 end
 
@@ -233,7 +247,8 @@ RPb.plasma.Te_eV .= T0
 record_band!(RPb)
 rec_b = MixingRecord()
 record!(rec_b, RPb, [inw_b])
-run!(RPb; callback_before_step = no_friction!, callback_after_step = rp -> (record!(rec_b, rp, [inw_b]); record_band!(rp)))
+keep_b! = tensor_keeper(RPb)
+run!(RPb; callback_before_step = rp -> (keep_b!(rp); no_friction!(rp)), callback_after_step = rp -> (record!(rec_b, rp, [inw_b]); record_band!(rp)))
 @printf(
     "blob: particles kept in the blob's band and branch %.1f %% → %.1f %%; particle momentum %+.2f %%\n",
     100 * kept[1], 100 * kept[end], 100 * (rec_b.P[end] / rec_b.P[1] - 1)
