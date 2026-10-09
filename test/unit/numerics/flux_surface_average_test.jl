@@ -230,3 +230,47 @@ end
     @test all(isnan, surface_average(fsa, G.R2D))
     @test all(iszero, to_grid(fsa, surface_average(fsa, G.R2D)))
 end
+
+@testitem "Flux surfaces: contour tracing on the bicubic flux keeps small coarse surfaces accurate" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: initialize_grid_geometry, flux_surface_average, surface_average, CubicContourAverage, MarchingSquaresAverage
+    # The start-up grid: 30 × 50 over R 1–2 m, Z ±1 m (dR 3.4 cm, dZ 4.1 cm). A region 2–5 cells
+    # across: marching squares sees a polygon of a handful of vertices, so its dV/dψ is off by
+    # 4–11 %; tracing the bicubic level set is not limited by the cells.
+    G = initialize_grid_geometry(30, 50, (1.0, 2.0), (-1.0, 1.0))
+    G.inVol2D .= 2π .* G.R2D .* G.dR .* G.dZ
+    κ = 1.4
+    ψ = ellipse_ψ(G; κ)
+    for a in (0.08, 0.15)
+        region = inside(ψ; a)
+        fsa = flux_surface_average(G, ψ, region; policy = CubicContourAverage(), nsurf = 6)
+        @test fsa.policy isa CubicContourAverage
+        @test all(fsa.valid)
+        @test maximum(abs, surface_average(fsa, ones(G.NR, G.NZ)) .- 1) < 1.0e-13
+        invR2 = surface_average(fsa, 1 ./ G.R2D .^ 2)
+        for (s, ψs) in pairs(fsa.ψ)
+            refI, refV = reference_average((R, Z) -> 1 / R^2, sqrt(ψs); κ)
+            @test abs(fsa.dVdψ[s] / refV - 1) < 1.0e-3
+            @test abs(invR2[s] / refI - 1) < 5.0e-3      # f itself is still bilinear between nodes
+        end
+        # and better than marching squares where marching squares is weakest
+        ms = flux_surface_average(G, ψ, region; policy = MarchingSquaresAverage(), nsurf = 6)
+        refV1 = reference_average((R, Z) -> 1.0, sqrt(ms.ψ[1]); κ)[2]
+        @test abs(fsa.dVdψ[1] / refV1 - 1) < abs(ms.dVdψ[1] / refV1 - 1) / 10
+    end
+end
+
+@testitem "Flux surfaces: contour tracing beside an X-point and without an O-point" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, CubicContourAverage
+    G = test_grid(61)
+    Zc, w = 0.2, 0.15
+    ψ = @. -exp(-((G.R2D - R0)^2 + (G.Z2D - Zc)^2) / w^2) - exp(-((G.R2D - R0)^2 + (G.Z2D + Zc)^2) / w^2)
+    ψX = -2 * exp(-Zc^2 / w^2)
+    upper = [k for k in eachindex(ψ) if ψ[k] < ψX && G.Z2D[k] > 0]
+    fsa = flux_surface_average(G, ψ, upper; policy = CubicContourAverage())
+    @test all(fsa.valid)
+    @test all(>(0), surface_average(fsa, G.Z2D))
+    @test issorted(fsa.dVdψ)
+    # no extremum: nothing to trace
+    flat = flux_surface_average(G, copy(G.R2D), upper; policy = CubicContourAverage())
+    @test !flat.axis.converged && !any(flat.valid)
+end

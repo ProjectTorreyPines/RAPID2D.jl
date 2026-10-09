@@ -132,6 +132,32 @@ invalid. **The default.**
 struct MarchingSquaresAverage <: FluxSurfaceAveragePolicy end
 
 """
+    CubicContourAverage(; max_turn = deg2rad(5), max_step_cells = 0.5, max_steps = 20_000)
+
+Each surface is traced on the bicubic ψ itself, by predictor–corrector continuation along the
+level set: a step along the tangent, then Newton back onto the level. A step is halved until the
+tangent turns by at most `max_turn`, and is never longer than `max_step_cells` grid spacings.
+The trace starts on the outward midplane of the O-point and closes when it returns there. The
+average is the same trapezoidal ∮ f dl/B_pol as [`MarchingSquaresAverage`](@ref), f bilinear
+between nodes. The contour is not limited by the cells, so a surface a few cells across, or
+one beside an X-point, keeps its length and dV/dψ. A level that does not close within
+`max_steps` steps, or leaves the grid, is marked invalid. The method follows IMAS.jl
+`fluxsurfaces_cubic.jl`.
+"""
+struct CubicContourAverage{FT <: AbstractFloat} <: FluxSurfaceAveragePolicy
+    max_turn::FT
+    max_step_cells::FT
+    max_steps::Int
+    function CubicContourAverage(; max_turn::Real = deg2rad(5.0), max_step_cells::Real = 0.5, max_steps::Int = 20_000)
+        0 < max_turn < π / 2 || throw(ArgumentError("max_turn must be in (0, π/2), got $max_turn"))
+        max_step_cells > 0 || throw(ArgumentError("max_step_cells must be positive, got $max_step_cells"))
+        max_steps > 0 || throw(ArgumentError("max_steps must be positive, got $max_steps"))
+        FT = float(promote_type(typeof(max_turn), typeof(max_step_cells)))
+        return new{FT}(FT(max_turn), FT(max_step_cells), max_steps)
+    end
+end
+
+"""
     HatBinningAverage()
 
 Each region node is shared between the two surfaces whose levels bracket its ψ (linear hats
@@ -256,10 +282,22 @@ function level_interpolation(ψ::AbstractMatrix{FT}, region, lv, valid) where {F
     return hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN[ids]; extrapolate = true, columns = ids, ncol = length(lv.ψ))
 end
 
-function surface_weights(::MarchingSquaresAverage, G::GridGeometry{FT}, ψ, region, o, lv, itp) where {FT}
+function surface_weights(::MarchingSquaresAverage, G::GridGeometry, ψ, region, o, lv, itp)
     ψm = ψ isa Matrix ? ψ : Matrix(ψ)
     Rc_cache, Zc_cache = IMASutils.contour_cache(G.R1D, G.Z1D)
-    nsurf, N = length(lv.ψ), G.NR * G.NZ
+    return contour_weights(s -> closed_contour!(Rc_cache, Zc_cache, ψm, G, lv.ψ[s], o), G, length(lv.ψ), itp)
+end
+
+function surface_weights(policy::CubicContourAverage, G::GridGeometry{FT}, ψ, region, o, lv, itp) where {FT}
+    Rs, Zs = FT[], FT[]
+    return contour_weights(s -> traced_contour!(Rs, Zs, itp, G, lv.ψ[s], o, policy), G, length(lv.ψ), itp)
+end
+
+# The weights of closed polylines, `contour(s) -> (R, Z)` with the last point repeating the
+# first (or `(nothing, nothing)`), as the columns of a nodes × surfaces matrix: the trapezoidal
+# ∮ f dl/B_pol over the vertices, f bilinear between nodes, B_pol = |∇ψ|/R from the bicubic ψ.
+function contour_weights(contour, G::GridGeometry{FT}, nsurf::Int, itp) where {FT}
+    N = G.NR * G.NZ
     colptr = Vector{Int}(undef, nsurf + 1)
     colptr[1] = 1
     rowval, nzval = Int[], FT[]
@@ -271,7 +309,7 @@ function surface_weights(::MarchingSquaresAverage, G::GridGeometry{FT}, ψ, regi
         stamp = zeros!(pool, Int, N)            # the last surface that reached each node
         reached = acquire!(pool, Int, N)        # the nodes this surface reached
         for s in 1:nsurf
-            Rc, Zc = closed_contour!(Rc_cache, Zc_cache, ψm, G, lv.ψ[s], o)
+            Rc, Zc = contour(s)
             if Rc !== nothing
                 m = length(Rc) - 1              # the last point repeats the first
                 nreached, total = 0, zero(FT)
@@ -333,6 +371,95 @@ function add_bilinear!(acc, stamp, reached, nreached, G::GridGeometry, R, Z, w, 
         acc[node] += w * c
     end
     return nreached
+end
+
+# ── tracing the bicubic level set ──────────────────────────────────────────────────
+
+# The closed level set `level` of the bicubic ψ around the O-point `o`, traced by
+# predictor–corrector continuation into `Rs`, `Zs` (the last point repeats the first), or
+# `(nothing, nothing)` when it does not close.
+function traced_contour!(Rs, Zs, itp, G::GridGeometry{FT}, level, o, p::CubicContourAverage) where {FT}
+    empty!(Rs)
+    empty!(Zs)
+    x0 = midplane_crossing(itp, G, level, o)
+    x0 === nothing && return nothing, nothing
+    h_max = p.max_step_cells * min(G.dR, G.dZ)
+    h_min = FT(1.0e-6) * h_max
+    t0 = level_tangent(itp, x0, 1)
+    t0 === nothing && return nothing, nothing
+    sgn = t0[2] >= 0 ? 1 : -1                  # leave the outward midplane upward
+    t = sgn == 1 ? t0 : (-t0[1], -t0[2])
+    push!(Rs, x0[1])
+    push!(Zs, x0[2])
+    x, h, turned = x0, h_max, zero(FT)
+    for _ in 1:p.max_steps
+        # predictor along the tangent, corrector back onto the level; halve until the turn is small
+        xn, tn, turn = x, t, zero(FT)
+        while true
+            xn = project_to_level(itp, level, (x[1] + h * t[1], x[2] + h * t[2]), h_max)
+            tn = xn === nothing ? nothing : level_tangent(itp, xn, sgn)
+            if tn !== nothing
+                turn = atan(t[1] * tn[2] - t[2] * tn[1], t[1] * tn[1] + t[2] * tn[2])
+                abs(turn) <= p.max_turn && break
+            end
+            h /= 2
+            h < h_min && return nothing, nothing
+        end
+        (G.R1D[1] <= xn[1] <= G.R1D[end] && G.Z1D[1] <= xn[2] <= G.Z1D[end]) || return nothing, nothing
+        turned += turn
+        # closed: back across the outward midplane, from below, after more than half a turn
+        if abs(turned) > π && x[2] < o.Z <= xn[2] && xn[1] > o.R
+            push!(Rs, x0[1])
+            push!(Zs, x0[2])
+            return Rs, Zs
+        end
+        push!(Rs, xn[1])
+        push!(Zs, xn[2])
+        x, t = xn, tn
+        h = min(2h, h_max)
+    end
+    return nothing, nothing
+end
+
+# Where the level crosses the outward midplane of the O-point: the first sign change of
+# ψ − level along Z = Z_axis from the axis outward, refined by bisection.
+function midplane_crossing(itp, G::GridGeometry{FT}, level, o) where {FT}
+    f(R) = itp((R, o.Z)) - level
+    f_axis = f(o.R)
+    a, step = o.R, G.dR / 4
+    while a + step <= G.R1D[end]
+        b = a + step
+        if sign(f(b)) != sign(f_axis)
+            for _ in 1:60
+                c = (a + b) / 2
+                sign(f(c)) == sign(f_axis) ? (a = c) : (b = c)
+            end
+            return ((a + b) / 2, FT(o.Z))
+        end
+        a = b
+    end
+    return nothing
+end
+
+# Unit tangent of the level set (∇ψ turned by +90°, times `sgn`), or `nothing` at a critical point.
+function level_tangent(itp, x, sgn)
+    g = gradient(itp, x)
+    n = hypot(g[1], g[2])
+    n > 0 || return nothing
+    return (-sgn * g[2] / n, sgn * g[1] / n)
+end
+
+# Newton along ∇ψ back onto the level, or `nothing` when it does not converge.
+function project_to_level(itp, level, x, h)
+    for _ in 1:8
+        v = itp(x) - level
+        g = gradient(itp, x)
+        g2 = g[1]^2 + g[2]^2
+        g2 > 0 || return nothing
+        x = (x[1] - v * g[1] / g2, x[2] - v * g[2] / g2)
+        abs(v) / sqrt(g2) < 1.0e-10 * h && return x
+    end
+    return nothing
 end
 
 # ── reference ──────────────────────────────────────────────────────────────────────
