@@ -94,6 +94,7 @@ include("coils/circuit_equations.jl")
 # Include utility functions
 include("utils/grid.jl")  # Grid-related utility functions
 include("utils/field_line_following.jl")
+include("numerics/flux_surface_average.jl")  # averages over flux surfaces, and back to the grid
 include("utils/green_function.jl")  # Green's function utilities
 include("utils/utils.jl")
 
