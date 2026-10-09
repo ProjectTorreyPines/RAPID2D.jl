@@ -3,12 +3,12 @@
 # A closed ψ contour, revolved toroidally, is a flux surface. Its average carries the volume
 # measure dl/B_pol,
 #
-#     ⟨f⟩ = ∮ f dl/B_pol / ∮ dl/B_pol,        dV/dψ = 2π ∮ dl/B_pol   (ψ per radian),
+#     ⟨f⟩ = ∮ f dl/B_pol / ∮ dl/B_pol,        |dV/dψ| = 2π ∮ dl/B_pol   (ψ per radian),
 #
-# and the safety factor follows as q = F ⟨1/R²⟩ dV/dψ / (4π²), F = R Bϕ. Two ways to build
-# the average on the grid are compared:
-#   MarchingSquaresAverage (the default): the closed contour of each level by marching squares;
-#   CubicContourAverage: the level set of the bicubic ψ, traced by predictor–corrector steps;
+# and the safety factor follows as |q| = F ⟨1/R²⟩ |dV/dψ| / (4π²), F = R Bϕ. Three ways to
+# build the average on the grid are compared:
+#   CubicContourAverage (the default): the level set of the bicubic ψ, traced by predictor–corrector steps;
+#   MarchingSquaresAverage: the closed contour of each level by marching squares on the grid ψ;
 #   HatBinningAverage: share each node between the two nearest levels, weighted by volume.
 #
 # Part 1 uses elliptic surfaces whose averages are known by quadrature along the ellipse.

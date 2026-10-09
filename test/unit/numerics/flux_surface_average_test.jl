@@ -275,3 +275,72 @@ end
     flat = flux_surface_average(G, copy(G.R2D), upper; policy = CubicContourAverage())
     @test !flat.axis.converged && !any(flat.valid)
 end
+
+@testitem "Flux surfaces: tracing stays accurate up to a separatrix (exact cubic saddle)" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: find_o_point, psi_interpolant, surface_weights, CubicContourAverage
+    # ψ = x² + y² − y³, x = (R − 1.5)/0.4, y = Z/0.4: an O-point at the origin and an X-point at
+    # y = 2/3, ψX = 4/27. Exactly cubic, so the bicubic interpolant is exact. Inside the level c,
+    # c − y² + y³ = (y − y₁)(y₂ − y)(y₃ − y), and dV/dψ = 0.48π ∫ dy/√(…) = 0.48π · 2K(m)/√(y₃ − y₁),
+    # m = (y₂ − y₁)/(y₃ − y₁): an elliptic integral, exact up to the separatrix (m → 1).
+    G = test_grid(31)
+    x, y = (G.R2D .- 1.5) ./ 0.4, G.Z2D ./ 0.4
+    ψ = @. x^2 + y^2 - y^3
+    ψX = 4 / 27
+    region = findall(k -> ψ[k] < ψX && y[k] < 2 / 3, eachindex(ψ))
+    function root(f, a, b)
+        for _ in 1:200
+            c = (a + b) / 2
+            sign(f(c)) == sign(f(a)) ? (a = c) : (b = c)
+        end
+        return (a + b) / 2
+    end
+    agm(a, b) = (
+        for _ in 1:60
+            a, b = (a + b) / 2, sqrt(a * b)
+        end; a
+    )
+    function exact_dVdψ(c)
+        p(t) = t^3 - t^2 + c
+        y1, y2, y3 = root(p, -1.0, 0.0), root(p, 0.0, 2 / 3), root(p, 2 / 3, 1.5)
+        m = (y2 - y1) / (y3 - y1)
+        return 0.48π * 2 * (π / (2 * agm(1.0, sqrt(1 - m)))) / sqrt(y3 - y1)
+    end
+    itp = psi_interpolant(G, ψ)
+    o = find_o_point(G, ψ, region; itp)
+    fractions = [0.5, 0.9, 0.99, 0.999, 0.9999]
+    levels = fractions .* ψX
+    lv = (; ψ_axis = o.ψ, ψ_edge = ψX, ψN = fractions, ψ = levels)
+    _, dVdψ, valid = surface_weights(CubicContourAverage(), G, ψ, region, o, lv, itp)
+    @test all(valid)
+    for (s, c) in pairs(levels)
+        @test abs(dVdψ[s] / exact_dVdψ(c) - 1) < 2.0e-3
+    end
+end
+
+@testitem "Flux surfaces: edge cases of the contour start and of the O-point" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: initialize_grid_geometry, initialize_grid_geometry!, GridGeometry, closed_contour!, find_o_point,
+        flux_surface_average, CubicContourAverage, IMASutils
+    # A level equal to the last radial node on the axis row: marching squares must not start
+    # its trace in the cell past the grid.
+    G5 = initialize_grid_geometry(5, 5, (1.0, 2.0), (-0.5, 0.5))
+    ψ5 = @. (G5.R2D - 1.5)^2 + G5.Z2D^2
+    Rc, Zc = IMASutils.contour_cache(G5.R1D, G5.Z1D)
+    @test closed_contour!(Rc, Zc, ψ5, G5, 0.25, (; R = 1.5, Z = 0.0, ψ = 0.0)) == (nothing, nothing)
+    # A region whose outermost surfaces reach within a quarter cell of the grid edge.
+    G = test_grid(31)
+    ψ = @. (G.R2D - R0)^2 + G.Z2D^2
+    fsa = flux_surface_average(G, ψ, findall(<(0.488^2), vec(ψ)); nsurf = 200)
+    @test all(fsa.valid)
+    # A region that does not contain the extremum has no O-point of its own.
+    ψc = @. (G.R2D - 1.5)^2 + G.Z2D^2
+    away = findall(k -> 1.6 < G.R2D[k] < 1.7 && abs(G.Z2D[k]) < 0.1, eachindex(ψc))
+    @test !find_o_point(G, ψc, away).converged
+    # Float32 grids, with default and with Float32 tracing parameters.
+    G32 = initialize_grid_geometry!(GridGeometry{Float32}(31, 31), (1.0f0, 2.0f0), (-0.5f0, 0.5f0))
+    G32.inVol2D .= 2.0f0 * Float32(π) .* G32.R2D .* G32.dR .* G32.dZ
+    ψ32 = @. (G32.R2D - Float32(R0))^2 + (G32.Z2D - Float32(Z0))^2
+    region32 = findall(<(0.09f0), vec(ψ32))
+    for policy in (CubicContourAverage(), CubicContourAverage(max_turn = Float32(deg2rad(5)), max_step_cells = 0.5f0))
+        @test all(flux_surface_average(G32, ψ32, region32; policy).valid)
+    end
+end

@@ -24,16 +24,18 @@ function psi_interpolant(G::GridGeometry, ψ::AbstractMatrix)
 end
 
 """
-    find_o_point(G, ψ, region; itp = psi_interpolant(G, ψ), tol = 1e-10, maxit = 50) -> (; R, Z, ψ, converged) or nothing
+    find_o_point(G, ψ, region; itp = psi_interpolant(G, ψ), tol, maxit = 50) -> (; R, Z, ψ, converged) or nothing
 
 The O-point of a closed region (`region` holds linear node indices): the extremum of the
 bicubic interpolant of `ψ`, found by damped Newton on ∇ψ = 0 from the region's node farthest
-in ψ from the region's edge. `converged` requires a definite Hessian (an extremum, not an
-X-point) and a step below `tol` grid spacings. `nothing` when `region` is empty.
+in ψ from the region's edge. `converged` requires a full Newton correction below `tol` grid
+spacings (by default 1e-10, or 64 eps of the grid's float type if larger), a definite Hessian (an extremum, not an X-point), and a cell with a corner in the
+region: an extremum outside the region is not its O-point. A line search that cannot lower
+|∇ψ| stops the search unconverged. `nothing` when `region` is empty.
 """
 function find_o_point(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, region::AbstractVector{<:Integer};
-        itp = nothing, tol::Real = 1.0e-10, maxit::Int = 50,
+        itp = nothing, tol::Real = max(1.0e-10, 64 * eps(FT)), maxit::Int = 50,
     ) where {FT <: AbstractFloat}
     isempty(region) && return nothing
     itp === nothing && (itp = psi_interpolant(G, ψ))
@@ -47,26 +49,35 @@ function find_o_point(
         det = H[1, 1] * H[2, 2] - H[1, 2] * H[2, 1]
         det == 0 && break
         δ = ((H[2, 2] * g[1] - H[1, 2] * g[2]) / det, (H[1, 1] * g[2] - H[2, 1] * g[1]) / det)
+        if hypot(δ[1], δ[2]) < tol * h          # the full correction is already negligible
+            x = (x[1] - δ[1], x[2] - δ[2])
+            converged = det > 0
+            break
+        end
         # Backtrack until |∇ψ| decreases: a full Newton step can overshoot on a coarse grid.
         g2 = g[1]^2 + g[2]^2
-        α = one(FT)
-        xn = (x[1] - α * δ[1], x[2] - α * δ[2])
+        α, decreased = one(FT), false
+        xn = (x[1] - δ[1], x[2] - δ[2])
         while α > FT(1.0e-3)
             gn = gradient(itp, xn)
-            gn[1]^2 + gn[2]^2 < g2 && break
+            decreased = gn[1]^2 + gn[2]^2 < g2
+            decreased && break
             α /= 2
             xn = (x[1] - α * δ[1], x[2] - α * δ[2])
         end
-        step = hypot(xn[1] - x[1], xn[2] - x[2])
+        decreased || break
         x = xn
-        if step < tol * h
-            Hn = hessian(itp, x)
-            converged = Hn[1, 1] * Hn[2, 2] - Hn[1, 2] * Hn[2, 1] > 0
-            break
-        end
     end
-    inside = first(G.R1D) <= x[1] <= last(G.R1D) && first(G.Z1D) <= x[2] <= last(G.Z1D)
-    return (; R = x[1], Z = x[2], ψ = itp(x), converged = converged && inside)
+    return (; R = x[1], Z = x[2], ψ = itp(x), converged = converged && in_region_cell(G, region, x))
+end
+
+# Whether the cell containing `x` has a corner in `region`.
+function in_region_cell(G::GridGeometry, region, x)
+    (G.R1D[1] <= x[1] <= G.R1D[end] && G.Z1D[1] <= x[2] <= G.Z1D[end]) || return false
+    i = clamp(floor(Int, (x[1] - G.R1D[1]) / G.dR) + 1, 1, G.NR - 1)
+    j = clamp(floor(Int, (x[2] - G.Z1D[1]) / G.dZ) + 1, 1, G.NZ - 1)
+    k = (j - 1) * G.NR + i
+    return any(c -> c in region, (k, k + 1, k + G.NR, k + G.NR + 1))
 end
 
 # The region's node farthest in ψ from the mean ψ of its edge nodes (those with a neighbour
@@ -120,11 +131,13 @@ same object, so consumers never learn which one built it.
 abstract type FluxSurfaceAveragePolicy end
 
 """
-    CubicContourAverage(; max_turn = deg2rad(5), max_step_cells = 0.5, max_steps = 20_000)
+    CubicContourAverage(; max_turn = deg2rad(5), max_weight_change = 0.02, max_step_cells = 0.5, max_steps = 20_000)
 
 Each surface is traced on the bicubic ψ itself, by predictor–corrector continuation along the
 level set: a step along the tangent, then Newton back onto the level. A step is halved until the
-tangent turns by at most `max_turn`, and is never longer than `max_step_cells` grid spacings.
+tangent turns by at most `max_turn` and the integrand R/|∇ψ| changes by at most a fraction
+`max_weight_change` (which keeps the trace resolved toward an X-point, where |∇ψ| → 0), and is
+never longer than `max_step_cells` grid spacings.
 The trace starts on the outward midplane of the O-point and closes when it returns there. The
 average is the same trapezoidal ∮ f dl/B_pol as [`MarchingSquaresAverage`](@ref), f bilinear
 between nodes. The contour is not limited by the cells, so a surface a few cells across, or
@@ -134,14 +147,19 @@ one beside an X-point, keeps its length and dV/dψ. A level that does not close 
 """
 struct CubicContourAverage{FT <: AbstractFloat} <: FluxSurfaceAveragePolicy
     max_turn::FT
+    max_weight_change::FT
     max_step_cells::FT
     max_steps::Int
-    function CubicContourAverage(; max_turn::Real = deg2rad(5.0), max_step_cells::Real = 0.5, max_steps::Int = 20_000)
+    function CubicContourAverage(;
+            max_turn::Real = deg2rad(5.0), max_weight_change::Real = 0.02,
+            max_step_cells::Real = 0.5, max_steps::Int = 20_000,
+        )
         0 < max_turn < π / 2 || throw(ArgumentError("max_turn must be in (0, π/2), got $max_turn"))
+        0 < max_weight_change < 1 || throw(ArgumentError("max_weight_change must be in (0, 1), got $max_weight_change"))
         max_step_cells > 0 || throw(ArgumentError("max_step_cells must be positive, got $max_step_cells"))
         max_steps > 0 || throw(ArgumentError("max_steps must be positive, got $max_steps"))
-        FT = float(promote_type(typeof(max_turn), typeof(max_step_cells)))
-        return new{FT}(FT(max_turn), FT(max_step_cells), max_steps)
+        FT = float(promote_type(typeof(max_turn), typeof(max_weight_change), typeof(max_step_cells)))
+        return new{FT}(FT(max_turn), FT(max_weight_change), FT(max_step_cells), max_steps)
     end
 end
 
@@ -178,8 +196,9 @@ with [`flux_surface_average`](@ref); apply with [`surface_average`](@ref) and
 [`to_grid`](@ref).
 
 Fields read by consumers: `policy`, `axis` (`(; R, Z, ψ, converged)`), `ψ` and `ψN` (the
-level of each surface), `valid` (whether the surface was found), `dVdψ` (2π∮dl/B_pol, per
-radian of ψ). The weights are internal.
+level of each surface), `valid` (whether the surface was found), `dVdψ` (2π∮dl/B_pol per
+radian of ψ: the magnitude |dV/dψ|, positive whether ψ rises or falls away from the axis).
+The weights are internal.
 """
 struct FluxSurfaceAverage{FT <: AbstractFloat, P <: FluxSurfaceAveragePolicy}
     policy::P
@@ -244,8 +263,10 @@ surface_average(fsa::FluxSurfaceAverage, f::AbstractVecOrMat, ω::AbstractVecOrM
 
 A profile on the surfaces (one value per surface) back on the grid: linear in normalized
 flux between the valid surfaces, and extrapolated linearly from the two nearest beyond the
-first and the last (half a level at most), so a profile linear in ψN, as any smooth field is
-near the axis, comes back exactly. Nodes outside the region are zero.
+first and the last valid ones (half a level when the end surfaces are valid, farther when
+they are not). A profile linear in ψN comes back exactly; a surface profile smooth in the
+minor radius is a function of r² ∝ ψN, so it is linear in ψN near the axis. With a single
+valid surface the profile comes back constant. Nodes outside the region are zero.
 """
 to_grid(fsa::FluxSurfaceAverage, profile::AbstractVector) =
     reshape(fsa.grid_weights * ifelse.(fsa.valid, profile, zero(eltype(profile))), fsa.dims)
@@ -306,7 +327,7 @@ function contour_weights(contour, G::GridGeometry{FT}, nsurf::Int, itp) where {F
     dVdψ = fill(FT(NaN), nsurf)
     valid = fill(false, nsurf)
     hint = (Ref(1), Ref(1))                     # successive contour points share cells
-    @with_pool pool begin
+    @safe_with_pool pool begin                  # a contour may throw; the pool must survive it
         acc = zeros!(pool, FT, N)               # one surface's weight on each node
         stamp = zeros!(pool, Int, N)            # the last surface that reached each node
         reached = acquire!(pool, Int, N)        # the nodes this surface reached
@@ -344,6 +365,18 @@ end
 function closed_contour!(Rc_cache, Zc_cache, ψ::Matrix, G::GridGeometry, level, o)
     # marching squares starts from the axis cell, which must lie inside the grid
     (G.R1D[1] <= o.R < G.R1D[end] && G.Z1D[1] <= o.Z < G.Z1D[end]) || return nothing, nothing
+    # It then walks out along the axis row to the first node at or beyond the level, and starts
+    # in the cell before it, or in that node's own cell on an exact hit. On the last column that
+    # cell lies past the grid, read unchecked: refuse the level instead.
+    ia = searchsortedlast(G.R1D, o.R)
+    ja = searchsortedlast(G.Z1D, o.Z)
+    for i in (ia + 1):G.NR
+        v = (ψ[i, ja] - o.ψ) / (level - o.ψ)
+        if v >= 1
+            v == 1 && i == G.NR && return nothing, nothing
+            break
+        end
+    end
     Rc, Zc = try
         IMASutils.contour_from_midplane!(Rc_cache, Zc_cache, ψ, G.R1D, G.Z1D, level, o.R, o.Z, o.ψ)
     catch err
@@ -387,37 +420,44 @@ function traced_contour!(Rs, Zs, itp, G::GridGeometry{FT}, level, o, p::CubicCon
     x0 === nothing && return nothing, nothing
     h_max = p.max_step_cells * min(G.dR, G.dZ)
     h_min = FT(1.0e-6) * h_max
-    t0 = level_tangent(itp, x0, 1)
-    t0 === nothing && return nothing, nothing
-    sgn = t0[2] >= 0 ? 1 : -1                  # leave the outward midplane upward
-    t = sgn == 1 ? t0 : (-t0[1], -t0[2])
+    tw0 = tangent_and_weight(itp, x0, 1)
+    tw0 === nothing && return nothing, nothing
+    sgn = tw0[1][2] >= 0 ? 1 : -1              # leave the outward midplane upward
+    t = sgn == 1 ? tw0[1] : (-tw0[1][1], -tw0[1][2])
+    w = tw0[2]
     push!(Rs, x0[1])
     push!(Zs, x0[2])
     x, h, turned = x0, h_max, zero(FT)
     for _ in 1:p.max_steps
-        # predictor along the tangent, corrector back onto the level; halve until the turn is small
-        xn, tn, turn = x, t, zero(FT)
+        # predictor along the tangent, corrector back onto the level; halve until the tangent
+        # turns little and the integrand R/|∇ψ| changes little
+        xn, tn, wn, turn = x, t, w, zero(FT)
         while true
-            xn = project_to_level(itp, level, (x[1] + h * t[1], x[2] + h * t[2]), h_max)
-            tn = xn === nothing ? nothing : level_tangent(itp, xn, sgn)
-            if tn !== nothing
+            xn = project_to_level(itp, level, (x[1] + h * t[1], x[2] + h * t[2]), h)
+            tw = xn === nothing ? nothing : tangent_and_weight(itp, xn, sgn)
+            if tw !== nothing
+                tn, wn = tw
                 turn = atan(t[1] * tn[2] - t[2] * tn[1], t[1] * tn[1] + t[2] * tn[2])
-                abs(turn) <= p.max_turn && break
+                abs(turn) <= p.max_turn && abs(wn - w) <= p.max_weight_change * max(w, wn) && break
             end
             h /= 2
             h < h_min && return nothing, nothing
         end
         (G.R1D[1] <= xn[1] <= G.R1D[end] && G.Z1D[1] <= xn[2] <= G.Z1D[end]) || return nothing, nothing
         turned += turn
-        # closed: back across the outward midplane, from below, after more than half a turn
+        # closed: back across the outward midplane from below, after more than half a turn, at
+        # the seed rather than at another crossing of a non-convex surface
         if abs(turned) > π && x[2] < o.Z <= xn[2] && xn[1] > o.R
-            push!(Rs, x0[1])
-            push!(Zs, x0[2])
-            return Rs, Zs
+            R_cross = x[1] + (xn[1] - x[1]) * (o.Z - x[2]) / (xn[2] - x[2])
+            if abs(R_cross - x0[1]) <= 2 * h_max
+                push!(Rs, x0[1])
+                push!(Zs, x0[2])
+                return Rs, Zs
+            end
         end
         push!(Rs, xn[1])
         push!(Zs, xn[2])
-        x, t = xn, tn
+        x, t, w = xn, tn, wn
         h = min(2h, h_max)
     end
     return nothing, nothing
@@ -429,8 +469,8 @@ function midplane_crossing(itp, G::GridGeometry{FT}, level, o) where {FT}
     f(R) = itp((R, o.Z)) - level
     f_axis = f(o.R)
     a, step = o.R, G.dR / 4
-    while a + step <= G.R1D[end]
-        b = a + step
+    while a < G.R1D[end]
+        b = min(a + step, G.R1D[end])
         if sign(f(b)) != sign(f_axis)
             for _ in 1:60
                 c = (a + b) / 2
@@ -443,23 +483,27 @@ function midplane_crossing(itp, G::GridGeometry{FT}, level, o) where {FT}
     return nothing
 end
 
-# Unit tangent of the level set (∇ψ turned by +90°, times `sgn`), or `nothing` at a critical point.
-function level_tangent(itp, x, sgn)
+# The unit tangent of the level set (∇ψ turned by +90°, times `sgn`) and the integrand
+# R/|∇ψ| of dl/B_pol, or `nothing` at a critical point.
+function tangent_and_weight(itp, x, sgn)
     g = gradient(itp, x)
     n = hypot(g[1], g[2])
     n > 0 || return nothing
-    return (-sgn * g[2] / n, sgn * g[1] / n)
+    return (-sgn * g[2] / n, sgn * g[1] / n), x[1] / n
 end
 
-# Newton along ∇ψ back onto the level, or `nothing` when it does not converge.
+# Newton along ∇ψ back onto the level, or `nothing` when it does not converge or moves farther
+# than the step `h` (onto another branch). The tolerance follows the working precision.
 function project_to_level(itp, level, x, h)
+    x_pred = x
     for _ in 1:8
         v = itp(x) - level
         g = gradient(itp, x)
         g2 = g[1]^2 + g[2]^2
         g2 > 0 || return nothing
         x = (x[1] - v * g[1] / g2, x[2] - v * g[2] / g2)
-        abs(v) / sqrt(g2) < 1.0e-10 * h && return x
+        hypot(x[1] - x_pred[1], x[2] - x_pred[2]) <= h || return nothing
+        abs(v) / sqrt(g2) < max(1.0e-10, 64 * eps(typeof(v))) * h && return x
     end
     return nothing
 end
