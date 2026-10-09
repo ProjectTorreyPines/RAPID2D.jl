@@ -172,7 +172,8 @@ end
 
 Averages over `nsurf` closed flux surfaces of the region `region` (linear node indices),
 between its O-point and its edge ([`surface_levels`](@ref)). The `RP` form uses the closed
-nodes of the last field-line analysis. `nothing` when the region is empty.
+nodes of the last field-line analysis. `nothing` when the region is empty; every surface
+invalid when the region has no O-point (`axis.converged == false`).
 """
 function flux_surface_average(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, region::AbstractVector{<:Integer};
@@ -183,7 +184,9 @@ function flux_surface_average(
     itp = psi_interpolant(G, ψ)
     o = find_o_point(G, ψ, region; itp)
     lv = surface_levels(o, ψ, region; nsurf)
-    weights, dVdψ, valid = surface_weights(policy, G, ψ, region, o, lv, itp)
+    # Without an O-point there are no closed surfaces to average over: report, do not guess.
+    weights, dVdψ, valid = o.converged ? surface_weights(policy, G, ψ, region, o, lv, itp) :
+        (spzeros(FT, length(ψ), nsurf), fill(FT(NaN), nsurf), fill(false, nsurf))
     grid_weights = level_interpolation(ψ, region, lv, valid)
     axis = (; R = FT(o.R), Z = FT(o.Z), ψ = FT(o.ψ), converged = o.converged)
     return FluxSurfaceAverage(policy, axis, lv.ψ_edge, lv.ψ, lv.ψN, valid, dVdψ, weights, grid_weights, size(ψ))
@@ -299,6 +302,8 @@ end
 # The closed contour of `level` around the O-point `o`, or `nothing` when marching squares
 # finds none (a contour inside one cell, an open contour, or a saddle it cannot connect).
 function closed_contour!(Rc_cache, Zc_cache, ψ::Matrix, G::GridGeometry, level, o)
+    # marching squares starts from the axis cell, which must lie inside the grid
+    (G.R1D[1] <= o.R < G.R1D[end] && G.Z1D[1] <= o.Z < G.Z1D[end]) || return nothing, nothing
     Rc, Zc = try
         IMASutils.contour_from_midplane!(Rc_cache, Zc_cache, ψ, G.R1D, G.Z1D, level, o.R, o.Z, o.ψ)
     catch err

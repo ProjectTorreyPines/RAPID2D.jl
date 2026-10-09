@@ -218,3 +218,15 @@ end
         @test issorted(fsa.dVdψ)                             # dV/dψ grows toward the separatrix
     end
 end
+
+@testitem "Flux surfaces: a region without an O-point is reported, not averaged" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, to_grid
+    G = test_grid(31)
+    ψ = copy(G.R2D)                     # no extremum anywhere: open, parallel contours
+    region = findall(k -> abs(G.R2D[k] - 1.5) < 0.2 && abs(G.Z2D[k]) < 0.2, eachindex(ψ))
+    fsa = flux_surface_average(G, ψ, region)
+    @test !fsa.axis.converged
+    @test !any(fsa.valid)
+    @test all(isnan, surface_average(fsa, G.R2D))
+    @test all(iszero, to_grid(fsa, surface_average(fsa, G.R2D)))
+end
