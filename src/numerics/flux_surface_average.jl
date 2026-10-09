@@ -210,28 +210,30 @@ surface_average(fsa::FluxSurfaceAverage, f::AbstractVecOrMat, ω::AbstractVecOrM
 """
     to_grid(fsa, profile) -> Matrix
 
-A profile on the surfaces (one value per surface) back on the grid: linear interpolation in
-normalized flux between the valid surfaces, held constant inside the first and outside the
-last. Nodes outside the region are zero.
+A profile on the surfaces (one value per surface) back on the grid: linear in normalized
+flux between the valid surfaces, and extrapolated linearly from the two nearest beyond the
+first and the last (half a level at most), so a profile linear in ψN, as any smooth field is
+near the axis, comes back exactly. Nodes outside the region are zero.
 """
 to_grid(fsa::FluxSurfaceAverage, profile::AbstractVector) =
     reshape(fsa.grid_weights[:, fsa.valid] * profile[fsa.valid], fsa.dims)
 
 # ── weights of each policy ───────────────────────────────────────────────────────────
 
-# Linear-interpolation weights in ψN from the levels `ψN_levels` to the region's nodes:
-# rows are nodes, columns are levels; held constant outside the first and last level.
-function hat_weights(ψ::AbstractMatrix{FT}, region, ψ_axis, ψ_edge, ψN_levels) where {FT}
+# Linear-interpolation weights in ψN from the levels `ψN_levels` to the region's nodes: rows
+# are nodes, columns are levels. Beyond the first and the last level the weights are held
+# constant (`extrapolate = false`, a partition into hats) or continue the end segments.
+function hat_weights(ψ::AbstractMatrix{FT}, region, ψ_axis, ψ_edge, ψN_levels; extrapolate::Bool = false) where {FT}
     n = length(ψN_levels)
     I, J, V = Int[], Int[], FT[]
     for k in region
         x = (ψ[k] - ψ_axis) / (ψ_edge - ψ_axis)
-        if n == 1 || x <= ψN_levels[1]
+        if n == 1 || (!extrapolate && x <= ψN_levels[1])
             push!(I, k); push!(J, 1); push!(V, one(FT))
-        elseif x >= ψN_levels[n]
+        elseif !extrapolate && x >= ψN_levels[n]
             push!(I, k); push!(J, n); push!(V, one(FT))
         else
-            s = searchsortedlast(ψN_levels, x)
+            s = clamp(searchsortedlast(ψN_levels, x), 1, n - 1)
             t = (x - ψN_levels[s]) / (ψN_levels[s + 1] - ψN_levels[s])
             push!(I, k, k); push!(J, s, s + 1); push!(V, one(FT) - t, t)
         end
@@ -244,7 +246,7 @@ function level_interpolation(ψ::AbstractMatrix{FT}, region, lv, valid) where {F
     ids = findall(valid)
     W = spzeros(FT, length(ψ), length(lv.ψ))
     isempty(ids) && return W
-    Wv = hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN[ids])
+    Wv = hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN[ids]; extrapolate = true)
     W[:, ids] = Wv
     return W
 end

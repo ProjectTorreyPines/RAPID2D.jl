@@ -182,3 +182,39 @@ end
     @test all(isnan, avg[.!fsa.valid]) && all(isfinite, avg[fsa.valid])
     @test all(isfinite, to_grid(fsa, avg)[region])
 end
+
+@testitem "Flux surfaces: back to the grid is linear in ψN beyond the end levels too" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, to_grid
+    G = test_grid(61)
+    ψ = ellipse_ψ(G)
+    region = inside(ψ)
+    fsa = flux_surface_average(G, ψ, region)
+    # A field regular at the axis is a function of r² ∝ ψN, so near the axis it is linear in ψN.
+    # Linear in ψN is the case the way back must keep everywhere, the ends included.
+    g = ψ ./ 0.09
+    back = to_grid(fsa, surface_average(fsa, g))
+    ψN = g[region]
+    ends = (ψN .< first(fsa.ψN)) .| (ψN .> last(fsa.ψN))
+    @test any(ends)
+    @test maximum(abs.(back[region][ends] .- ψN[ends])) < 2.0e-3
+    @test maximum(abs.(back[region] .- ψN)) < 2.0e-3
+end
+
+@testitem "Flux surfaces: beside an X-point, the surfaces stay around their own O-point" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, MarchingSquaresAverage, HatBinningAverage
+    # A doublet: two O-points at Z = ±Zc and an X-point between them at Z = 0.
+    G = test_grid(61)
+    Zc, w = 0.2, 0.15
+    ψ = @. -exp(-((G.R2D - R0)^2 + (G.Z2D - Zc)^2) / w^2) - exp(-((G.R2D - R0)^2 + (G.Z2D + Zc)^2) / w^2)
+    ψX = -2 * exp(-Zc^2 / w^2)
+    upper = [k for k in eachindex(ψ) if ψ[k] < ψX && G.Z2D[k] > 0]
+    for policy in (MarchingSquaresAverage(), HatBinningAverage())
+        fsa = flux_surface_average(G, ψ, upper; policy)
+        @test fsa.axis.converged
+        # a Gaussian is not cubic, so the axis carries interpolation error (5e-4 dR at 61²)
+        @test abs(fsa.axis.R - R0) < 0.01 * G.dR && abs(fsa.axis.Z - Zc) < 0.01
+        @test all(fsa.valid)
+        @test all(>(0), surface_average(fsa, G.Z2D))       # never across the X-point
+        @test issorted(fsa.dVdψ)                             # dV/dψ grows toward the separatrix
+    end
+end
