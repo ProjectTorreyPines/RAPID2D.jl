@@ -120,6 +120,18 @@ same object, so consumers never learn which one built it.
 abstract type FluxSurfaceAveragePolicy end
 
 """
+    MarchingSquaresAverage()
+
+Each surface is the closed contour of its level, traced by marching squares on the grid ψ
+(`IMASutils.contour_from_midplane!`, from the O-point outward along its midplane). The
+average is the trapezoidal ∮ f dl/B_pol along the contour, with f bilinear between the
+nodes and B_pol = |∇ψ|/R from the bicubic ψ. No scatter from where nodes sit, second order
+in the grid. A level whose contour lies inside one cell, or does not close, is marked
+invalid. **The default.**
+"""
+struct MarchingSquaresAverage <: FluxSurfaceAveragePolicy end
+
+"""
     HatBinningAverage()
 
 Each region node is shared between the two surfaces whose levels bracket its ψ (linear hats
@@ -155,7 +167,7 @@ struct FluxSurfaceAverage{FT <: AbstractFloat, P <: FluxSurfaceAveragePolicy}
 end
 
 """
-    flux_surface_average(G, ψ, region; policy = HatBinningAverage(), nsurf) -> FluxSurfaceAverage or nothing
+    flux_surface_average(G, ψ, region; policy = MarchingSquaresAverage(), nsurf) -> FluxSurfaceAverage or nothing
     flux_surface_average(RP; kwargs...)
 
 Averages over `nsurf` closed flux surfaces of the region `region` (linear node indices),
@@ -164,7 +176,7 @@ nodes of the last field-line analysis. `nothing` when the region is empty.
 """
 function flux_surface_average(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, region::AbstractVector{<:Integer};
-        policy::FluxSurfaceAveragePolicy = HatBinningAverage(),
+        policy::FluxSurfaceAveragePolicy = MarchingSquaresAverage(),
         nsurf::Int = default_surface_count(region),
     ) where {FT <: AbstractFloat}
     o = find_o_point(G, ψ, region)
@@ -236,6 +248,64 @@ function level_interpolation(ψ::AbstractMatrix{FT}, region, lv, valid) where {F
     W[:, ids] = Wv
     return W
 end
+
+function surface_weights(::MarchingSquaresAverage, G::GridGeometry{FT}, ψ, region, o, lv) where {FT}
+    itp = psi_interpolant(G, ψ)
+    ψm = ψ isa Matrix ? ψ : Matrix(ψ)
+    Rc_cache, Zc_cache = IMASutils.contour_cache(G.R1D, G.Z1D)
+    nsurf = length(lv.ψ)
+    I, J, V = Int[], Int[], FT[]
+    dVdψ = fill(FT(NaN), nsurf)
+    valid = falses(nsurf)
+    for s in 1:nsurf
+        Rc, Zc = closed_contour!(Rc_cache, Zc_cache, ψm, G, lv.ψ[s], o)
+        Rc === nothing && continue
+        m = length(Rc) - 1                      # the last point repeats the first
+        row_start = length(V)
+        total = zero(FT)
+        for j in 1:m
+            jm = j == 1 ? m : j - 1
+            dl = (hypot(Rc[j + 1] - Rc[j], Zc[j + 1] - Zc[j]) + hypot(Rc[j] - Rc[jm], Zc[j] - Zc[jm])) / 2
+            g = gradient(itp, (Rc[j], Zc[j]))
+            w = dl * Rc[j] / hypot(g[1], g[2])  # dl/B_pol with B_pol = |∇ψ|/R
+            push_bilinear!(I, J, V, G, Rc[j], Zc[j], w, s)
+            total += w
+        end
+        V[(row_start + 1):end] ./= total
+        dVdψ[s] = 2π * total
+        valid[s] = true
+    end
+    return sparse(I, J, V, nsurf, G.NR * G.NZ), dVdψ, collect(valid)
+end
+
+# The closed contour of `level` around the O-point `o`, or `nothing` when marching squares
+# finds none (a contour inside one cell, an open contour, or a saddle it cannot connect).
+function closed_contour!(Rc_cache, Zc_cache, ψ::Matrix, G::GridGeometry, level, o)
+    Rc, Zc = try
+        IMASutils.contour_from_midplane!(Rc_cache, Zc_cache, ψ, G.R1D, G.Z1D, level, o.R, o.Z, o.ψ)
+    catch err
+        err isa ErrorException || rethrow()
+        return nothing, nothing
+    end
+    length(Rc) >= 4 || return nothing, nothing
+    closed = isapprox(first(Rc), last(Rc); atol = 1.0e-9 * G.dR) && isapprox(first(Zc), last(Zc); atol = 1.0e-9 * G.dZ)
+    return closed ? (Rc, Zc) : (nothing, nothing)
+end
+
+# Bilinear weights of the point (R, Z) on its four cell corners, scaled by `w`, into row `s`.
+function push_bilinear!(I, J, V, G::GridGeometry{FT}, R, Z, w, s) where {FT}
+    i = clamp(searchsortedlast(G.R1D, R), 1, G.NR - 1)
+    j = clamp(searchsortedlast(G.Z1D, Z), 1, G.NZ - 1)
+    t = (R - G.R1D[i]) / G.dR
+    u = (Z - G.Z1D[j]) / G.dZ
+    k = (j - 1) * G.NR + i
+    for (node, c) in ((k, (1 - t) * (1 - u)), (k + 1, t * (1 - u)), (k + G.NR, (1 - t) * u), (k + G.NR + 1, t * u))
+        push!(I, s); push!(J, node); push!(V, w * c)
+    end
+    return nothing
+end
+
+# ── reference ──────────────────────────────────────────────────────────────────────
 
 function surface_weights(::HatBinningAverage, G::GridGeometry{FT}, ψ, region, o, lv) where {FT}
     H = hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN)       # nodes × surfaces
