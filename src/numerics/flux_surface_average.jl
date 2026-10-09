@@ -24,7 +24,7 @@ function psi_interpolant(G::GridGeometry, ψ::AbstractMatrix)
 end
 
 """
-    find_o_point(G, ψ, region; tol = 1e-10, maxit = 50) -> (; R, Z, ψ, converged) or nothing
+    find_o_point(G, ψ, region; itp = psi_interpolant(G, ψ), tol = 1e-10, maxit = 50) -> (; R, Z, ψ, converged) or nothing
 
 The O-point of a closed region (`region` holds linear node indices): the extremum of the
 bicubic interpolant of `ψ`, found by damped Newton on ∇ψ = 0 from the region's node farthest
@@ -33,10 +33,10 @@ X-point) and a step below `tol` grid spacings. `nothing` when `region` is empty.
 """
 function find_o_point(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, region::AbstractVector{<:Integer};
-        tol::Real = 1.0e-10, maxit::Int = 50,
+        itp = nothing, tol::Real = 1.0e-10, maxit::Int = 50,
     ) where {FT <: AbstractFloat}
     isempty(region) && return nothing
-    itp = psi_interpolant(G, ψ)
+    itp === nothing && (itp = psi_interpolant(G, ψ))
     k0 = o_point_seed(G, ψ, region)
     x = (G.R2D[k0], G.Z2D[k0])
     h = min(G.dR, G.dZ)
@@ -161,8 +161,8 @@ struct FluxSurfaceAverage{FT <: AbstractFloat, P <: FluxSurfaceAveragePolicy}
     ψN::Vector{FT}
     valid::Vector{Bool}
     dVdψ::Vector{FT}
-    weights::SparseMatrixCSC{FT, Int}          # surfaces × nodes, rows of valid surfaces sum to 1
-    grid_weights::SparseMatrixCSC{FT, Int}     # nodes × surfaces, interpolation in ψN
+    weights::SparseMatrixCSC{FT, Int}          # nodes × surfaces; the column of a valid surface sums to 1
+    grid_weights::SparseMatrixCSC{FT, Int}     # nodes × surfaces, interpolation in ψN; invalid columns empty
     dims::Tuple{Int, Int}
 end
 
@@ -179,10 +179,11 @@ function flux_surface_average(
         policy::FluxSurfaceAveragePolicy = MarchingSquaresAverage(),
         nsurf::Int = default_surface_count(region),
     ) where {FT <: AbstractFloat}
-    o = find_o_point(G, ψ, region)
-    o === nothing && return nothing
+    isempty(region) && return nothing
+    itp = psi_interpolant(G, ψ)
+    o = find_o_point(G, ψ, region; itp)
     lv = surface_levels(o, ψ, region; nsurf)
-    weights, dVdψ, valid = surface_weights(policy, G, ψ, region, o, lv)
+    weights, dVdψ, valid = surface_weights(policy, G, ψ, region, o, lv, itp)
     grid_weights = level_interpolation(ψ, region, lv, valid)
     axis = (; R = FT(o.R), Z = FT(o.Z), ψ = FT(o.ψ), converged = o.converged)
     return FluxSurfaceAverage(policy, axis, lv.ψ_edge, lv.ψ, lv.ψN, valid, dVdψ, weights, grid_weights, size(ψ))
@@ -199,7 +200,7 @@ The average of the grid field `f` (an `(NR, NZ)` array or its vector) on each su
 weighted average ⟨ω f⟩/⟨ω⟩. `NaN` on surfaces that were not found.
 """
 function surface_average(fsa::FluxSurfaceAverage, f::AbstractVecOrMat)
-    avg = fsa.weights * vec(f)
+    avg = transpose(fsa.weights) * vec(f)
     avg[.!fsa.valid] .= NaN
     return avg
 end
@@ -216,68 +217,83 @@ first and the last (half a level at most), so a profile linear in ψN, as any sm
 near the axis, comes back exactly. Nodes outside the region are zero.
 """
 to_grid(fsa::FluxSurfaceAverage, profile::AbstractVector) =
-    reshape(fsa.grid_weights[:, fsa.valid] * profile[fsa.valid], fsa.dims)
+    reshape(fsa.grid_weights * ifelse.(fsa.valid, profile, zero(eltype(profile))), fsa.dims)
 
 # ── weights of each policy ───────────────────────────────────────────────────────────
 
 # Linear-interpolation weights in ψN from the levels `ψN_levels` to the region's nodes: rows
 # are nodes, columns are levels. Beyond the first and the last level the weights are held
-# constant (`extrapolate = false`, a partition into hats) or continue the end segments.
-function hat_weights(ψ::AbstractMatrix{FT}, region, ψ_axis, ψ_edge, ψN_levels; extrapolate::Bool = false) where {FT}
+# constant (`extrapolate = false`, a partition into hats) or continue the end segments. Level
+# `s` is written to column `columns[s]` of a matrix with `ncol` columns.
+function hat_weights(
+        ψ::AbstractMatrix{FT}, region, ψ_axis, ψ_edge, ψN_levels;
+        extrapolate::Bool = false, columns = eachindex(ψN_levels), ncol::Int = length(ψN_levels),
+    ) where {FT}
     n = length(ψN_levels)
     I, J, V = Int[], Int[], FT[]
     for k in region
         x = (ψ[k] - ψ_axis) / (ψ_edge - ψ_axis)
         if n == 1 || (!extrapolate && x <= ψN_levels[1])
-            push!(I, k); push!(J, 1); push!(V, one(FT))
+            push!(I, k); push!(J, columns[1]); push!(V, one(FT))
         elseif !extrapolate && x >= ψN_levels[n]
-            push!(I, k); push!(J, n); push!(V, one(FT))
+            push!(I, k); push!(J, columns[n]); push!(V, one(FT))
         else
             s = clamp(searchsortedlast(ψN_levels, x), 1, n - 1)
             t = (x - ψN_levels[s]) / (ψN_levels[s + 1] - ψN_levels[s])
-            push!(I, k, k); push!(J, s, s + 1); push!(V, one(FT) - t, t)
+            push!(I, k, k); push!(J, columns[s], columns[s + 1]); push!(V, one(FT) - t, t)
         end
     end
-    return sparse(I, J, V, length(ψ), n)
+    return sparse(I, J, V, length(ψ), ncol)
 end
 
 # The way back to the grid uses only the surfaces that were found.
 function level_interpolation(ψ::AbstractMatrix{FT}, region, lv, valid) where {FT}
     ids = findall(valid)
-    W = spzeros(FT, length(ψ), length(lv.ψ))
-    isempty(ids) && return W
-    Wv = hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN[ids]; extrapolate = true)
-    W[:, ids] = Wv
-    return W
+    isempty(ids) && return spzeros(FT, length(ψ), length(lv.ψ))
+    return hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN[ids]; extrapolate = true, columns = ids, ncol = length(lv.ψ))
 end
 
-function surface_weights(::MarchingSquaresAverage, G::GridGeometry{FT}, ψ, region, o, lv) where {FT}
-    itp = psi_interpolant(G, ψ)
+function surface_weights(::MarchingSquaresAverage, G::GridGeometry{FT}, ψ, region, o, lv, itp) where {FT}
     ψm = ψ isa Matrix ? ψ : Matrix(ψ)
     Rc_cache, Zc_cache = IMASutils.contour_cache(G.R1D, G.Z1D)
-    nsurf = length(lv.ψ)
-    I, J, V = Int[], Int[], FT[]
+    nsurf, N = length(lv.ψ), G.NR * G.NZ
+    colptr = Vector{Int}(undef, nsurf + 1)
+    colptr[1] = 1
+    rowval, nzval = Int[], FT[]
     dVdψ = fill(FT(NaN), nsurf)
-    valid = falses(nsurf)
-    for s in 1:nsurf
-        Rc, Zc = closed_contour!(Rc_cache, Zc_cache, ψm, G, lv.ψ[s], o)
-        Rc === nothing && continue
-        m = length(Rc) - 1                      # the last point repeats the first
-        row_start = length(V)
-        total = zero(FT)
-        for j in 1:m
-            jm = j == 1 ? m : j - 1
-            dl = (hypot(Rc[j + 1] - Rc[j], Zc[j + 1] - Zc[j]) + hypot(Rc[j] - Rc[jm], Zc[j] - Zc[jm])) / 2
-            g = gradient(itp, (Rc[j], Zc[j]))
-            w = dl * Rc[j] / hypot(g[1], g[2])  # dl/B_pol with B_pol = |∇ψ|/R
-            push_bilinear!(I, J, V, G, Rc[j], Zc[j], w, s)
-            total += w
+    valid = fill(false, nsurf)
+    hint = (Ref(1), Ref(1))                     # successive contour points share cells
+    @with_pool pool begin
+        acc = zeros!(pool, FT, N)               # one surface's weight on each node
+        stamp = zeros!(pool, Int, N)            # the last surface that reached each node
+        reached = acquire!(pool, Int, N)        # the nodes this surface reached
+        for s in 1:nsurf
+            Rc, Zc = closed_contour!(Rc_cache, Zc_cache, ψm, G, lv.ψ[s], o)
+            if Rc !== nothing
+                m = length(Rc) - 1              # the last point repeats the first
+                nreached, total = 0, zero(FT)
+                for j in 1:m
+                    jm = j == 1 ? m : j - 1
+                    dl = (hypot(Rc[j + 1] - Rc[j], Zc[j + 1] - Zc[j]) + hypot(Rc[j] - Rc[jm], Zc[j] - Zc[jm])) / 2
+                    g = gradient(itp, (Rc[j], Zc[j]); hint)
+                    w = dl * Rc[j] / hypot(g[1], g[2])  # dl/B_pol with B_pol = |∇ψ|/R
+                    nreached = add_bilinear!(acc, stamp, reached, nreached, G, Rc[j], Zc[j], w, s)
+                    total += w
+                end
+                nodes = sort!(view(reached, 1:nreached))
+                for node in nodes
+                    push!(rowval, node)
+                    push!(nzval, acc[node] / total)
+                    acc[node] = zero(FT)
+                end
+                dVdψ[s] = 2π * total
+                valid[s] = true
+            end
+            colptr[s + 1] = length(rowval) + 1
         end
-        V[(row_start + 1):end] ./= total
-        dVdψ[s] = 2π * total
-        valid[s] = true
+        nothing
     end
-    return sparse(I, J, V, nsurf, G.NR * G.NZ), dVdψ, collect(valid)
+    return SparseMatrixCSC(N, nsurf, colptr, rowval, nzval), dVdψ, valid
 end
 
 # The closed contour of `level` around the O-point `o`, or `nothing` when marching squares
@@ -294,27 +310,34 @@ function closed_contour!(Rc_cache, Zc_cache, ψ::Matrix, G::GridGeometry, level,
     return closed ? (Rc, Zc) : (nothing, nothing)
 end
 
-# Bilinear weights of the point (R, Z) on its four cell corners, scaled by `w`, into row `s`.
-function push_bilinear!(I, J, V, G::GridGeometry{FT}, R, Z, w, s) where {FT}
-    i = clamp(searchsortedlast(G.R1D, R), 1, G.NR - 1)
-    j = clamp(searchsortedlast(G.Z1D, Z), 1, G.NZ - 1)
+# Add `w` times the bilinear weights of the point (R, Z) on its four cell corners into `acc`,
+# listing in `reached` the nodes surface `s` reaches for the first time.
+function add_bilinear!(acc, stamp, reached, nreached, G::GridGeometry, R, Z, w, s)
+    # the grid is uniform: the cell follows from the spacing
+    i = clamp(floor(Int, (R - G.R1D[1]) / G.dR) + 1, 1, G.NR - 1)
+    j = clamp(floor(Int, (Z - G.Z1D[1]) / G.dZ) + 1, 1, G.NZ - 1)
     t = (R - G.R1D[i]) / G.dR
     u = (Z - G.Z1D[j]) / G.dZ
     k = (j - 1) * G.NR + i
     for (node, c) in ((k, (1 - t) * (1 - u)), (k + 1, t * (1 - u)), (k + G.NR, (1 - t) * u), (k + G.NR + 1, t * u))
-        push!(I, s); push!(J, node); push!(V, w * c)
+        if stamp[node] != s
+            stamp[node] = s
+            nreached += 1
+            reached[nreached] = node
+        end
+        acc[node] += w * c
     end
-    return nothing
+    return nreached
 end
 
 # ── reference ──────────────────────────────────────────────────────────────────────
 
-function surface_weights(::HatBinningAverage, G::GridGeometry{FT}, ψ, region, o, lv) where {FT}
+function surface_weights(::HatBinningAverage, G::GridGeometry{FT}, ψ, region, o, lv, itp) where {FT}
     H = hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN)       # nodes × surfaces
     mass = transpose(H) * vec(G.inVol2D)                           # ∫ h_s dV
     valid = mass .> 0
     scale = [m > 0 ? inv(m) : zero(FT) for m in mass]
-    weights = sparse(Diagonal(scale) * transpose(H) * Diagonal(vec(G.inVol2D)))
+    weights = sparse(Diagonal(vec(G.inVol2D)) * H * Diagonal(scale))
     # ∫ h_s dV ≈ V'(ψ_s) Δψ, Δψ the level spacing in ψ (hats at the ends also take the clamped tails)
     Δψ = abs(lv.ψ_edge - lv.ψ_axis) / length(lv.ψ)
     dVdψ = mass ./ Δψ
