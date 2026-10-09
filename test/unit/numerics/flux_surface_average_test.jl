@@ -81,3 +81,51 @@ end
     G = test_grid(31)
     @test find_o_point(G, ellipse_ψ(G), Int[]) === nothing
 end
+
+@testitem "Flux surfaces: hat binning keeps constants and is close to the ellipse" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, HatBinningAverage
+    G = test_grid(61)
+    for κ in (1.0, 1.6)
+        ψ = ellipse_ψ(G; κ)
+        fsa = flux_surface_average(G, ψ, inside(ψ); policy = HatBinningAverage(), nsurf = 10)
+        @test fsa.policy isa HatBinningAverage
+        @test all(fsa.valid)
+        @test maximum(abs, surface_average(fsa, ones(G.NR, G.NZ)) .- 1) < 1.0e-13
+        # ⟨R⟩ − R0 = O(a²/R0) is the part that tests the weighting; compare that part.
+        # Binning averages f over a band one level spacing wide, so it keeps an O(Δψ²) bias
+        # that does not fall with the grid (measured at 61²: 0.14, 4.9e-3, 0.05 at most).
+        meanR = surface_average(fsa, G.R2D)
+        invR2 = surface_average(fsa, 1 ./ G.R2D .^ 2)
+        for (s, ψs) in pairs(fsa.ψ)
+            a = sqrt(ψs)
+            refR, refV = reference_average((R, Z) -> R, a; κ)
+            refI, _ = reference_average((R, Z) -> 1 / R^2, a; κ)
+            @test abs((meanR[s] - R0) / (refR - R0) - 1) < 0.2
+            @test abs(invR2[s] / refI - 1) < 7.0e-3
+            @test abs(fsa.dVdψ[s] / refV - 1) < 0.08
+        end
+    end
+end
+
+@testitem "Flux surfaces: weighted averages, the way back to the grid, and the region" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, to_grid, HatBinningAverage
+    G = test_grid(61)
+    ψ = ellipse_ψ(G; κ = 1.3)
+    region = inside(ψ)
+    fsa = flux_surface_average(G, ψ, region; policy = HatBinningAverage())
+    f = @. G.R2D^2 * (1 + G.Z2D)
+    ω = @. 1 + G.R2D
+    @test surface_average(fsa, f, ω) ≈ surface_average(fsa, ω .* f) ./ surface_average(fsa, ω)
+    # a grid array and its vector give the same averages
+    @test surface_average(fsa, f) == surface_average(fsa, vec(f))
+    # a flux function comes back to itself between the first and the last surface
+    g = to_grid(fsa, surface_average(fsa, ψ))
+    @test size(g) == size(ψ)
+    between = [k for k in region if first(fsa.ψ) <= ψ[k] <= last(fsa.ψ)]
+    @test maximum(abs.(g[between] .- ψ[between])) < 0.05 * maximum(ψ[region])
+    # nodes outside the region get nothing
+    outside = setdiff(1:(G.NR * G.NZ), region)
+    @test all(iszero, g[outside])
+    # an empty region gives no averager
+    @test flux_surface_average(G, ψ, Int[]; policy = HatBinningAverage()) === nothing
+end

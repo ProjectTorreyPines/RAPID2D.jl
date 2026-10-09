@@ -110,3 +110,141 @@ end
 
 # About one surface per grid spacing across a roughly round region.
 default_surface_count(region) = max(2, round(Int, sqrt(length(region) / π)))
+
+"""
+    FluxSurfaceAveragePolicy
+
+How the weights of a flux-surface average are built from the grid. Every policy yields the
+same object, so consumers never learn which one built it.
+"""
+abstract type FluxSurfaceAveragePolicy end
+
+"""
+    HatBinningAverage()
+
+Each region node is shared between the two surfaces whose levels bracket its ψ (linear hats
+in normalized flux), weighted by its cell volume. No geometry: the average of a surface is
+a volume-weighted mean of the nodes near its level, so it is a convex average but carries
+the scatter of where the nodes happen to sit. The baseline the contour policies are judged
+against.
+"""
+struct HatBinningAverage <: FluxSurfaceAveragePolicy end
+
+"""
+    FluxSurfaceAverage{FT, P}
+
+Averages over the closed flux surfaces of one region, and their way back to the grid. Build
+with [`flux_surface_average`](@ref); apply with [`surface_average`](@ref) and
+[`to_grid`](@ref).
+
+Fields read by consumers: `policy`, `axis` (`(; R, Z, ψ, converged)`), `ψ` and `ψN` (the
+level of each surface), `valid` (whether the surface was found), `dVdψ` (2π∮dl/B_pol, per
+radian of ψ). The weights are internal.
+"""
+struct FluxSurfaceAverage{FT <: AbstractFloat, P <: FluxSurfaceAveragePolicy}
+    policy::P
+    axis::@NamedTuple{R::FT, Z::FT, ψ::FT, converged::Bool}
+    ψ_edge::FT
+    ψ::Vector{FT}
+    ψN::Vector{FT}
+    valid::Vector{Bool}
+    dVdψ::Vector{FT}
+    weights::SparseMatrixCSC{FT, Int}          # surfaces × nodes, rows of valid surfaces sum to 1
+    grid_weights::SparseMatrixCSC{FT, Int}     # nodes × surfaces, interpolation in ψN
+    dims::Tuple{Int, Int}
+end
+
+"""
+    flux_surface_average(G, ψ, region; policy = HatBinningAverage(), nsurf) -> FluxSurfaceAverage or nothing
+    flux_surface_average(RP; kwargs...)
+
+Averages over `nsurf` closed flux surfaces of the region `region` (linear node indices),
+between its O-point and its edge ([`surface_levels`](@ref)). The `RP` form uses the closed
+nodes of the last field-line analysis. `nothing` when the region is empty.
+"""
+function flux_surface_average(
+        G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, region::AbstractVector{<:Integer};
+        policy::FluxSurfaceAveragePolicy = HatBinningAverage(),
+        nsurf::Int = default_surface_count(region),
+    ) where {FT <: AbstractFloat}
+    o = find_o_point(G, ψ, region)
+    o === nothing && return nothing
+    lv = surface_levels(o, ψ, region; nsurf)
+    weights, dVdψ, valid = surface_weights(policy, G, ψ, region, o, lv)
+    grid_weights = level_interpolation(ψ, region, lv, valid)
+    axis = (; R = FT(o.R), Z = FT(o.Z), ψ = FT(o.ψ), converged = o.converged)
+    return FluxSurfaceAverage(policy, axis, lv.ψ_edge, lv.ψ, lv.ψN, valid, dVdψ, weights, grid_weights, size(ψ))
+end
+
+flux_surface_average(RP::RAPID; kwargs...) =
+    flux_surface_average(RP.G, RP.fields.ψ, RP.flf.closed_surface_nids; kwargs...)
+
+"""
+    surface_average(fsa, f) -> Vector
+    surface_average(fsa, f, ω) -> Vector
+
+The average of the grid field `f` (an `(NR, NZ)` array or its vector) on each surface, or the
+weighted average ⟨ω f⟩/⟨ω⟩. `NaN` on surfaces that were not found.
+"""
+function surface_average(fsa::FluxSurfaceAverage, f::AbstractVecOrMat)
+    avg = fsa.weights * vec(f)
+    avg[.!fsa.valid] .= NaN
+    return avg
+end
+
+surface_average(fsa::FluxSurfaceAverage, f::AbstractVecOrMat, ω::AbstractVecOrMat) =
+    surface_average(fsa, vec(ω) .* vec(f)) ./ surface_average(fsa, ω)
+
+"""
+    to_grid(fsa, profile) -> Matrix
+
+A profile on the surfaces (one value per surface) back on the grid: linear interpolation in
+normalized flux between the valid surfaces, held constant inside the first and outside the
+last. Nodes outside the region are zero.
+"""
+to_grid(fsa::FluxSurfaceAverage, profile::AbstractVector) =
+    reshape(fsa.grid_weights[:, fsa.valid] * profile[fsa.valid], fsa.dims)
+
+# ── weights of each policy ───────────────────────────────────────────────────────────
+
+# Linear-interpolation weights in ψN from the levels `ψN_levels` to the region's nodes:
+# rows are nodes, columns are levels; held constant outside the first and last level.
+function hat_weights(ψ::AbstractMatrix{FT}, region, ψ_axis, ψ_edge, ψN_levels) where {FT}
+    n = length(ψN_levels)
+    I, J, V = Int[], Int[], FT[]
+    for k in region
+        x = (ψ[k] - ψ_axis) / (ψ_edge - ψ_axis)
+        if n == 1 || x <= ψN_levels[1]
+            push!(I, k); push!(J, 1); push!(V, one(FT))
+        elseif x >= ψN_levels[n]
+            push!(I, k); push!(J, n); push!(V, one(FT))
+        else
+            s = searchsortedlast(ψN_levels, x)
+            t = (x - ψN_levels[s]) / (ψN_levels[s + 1] - ψN_levels[s])
+            push!(I, k, k); push!(J, s, s + 1); push!(V, one(FT) - t, t)
+        end
+    end
+    return sparse(I, J, V, length(ψ), n)
+end
+
+# The way back to the grid uses only the surfaces that were found.
+function level_interpolation(ψ::AbstractMatrix{FT}, region, lv, valid) where {FT}
+    ids = findall(valid)
+    W = spzeros(FT, length(ψ), length(lv.ψ))
+    isempty(ids) && return W
+    Wv = hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN[ids])
+    W[:, ids] = Wv
+    return W
+end
+
+function surface_weights(::HatBinningAverage, G::GridGeometry{FT}, ψ, region, o, lv) where {FT}
+    H = hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN)       # nodes × surfaces
+    mass = transpose(H) * vec(G.inVol2D)                           # ∫ h_s dV
+    valid = mass .> 0
+    scale = [m > 0 ? inv(m) : zero(FT) for m in mass]
+    weights = sparse(Diagonal(scale) * transpose(H) * Diagonal(vec(G.inVol2D)))
+    # ∫ h_s dV ≈ V'(ψ_s) Δψ, Δψ the level spacing in ψ (hats at the ends also take the clamped tails)
+    Δψ = abs(lv.ψ_edge - lv.ψ_axis) / length(lv.ψ)
+    dVdψ = mass ./ Δψ
+    return weights, dVdψ, collect(valid)
+end
