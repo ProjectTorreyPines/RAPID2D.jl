@@ -120,18 +120,6 @@ same object, so consumers never learn which one built it.
 abstract type FluxSurfaceAveragePolicy end
 
 """
-    MarchingSquaresAverage()
-
-Each surface is the closed contour of its level, traced by marching squares on the grid ψ
-(`IMASutils.contour_from_midplane!`, from the O-point outward along its midplane). The
-average is the trapezoidal ∮ f dl/B_pol along the contour, with f bilinear between the
-nodes and B_pol = |∇ψ|/R from the bicubic ψ. No scatter from where nodes sit, second order
-in the grid. A level whose contour lies inside one cell, or does not close, is marked
-invalid. **The default.**
-"""
-struct MarchingSquaresAverage <: FluxSurfaceAveragePolicy end
-
-"""
     CubicContourAverage(; max_turn = deg2rad(5), max_step_cells = 0.5, max_steps = 20_000)
 
 Each surface is traced on the bicubic ψ itself, by predictor–corrector continuation along the
@@ -142,7 +130,7 @@ average is the same trapezoidal ∮ f dl/B_pol as [`MarchingSquaresAverage`](@re
 between nodes. The contour is not limited by the cells, so a surface a few cells across, or
 one beside an X-point, keeps its length and dV/dψ. A level that does not close within
 `max_steps` steps, or leaves the grid, is marked invalid. The method follows IMAS.jl
-`fluxsurfaces_cubic.jl`.
+`fluxsurfaces_cubic.jl`. **The default.**
 """
 struct CubicContourAverage{FT <: AbstractFloat} <: FluxSurfaceAveragePolicy
     max_turn::FT
@@ -156,6 +144,20 @@ struct CubicContourAverage{FT <: AbstractFloat} <: FluxSurfaceAveragePolicy
         return new{FT}(FT(max_turn), FT(max_step_cells), max_steps)
     end
 end
+
+"""
+    MarchingSquaresAverage()
+
+Each surface is the closed contour of its level, traced by marching squares on the grid ψ
+(`IMASutils.contour_from_midplane!`, from the O-point outward along its midplane). The
+average is the trapezoidal ∮ f dl/B_pol along the contour, with f bilinear between the
+nodes and B_pol = |∇ψ|/R from the bicubic ψ. No scatter from where nodes sit, second order
+in the grid. A level whose contour lies inside one cell, or does not close, is marked
+invalid. On a coarse grid a small surface is a polygon of a handful of vertices: ratio averages
+stay accurate, but dV/dψ (and q) lose several per cent. The fast option.
+"""
+struct MarchingSquaresAverage <: FluxSurfaceAveragePolicy end
+
 
 """
     HatBinningAverage()
@@ -193,7 +195,7 @@ struct FluxSurfaceAverage{FT <: AbstractFloat, P <: FluxSurfaceAveragePolicy}
 end
 
 """
-    flux_surface_average(G, ψ, region; policy = MarchingSquaresAverage(), nsurf) -> FluxSurfaceAverage or nothing
+    flux_surface_average(G, ψ, region; policy = CubicContourAverage(), nsurf) -> FluxSurfaceAverage or nothing
     flux_surface_average(RP; kwargs...)
 
 Averages over `nsurf` closed flux surfaces of the region `region` (linear node indices),
@@ -203,7 +205,7 @@ invalid when the region has no O-point (`axis.converged == false`).
 """
 function flux_surface_average(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, region::AbstractVector{<:Integer};
-        policy::FluxSurfaceAveragePolicy = MarchingSquaresAverage(),
+        policy::FluxSurfaceAveragePolicy = CubicContourAverage(),
         nsurf::Int = default_surface_count(region),
     ) where {FT <: AbstractFloat}
     isempty(region) && return nothing
@@ -282,15 +284,15 @@ function level_interpolation(ψ::AbstractMatrix{FT}, region, lv, valid) where {F
     return hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN[ids]; extrapolate = true, columns = ids, ncol = length(lv.ψ))
 end
 
+function surface_weights(policy::CubicContourAverage, G::GridGeometry{FT}, ψ, region, o, lv, itp) where {FT}
+    Rs, Zs = FT[], FT[]
+    return contour_weights(s -> traced_contour!(Rs, Zs, itp, G, lv.ψ[s], o, policy), G, length(lv.ψ), itp)
+end
+
 function surface_weights(::MarchingSquaresAverage, G::GridGeometry, ψ, region, o, lv, itp)
     ψm = ψ isa Matrix ? ψ : Matrix(ψ)
     Rc_cache, Zc_cache = IMASutils.contour_cache(G.R1D, G.Z1D)
     return contour_weights(s -> closed_contour!(Rc_cache, Zc_cache, ψm, G, lv.ψ[s], o), G, length(lv.ψ), itp)
-end
-
-function surface_weights(policy::CubicContourAverage, G::GridGeometry{FT}, ψ, region, o, lv, itp) where {FT}
-    Rs, Zs = FT[], FT[]
-    return contour_weights(s -> traced_contour!(Rs, Zs, itp, G, lv.ψ[s], o, policy), G, length(lv.ψ), itp)
 end
 
 # The weights of closed polylines, `contour(s) -> (R, Z)` with the last point repeating the

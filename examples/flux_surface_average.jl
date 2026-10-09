@@ -7,7 +7,8 @@
 #
 # and the safety factor follows as q = F ⟨1/R²⟩ dV/dψ / (4π²), F = R Bϕ. Two ways to build
 # the average on the grid are compared:
-#   MarchingSquaresAverage (the default): trace each level's closed contour, integrate along it;
+#   MarchingSquaresAverage (the default): the closed contour of each level by marching squares;
+#   CubicContourAverage: the level set of the bicubic ψ, traced by predictor–corrector steps;
 #   HatBinningAverage: share each node between the two nearest levels, weighted by volume.
 #
 # Part 1 uses elliptic surfaces whose averages are known by quadrature along the ellipse.
@@ -17,12 +18,13 @@
 #   julia --project=examples examples/flux_surface_average.jl
 
 include("common.jl")
-using RAPID2D: initialize_grid_geometry, flux_surface_average, surface_average, MarchingSquaresAverage, HatBinningAverage
+using RAPID2D: initialize_grid_geometry, flux_surface_average, surface_average, MarchingSquaresAverage, HatBinningAverage, CubicContourAverage
 
 name = "flux_surface_average"
 out = output_dir(name)
-policies = (MarchingSquaresAverage(), HatBinningAverage())
-label(p) = p isa MarchingSquaresAverage ? "marching squares" : "hat binning"
+policies = (MarchingSquaresAverage(), CubicContourAverage(), HatBinningAverage())
+label(p) = p isa MarchingSquaresAverage ? "marching squares" : p isa CubicContourAverage ? "bicubic tracing" : "hat binning"
+linestyle(p) = p isa MarchingSquaresAverage ? :solid : p isa CubicContourAverage ? :dot : :dash
 
 # ── Part 1: elliptic surfaces ψ = (R − R0)² + ((Z − Z0)/κ)², axis off the nodes ──────────────
 const R0, Z0, κ = 1.5113, 0.0071, 1.6
@@ -58,7 +60,7 @@ for N in (31, 61, 121), pol in policies
     err = [abs(avg[s] / ellipse_reference((R, Z) -> 1 / R^2, sqrt(ψs))[1] - 1) for (s, ψs) in pairs(fsa.ψ)]
     errV = [abs(fsa.dVdψ[s] / ellipse_reference((R, Z) -> 1.0, sqrt(ψs))[2] - 1) for (s, ψs) in pairs(fsa.ψ)]
     @printf("  %-17s %3d² | ⟨1/R²⟩ error max %.1e | dV/dψ error max %.1e | build %.2f ms\n", label(pol), N, maximum(err), maximum(errV), 1.0e3 * t_build)
-    style = pol isa MarchingSquaresAverage ? :solid : :dash
+    style = linestyle(pol)
     plot!(pl_err, fsa.ψN, err; lw = 2, ls = style, marker = :circle, ms = 3, label = "$(label(pol)) $(N)²")
     plot!(pl_dV, fsa.ψN, errV; lw = 2, ls = style, marker = :circle, ms = 3)
 end
@@ -113,7 +115,7 @@ for t in times_ms
             "  t %4.1f ms | %-17s | closed nodes %3d | surfaces valid %d of %d | q %s | build %.2f ms\n", t, label(pol), r.nclosed, r.nvalid, r.nsurf,
             join((@sprintf("%.0f", x) for x in r.q), " "), 1.0e3 * r.t_build
         )
-        style = pol isa MarchingSquaresAverage ? :solid : :dash
+        style = linestyle(pol)
         plot!(pl_Te, r.ψN, r.Te; lw = 2, ls = style, marker = :circle, ms = 3, label = "$(t) ms, $(label(pol))")
         plot!(pl_q, r.ψN, r.q; lw = 2, ls = style, marker = :circle, ms = 3)
     end

@@ -130,12 +130,13 @@ end
     @test flux_surface_average(G, ψ, Int[]; policy = HatBinningAverage()) === nothing
 end
 
-@testitem "Flux surfaces: marching squares is the default and matches the ellipse" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: flux_surface_average, surface_average, MarchingSquaresAverage
+@testitem "Flux surfaces: marching squares matches the ellipse" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, MarchingSquaresAverage, CubicContourAverage
     G = test_grid(61)
+    @test flux_surface_average(G, ellipse_ψ(G), inside(ellipse_ψ(G))).policy isa CubicContourAverage   # the default
     for κ in (1.0, 1.6)
         ψ = ellipse_ψ(G; κ)
-        fsa = flux_surface_average(G, ψ, inside(ψ); nsurf = 10)
+        fsa = flux_surface_average(G, ψ, inside(ψ); policy = MarchingSquaresAverage(), nsurf = 10)
         @test fsa.policy isa MarchingSquaresAverage
         @test all(fsa.valid)
         @test maximum(abs, surface_average(fsa, ones(G.NR, G.NZ)) .- 1) < 1.0e-13
@@ -170,13 +171,13 @@ end
 end
 
 @testitem "Flux surfaces: a level too close to the axis is skipped, not an error" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: flux_surface_average, surface_average, to_grid
+    using RAPID2D: flux_surface_average, surface_average, to_grid, MarchingSquaresAverage
     G = test_grid(31)
     ψ = ellipse_ψ(G)
     region = inside(ψ)
     # The nearest node is 0.013 m from the axis, so only levels with ψN below about 0.002 lie
     # inside the axis cell, where marching squares sees no contour: 400 levels put one there.
-    fsa = flux_surface_average(G, ψ, region; nsurf = 400)
+    fsa = flux_surface_average(G, ψ, region; policy = MarchingSquaresAverage(), nsurf = 400)
     @test !all(fsa.valid) && any(fsa.valid)
     avg = surface_average(fsa, G.R2D)
     @test all(isnan, avg[.!fsa.valid]) && all(isfinite, avg[fsa.valid])
