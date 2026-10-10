@@ -68,45 +68,65 @@ function _finalize_total_lengths!(flf::FieldLineFollowingResult)
 end
 
 """
-    flf_analysis_field_lines_rz_plane(R1D, Z1D, BR, BZ, Bϕ, cell_state;
-                                         dR=nothing, dZ=nothing,
-                                         out_wall_idx=nothing,
-                                         )
+    field_line_analysis!(flf, g, tracer; max_length = default_max_length(g)) -> flf
 
-Modular field line following analysis using Julia best practices.
+Field-line following on every node of the geometry `g`: the line through each node traced
+forward and backward along B_pol by `tracer` (backward is skipped when forward closed), and the
+lengths, terminations and closed nodes it publishes stored in `flf`. A node the tracer cannot
+follow (`:degenerate`, marching squares next to an O-point) is traced by its fallback,
+[`CubicTracer`](@ref).
+"""
+function field_line_analysis!(
+        flf::FieldLineFollowingResult{FT}, g::FieldLineGeometry, tracer::FieldLineTracer;
+        max_length::Real = default_max_length(g),
+    ) where {FT <: AbstractFloat}
+    NR, NZ = size(g.ψ)
+    flf.max_Lpol = max_length
+    flf.max_step = 2 * step_budget(tracer, g, max_length)
+    empty!(flf.closed_surface_nids)
+    fill!(flf.is_closed, false)
+    # Back to "no trace has run" rather than to a plausible status, so a node the loop below
+    # fails to reach cannot pass a topology check on a stale answer.
+    fill!(flf.termination_forward, :unset)
+    fill!(flf.termination_backward, :unset)
+    for i in 1:NR, j in 1:NZ
+        fwd, ef, t = node_trace(tracer, g, i, j, 1, max_length, FT)
+        Lf = published_lengths(fwd, ef.termination, ef.R)
+        if ef.termination === :closed
+            # a closed forward trace already covers the circuit
+            bwd, eb, Lb = fwd, ef, Lf
+        else
+            bwd, eb, _ = node_trace(t, g, i, j, -1, max_length, FT)
+            Lb = published_lengths(bwd, eb.termination, eb.R)
+        end
+        flf.Lpol_forward[i, j], flf.Lpol_backward[i, j] = Lf.Lpol, Lb.Lpol
+        flf.Lc_forward[i, j], flf.Lc_backward[i, j] = Lf.Lc, Lb.Lc
+        flf.min_Bpol[i, j] = min(Lf.min_Bpol, Lb.min_Bpol)
+        flf.step[i, j] = max(fwd.n - 1, 0) + max(bwd.n - 1, 0)
+        flf.termination_forward[i, j], flf.termination_backward[i, j] = ef.termination, eb.termination
+        if ef.termination === :closed || eb.termination === :closed
+            flf.is_closed[i, j] = true
+            push!(flf.closed_surface_nids, (j - 1) * NR + i)
+        end
+    end
+    return _finalize_total_lengths!(flf)
+end
 
-This version replaces the complex vectorized approach with a clean,
-modular design that traces each field line individually.
+# One direction from node (i, j): the lengths visitor, the ending, and the tracer that did it
+# (the fallback when `tracer` could not follow the node's level).
+function node_trace(tracer, g, i, j, sgn, max_length, ::Type{FT}) where {FT}
+    L = path_lengths(tracer, FT)
+    e = trace_from_node!(L, tracer, g, i, j, sgn; max_length)
+    e.termination === :degenerate || return L, e, tracer
+    return node_trace(fallback_tracer(tracer), g, i, j, sgn, max_length, FT)
+end
 
-# Features
-- Clean, readable code following Julia best practices
-- Type-stable implementation for better performance
-- Easy to optimize with @inbounds and other performance annotations
-- Built-in parallelization support
-- Modular design for easy testing and debugging
+"""
+    flf_analysis_field_lines_rz_plane!(flf, R1D, Z1D, BR, BZ, Bϕ, cell_state; dR, dZ, out_wall_idx) -> flf
+    flf_analysis_field_lines_rz_plane(R1D, Z1D, BR, BZ, Bϕ, cell_state; kwargs...) -> flf
 
-# Arguments
-- `R1D::Vector{FT}`: 1D radial coordinate array
-- `Z1D::Vector{FT}`: 1D vertical coordinate array
-- `BR::Matrix{FT}`: Radial magnetic field component
-- `BZ::Matrix{FT}`: Vertical magnetic field component
-- `Bϕ::Matrix{FT}`: Toroidal magnetic field component
-- `cell_state::Vector{Bool}`: Cell state array for wall boundary checking
-- `dR::Union{FT,Nothing}`: Radial grid spacing (optional)
-- `dZ::Union{FT,Nothing}`: Vertical grid spacing (optional)
-- `out_wall_idx::Union{Vector{Int},Nothing}`: Indices outside wall (optional)
-
-# Returns
-- `flf::FieldLineFollowingResult`: Field line following results
-- `fmap2d::Union{FieldMapResult, Nothing}`: 2D field mapping results (if requested)
-
-# Example
-```julia
-# Use the new modular version
-flf_result, _ = flf_analysis_field_lines_rz_plane(
-    R1D, Z1D, BR, BZ, Bϕ, cell_state, parallel=true
-)
-```
+[`field_line_analysis!`](@ref) with [`RK4Tracer`](@ref) on nodal fields alone (no ψ): `cell_state`
+marks the in-wall cells, and `min_Bpol` is `NaN` at `out_wall_idx`.
 """
 function flf_analysis_field_lines_rz_plane!(
         flf::FieldLineFollowingResult{FT},
@@ -115,102 +135,13 @@ function flf_analysis_field_lines_rz_plane!(
         dR::Union{FT, Nothing} = nothing, dZ::Union{FT, Nothing} = nothing,
         out_wall_idx::Union{Vector{Int}, Nothing} = nothing,
     ) where {FT <: AbstractFloat}
-
-    # @assert size(flf.Lc_tot) == (length(R1D), length(Z1D)) "FieldLineFollowingResult size mismatch"
-
-    # Compute grid spacing if not provided
-    if dR === nothing
-        dR = length(R1D) > 1 ? R1D[2] - R1D[1] : one(FT)
-    end
-    if dZ === nothing
-        dZ = length(Z1D) > 1 ? Z1D[2] - Z1D[1] : one(FT)
-    end
-
-    NR, NZ = length(R1D), length(Z1D)
-
-    # Grid parameters
-    Rmin = R1D[1]
-    Zmin = Z1D[1]
-    # NZ = length(Z1D)
-    inv_dR = one(FT) / dR
-    inv_dZ = one(FT) / dZ
-
-    # Set up interpolants for magnetic field components
-    interp_BR = my_interpolation(R1D, Z1D, BR)
-    interp_BZ = my_interpolation(R1D, Z1D, BZ)
-    interp_Bϕ = my_interpolation(R1D, Z1D, Bϕ)
-
-    # Integration parameters
-    step_size = FT(0.5) * min(abs(dR), abs(dZ))
-    max_Lpol = FT(3) * sqrt((maximum(R1D) - minimum(R1D))^2 + (maximum(Z1D) - minimum(Z1D))^2)
-    max_step_per_direction = floor(Int, max_Lpol / step_size)
-
-    flf.max_Lpol = max_Lpol
-    flf.max_step = 2 * max_step_per_direction
-
-    # Create wall checker function
-    wall_checker = (R, Z) -> is_in_wall_by_cell_state(
-        R, Z, Rmin, Zmin, NR, inv_dR, inv_dZ, cell_state
-    )
-
-
-    empty!(flf.closed_surface_nids)  # Clear previous results
-    fill!(flf.is_closed, false)  # Reset closed flags
-    # Back to "no trace has run" rather than to a plausible status, so a node the loop
-    # below fails to reach cannot pass a topology check on a stale answer.
-    fill!(flf.termination_forward, :unset)
-    fill!(flf.termination_backward, :unset)
-
-    @inbounds for i in 1:NR, j in 1:NZ
-        R0, Z0 = R1D[i], Z1D[j]
-
-        # Forward tracing
-        forward_result = trace_single_field_line(
-            R0, Z0, 1, interp_BR, interp_BZ, interp_Bϕ,
-            step_size, max_step_per_direction, max_Lpol, wall_checker
-        )
-
-        # Backward tracing (skip if already closed)
-        backward_result = if forward_result.is_closed
-            # The one construction site that never runs the tracer: a closed forward
-            # trace already covers the circuit. Keyword form — positional args silently
-            # reshuffle when a field is added.
-            SingleTraceResult{FT}(;
-                Lpol = forward_result.Lpol, Lc = forward_result.Lc,
-                min_Bpol = forward_result.min_Bpol, steps = forward_result.steps,
-                termination = :closed, is_closed = true, hit_wall = false,
-                final_R = R0, final_Z = Z0
-            )
-        else
-            trace_single_field_line(
-                R0, Z0, -1, interp_BR, interp_BZ, interp_Bϕ,
-                step_size, max_step_per_direction, max_Lpol, wall_checker
-            )
-        end
-
-        # Store results
-        flf.Lpol_forward[i, j] = forward_result.Lpol
-        flf.Lpol_backward[i, j] = backward_result.Lpol
-        flf.Lc_forward[i, j] = forward_result.Lc
-        flf.Lc_backward[i, j] = backward_result.Lc
-        flf.min_Bpol[i, j] = min(forward_result.min_Bpol, backward_result.min_Bpol)
-        flf.step[i, j] = forward_result.steps + backward_result.steps
-        flf.termination_forward[i, j] = forward_result.termination
-        flf.termination_backward[i, j] = backward_result.termination
-
-        if forward_result.is_closed || backward_result.is_closed
-            flf.is_closed[i, j] = true
-            push!(flf.closed_surface_nids, (j - 1) * NR + i)  # Store linear index of closed field line
-        end
-    end
-
-    _finalize_total_lengths!(flf)
-
-    # Set NaN values for points outside wall
-    if out_wall_idx !== nothing
-        @. flf.min_Bpol[out_wall_idx] = FT(NaN)
-    end
-
+    dR === nothing && (dR = length(R1D) > 1 ? R1D[2] - R1D[1] : one(FT))
+    dZ === nothing && (dZ = length(Z1D) > 1 ? Z1D[2] - Z1D[1] : one(FT))
+    B = (BR = my_interpolation(R1D, Z1D, BR), BZ = my_interpolation(R1D, Z1D, BZ), Bϕ = my_interpolation(R1D, Z1D, Bϕ))
+    # RK4 reads the grid, the wall and these interpolants, not ψ
+    g = FieldLineGeometry(R1D, Z1D, dR, dZ, zeros(FT, size(BR)), nothing, Bϕ, cell_state, B)
+    field_line_analysis!(flf, g, RK4Tracer())
+    out_wall_idx !== nothing && (flf.min_Bpol[out_wall_idx] .= FT(NaN))
     return flf
 end
 
@@ -220,22 +151,21 @@ function flf_analysis_field_lines_rz_plane(
         dR::Union{FT, Nothing} = nothing, dZ::Union{FT, Nothing} = nothing,
         out_wall_idx::Union{Vector{Int}, Nothing} = nothing,
     ) where {FT <: AbstractFloat}
-
     flf = FieldLineFollowingResult{FT}(; dims_RZ = (length(R1D), length(Z1D)))
-    return flf_analysis_field_lines_rz_plane!(
-        flf, R1D, Z1D, BR, BZ, Bϕ, cell_state;
-        dR, dZ, out_wall_idx
-    )
+    return flf_analysis_field_lines_rz_plane!(flf, R1D, Z1D, BR, BZ, Bϕ, cell_state; dR, dZ, out_wall_idx)
 end
 
-# Convenience dispatch for RAPID object
-function flf_analysis_field_lines_rz_plane(RP::RAPID)
-    return flf_analysis_field_lines_rz_plane(
-        RP.G.R1D, RP.G.Z1D, RP.fields.BR, RP.fields.BZ, RP.fields.Bϕ,
-        RP.G.cell_state .>= 0; # Use cell_state as boolean mask
-        dR = RP.G.dR, dZ = RP.G.dZ,
-        out_wall_idx = RP.G.nodes.out_wall_nids
-    )
+# The analysis of a run's field by its own tracer, into a new result.
+function flf_analysis_field_lines_rz_plane(RP::RAPID{FT}) where {FT}
+    flf = FieldLineFollowingResult{FT}(RP.G.NR, RP.G.NZ)
+    return run_field_line_analysis!(flf, RP)
+end
+
+function run_field_line_analysis!(flf::FieldLineFollowingResult{FT}, RP::RAPID{FT}) where {FT}
+    tracer = RP.flags.field_line_tracer
+    field_line_analysis!(flf, FieldLineGeometry(RP; nodal_B = needs_nodal_B(tracer)), tracer)
+    flf.min_Bpol[RP.G.nodes.out_wall_nids] .= FT(NaN)
+    return flf
 end
 
 """
@@ -342,13 +272,7 @@ function validate_field_line_terminations!(RP::RAPID; strict::Bool = true)
 end
 
 function flf_analysis_field_lines_rz_plane!(RP::RAPID; strict::Bool = true)
-    flf_analysis_field_lines_rz_plane!(
-        RP.flf,
-        RP.G.R1D, RP.G.Z1D, RP.fields.BR, RP.fields.BZ, RP.fields.Bϕ,
-        RP.G.cell_state .>= 0; # Use cell_state as boolean mask
-        dR = RP.G.dR, dZ = RP.G.dZ,
-        out_wall_idx = RP.G.nodes.out_wall_nids
-    )
+    run_field_line_analysis!(RP.flf, RP)
     # Validated HERE so the setup call and every periodic refresh share one gate; the
     # lower-level array API stays unvalidated and separately testable. `strict` picks
     # the failure policy — throw at setup, warn-and-fallback in the step loop.

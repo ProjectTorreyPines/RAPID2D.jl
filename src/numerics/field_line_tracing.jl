@@ -68,7 +68,21 @@ FieldLineGeometry(RP::RAPID; nodal_B::Bool = false) = FieldLineGeometry(
 )
 
 # The poloidal-length budget of a field-line trace: three diagonals of the grid.
-default_max_length(g::FieldLineGeometry) = 3 * hypot(g.R1D[end] - g.R1D[1], g.Z1D[end] - g.Z1D[1])
+default_max_length(g::FieldLineGeometry{FT}) where {FT} =
+    FT(3) * sqrt((maximum(g.R1D) - minimum(g.R1D))^2 + (maximum(g.Z1D) - minimum(g.Z1D))^2)
+
+# the most steps one trace may take within `max_length`
+step_budget(::MarchingSquaresTracer, g::FieldLineGeometry, max_length) = 2 * length(g.ψ)
+step_budget(p::CubicTracer, g::FieldLineGeometry, max_length) = p.max_steps
+step_budget(p::RK4Tracer, g::FieldLineGeometry{FT}, max_length) where {FT} =
+    floor(Int, max_length / (FT(p.step_cells) * min(abs(g.dR), abs(g.dZ))))
+
+# the visitor that measures a trace's lengths: RK4 keeps its right-endpoint sums
+path_lengths(::FieldLineTracer, ::Type{FT}) where {FT} = PathLengths{FT}()
+path_lengths(::RK4Tracer, ::Type{FT}) where {FT} = StepLengths{FT}()
+
+# the tracer for a node a tracer cannot follow (`:degenerate`)
+fallback_tracer(::MarchingSquaresTracer) = CubicTracer()
 
 # whether cell (i, j) is a cell of the grid inside the wall
 @inline function cell_inside(g::FieldLineGeometry, i::Int, j::Int)
@@ -93,10 +107,11 @@ end
 # or `nothing`. It walks every cell the chord crosses, so no corner of the wall is stepped over.
 function chord_exit(g::FieldLineGeometry{FT}, x, xn) where {FT}
     R1, Z1 = g.R1D[1], g.Z1D[1]
-    i = floor(Int, (x[1] - R1) / g.dR) + 1
-    j = floor(Int, (x[2] - Z1) / g.dZ) + 1
-    cell_inside(g, i, j) || return zero(FT)
     ΔR, ΔZ = xn[1] - x[1], xn[2] - x[2]
+    # the cell the chord starts into: a start on a grid line (a node) belongs to the side it leaves by
+    i = floor(Int, (x[1] + FT(1.0e-6) * ΔR - R1) / g.dR) + 1
+    j = floor(Int, (x[2] + FT(1.0e-6) * ΔZ - Z1) / g.dZ) + 1
+    cell_inside(g, i, j) || return zero(FT)
     tR = ΔR == 0 ? FT(Inf) : (R1 + (ΔR > 0 ? i : i - 1) * g.dR - x[1]) / ΔR
     tZ = ΔZ == 0 ? FT(Inf) : (Z1 + (ΔZ > 0 ? j : j - 1) * g.dZ - x[2]) / ΔZ
     dtR = ΔR == 0 ? FT(Inf) : g.dR / abs(ΔR)

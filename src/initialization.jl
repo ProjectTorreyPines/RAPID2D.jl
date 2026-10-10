@@ -366,7 +366,10 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Initialize other field components
     RP.fields.BR_ext = copy(RP.fields.BR)
     RP.fields.BZ_ext = copy(RP.fields.BZ)
-    RP.fields.ψ_ext = zeros(FT, NR, NZ)
+    # The flux of the uniform poloidal field (per radian): B_Z = (1/R)∂ψ/∂R gives B_Z R²/2. A
+    # uniform B_R has no flux function in axisymmetry (∇·B = B_R/R ≠ 0); −B_R R Z reproduces B_R
+    # and adds −B_R Z/R to B_Z. Contour tracing follows this ψ.
+    RP.fields.ψ_ext = @. manual.BZ * RP.G.R2D^2 / 2 - manual.BR * RP.G.R2D * RP.G.Z2D
 
     # Copy external fields to total fields initially
     RP.fields.E_para_tot = copy(RP.fields.E_para_ext)
