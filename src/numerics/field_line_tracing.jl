@@ -18,50 +18,49 @@ function psi_interpolant(G::GridGeometry, ψ::AbstractMatrix)
 end
 
 """
-    FieldLineGeometry(G, ψ; Bϕ = zero, inside = the grid, nodal_B = false, BR, BZ)
+    FieldLineGeometry(G, ψ; Bϕ = nothing, inside = nothing, nodal_B = false, BR, BZ)
     FieldLineGeometry(RP; nodal_B = false)
 
-What every tracer reads: the uniform grid, the flux `ψ` on its nodes with its bicubic
-interpolant, the toroidal field `Bϕ` on the nodes, and the wall as a set of cells: `inside[i, j]`
-for the cell spanning nodes i..i+1 × j..j+1. By default every cell of the grid is inside; the
-`RP` form takes the wall from `cell_state`. `nodal_B = true` adds bicubic interpolants of the
-nodal `BR`, `BZ` (by default central differences of ψ; the `RP` form takes the run's) and `Bϕ`,
-for a tracer that follows B rather than ψ ([`needs_nodal_B`](@ref)).
+What every tracer reads: the uniform grid, the flux `ψ` on its nodes (kept, not copied) with its
+bicubic interpolant, the toroidal field `Bϕ` on the nodes (`nothing`: none), and the wall as a
+set of cells: `inside[i, j]` for the cell spanning nodes i..i+1 × j..j+1 (`nothing`: the whole
+grid). The `RP` form takes the run's Bϕ and its wall from `cell_state`. `nodal_B = true` adds
+bicubic interpolants of the nodal `BR`, `BZ` (by default central differences of ψ; the `RP` form
+takes the run's) and `Bϕ`, for a tracer that follows B rather than ψ ([`needs_nodal_B`](@ref)).
 """
-struct FieldLineGeometry{FT <: AbstractFloat, I, B}
+struct FieldLineGeometry{FT <: AbstractFloat, M <: AbstractMatrix{FT}, I, P, W, B}
     R1D::Vector{FT}
     Z1D::Vector{FT}
     dR::FT
     dZ::FT
-    ψ::Matrix{FT}
+    ψ::M
     itp::I
-    Bϕ::Matrix{FT}
-    inside::Matrix{Bool}
+    Bϕ::P                                   # nothing, or Bϕ on the nodes
+    inside::W                               # nothing (the whole grid), or the in-wall cells
     nodal_B::B                              # nothing, or (; BR, BZ, Bϕ) interpolants
 end
 
 function FieldLineGeometry(
-        G::GridGeometry{FT}, ψ::AbstractMatrix;
-        Bϕ::AbstractMatrix = zeros(FT, G.NR, G.NZ), inside::AbstractMatrix{Bool} = trues(G.NR, G.NZ),
+        G::GridGeometry{FT}, ψ::AbstractMatrix{FT};
+        Bϕ::Union{AbstractMatrix, Nothing} = nothing, inside::Union{AbstractMatrix{Bool}, Nothing} = nothing,
         nodal_B::Bool = false, BR::Union{AbstractMatrix, Nothing} = nothing, BZ::Union{AbstractMatrix, Nothing} = nothing,
     ) where {FT <: AbstractFloat}
-    size(ψ) == size(Bϕ) == size(inside) == (G.NR, G.NZ) ||
-        throw(DimensionMismatch("ψ, Bϕ and inside must be $((G.NR, G.NZ))"))
+    dims = (G.NR, G.NZ)
+    (size(ψ) == dims && (Bϕ === nothing || size(Bϕ) == dims) && (inside === nothing || size(inside) == dims)) ||
+        throw(DimensionMismatch("ψ, Bϕ and inside must be $dims"))
     R1D, Z1D = collect(FT, G.R1D), collect(FT, G.Z1D)
     B = nothing
     if nodal_B
         if BR === nothing || BZ === nothing
-            BR, BZ = zeros(FT, G.NR, G.NZ), zeros(FT, G.NR, G.NZ)
+            BR, BZ = zeros(FT, dims), zeros(FT, dims)
             calculate_B_from_ψ!(G, Matrix{FT}(ψ), BR, BZ)
         end
         B = (
             BR = my_interpolation(R1D, Z1D, Matrix{FT}(BR)), BZ = my_interpolation(R1D, Z1D, Matrix{FT}(BZ)),
-            Bϕ = my_interpolation(R1D, Z1D, Matrix{FT}(Bϕ)),
+            Bϕ = my_interpolation(R1D, Z1D, Bϕ === nothing ? zeros(FT, dims) : Matrix{FT}(Bϕ)),
         )
     end
-    return FieldLineGeometry(
-        R1D, Z1D, FT(G.dR), FT(G.dZ), Matrix{FT}(ψ), psi_interpolant(G, ψ), Matrix{FT}(Bϕ), Matrix{Bool}(inside), B,
-    )
+    return FieldLineGeometry(R1D, Z1D, FT(G.dR), FT(G.dZ), ψ, psi_interpolant(G, ψ), Bϕ, inside, B)
 end
 
 FieldLineGeometry(RP::RAPID; nodal_B::Bool = false) = FieldLineGeometry(
@@ -74,11 +73,13 @@ default_max_length(g::FieldLineGeometry) = 3 * hypot(g.R1D[end] - g.R1D[1], g.Z1
 # whether cell (i, j) is a cell of the grid inside the wall
 @inline function cell_inside(g::FieldLineGeometry, i::Int, j::Int)
     NR, NZ = size(g.ψ)
-    return 1 <= i < NR && 1 <= j < NZ && @inbounds g.inside[i, j]
+    (1 <= i < NR && 1 <= j < NZ) || return false
+    return g.inside === nothing || @inbounds g.inside[i, j]
 end
 
 # Bϕ at a point, bilinear between the nodes
-@inline function toroidal_field(g::FieldLineGeometry, x)
+@inline function toroidal_field(g::FieldLineGeometry{FT}, x) where {FT}
+    g.Bϕ === nothing && return zero(FT)
     NR, NZ = size(g.Bϕ)
     i = clamp(floor(Int, (x[1] - g.R1D[1]) / g.dR) + 1, 1, NR - 1)
     j = clamp(floor(Int, (x[2] - g.Z1D[1]) / g.dZ) + 1, 1, NZ - 1)
@@ -238,7 +239,7 @@ end
 @inline function ms_vertex(g::FieldLineGeometry, L, i, j, e)
     R, Z, t, a, b = ms_point(g, L, i, j, e)
     gr = gradient(g.itp, (R, Z))
-    @inbounds Bϕ = g.Bϕ[a[1], a[2]] + t * (g.Bϕ[b[1], b[2]] - g.Bϕ[a[1], a[2]])
+    Bϕ = g.Bϕ === nothing ? zero(R) : @inbounds g.Bϕ[a[1], a[2]] + t * (g.Bϕ[b[1], b[2]] - g.Bϕ[a[1], a[2]])
     return R, Z, hypot(gr[1], gr[2]) / R, Bϕ
 end
 
@@ -301,7 +302,33 @@ end
 @inline function ms_node_field(g::FieldLineGeometry, i, j)
     R = g.R1D[i]
     gr = gradient(g.itp, (R, g.Z1D[j]))
-    return hypot(gr[1], gr[2]) / R, g.Bϕ[i, j]
+    return hypot(gr[1], gr[2]) / R, g.Bϕ === nothing ? zero(R) : g.Bϕ[i, j]
+end
+
+"""
+    trace_around!(visitor, tracer, g, level, o; max_length = Inf) -> (; termination, R, Z)
+
+Follow the contour of `level` around the O-point `o` (`(; R, Z, ψ)`), starting where it crosses
+the midplane outward of `o`, until it comes back there (`:closed`). As for
+[`trace_from_node!`](@ref), plus `:unseeded` when no crossing is found. With marching squares
+the midplane is the grid row nearest `o`; otherwise it is Z = o.Z on the bicubic ψ.
+"""
+function trace_around!(v, ::MarchingSquaresTracer, g::FieldLineGeometry{FT}, level, o; max_length::Real = Inf) where {FT}
+    ψ = g.ψ
+    NR, NZ = size(ψ)
+    unseeded = (; termination = :unseeded, R = FT(o.R), Z = FT(o.Z))
+    (g.R1D[1] <= o.R < g.R1D[end] && g.Z1D[1] <= o.Z <= g.Z1D[end]) || return unseeded
+    ia = floor(Int, (o.R - g.R1D[1]) / g.dR) + 1
+    jr = clamp(round(Int, (o.Z - g.Z1D[1]) / g.dZ) + 1, 1, NZ)
+    for i in (ia + 1):NR
+        ms_above(ψ, level, (i - 1, jr)) == ms_above(ψ, level, (i, jr)) && continue
+        # the edge is the bottom of cell (i − 1, jr) and the top of cell (i − 1, jr − 1): along B_pol into one
+        ci, cj, ce = ms_forward(ψ, level, i - 1, jr, 1) ? (i - 1, jr, 1) : (i - 1, jr - 1, 3)
+        R, Z, Bpol, Bϕ = ms_vertex(g, level, ci, cj, ce)
+        visit!(v, R, Z, Bpol, Bϕ)
+        return first(ms_march!(v, g, level, ci, cj, ce, ms_edge_id(NR, ci, cj, ce), max_length))
+    end
+    return unseeded
 end
 
 # ── the bicubic level set ────────────────────────────────────────────────────────
@@ -385,6 +412,36 @@ function cubic_trace!(v, p::CubicTracer, g::FieldLineGeometry{FT}, x0, level, sg
         h = min(2h, h_max)
     end
     return (; termination = :trace_limit, R = x[1], Z = x[2])
+end
+
+function trace_around!(v, p::Union{CubicTracer, RK4Tracer}, g::FieldLineGeometry{FT}, level, o; max_length::Real = Inf) where {FT}
+    x0 = midplane_crossing(g, level, o)
+    x0 === nothing && return (; termination = :unseeded, R = FT(o.R), Z = FT(o.Z))
+    tw = tangent_and_weight(g.itp, x0, 1)
+    tw === nothing && return (; termination = :null, R = x0[1], Z = x0[2])
+    return trace_from_point!(v, p, g, x0, level, tw[1][2] >= 0 ? 1 : -1, max_length)    # upward
+end
+
+trace_from_point!(v, p::CubicTracer, g::FieldLineGeometry, x0, level, sgn, max_length) =
+    cubic_trace!(v, p, g, x0, level, sgn, max_length)
+
+# The first crossing of `level` outward of `o` along Z = o.Z on the bicubic ψ, to bisection accuracy.
+function midplane_crossing(g::FieldLineGeometry{FT}, level, o) where {FT}
+    f(R) = g.itp((R, o.Z)) - level
+    f_axis = f(o.R)
+    a, step = FT(o.R), g.dR / 4
+    while a < g.R1D[end]
+        b = min(a + step, g.R1D[end])
+        if sign(f(b)) != sign(f_axis)
+            for _ in 1:60
+                c = (a + b) / 2
+                sign(f(c)) == sign(f_axis) ? (a = c) : (b = c)
+            end
+            return ((a + b) / 2, FT(o.Z))
+        end
+        a = b
+    end
+    return nothing
 end
 
 # ── RK4 along the nodal B ────────────────────────────────────────────────────────────
@@ -514,16 +571,21 @@ function is_in_wall_by_cell_state(
     return cell_state[nid]
 end
 
-function trace_from_node!(v, p::RK4Tracer, g::FieldLineGeometry{FT}, i::Int, j::Int, sgn::Int; max_length::Real = Inf) where {FT}
+trace_from_node!(v, p::RK4Tracer, g::FieldLineGeometry, i::Int, j::Int, sgn::Int; max_length::Real = Inf) =
+    trace_from_point!(v, p, g, (g.R1D[i], g.Z1D[j]), nothing, sgn, max_length)
+
+# RK4 does not read the level
+function trace_from_point!(v, p::RK4Tracer, g::FieldLineGeometry{FT}, x0, level, sgn, max_length) where {FT}
     B = g.nodal_B
     B === nothing && throw(ArgumentError("RK4Tracer follows the nodal B: build the geometry with `nodal_B = true`"))
     step_size = FT(p.step_cells) * min(abs(g.dR), abs(g.dZ))
     max_Lpol = isfinite(max_length) ? FT(max_length) : default_max_length(g)
     NR = size(g.ψ, 1)
     Rmin, Zmin, inv_dR, inv_dZ = g.R1D[1], g.Z1D[1], one(FT) / g.dR, one(FT) / g.dZ
-    wall_checker = (R, Z) -> is_in_wall_by_cell_state(R, Z, Rmin, Zmin, NR, inv_dR, inv_dZ, g.inside)
+    cells = g.inside === nothing ? trues(size(g.ψ)) : g.inside
+    wall_checker = (R, Z) -> is_in_wall_by_cell_state(R, Z, Rmin, Zmin, NR, inv_dR, inv_dZ, cells)
     return rk4_trace!(
-        v, g.R1D[i], g.Z1D[j], sgn, B.BR, B.BZ, B.Bϕ, step_size, floor(Int, max_Lpol / step_size), max_Lpol, wall_checker,
+        v, FT(x0[1]), FT(x0[2]), sgn, B.BR, B.BZ, B.Bϕ, step_size, floor(Int, max_Lpol / step_size), max_Lpol, wall_checker,
     )
 end
 

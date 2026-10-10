@@ -7,9 +7,9 @@
 #
 # and the safety factor follows as |q| = F ⟨1/R²⟩ |dV/dψ| / (4π²), F = R Bϕ. Three ways to
 # build the average on the grid are compared:
-#   CubicContourAverage (the default): the level set of the bicubic ψ, traced by predictor–corrector steps;
-#   MarchingSquaresAverage: the closed contour of each level by marching squares on the grid ψ;
-#   HatBinningAverage: share each node between the two nearest levels, weighted by volume.
+#   ContourAverage(CubicTracer()) (the default): the level set of the bicubic ψ, traced by predictor–corrector steps;
+#   ContourAverage(MarchingSquaresTracer()): the contour of each level by marching squares on the grid ψ;
+#   HatBinningAverage(): share each node between the two nearest levels, weighted by volume.
 #
 # Part 1 uses elliptic surfaces whose averages are known by quadrature along the ellipse.
 # Part 2 follows the closed region of the full start-up run (single-quadrupole field, every
@@ -18,13 +18,13 @@
 #   julia --project=examples examples/flux_surface_average.jl
 
 include("common.jl")
-using RAPID2D: initialize_grid_geometry, flux_surface_average, surface_average, MarchingSquaresAverage, HatBinningAverage, CubicContourAverage
+using RAPID2D: initialize_grid_geometry, flux_surface_average, surface_average, ContourAverage, CubicTracer, MarchingSquaresTracer, HatBinningAverage
 
 name = "flux_surface_average"
 out = output_dir(name)
-policies = (MarchingSquaresAverage(), CubicContourAverage(), HatBinningAverage())
-label(p) = p isa MarchingSquaresAverage ? "marching squares" : p isa CubicContourAverage ? "bicubic tracing" : "hat binning"
-linestyle(p) = p isa MarchingSquaresAverage ? :solid : p isa CubicContourAverage ? :dot : :dash
+policies = (ContourAverage(MarchingSquaresTracer()), ContourAverage(CubicTracer()), HatBinningAverage())
+label(p) = p isa HatBinningAverage ? "hat binning" : p.tracer isa MarchingSquaresTracer ? "marching squares" : "bicubic tracing"
+linestyle(p) = p isa HatBinningAverage ? :dash : p.tracer isa MarchingSquaresTracer ? :solid : :dot
 
 # ── Part 1: elliptic surfaces ψ = (R − R0)² + ((Z − Z0)/κ)², axis off the nodes ──────────────
 const R0, Z0, κ = 1.5113, 0.0071, 1.6
@@ -95,7 +95,7 @@ run!(
             t_build = @elapsed flux_surface_average(rp; policy = pol)
             F = rp.config.R0B0
             q = abs.(F .* surface_average(fsa, 1 ./ rp.G.R2D .^ 2) .* fsa.dVdψ ./ (4π^2))
-            records[(t, nameof(typeof(pol)))] = (;
+            records[(t, label(pol))] = (;
                 nclosed = length(rp.flf.closed_surface_nids), nvalid = count(fsa.valid), nsurf = length(fsa.ψ),
                 ψN = fsa.ψN, Te = surface_average(fsa, rp.plasma.Te_eV, rp.plasma.ne),
                 ne = surface_average(fsa, rp.plasma.ne), q, t_build,
@@ -108,9 +108,9 @@ println("Part 2: closed region of full_startup")
 pl_Te = plot(xlabel = "ψN", ylabel = "n-weighted ⟨Te⟩ (eV)", legend = :topright, title = "full_startup")
 pl_q = plot(xlabel = "ψN", ylabel = "q", yscale = :log10, legend = false, title = "full_startup")
 for t in times_ms
-    haskey(records, (t, :MarchingSquaresAverage)) || continue
+    haskey(records, (t, "marching squares")) || continue
     for pol in policies
-        r = records[(t, nameof(typeof(pol)))]
+        r = records[(t, label(pol))]
         @printf(
             "  t %4.1f ms | %-17s | closed nodes %3d | surfaces valid %d of %d | q %s | build %.2f ms\n", t, label(pol), r.nclosed, r.nvalid, r.nsurf,
             join((@sprintf("%.0f", x) for x in r.q), " "), 1.0e3 * r.t_build

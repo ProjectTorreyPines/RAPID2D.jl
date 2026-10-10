@@ -119,51 +119,25 @@ same object, so consumers never learn which one built it.
 abstract type FluxSurfaceAveragePolicy end
 
 """
-    CubicContourAverage(; max_turn = deg2rad(5), max_weight_change = 0.02, max_step_cells = 0.5, max_steps = 20_000)
+    ContourAverage(tracer = CubicTracer())
 
-Each surface is traced on the bicubic ψ itself, by predictor–corrector continuation along the
-level set: a step along the tangent, then Newton back onto the level. A step is halved until the
-tangent turns by at most `max_turn` and the integrand R/|∇ψ| changes by at most a fraction
-`max_weight_change` (which keeps the trace resolved toward an X-point, where |∇ψ| → 0), and is
-never longer than `max_step_cells` grid spacings.
-The trace starts on the outward midplane of the O-point and closes when it returns there. The
-average is the same trapezoidal ∮ f dl/B_pol as [`MarchingSquaresAverage`](@ref), f bilinear
-between nodes. The contour is not limited by the cells, so a surface a few cells across, or
-one beside an X-point, keeps its length and dV/dψ. A level that does not close within
-`max_steps` steps, or leaves the grid, is marked invalid. The method follows IMAS.jl
-`fluxsurfaces_cubic.jl`. **The default.**
+Each surface is the contour of its level, followed around the O-point by `tracer` (a
+[`FieldLineTracer`](@ref)) from where it crosses the outward midplane. The average is the
+trapezoidal ∮ f dl/B_pol along the path, f bilinear between nodes and B_pol as the tracer gives it.
+A level whose path does not close, leaves the wall, or does not wind once around the O-point is
+marked invalid.
+
+- `CubicTracer()`, **the default**: the bicubic level set, not limited by the cells, so a surface
+  a few cells across, or one beside an X-point, keeps its length and dV/dψ.
+- `MarchingSquaresTracer()`: the bilinear contour, second order in the grid and the fastest. On a
+  coarse grid a small surface is a polygon of a handful of vertices: ratio averages stay
+  accurate, but dV/dψ (and q) lose several per cent. A contour inside one cell is not found.
+- `RK4Tracer()`: follows B rather than the level, for comparison only.
 """
-struct CubicContourAverage{FT <: AbstractFloat} <: FluxSurfaceAveragePolicy
-    max_turn::FT
-    max_weight_change::FT
-    max_step_cells::FT
-    max_steps::Int
-    function CubicContourAverage(;
-            max_turn::Real = deg2rad(5.0), max_weight_change::Real = 0.02,
-            max_step_cells::Real = 0.5, max_steps::Int = 20_000,
-        )
-        0 < max_turn < π / 2 || throw(ArgumentError("max_turn must be in (0, π/2), got $max_turn"))
-        0 < max_weight_change < 1 || throw(ArgumentError("max_weight_change must be in (0, 1), got $max_weight_change"))
-        max_step_cells > 0 || throw(ArgumentError("max_step_cells must be positive, got $max_step_cells"))
-        max_steps > 0 || throw(ArgumentError("max_steps must be positive, got $max_steps"))
-        FT = float(promote_type(typeof(max_turn), typeof(max_weight_change), typeof(max_step_cells)))
-        return new{FT}(FT(max_turn), FT(max_weight_change), FT(max_step_cells), max_steps)
-    end
+struct ContourAverage{T <: FieldLineTracer} <: FluxSurfaceAveragePolicy
+    tracer::T
 end
-
-"""
-    MarchingSquaresAverage()
-
-Each surface is the closed contour of its level, traced by marching squares on the grid ψ
-(`IMASutils.contour_from_midplane!`, from the O-point outward along its midplane). The
-average is the trapezoidal ∮ f dl/B_pol along the contour, with f bilinear between the
-nodes and B_pol = |∇ψ|/R from the bicubic ψ. No scatter from where nodes sit, second order
-in the grid. A level whose contour lies inside one cell, or does not close, is marked
-invalid. On a coarse grid a small surface is a polygon of a handful of vertices: ratio averages
-stay accurate, but dV/dψ (and q) lose several per cent. The fast option.
-"""
-struct MarchingSquaresAverage <: FluxSurfaceAveragePolicy end
-
+ContourAverage() = ContourAverage(CubicTracer())
 
 """
     HatBinningAverage()
@@ -202,25 +176,27 @@ struct FluxSurfaceAverage{FT <: AbstractFloat, P <: FluxSurfaceAveragePolicy}
 end
 
 """
-    flux_surface_average(G, ψ, region; policy = CubicContourAverage(), nsurf) -> FluxSurfaceAverage or nothing
+    flux_surface_average(G, ψ, region; policy = ContourAverage(), nsurf, inside) -> FluxSurfaceAverage or nothing
     flux_surface_average(RP; kwargs...)
 
 Averages over `nsurf` closed flux surfaces of the region `region` (linear node indices),
-between its O-point and its edge ([`surface_levels`](@ref)). The `RP` form uses the closed
-nodes of the last field-line analysis. `nothing` when the region is empty; every surface
-invalid when the region has no O-point (`axis.converged == false`).
+between its O-point and its edge ([`surface_levels`](@ref)). `inside` is the wall as a set of
+cells ([`FieldLineGeometry`](@ref)); `nothing` is the whole grid. The `RP` form uses the closed nodes
+of the last field-line analysis and the run's wall. `nothing` when the region is empty; every
+surface invalid when the region has no O-point (`axis.converged == false`).
 """
 function flux_surface_average(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, region::AbstractVector{<:Integer};
-        policy::FluxSurfaceAveragePolicy = CubicContourAverage(),
+        policy::FluxSurfaceAveragePolicy = ContourAverage(),
         nsurf::Int = default_surface_count(region),
+        inside::Union{AbstractMatrix{Bool}, Nothing} = nothing,
     ) where {FT <: AbstractFloat}
     isempty(region) && return nothing
-    itp = psi_interpolant(G, ψ)
-    o = find_o_point(G, ψ, region; itp)
+    g = FieldLineGeometry(G, ψ; inside, nodal_B = needs_nodal_B(policy))
+    o = find_o_point(G, ψ, region; itp = g.itp)
     lv = surface_levels(o, ψ, region; nsurf)
     # Without an O-point there are no closed surfaces to average over: report, do not guess.
-    weights, dVdψ, valid = o.converged ? surface_weights(policy, G, ψ, region, o, lv, itp) :
+    weights, dVdψ, valid = o.converged ? surface_weights(policy, G, g, region, o, lv) :
         (spzeros(FT, length(ψ), nsurf), fill(FT(NaN), nsurf), fill(false, nsurf))
     grid_weights = level_interpolation(ψ, region, lv, valid)
     axis = (; R = FT(o.R), Z = FT(o.Z), ψ = FT(o.ψ), converged = o.converged)
@@ -228,7 +204,10 @@ function flux_surface_average(
 end
 
 flux_surface_average(RP::RAPID; kwargs...) =
-    flux_surface_average(RP.G, RP.fields.ψ, RP.flf.closed_surface_nids; kwargs...)
+    flux_surface_average(RP.G, RP.fields.ψ, RP.flf.closed_surface_nids; inside = RP.G.cell_state .>= 0, kwargs...)
+
+needs_nodal_B(::FluxSurfaceAveragePolicy) = false
+needs_nodal_B(p::ContourAverage) = needs_nodal_B(p.tracer)
 
 """
     surface_average(fsa, f) -> Vector
@@ -293,53 +272,35 @@ function level_interpolation(ψ::AbstractMatrix{FT}, region, lv, valid) where {F
     return hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN[ids]; extrapolate = true, columns = ids, ncol = length(lv.ψ))
 end
 
-function surface_weights(policy::CubicContourAverage, G::GridGeometry{FT}, ψ, region, o, lv, itp) where {FT}
-    Rs, Zs = FT[], FT[]
-    return contour_weights(s -> traced_contour!(Rs, Zs, itp, G, lv.ψ[s], o, policy), G, length(lv.ψ), itp)
-end
-
-function surface_weights(::MarchingSquaresAverage, G::GridGeometry, ψ, region, o, lv, itp)
-    ψm = ψ isa Matrix ? ψ : Matrix(ψ)
-    Rc_cache, Zc_cache = IMASutils.contour_cache(G.R1D, G.Z1D)
-    return contour_weights(s -> closed_contour!(Rc_cache, Zc_cache, ψm, G, lv.ψ[s], o), G, length(lv.ψ), itp)
-end
-
-# The weights of closed polylines, `contour(s) -> (R, Z)` with the last point repeating the
-# first (or `(nothing, nothing)`), as the columns of a nodes × surfaces matrix: the trapezoidal
-# ∮ f dl/B_pol over the vertices, f bilinear between nodes, B_pol = |∇ψ|/R from the bicubic ψ.
-function contour_weights(contour, G::GridGeometry{FT}, nsurf::Int, itp) where {FT}
-    N = G.NR * G.NZ
+# Each surface traced around the O-point, its trapezoidal weights dl/B_pol spread bilinearly onto
+# the nodes as the path goes; the columns of a nodes × surfaces matrix.
+function surface_weights(p::ContourAverage, G::GridGeometry{FT}, g::FieldLineGeometry, region, o, lv) where {FT}
+    N, nsurf = G.NR * G.NZ, length(lv.ψ)
     colptr = Vector{Int}(undef, nsurf + 1)
     colptr[1] = 1
     rowval, nzval = Int[], FT[]
     dVdψ = fill(FT(NaN), nsurf)
     valid = fill(false, nsurf)
-    hint = (Ref(1), Ref(1))                     # successive contour points share cells
-    @safe_with_pool pool begin                  # a contour may throw; the pool must survive it
+    @safe_with_pool pool begin                  # a trace may throw; the pool must survive it
         acc = zeros!(pool, FT, N)               # one surface's weight on each node
         stamp = zeros!(pool, Int, N)            # the last surface that reached each node
         reached = acquire!(pool, Int, N)        # the nodes this surface reached
+        sw = SurfaceWeights(acc, stamp, reached, g, o)
         for s in 1:nsurf
-            Rc, Zc = contour(s)
-            if Rc !== nothing
-                m = length(Rc) - 1              # the last point repeats the first
-                nreached, total = 0, zero(FT)
-                for j in 1:m
-                    jm = j == 1 ? m : j - 1
-                    dl = (hypot(Rc[j + 1] - Rc[j], Zc[j + 1] - Zc[j]) + hypot(Rc[j] - Rc[jm], Zc[j] - Zc[jm])) / 2
-                    g = gradient(itp, (Rc[j], Zc[j]); hint)
-                    w = dl * Rc[j] / hypot(g[1], g[2])  # dl/B_pol with B_pol = |∇ψ|/R
-                    nreached = add_bilinear!(acc, stamp, reached, nreached, G, Rc[j], Zc[j], w, s)
-                    total += w
-                end
-                nodes = sort!(view(reached, 1:nreached))
-                for node in nodes
+            start_surface!(sw, s)
+            e = trace_around!(sw, p.tracer, g, lv.ψ[s], o)
+            nodes = view(reached, 1:sw.nreached)
+            if e.termination === :closed && abs(sw.winding) == 1
+                close_surface!(sw)
+                for node in sort!(view(reached, 1:sw.nreached))
                     push!(rowval, node)
-                    push!(nzval, acc[node] / total)
+                    push!(nzval, acc[node] / sw.total)
                     acc[node] = zero(FT)
                 end
-                dVdψ[s] = 2π * total
+                dVdψ[s] = 2π * sw.total
                 valid[s] = true
+            else
+                acc[nodes] .= zero(FT)
             end
             colptr[s + 1] = length(rowval) + 1
         end
@@ -348,138 +309,90 @@ function contour_weights(contour, G::GridGeometry{FT}, nsurf::Int, itp) where {F
     return SparseMatrixCSC(N, nsurf, colptr, rowval, nzval), dVdψ, valid
 end
 
-# The closed contour of `level` around the O-point `o`, or `nothing` when marching squares
-# finds none (a contour inside one cell, an open contour, or a saddle it cannot connect).
-function closed_contour!(Rc_cache, Zc_cache, ψ::Matrix, G::GridGeometry, level, o)
-    # marching squares starts from the axis cell, which must lie inside the grid
-    (G.R1D[1] <= o.R < G.R1D[end] && G.Z1D[1] <= o.Z < G.Z1D[end]) || return nothing, nothing
-    # It then walks out along the axis row to the first node at or beyond the level, and starts
-    # in the cell before it, or in that node's own cell on an exact hit. On the last column that
-    # cell lies past the grid, read unchecked: refuse the level instead.
-    ia = searchsortedlast(G.R1D, o.R)
-    ja = searchsortedlast(G.Z1D, o.Z)
-    for i in (ia + 1):G.NR
-        v = (ψ[i, ja] - o.ψ) / (level - o.ψ)
-        if v >= 1
-            v == 1 && i == G.NR && return nothing, nothing
-            break
-        end
-    end
-    Rc, Zc = try
-        IMASutils.contour_from_midplane!(Rc_cache, Zc_cache, ψ, G.R1D, G.Z1D, level, o.R, o.Z, o.ψ)
-    catch err
-        err isa ErrorException || rethrow()
-        return nothing, nothing
-    end
-    length(Rc) >= 4 || return nothing, nothing
-    closed = isapprox(first(Rc), last(Rc); atol = 1.0e-9 * G.dR) && isapprox(first(Zc), last(Zc); atol = 1.0e-9 * G.dZ)
-    return closed ? (Rc, Zc) : (nothing, nothing)
+# A visitor that spreads the trapezoidal weight (dl/2 on each side) / B_pol of every vertex of a
+# closed path bilinearly onto the nodes, and counts how many times the path winds around the
+# O-point (signed crossings of the ray from it towards +R). The first vertex's weight waits for
+# the closing segment.
+mutable struct SurfaceWeights{FT, G}
+    acc::Vector{FT}
+    stamp::Vector{Int}
+    reached::Vector{Int}
+    g::G
+    Ro::FT                                      # the O-point
+    Zo::FT
+    s::Int
+    nreached::Int
+    total::FT
+    n::Int
+    winding::Int
+    R::FT                                       # the vertex waiting for its second half-segment
+    Z::FT
+    w::FT                                       # 1/B_pol there
+    half::FT                                    # its first half-segment
+    first_half::FT                              # the first vertex's second half-segment
+    R1::FT
+    Z1::FT
+    w1::FT
 end
+function SurfaceWeights(acc::AbstractVector{FT}, stamp, reached, g, o) where {FT}
+    nan = FT(NaN)
+    return SurfaceWeights(acc, stamp, reached, g, FT(o.R), FT(o.Z), 0, 0, zero(FT), 0, 0, nan, nan, nan, zero(FT), zero(FT), nan, nan, nan)
+end
+
+function start_surface!(sw::SurfaceWeights{FT}, s) where {FT}
+    sw.s, sw.nreached, sw.total, sw.n, sw.winding = s, 0, zero(FT), 0, 0
+    return sw
+end
+
+function visit!(sw::SurfaceWeights, R, Z, Bpol, Bϕ)
+    w = inv(Bpol)
+    if sw.n == 0
+        sw.R1, sw.Z1, sw.w1 = R, Z, w
+    else
+        d = hypot(R - sw.R, Z - sw.Z)
+        if sw.n == 1
+            sw.first_half = d / 2
+        else
+            spread!(sw, sw.R, sw.Z, (sw.half + d / 2) * sw.w)
+        end
+        za, zb = sw.Z - sw.Zo, Z - sw.Zo
+        if (za < 0) != (zb < 0) && sw.R + (R - sw.R) * za / (za - zb) > sw.Ro
+            sw.winding += zb < 0 ? -1 : 1
+        end
+        sw.half = d / 2
+    end
+    sw.R, sw.Z, sw.w = R, Z, w
+    sw.n += 1
+    return sw
+end
+
+# the path came back to its first vertex: give that vertex both its half-segments
+close_surface!(sw::SurfaceWeights) = spread!(sw, sw.R1, sw.Z1, (sw.first_half + sw.half) * sw.w1)
 
 # Add `w` times the bilinear weights of the point (R, Z) on its four cell corners into `acc`,
 # listing in `reached` the nodes surface `s` reaches for the first time.
-function add_bilinear!(acc, stamp, reached, nreached, G::GridGeometry, R, Z, w, s)
-    # the grid is uniform: the cell follows from the spacing
-    i = clamp(floor(Int, (R - G.R1D[1]) / G.dR) + 1, 1, G.NR - 1)
-    j = clamp(floor(Int, (Z - G.Z1D[1]) / G.dZ) + 1, 1, G.NZ - 1)
-    t = (R - G.R1D[i]) / G.dR
-    u = (Z - G.Z1D[j]) / G.dZ
-    k = (j - 1) * G.NR + i
-    for (node, c) in ((k, (1 - t) * (1 - u)), (k + 1, t * (1 - u)), (k + G.NR, (1 - t) * u), (k + G.NR + 1, t * u))
-        if stamp[node] != s
-            stamp[node] = s
-            nreached += 1
-            reached[nreached] = node
+function spread!(sw::SurfaceWeights, R, Z, w)
+    g = sw.g
+    NR, NZ = size(g.ψ)
+    i = clamp(floor(Int, (R - g.R1D[1]) / g.dR) + 1, 1, NR - 1)
+    j = clamp(floor(Int, (Z - g.Z1D[1]) / g.dZ) + 1, 1, NZ - 1)
+    t = (R - g.R1D[i]) / g.dR
+    u = (Z - g.Z1D[j]) / g.dZ
+    k = (j - 1) * NR + i
+    for (node, c) in ((k, (1 - t) * (1 - u)), (k + 1, t * (1 - u)), (k + NR, (1 - t) * u), (k + NR + 1, t * u))
+        if sw.stamp[node] != sw.s
+            sw.stamp[node] = sw.s
+            sw.nreached += 1
+            sw.reached[sw.nreached] = node
         end
-        acc[node] += w * c
+        sw.acc[node] += w * c
     end
-    return nreached
+    sw.total += w
+    return sw
 end
 
-# ── tracing the bicubic level set ──────────────────────────────────────────────────
-
-# The closed level set `level` of the bicubic ψ around the O-point `o`, traced by
-# predictor–corrector continuation into `Rs`, `Zs` (the last point repeats the first), or
-# `(nothing, nothing)` when it does not close.
-function traced_contour!(Rs, Zs, itp, G::GridGeometry{FT}, level, o, p::CubicContourAverage) where {FT}
-    empty!(Rs)
-    empty!(Zs)
-    x0 = midplane_crossing(itp, G, level, o)
-    x0 === nothing && return nothing, nothing
-    h_max = p.max_step_cells * min(G.dR, G.dZ)
-    h_min = FT(1.0e-6) * h_max
-    tw0 = tangent_and_weight(itp, x0, 1)
-    tw0 === nothing && return nothing, nothing
-    sgn = tw0[1][2] >= 0 ? 1 : -1              # leave the outward midplane upward
-    t = sgn == 1 ? tw0[1] : (-tw0[1][1], -tw0[1][2])
-    w = tw0[2]
-    push!(Rs, x0[1])
-    push!(Zs, x0[2])
-    x, h, turned = x0, h_max, zero(FT)
-    for _ in 1:p.max_steps
-        # predictor along the tangent, corrector back onto the level; halve until the tangent
-        # turns little and the integrand R/|∇ψ| changes little
-        xn, tn, wn, turn = x, t, w, zero(FT)
-        while true
-            xn = project_to_level(itp, level, (x[1] + h * t[1], x[2] + h * t[2]), h)
-            tw = xn === nothing ? nothing : tangent_and_weight(itp, xn, sgn)
-            if tw !== nothing
-                tn, wn = tw
-                turn = atan(t[1] * tn[2] - t[2] * tn[1], t[1] * tn[1] + t[2] * tn[2])
-                abs(turn) <= p.max_turn && abs(wn - w) <= p.max_weight_change * max(w, wn) && break
-            end
-            h /= 2
-            h < h_min && return nothing, nothing
-        end
-        (G.R1D[1] <= xn[1] <= G.R1D[end] && G.Z1D[1] <= xn[2] <= G.Z1D[end]) || return nothing, nothing
-        turned += turn
-        # closed: back across the outward midplane from below, after more than half a turn, at
-        # the seed rather than at another crossing of a non-convex surface
-        if abs(turned) > π && x[2] < o.Z <= xn[2] && xn[1] > o.R
-            R_cross = x[1] + (xn[1] - x[1]) * (o.Z - x[2]) / (xn[2] - x[2])
-            if abs(R_cross - x0[1]) <= 2 * h_max
-                push!(Rs, x0[1])
-                push!(Zs, x0[2])
-                return Rs, Zs
-            end
-        end
-        push!(Rs, xn[1])
-        push!(Zs, xn[2])
-        x, t, w = xn, tn, wn
-        h = min(2h, h_max)
-    end
-    return nothing, nothing
-end
-
-# Where the level crosses the outward midplane of the O-point: the first sign change of
-# ψ − level along Z = Z_axis from the axis outward, refined by bisection.
-function midplane_crossing(itp, G::GridGeometry{FT}, level, o) where {FT}
-    f(R) = itp((R, o.Z)) - level
-    f_axis = f(o.R)
-    a, step = o.R, G.dR / 4
-    while a < G.R1D[end]
-        b = min(a + step, G.R1D[end])
-        if sign(f(b)) != sign(f_axis)
-            for _ in 1:60
-                c = (a + b) / 2
-                sign(f(c)) == sign(f_axis) ? (a = c) : (b = c)
-            end
-            return ((a + b) / 2, FT(o.Z))
-        end
-        a = b
-    end
-    return nothing
-end
-
-# The unit tangent of the level set (∇ψ turned by +90°, times `sgn`) and the integrand
-# R/|∇ψ| of dl/B_pol, or `nothing` at a critical point.
-
-# Newton along ∇ψ back onto the level, or `nothing` when it does not converge or moves farther
-# than the step `h` (onto another branch). The tolerance follows the working precision.
-
-# ── reference ──────────────────────────────────────────────────────────────────────
-
-function surface_weights(::HatBinningAverage, G::GridGeometry{FT}, ψ, region, o, lv, itp) where {FT}
+function surface_weights(::HatBinningAverage, G::GridGeometry{FT}, g::FieldLineGeometry, region, o, lv) where {FT}
+    ψ = g.ψ
     H = hat_weights(ψ, region, lv.ψ_axis, lv.ψ_edge, lv.ψN)       # nodes × surfaces
     mass = transpose(H) * vec(G.inVol2D)                           # ∫ h_s dV
     valid = mass .> 0

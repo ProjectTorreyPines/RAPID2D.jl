@@ -23,7 +23,6 @@ using SimpleUnPack
 using ADIOS2
 using TimerOutputs
 using AdaptiveArrayPools: @with_pool, @safe_with_pool, acquire!, zeros!
-import IMASutils
 
 LinearAlgebra.BLAS.set_num_threads(1)
 
