@@ -89,14 +89,15 @@ function field_line_analysis!(
     # fails to reach cannot pass a topology check on a stale answer.
     fill!(flf.termination_forward, :unset)
     fill!(flf.termination_backward, :unset)
+    Lf_visitor, Lb_visitor = path_lengths(tracer, FT), path_lengths(tracer, FT)
     for i in 1:NR, j in 1:NZ
-        fwd, ef, t = node_trace(tracer, g, i, j, 1, max_length, FT)
+        fwd, ef, t = node_trace!(reset!(Lf_visitor), tracer, g, i, j, 1, max_length)
         Lf = published_lengths(fwd, ef.termination, ef.R)
         if ef.termination === :closed
             # a closed forward trace already covers the circuit
             bwd, eb, Lb = fwd, ef, Lf
         else
-            bwd, eb, _ = node_trace(t, g, i, j, -1, max_length, FT)
+            bwd, eb, _ = node_trace!(reset!(Lb_visitor), t, g, i, j, -1, max_length)
             Lb = published_lengths(bwd, eb.termination, eb.R)
         end
         flf.Lpol_forward[i, j], flf.Lpol_backward[i, j] = Lf.Lpol, Lb.Lpol
@@ -112,13 +113,14 @@ function field_line_analysis!(
     return _finalize_total_lengths!(flf)
 end
 
-# One direction from node (i, j): the lengths visitor, the ending, and the tracer that did it
-# (the fallback when `tracer` could not follow the node's level).
-function node_trace(tracer, g, i, j, sgn, max_length, ::Type{FT}) where {FT}
-    L = path_lengths(tracer, FT)
+# One direction from node (i, j) into the lengths visitor `L`: the visitor that measured it, the
+# ending, and the tracer that did it (the fallback, with a fresh visitor, when `tracer` could not
+# follow the node's level).
+function node_trace!(L, tracer, g, i, j, sgn, max_length)
     e = trace_from_node!(L, tracer, g, i, j, sgn; max_length)
     e.termination === :degenerate || return L, e, tracer
-    return node_trace(fallback_tracer(tracer), g, i, j, sgn, max_length, FT)
+    fallback = fallback_tracer(tracer)
+    return node_trace!(path_lengths(fallback, typeof(L.Lpol)), fallback, g, i, j, sgn, max_length)
 end
 
 """

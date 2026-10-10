@@ -151,10 +151,16 @@ mutable struct PathLengths{FT <: AbstractFloat}
 end
 PathLengths{FT}() where {FT} = PathLengths{FT}(zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN), FT(NaN))
 
+# back to no path, for the next trace
+function reset!(p::PathLengths{FT}) where {FT}
+    p.Lpol, p.Lc, p.min_Bpol, p.n = zero(FT), zero(FT), FT(Inf), 0
+    return p
+end
+
 function visit!(p::PathLengths, R, Z, Bpol, Bϕ)
     ratio = sqrt(Bpol^2 + Bϕ^2) / Bpol
     if p.n > 0
-        d = hypot(R - p.R, Z - p.Z)
+        d = sqrt((R - p.R)^2 + (Z - p.Z)^2)
         p.Lpol += d
         p.Lc += d * (p.ratio + ratio) / 2
     end
@@ -180,6 +186,11 @@ mutable struct StepLengths{FT <: AbstractFloat}
     Z::FT
 end
 StepLengths{FT}() where {FT} = StepLengths{FT}(zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN))
+
+function reset!(p::StepLengths{FT}) where {FT}
+    p.Lpol, p.Lc, p.min_Bpol, p.n = zero(FT), zero(FT), FT(Inf), 0
+    return p
+end
 
 function visit!(p::StepLengths, R, Z, Bpol, Bϕ)
     if p.n > 0
@@ -230,15 +241,19 @@ end
 # saddle (corners alternating above and below) connects by its centre: the corners on the other
 # side from the centre are cut off, each with its two edges.
 function ms_exit_edge(ψ, L, i, j, ein)
-    if ms_crosses(ψ, L, i, j, 1) && ms_crosses(ψ, L, i, j, 2) && ms_crosses(ψ, L, i, j, 3) && ms_crosses(ψ, L, i, j, 4)
-        @inbounds centre_above = (ψ[i, j] + ψ[i + 1, j] + ψ[i + 1, j + 1] + ψ[i, j + 1]) / 4 >= L
+    @inbounds v1, v2, v3, v4 = ψ[i, j], ψ[i + 1, j], ψ[i + 1, j + 1], ψ[i, j + 1]
+    a1, a2, a3, a4 = v1 >= L, v2 >= L, v3 >= L, v4 >= L
+    if a1 == a3 && a2 == a4 && a1 != a2
         # of the two corners of the entry edge, the one cut off is the one unlike the centre
-        c = ms_above(ψ, L, ms_corner(i, j, ein)) == centre_above ? ein % 4 + 1 : ein
+        centre_above = (v1 + v2 + v3 + v4) / 4 >= L
+        entry_above = ein == 1 ? a1 : ein == 2 ? a2 : ein == 3 ? a3 : a4
+        c = entry_above == centre_above ? ein % 4 + 1 : ein
         return c == ein ? (ein + 2) % 4 + 1 : c       # corner c lies on edges c − 1 and c
     end
-    for e in 1:4
-        e != ein && ms_crosses(ψ, L, i, j, e) && return e
-    end
+    ein != 1 && a1 != a2 && return 1
+    ein != 2 && a2 != a3 && return 2
+    ein != 3 && a3 != a4 && return 3
+    ein != 4 && a4 != a1 && return 4
     return 0
 end
 
@@ -255,7 +270,7 @@ end
     R, Z, t, a, b = ms_point(g, L, i, j, e)
     gr = gradient(g.itp, (R, Z))
     Bϕ = g.Bϕ === nothing ? zero(R) : @inbounds g.Bϕ[a[1], a[2]] + t * (g.Bϕ[b[1], b[2]] - g.Bϕ[a[1], a[2]])
-    return R, Z, hypot(gr[1], gr[2]) / R, Bϕ
+    return R, Z, sqrt(gr[1]^2 + gr[2]^2) / R, Bϕ
 end
 
 # From the contour's crossing of edge `e` of cell (i, j) (already visited), cell by cell until
@@ -272,7 +287,7 @@ function ms_march!(v, g::FieldLineGeometry{FT}, L, i, j, e, start, max_length) w
         eo == 0 && return (; termination = :trace_limit, R, Z), Lpol
         Rn, Zn, Bpol, Bϕ = ms_vertex(g, L, i, j, eo)
         visit!(v, Rn, Zn, Bpol, Bϕ)
-        Lpol += hypot(Rn - R, Zn - Z)
+        Lpol += sqrt((Rn - R)^2 + (Zn - Z)^2)
         R, Z = Rn, Zn
         ms_edge_id(NR, i, j, eo) == start && return (; termination = :closed, R, Z), Lpol
         Lpol > max_length && return (; termination = :trace_limit, R, Z), Lpol
@@ -317,7 +332,7 @@ end
 @inline function ms_node_field(g::FieldLineGeometry, i, j)
     R = g.R1D[i]
     gr = gradient(g.itp, (R, g.Z1D[j]))
-    return hypot(gr[1], gr[2]) / R, g.Bϕ === nothing ? zero(R) : g.Bϕ[i, j]
+    return sqrt(gr[1]^2 + gr[2]^2) / R, g.Bϕ === nothing ? zero(R) : g.Bϕ[i, j]
 end
 
 """
