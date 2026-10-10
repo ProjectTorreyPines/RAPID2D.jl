@@ -84,7 +84,7 @@ RP = setup(
 
 times_ms = (4.0, 6.0, 8.0, 10.0, 14.0, 20.0)
 marks = Dict(round(Int, t * 1.0e-3 / config.dt) => t for t in times_ms)
-records = Dict{Tuple{Float64, Symbol}, Any}()
+records = Dict{Tuple{Float64, String}, Any}()
 run!(
     RP; callback_after_step = rp -> begin
         haskey(marks, rp.step) || return
