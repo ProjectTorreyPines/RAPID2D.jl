@@ -107,6 +107,25 @@ function surface_levels(
     return (; ψ_axis, ψ_edge, ψN, ψ = ψ_axis .+ ψN .* (ψ_edge - ψ_axis))
 end
 
+# The region's nodes where ψ is strictly above, or strictly below, all eight neighbours: one per
+# O-point of a closed region.
+function count_extrema(ψ::AbstractMatrix, region)
+    NR, NZ = size(ψ)
+    n = 0
+    for k in region
+        i, j = mod1(k, NR), cld(k, NR)
+        above = below = true
+        for b in -1:1, a in -1:1
+            (a, b) == (0, 0) && continue
+            (1 <= i + a <= NR && 1 <= j + b <= NZ) || continue
+            above &= ψ[i + a, j + b] < ψ[k]
+            below &= ψ[i + a, j + b] > ψ[k]
+        end
+        n += above | below
+    end
+    return n
+end
+
 # About one surface per grid spacing across a roughly round region.
 default_surface_count(region) = max(2, round(Int, sqrt(length(region) / π)))
 
@@ -183,7 +202,8 @@ Averages over `nsurf` closed flux surfaces of the region `region` (linear node i
 between its O-point and its edge ([`surface_levels`](@ref)). `inside` is the wall as a set of
 cells ([`FieldLineGeometry`](@ref)); `nothing` is the whole grid. The `RP` form uses the closed nodes
 of the last field-line analysis and the run's wall. `nothing` when the region is empty; every
-surface invalid when the region has no O-point (`axis.converged == false`).
+surface invalid when the region has no O-point (`axis.converged == false`) or more than one (a
+warning; pass one island).
 """
 function flux_surface_average(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, region::AbstractVector{<:Integer};
@@ -195,8 +215,11 @@ function flux_surface_average(
     g = FieldLineGeometry(G, ψ; inside, nodal_B = needs_nodal_B(policy))
     o = find_o_point(G, ψ, region; itp = g.itp)
     lv = surface_levels(o, ψ, region; nsurf)
-    # Without an O-point there are no closed surfaces to average over: report, do not guess.
-    weights, dVdψ, valid = o.converged ? surface_weights(policy, G, g, region, o, lv) :
+    # Without an O-point there are no closed surfaces to average over, and around several (separate
+    # islands, a doublet) no single family of them: report, do not guess.
+    n_o = count_extrema(ψ, region)
+    n_o > 1 && @warn "the region holds $n_o O-points (extrema of ψ); its surfaces are not averaged. Pass one closed region." maxlog = 1
+    weights, dVdψ, valid = o.converged && n_o <= 1 ? surface_weights(policy, G, g, region, o, lv) :
         (spzeros(FT, length(ψ), nsurf), fill(FT(NaN), nsurf), fill(false, nsurf))
     grid_weights = level_interpolation(ψ, region, lv, valid)
     axis = (; R = FT(o.R), Z = FT(o.Z), ψ = FT(o.ψ), converged = o.converged)

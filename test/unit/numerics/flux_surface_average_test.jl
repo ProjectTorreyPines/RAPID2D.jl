@@ -344,3 +344,21 @@ end
         @test all(flux_surface_average(G32, ψ32, region32; policy).valid)
     end
 end
+
+@testitem "Flux surfaces: a region around two O-points is reported, not averaged" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, to_grid
+    # Built around one O-point, the average would paint that island's profile onto the other's
+    # nodes: two separate islands, or a doublet whose closed nodes are one connected region.
+    G = test_grid(61)
+    island(Zc, w) = @. -exp(-((G.R2D - R0)^2 + (G.Z2D - Zc)^2) / w^2)
+    for ψ in (island(0.25, 0.08) .+ island(-0.25, 0.08), island(0.1, 0.12) .+ island(-0.1, 0.12))
+        region = findall(<(-0.3), vec(ψ))
+        fsa = @test_logs (:warn, r"O-points") match_mode = :any flux_surface_average(G, ψ, region)
+        @test !any(fsa.valid)
+        @test all(iszero, to_grid(fsa, surface_average(fsa, G.R2D)))
+    end
+    # one island of the same pair is averaged
+    ψ = island(0.25, 0.08) .+ island(-0.25, 0.08)
+    upper = [k for k in findall(<(-0.3), vec(ψ)) if G.Z2D[k] > 0]
+    @test all(flux_surface_average(G, ψ, upper).valid)
+end
