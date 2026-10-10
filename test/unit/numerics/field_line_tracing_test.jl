@@ -41,8 +41,8 @@ end
     i, j = nearest(G, 1.5, 0.0)
     for (sgn, Zend) in ((1, 0.6), (-1, -0.6))
         p, L = Path(), PathLengths{Float64}()
-        @test trace_from_node!(p, MarchingSquaresTracer(), g, i, j, sgn) === :wall
-        @test trace_from_node!(L, MarchingSquaresTracer(), g, i, j, sgn) === :wall
+        @test trace_from_node!(p, MarchingSquaresTracer(), g, i, j, sgn).termination === :wall
+        @test trace_from_node!(L, MarchingSquaresTracer(), g, i, j, sgn).termination === :wall
         @test (p.R[1], p.Z[1]) == (G.R1D[i], G.Z1D[j])         # the node first
         @test all(==(G.R1D[i]), p.R)
         @test p.Z[end] ≈ Zend atol = 1.0e-12                   # stops on the wall edge
@@ -64,8 +64,8 @@ end
         i, j = nearest(G, R0 + 0.3, Z0)
         r = sqrt(ψ[i, j])
         p, L = Path(), PathLengths{Float64}()
-        @test trace_from_node!(p, MarchingSquaresTracer(), g, i, j, 1) === :closed
-        @test trace_from_node!(L, MarchingSquaresTracer(), g, i, j, 1) === :closed
+        @test trace_from_node!(p, MarchingSquaresTracer(), g, i, j, 1).termination === :closed
+        @test trace_from_node!(L, MarchingSquaresTracer(), g, i, j, 1).termination === :closed
         @test (p.R[end], p.Z[end]) == (p.R[1], p.Z[1])        # back at the node
         @test L.Lc / L.Lpol ≈ sqrt(1 + F^2 / (4r^2)) rtol = 1.0e-2
         push!(errors, abs(L.Lpol / (2π * r) - 1))
@@ -106,7 +106,7 @@ end
     r = sqrt(ψ[i, j])
     paths = (Path(), Path())
     for (p, sgn) in zip(paths, (1, -1))
-        @test trace_from_node!(p, MarchingSquaresTracer(), g, i, j, sgn) === :wall
+        @test trace_from_node!(p, MarchingSquaresTracer(), g, i, j, sgn).termination === :wall
         @test p.Z[end] ≈ Zw atol = 1.0e-12
     end
     @test sum(poloidal_length, paths) ≈ r * (2π - 2acos((Zw - Z0) / r)) rtol = 2.0e-3
@@ -117,8 +117,8 @@ end
     i, j = 20, 22
     for s in (1, -1)                             # a minimum and a maximum on the node
         g = FieldLineGeometry(G, @. s * ((G.R2D - G.R1D[i])^2 + (G.Z2D - G.Z1D[j])^2))
-        @test trace_from_node!(Path(), MarchingSquaresTracer(), g, i, j, 1) === :degenerate
-        @test trace_from_node!(Path(), MarchingSquaresTracer(), g, i, j, -1) === :degenerate
+        @test trace_from_node!(Path(), MarchingSquaresTracer(), g, i, j, 1).termination === :degenerate
+        @test trace_from_node!(Path(), MarchingSquaresTracer(), g, i, j, -1).termination === :degenerate
     end
 end
 
@@ -142,7 +142,7 @@ end
     g = FieldLineGeometry(G, @. (G.R2D - Rs)^2 - (G.Z2D - Zs)^2)
     for i in 11:13, sgn in (1, -1)
         p = Path()
-        @test trace_from_node!(p, MarchingSquaresTracer(), g, i, 10, sgn) === :wall
+        @test trace_from_node!(p, MarchingSquaresTracer(), g, i, 10, sgn).termination === :wall
         @test minimum(p.R) > Rs
     end
 end
@@ -152,9 +152,97 @@ end
     g = FieldLineGeometry(G, copy(G.R2D))
     i, j = nearest(G, 1.5, 0.0)
     L = PathLengths{Float64}()
-    @test trace_from_node!(L, MarchingSquaresTracer(), g, i, j, 1; max_length = 0.1) === :trace_limit
+    @test trace_from_node!(L, MarchingSquaresTracer(), g, i, j, 1; max_length = 0.1).termination === :trace_limit
     @test 0.1 < L.Lpol <= 0.1 + G.dZ
     allocations(L, g, i, j) = @allocated trace_from_node!(L, MarchingSquaresTracer(), g, i, j, 1)
     allocations(L, g, i, j)
     @test allocations(PathLengths{Float64}(), g, i, j) == 0
+end
+
+@testitem "Bicubic tracer: a line to the wall, a circle to its chords, along B_pol" setup = [TracingFixtures] tags = [:numerics] begin
+    using RAPID2D: CubicTracer
+    # ψ = R is reproduced exactly by the bicubic ψ: the path is the line, cut exactly at the wall.
+    G = test_grid(21, 41; Z = (-1.0, 1.0))
+    F = 3.0
+    inside = [abs(G.Z1D[j] + G.dZ / 2) < 0.6 for _ in 1:G.NR, j in 1:G.NZ]
+    g = FieldLineGeometry(G, copy(G.R2D); Bϕ = F ./ G.R2D, inside)
+    i, j = nearest(G, 1.5, 0.0)
+    for (sgn, Zend) in ((1, 0.6), (-1, -0.6))
+        L = PathLengths{Float64}()
+        e = trace_from_node!(L, CubicTracer(), g, i, j, sgn)
+        @test e.termination === :wall
+        @test e.Z ≈ Zend atol = 1.0e-12
+        @test L.Lpol ≈ 0.6 atol = 1.0e-12
+        @test L.Lc ≈ 0.6 * sqrt(1 + F^2) rtol = 1.0e-10
+    end
+    # ψ = r² is reproduced exactly too, so a closed path is a polygon inscribed in the circle:
+    # its length falls short by about θ²/24 for a turn θ per step (here θ ≈ 2.4°, 7e-5).
+    R0, Z0 = 1.5113, 0.0071
+    G = test_grid(41)
+    g = FieldLineGeometry(G, @. (G.R2D - R0)^2 + (G.Z2D - Z0)^2; Bϕ = F ./ G.R2D)
+    i, j = nearest(G, R0 + 0.3, Z0)
+    r = hypot(G.R1D[i] - R0, G.Z1D[j] - Z0)
+    p, L = Path(), PathLengths{Float64}()
+    @test trace_from_node!(p, CubicTracer(), g, i, j, 1).termination === :closed
+    @test trace_from_node!(L, CubicTracer(), g, i, j, 1).termination === :closed
+    @test (p.R[end], p.Z[end]) == (p.R[1], p.Z[1])
+    @test maximum(abs.(hypot.(p.R .- R0, p.Z .- Z0) .- r)) < 1.0e-9     # every vertex on the level
+    @test 0 < 1 - L.Lpol / (2π * r) < 1.0e-4
+    @test L.Lc / L.Lpol ≈ sqrt(1 + F^2 / (4r^2)) rtol = 1.0e-3
+    @test p.Z[2] > p.Z[1]                                              # along B_pol: up on the outer side
+end
+
+@testitem "Bicubic tracer: no corner of the wall is stepped over" setup = [TracingFixtures] tags = [:numerics] begin
+    using RAPID2D: CubicTracer
+    # ψ = R + βZ: straight contours going down to the right against B_pol. The one through node
+    # (i, j) passes the corner (i+1, j−3) on its left by δ, so it cuts the corner of cell (i, j−4)
+    # for about 3δ, a thousandth of a step. Marking that cell outside must end the trace there.
+    G = test_grid(41)
+    h = G.dR
+    δ = 1.0e-3 * h
+    β = (h - δ) / (3 * G.dZ)
+    i, j = 20, 25
+    inside = trues(G.NR, G.NZ)
+    inside[i, j - 4] = false
+    g = FieldLineGeometry(G, @. G.R2D + β * G.Z2D; inside)
+    e = trace_from_node!(Path(), CubicTracer(), g, i, j, -1)
+    @test e.termination === :wall
+    @test e.Z ≈ G.Z1D[j - 3] atol = 1.0e-9
+    @test e.R ≈ G.R1D[i + 1] - δ atol = 1.0e-9
+    # without the cell the line runs on to the edge of the grid
+    g = FieldLineGeometry(G, @. G.R2D + β * G.Z2D)
+    @test trace_from_node!(Path(), CubicTracer(), g, i, j, -1).Z < G.Z1D[j - 4]
+end
+
+@testitem "Bicubic tracer: a null at the node, and the length budget" setup = [TracingFixtures] tags = [:numerics] begin
+    using RAPID2D: CubicTracer
+    G = test_grid(41)
+    i, j = 20, 22
+    g = FieldLineGeometry(G, @. (G.R2D - G.R1D[i])^2 + (G.Z2D - G.Z1D[j])^2)
+    @test trace_from_node!(Path(), CubicTracer(), g, i, j, 1).termination === :null
+    g = FieldLineGeometry(G, copy(G.R2D))
+    L = PathLengths{Float64}()
+    @test trace_from_node!(L, CubicTracer(), g, 20, 21, 1; max_length = 0.1).termination === :trace_limit
+    @test 0.1 < L.Lpol <= 0.1 + G.dZ
+end
+
+@testitem "RK4 tracer: the same trace as trace_single_field_line" setup = [TracingFixtures] tags = [:numerics] begin
+    using RAPID2D: RK4Tracer, StepLengths, trace_single_field_line, is_in_wall_by_cell_state, default_max_length
+    G = test_grid(41)
+    R0, Z0 = 1.5113, 0.0071
+    ψ = @. (G.R2D - R0)^2 + (G.Z2D - Z0)^2
+    inside = [G.R1D[i] + G.dR / 2 < 1.85 for i in 1:G.NR, _ in 1:G.NZ]
+    @test_throws ArgumentError trace_from_node!(StepLengths{Float64}(), RK4Tracer(), FieldLineGeometry(G, ψ; inside), 30, 21, 1)
+    g = FieldLineGeometry(G, ψ; Bϕ = 3.0 ./ G.R2D, inside, nodal_B = true)
+    B = g.nodal_B
+    wall = (R, Z) -> is_in_wall_by_cell_state(R, Z, g.R1D[1], g.Z1D[1], G.NR, 1 / g.dR, 1 / g.dZ, inside)
+    step = 0.5 * min(g.dR, g.dZ)
+    Lmax = default_max_length(g)
+    for (i, j) in ((30, 21), (25, 30), (35, 21)), sgn in (1, -1)     # closed, closed, cut by the wall
+        L = StepLengths{Float64}()
+        e = trace_from_node!(L, RK4Tracer(), g, i, j, sgn)
+        ref = trace_single_field_line(g.R1D[i], g.Z1D[j], sgn, B.BR, B.BZ, B.Bϕ, step, floor(Int, Lmax / step), Lmax, wall)
+        @test e.termination === ref.termination
+        @test (L.Lpol, L.Lc, L.min_Bpol, e.R, e.Z) === (ref.Lpol, ref.Lc, ref.min_Bpol, ref.final_R, ref.final_Z)
+    end
 end

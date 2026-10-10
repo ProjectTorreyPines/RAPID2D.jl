@@ -11,159 +11,13 @@ using LinearAlgebra
 using RAPID2D
 
 """
-    advance_step_along_b_rz_plane(dl, R, Z, interp_BR, interp_BZ)
-
-Advance one step along magnetic field line using 4th-order Runge-Kutta integration.
-
-This function implements the RK4 algorithm for integrating field lines in the poloidal
-plane, following the magnetic field direction with step size `dl`.
-
-# Arguments
-- `dl::FT`: Step size (positive for forward, negative for backward)
-- `R::FT`: Current radial position
-- `Z::FT`: Current vertical position
-- `interp_BR`: Radial magnetic field interpolation function
-- `interp_BZ`: Vertical magnetic field interpolation function
-
-# Returns
-- `next_R::FT`: New radial position
-- `next_Z::FT`: New vertical position
-
-# Algorithm
-Uses classical RK4 integration:
-1. k1 = f(t, y)
-2. k2 = f(t + h/2, y + k1*h/2)
-3. k3 = f(t + h/2, y + k2*h/2)
-4. k4 = f(t + h, y + k3*h)
-5. y_new = y + h*(k1 + 2*k2 + 2*k3 + k4) / 6
-
-Where f(t,y) = B(R,Z)/|B_pol(R,Z)| is the unit field direction.
-"""
-function advance_step_along_b_rz_plane(
-        dl::FT,
-        R::FT,
-        Z::FT,
-        interp_BR::FastInterpolations.AbstractInterpolantND,
-        interp_BZ::FastInterpolations.AbstractInterpolantND
-    ) where {FT <: AbstractFloat}
-    half = FT(0.5)
-    two_FT = FT(2.0)
-
-    # RK4 Step 1
-    BR1 = interp_BR(R, Z)
-    BZ1 = interp_BZ(R, Z)
-    Bpol1 = sqrt(BR1^two_FT + BZ1^two_FT)
-    R_RK1 = dl * BR1 / Bpol1
-    Z_RK1 = dl * BZ1 / Bpol1
-
-    # RK4 Step 2
-    R2 = R + half * R_RK1
-    Z2 = Z + half * Z_RK1
-    BR2 = interp_BR(R2, Z2)
-    BZ2 = interp_BZ(R2, Z2)
-    Bpol2 = sqrt(BR2^two_FT + BZ2^two_FT)
-    R_RK2 = dl * BR2 / Bpol2
-    Z_RK2 = dl * BZ2 / Bpol2
-
-    # RK4 Step 3
-    R3 = R + half * R_RK2
-    Z3 = Z + half * Z_RK2
-    BR3 = interp_BR(R3, Z3)
-    BZ3 = interp_BZ(R3, Z3)
-    Bpol3 = sqrt(BR3^two_FT + BZ3^two_FT)
-    R_RK3 = dl * BR3 / Bpol3
-    Z_RK3 = dl * BZ3 / Bpol3
-
-    # RK4 Step 4
-    R4 = R + R_RK3
-    Z4 = Z + Z_RK3
-    BR4 = interp_BR(R4, Z4)
-    BZ4 = interp_BZ(R4, Z4)
-    Bpol4 = sqrt(BR4^two_FT + BZ4^two_FT)
-    R_RK4 = dl * BR4 / Bpol4
-    Z_RK4 = dl * BZ4 / Bpol4
-
-    # Combine RK4 steps
-    next_R = R + (R_RK1 + two_FT * R_RK2 + two_FT * R_RK3 + R_RK4) / FT(6.0)
-    next_Z = Z + (Z_RK1 + two_FT * Z_RK2 + two_FT * Z_RK3 + Z_RK4) / FT(6.0)
-
-    return next_R, next_Z
-end
-
-"""
-    is_in_wall_by_cell_state(R, Z, Rmin, Zmin, NZ, inv_dR, inv_dZ, cell_state)
-
-Check if point (R,Z) is inside the computational domain (not in wall).
-
-Uses cell state array to determine if a point is inside the valid computational
-region or hits a wall boundary.
-
-# Arguments
-- `R::FT`: Radial coordinate
-- `Z::FT`: Vertical coordinate
-- `Rmin::FT`: Minimum radial coordinate
-- `Zmin::FT`: Minimum vertical coordinate
-- `NZ::Int`: Number of vertical grid points
-- `inv_dR::FT`: Inverse radial grid spacing
-- `inv_dZ::FT`: Inverse vertical grid spacing
-- `cell_state::Vector{Bool}`: Cell state array (true = valid, false = wall)
-
-# Returns
-- `state::Bool`: true if point is valid (not in wall), false if in wall
-"""
-function is_in_wall_by_cell_state(
-        R::FT, Z::FT, Rmin::FT, Zmin::FT, NR::Int,
-        inv_dR::FT, inv_dZ::FT, cell_state::AbstractMatrix{Bool}
-    ) where {FT <: AbstractFloat}
-
-    # Convert coordinates to grid indices
-    Rid = floor(Int, (R - Rmin) * inv_dR) + 1
-    Zid = floor(Int, (Z - Zmin) * inv_dZ) + 1
-
-    # Bound R FIRST: the linear index alone folds `Rid = NR+1` onto the valid index of
-    # `(1, Zid+1)`, so a rightward escape used to read as "still inside".
-    if Rid < 1 || Rid > NR
-        return false  # Outside domain = wall
-    end
-
-    # With R bounded, the linear check below is exactly a bound on Zid.
-    nid = (Zid - 1) * NR + Rid
-    if nid < 1 || nid > length(cell_state)
-        return false  # Outside domain = wall
-    end
-
-    return cell_state[nid]
-end
-
-"""
     trace_single_field_line(R0, Z0, direction, interp_BR, interp_BZ, interp_Bphi,
-                           step_size, max_steps, max_Lpol, wall_checker;
-                           detect_closure=true, closure_tolerance=1e-6)
+                            step_size, max_steps, max_Lpol, wall_checker;
+                            detect_closure = true, closure_tolerance = 1e-6) -> SingleTraceResult
 
-Trace a single magnetic field line from starting point (R0, Z0).
-
-This function follows Julia best practices with:
-- Type-stable implementation
-- Minimal memory allocation
-- Clear control flow
-- Easy to optimize with @inbounds
-
-# Arguments
-- `R0::FT`: Starting radial coordinate
-- `Z0::FT`: Starting vertical coordinate
-- `direction::Int`: +1 for forward, -1 for backward
-- `interp_BR`: Radial magnetic field interpolation function
-- `interp_BZ`: Vertical magnetic field interpolation function
-- `interp_Bphi`: Toroidal magnetic field interpolation function
-- `step_size::FT`: Integration step size
-- `max_steps::Int`: Maximum number of steps
-- `max_Lpol::FT`: Maximum poloidal length
-- `wall_checker`: Function to check if point hits wall
-- `detect_closure::Bool`: Whether to detect closed field lines
-- `closure_tolerance::FT`: Tolerance for closure detection
-
-# Returns
-- `SingleTraceResult`: Complete tracing results
+One RK4 trace (see [`RK4Tracer`](@ref)) from (R0, Z0) along `direction` (±1) B_pol, in steps of
+`step_size`, with the lengths and termination it publishes. `wall_checker(R, Z)` is `true`
+inside the wall.
 """
 function trace_single_field_line(
         R0::FT, Z0::FT, direction::Int,
@@ -173,152 +27,20 @@ function trace_single_field_line(
         detect_closure::Bool = true,
         closure_tolerance::FT = FT(1.0e-6)
     ) where {FT <: AbstractFloat}
+    lengths = StepLengths{FT}()
+    e = rk4_trace!(
+        lengths, R0, Z0, direction, interp_BR, interp_BZ, interp_Bphi, step_size, max_steps, max_Lpol, wall_checker;
+        detect_closure, closure_tolerance,
+    )
+    return single_trace_result(lengths, e)
+end
 
-    # Initialize current position
-    R_current = R0
-    Z_current = Z0
-
-    # Initialize accumulated quantities
-    Lpol = zero(FT)
-    Lc = zero(FT)
-    min_Bpol = FT(Inf)
-    steps = 0
-
-    # For closure detection
-    total_angle = zero(FT)
-    prev_R, prev_Z = R0, Z0
-
-    # Integration step size with direction
-    dl = direction * step_size
-
-
-    # Check if starting point is a null point (Bpol = 0)
-    BR = interp_BR(R_current, Z_current)
-    BZ = interp_BZ(R_current, Z_current)
-    Bpol = sqrt(BR^2 + BZ^2)
-
-    if Bpol == 0
-        # `Bpol = 0` means purely toroidal: the line is a closed circle, `Lc = 2πR`.
-        # `Lpol` keeps its existing `Inf` — its honest value here is a separate question,
-        # since `Lpol_tot` feeds `L_mixing`
-        # (internal/docs/src/notes/TODO/L-mixing-serves-two-lengths.md). `min_Bpol` is
-        # zero by the same token that makes this `:null`, not the `Inf` seed.
-        return SingleTraceResult{FT}(;
-            Lpol = FT(Inf), Lc = FT(2π) * R_current, min_Bpol = zero(FT), steps,
-            termination = :null,
-            is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
-        )
-    end
-
-    # Main integration loop
-    for step in 1:max_steps
-        # Check wall boundary
-        if !wall_checker(R_current, Z_current)
-            # THE ONLY EXIT THAT PUBLISHES A FINITE `Lc`.
-            return SingleTraceResult{FT}(;
-                Lpol, Lc, min_Bpol, steps, termination = :wall,
-                is_closed = false, hit_wall = true, final_R = R_current, final_Z = Z_current
-            )
-        end
-
-        # Store previous position for step calculation
-        R_prev = R_current
-        Z_prev = Z_current
-
-        # Advance one step using RK4
-        R_current, Z_current = advance_step_along_b_rz_plane(
-            dl, R_current, Z_current, interp_BR, interp_BZ
-        )
-
-        # The RK4 stages divide by Bpol at their lookahead points, so a step poking
-        # into a Bpol = 0 region comes back NaN before the committed-position check
-        # below can see it. Still a null termination, at the last position actually
-        # reached; unguarded, the NaN misread as a wall hit (NaN comparisons are
-        # false) or threw in the cell-state checker (`floor(Int, NaN)`).
-        if !(isfinite(R_current) && isfinite(Z_current))
-            return SingleTraceResult{FT}(;
-                Lpol = FT(Inf), Lc = Lc + FT(2π) * R_prev, min_Bpol = zero(FT), steps,
-                termination = :null,
-                is_closed = false, hit_wall = false, final_R = R_prev, final_Z = Z_prev
-            )
-        end
-
-        # Calculate magnetic field components at new position
-        BR = interp_BR(R_current, Z_current)
-        BZ = interp_BZ(R_current, Z_current)
-        Bphi = interp_Bphi(R_current, Z_current)
-
-        Bpol = sqrt(BR^2 + BZ^2)
-
-        if Bpol == 0
-            # Same reading as the starting null above, with the distance already walked
-            # to get here: the line runs `Lc` to this point and then closes toroidally.
-            return SingleTraceResult{FT}(;
-                Lpol = FT(Inf), Lc = Lc + FT(2π) * R_current, min_Bpol = zero(FT), steps,
-                termination = :null,
-                is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
-            )
-        end
-
-        Btot = sqrt(Bpol^2 + Bphi^2)
-
-        # Calculate step lengths
-        dl_pol = sqrt((R_current - R_prev)^2 + (Z_current - Z_prev)^2)
-        dl_tot = dl_pol * Btot / Bpol
-
-        # Update accumulated quantities
-        Lpol += dl_pol
-        Lc += dl_tot
-        min_Bpol = min(min_Bpol, Bpol)
-        steps += 1
-
-        # Check maximum poloidal length
-        if Lpol > max_Lpol
-            # `Lc = Inf` means UNKNOWN, not "no wall": the trace was still going when
-            # the budget ran out. `Lpol` keeps the distance actually travelled.
-            return SingleTraceResult{FT}(;
-                Lpol, Lc = FT(Inf), min_Bpol, steps, termination = :trace_limit,
-                is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
-            )
-        end
-
-        # Closure detection using angle accumulation
-        if detect_closure && step > 2
-            # Calculate angle between consecutive displacement vectors
-            v1_R, v1_Z = R_prev - prev_R, Z_prev - prev_Z
-            v2_R, v2_Z = R_current - R_prev, Z_current - Z_prev
-
-            # Cross and dot products for angle calculation
-            cross_prod = v1_R * v2_Z - v1_Z * v2_R
-            dot_prod = v1_R * v2_R + v1_Z * v2_Z
-
-            if dot_prod != 0 || cross_prod != 0
-                angle = atan(cross_prod, dot_prod)
-                total_angle += angle
-
-                # Check for 360° circulation
-                if abs(total_angle) >= 2π - closure_tolerance
-                    # `Lc` is the CIRCUIT length, not `Inf`: the geometry repeats
-                    # after one circuit, so a longer step reaches nowhere new — a
-                    # measured bound, same standing as a wall distance.
-                    return SingleTraceResult{FT}(;
-                        Lpol, Lc, min_Bpol, steps, termination = :closed,
-                        is_closed = true, hit_wall = false, final_R = R_current, final_Z = Z_current
-                    )
-                end
-            end
-
-            prev_R, prev_Z = R_prev, Z_prev
-        end
-    end
-
-
-    # Reached maximum steps — the same physical condition as `Lpol > max_Lpol` above
-    # (`max_step_per_direction = floor(max_Lpol/step_size)` makes them trip together),
-    # so it carries the same status rather than one of its own.
-    return SingleTraceResult{FT}(;
-        Lpol, Lc = FT(Inf), min_Bpol, steps, termination = :trace_limit,
-        is_closed = false, hit_wall = false, final_R = R_current, final_Z = Z_current
+# A trace's lengths and ending as a `SingleTraceResult`.
+function single_trace_result(lengths, e)
+    L = published_lengths(lengths, e.termination, e.R)
+    return SingleTraceResult{typeof(L.Lpol)}(;
+        L.Lpol, L.Lc, L.min_Bpol, steps = max(lengths.n - 1, 0), e.termination,
+        is_closed = e.termination === :closed, hit_wall = e.termination === :wall, final_R = e.R, final_Z = e.Z,
     )
 end
 
@@ -631,28 +353,4 @@ function flf_analysis_field_lines_rz_plane!(RP::RAPID; strict::Bool = true)
     # lower-level array API stays unvalidated and separately testable. `strict` picks
     # the failure policy — throw at setup, warn-and-fallback in the step loop.
     return validate_field_line_terminations!(RP; strict)
-end
-
-# Helper function to create 2D interpolation that matches MATLAB's griddedInterpolant behavior
-function my_interpolation(R1D::Vector{FT}, Z1D::Vector{FT}, data_2d::Matrix{FT}; method::Symbol = :cubic) where {FT <: AbstractFloat}
-    @assert method in (:nearst, :linear, :cubic) "Invalid interpolation method: $method"
-
-    r1d = range(R1D[1], stop = R1D[end], length = length(R1D))
-    z1d = range(Z1D[1], stop = Z1D[end], length = length(Z1D))
-
-    # `ClampExtrap`, not the default `NoExtrap`: RK4 evaluates up to one step BEYOND
-    # the current position before the next wall check can stop the trace, so a trace on
-    # the last grid node queries just outside the domain — which `NoExtrap` answered
-    # with a run-killing DomainError. Outside the grid there is no field data, so the
-    # edge IS a wall; the clamped step is discarded by the very next wall check, and
-    # flat clamping cannot diverge the way extending the cubic would.
-    extrap = ClampExtrap()
-    if method == :nearst
-        itp = constant_interp((r1d, z1d), data_2d; extrap)
-    elseif method == :linear
-        itp = linear_interp((r1d, z1d), data_2d; extrap)
-    elseif method == :cubic
-        itp = cubic_interp((r1d, z1d), data_2d; extrap)
-    end
-    return itp
 end

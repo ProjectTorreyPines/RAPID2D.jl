@@ -473,28 +473,9 @@ end
 
 # The unit tangent of the level set (∇ψ turned by +90°, times `sgn`) and the integrand
 # R/|∇ψ| of dl/B_pol, or `nothing` at a critical point.
-function tangent_and_weight(itp, x, sgn)
-    g = gradient(itp, x)
-    n = hypot(g[1], g[2])
-    n > 0 || return nothing
-    return (-sgn * g[2] / n, sgn * g[1] / n), x[1] / n
-end
 
 # Newton along ∇ψ back onto the level, or `nothing` when it does not converge or moves farther
 # than the step `h` (onto another branch). The tolerance follows the working precision.
-function project_to_level(itp, level, x, h)
-    x_pred = x
-    for _ in 1:8
-        v = itp(x) - level
-        g = gradient(itp, x)
-        g2 = g[1]^2 + g[2]^2
-        g2 > 0 || return nothing
-        x = (x[1] - v * g[1] / g2, x[2] - v * g[2] / g2)
-        hypot(x[1] - x_pred[1], x[2] - x_pred[2]) <= h || return nothing
-        abs(v) / sqrt(g2) < max(1.0e-10, 64 * eps(typeof(v))) * h && return x
-    end
-    return nothing
-end
 
 # ── reference ──────────────────────────────────────────────────────────────────────
 
