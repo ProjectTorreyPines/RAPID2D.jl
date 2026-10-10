@@ -320,7 +320,7 @@ mutable struct SurfaceWeights{FT, G}
     g::G
     Ro::FT                                      # the O-point
     Zo::FT
-    s::Int
+    column::Int
     nreached::Int
     total::FT
     n::Int
@@ -340,7 +340,7 @@ function SurfaceWeights(acc::AbstractVector{FT}, stamp, reached, g, o) where {FT
 end
 
 function start_surface!(sw::SurfaceWeights{FT}, s) where {FT}
-    sw.s, sw.nreached, sw.total, sw.n, sw.winding = s, 0, zero(FT), 0, 0
+    sw.column, sw.nreached, sw.total, sw.n, sw.winding = s, 0, zero(FT), 0, 0
     return sw
 end
 
@@ -369,10 +369,10 @@ end
 # the path came back to its first vertex: give that vertex both its half-segments
 close_surface!(sw::SurfaceWeights) = spread!(sw, sw.R1, sw.Z1, (sw.first_half + sw.half) * sw.w1)
 
-# Add `w` times the bilinear weights of the point (R, Z) on its four cell corners into `acc`,
-# listing in `reached` the nodes surface `s` reaches for the first time.
-function spread!(sw::SurfaceWeights, R, Z, w)
-    g = sw.g
+# Add `w` times the bilinear weights of the point (R, Z) on its four cell corners into the
+# visitor's `acc`, listing in `reached` the nodes its column reaches for the first time.
+function spread!(v, R, Z, w)
+    g = v.g
     NR, NZ = size(g.ψ)
     i = clamp(floor(Int, (R - g.R1D[1]) / g.dR) + 1, 1, NR - 1)
     j = clamp(floor(Int, (Z - g.Z1D[1]) / g.dZ) + 1, 1, NZ - 1)
@@ -380,15 +380,15 @@ function spread!(sw::SurfaceWeights, R, Z, w)
     u = (Z - g.Z1D[j]) / g.dZ
     k = (j - 1) * NR + i
     for (node, c) in ((k, (1 - t) * (1 - u)), (k + 1, t * (1 - u)), (k + NR, (1 - t) * u), (k + NR + 1, t * u))
-        if sw.stamp[node] != sw.s
-            sw.stamp[node] = sw.s
-            sw.nreached += 1
-            sw.reached[sw.nreached] = node
+        if v.stamp[node] != v.column
+            v.stamp[node] = v.column
+            v.nreached += 1
+            v.reached[v.nreached] = node
         end
-        sw.acc[node] += w * c
+        v.acc[node] += w * c
     end
-    sw.total += w
-    return sw
+    v.total += w
+    return v
 end
 
 function surface_weights(::HatBinningAverage, G::GridGeometry{FT}, g::FieldLineGeometry, region, o, lv) where {FT}

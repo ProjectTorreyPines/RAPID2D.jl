@@ -97,6 +97,7 @@ include("utils/grid.jl")  # Grid-related utility functions
 include("numerics/field_line_tracing.jl")  # following ψ contours: geometry, visitors, the tracers
 include("utils/field_line_following.jl")
 include("numerics/flux_surface_average.jl")  # averages over flux surfaces, and back to the grid
+include("numerics/field_line_average.jl")    # averages along the field line through each node
 include("utils/green_function.jl")  # Green's function utilities
 include("utils/utils.jl")
 
