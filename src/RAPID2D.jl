@@ -22,7 +22,8 @@ using FastInterpolations
 using SimpleUnPack
 using ADIOS2
 using TimerOutputs
-using AdaptiveArrayPools: @with_pool, acquire!, zeros!
+using AdaptiveArrayPools: @with_pool, @safe_with_pool, acquire!, zeros!
+import IMASutils
 
 LinearAlgebra.BLAS.set_num_threads(1)
 
@@ -94,6 +95,7 @@ include("coils/circuit_equations.jl")
 # Include utility functions
 include("utils/grid.jl")  # Grid-related utility functions
 include("utils/field_line_following.jl")
+include("numerics/flux_surface_average.jl")  # averages over flux surfaces, and back to the grid
 include("utils/green_function.jl")  # Green's function utilities
 include("utils/utils.jl")
 
