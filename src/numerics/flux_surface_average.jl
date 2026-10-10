@@ -12,18 +12,6 @@
 # internal/docs/src/notes/design/closed-surface-quasineutrality.md §9.4.
 
 """
-    psi_interpolant(G, ψ)
-
-Bicubic interpolant of the grid flux `ψ`, with analytic gradient and Hessian. It reproduces
-cubic polynomials exactly.
-"""
-function psi_interpolant(G::GridGeometry, ψ::AbstractMatrix)
-    Rg = range(first(G.R1D), last(G.R1D); length = G.NR)
-    Zg = range(first(G.Z1D), last(G.Z1D); length = G.NZ)
-    return cubic_interp((Rg, Zg), ψ; bc = CubicFit(), extrap = ExtendExtrap())
-end
-
-"""
     find_o_point(G, ψ, region; itp = psi_interpolant(G, ψ), tol, maxit = 50) -> (; R, Z, ψ, converged) or nothing
 
 The O-point of a closed region (`region` holds linear node indices): the extremum of the

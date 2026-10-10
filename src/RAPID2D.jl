@@ -39,6 +39,7 @@ include("numerics/coupled_block.jl")         # the coupled solve's u∥–ψ blo
 include("numerics/fixed_point.jl")           # the fixed-point solve, and Newton's step for an affine map
 include("numerics/anderson.jl")              # Anderson mixing for the coupled solve's fixed point
 include("physics/ion_species.jl")   # IonSpecies and the transport policies; types.jl needs both
+include("numerics/field_line_tracers.jl")   # how a field line is followed: the tracer policies the flags hold
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")
@@ -94,6 +95,7 @@ include("coils/circuit_equations.jl")
 
 # Include utility functions
 include("utils/grid.jl")  # Grid-related utility functions
+include("numerics/field_line_tracing.jl")  # following ψ contours: geometry, visitors, the tracers
 include("utils/field_line_following.jl")
 include("numerics/flux_surface_average.jl")  # averages over flux surfaces, and back to the grid
 include("utils/green_function.jl")  # Green's function utilities
