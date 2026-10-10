@@ -59,3 +59,16 @@ end
         @test Zmid[m] ≈ (RP.G.Z1D[j] + RP.flf.Lpol_forward[n] + RP.G.Z1D[j] - RP.flf.Lpol_backward[n]) / 2 atol = 1.0e-12
     end
 end
+
+@testitem "Field-line averages: a node handed to the fallback starts from clean weights" tags = [:numerics] begin
+    using RAPID2D: initialize_grid_geometry, FieldLineGeometry, field_line_average, line_average, CubicTracer
+    # Next to an O-point marching squares sees a point and hands the node to the bicubic tracer;
+    # what its own attempt marked must not hide the fallback's weights.
+    G = initialize_grid_geometry(17, 17, (1.0, 2.0), (-0.5, 0.5))
+    g = FieldLineGeometry(G, @. -((G.R2D - 1.51)^2 + (G.Z2D - 0.01)^2))
+    node = [LinearIndices((17, 17))[9, 9]]
+    fla, ref = field_line_average(g, node), field_line_average(g, node; tracer = CubicTracer())
+    @test all(fla.valid)
+    @test line_average(fla, ones(17, 17)) ≈ [1.0]
+    @test line_average(fla, G.R2D) ≈ line_average(ref, G.R2D)
+end

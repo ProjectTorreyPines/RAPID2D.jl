@@ -362,3 +362,19 @@ end
     upper = [k for k in findall(<(-0.3), vec(ψ)) if G.Z2D[k] > 0]
     @test all(flux_surface_average(G, ψ, upper).valid)
 end
+
+@testitem "Flux surfaces: O-points are counted on the interpolated flux" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: initialize_grid_geometry, flux_surface_average, count_o_points, psi_interpolant
+    # Grid extrema miss two islands whose minima each fall between two nodes of equal ψ, and count
+    # several along a tilted valley around one O-point. Stationary points of the bicubic ψ do not.
+    G = initialize_grid_geometry(17, 17, (1.0, 2.0), (-0.5, 0.5))
+    G.inVol2D .= 2π .* G.R2D .* G.dR .* G.dZ
+    two = @. ((G.R2D - 1.5)^2 - 0.25^2)^2 + (G.Z2D - 0.03125)^2
+    fsa = @test_logs (:warn, r"O-points") match_mode = :any flux_surface_average(G, two, findall(<(0.002), vec(two)); nsurf = 3)
+    @test !any(fsa.valid)
+    one = @. ((G.R2D - 1.5) - 3 * G.Z2D)^2 + 0.01 * G.Z2D^2
+    region = findall(<(0.0005), vec(one))
+    @test count_o_points(G, one, region, psi_interpolant(G, one); tol = 1.0e-10) == 1
+    fsa = @test_logs flux_surface_average(G, one, region; nsurf = 3)
+    @test fsa.axis.converged
+end

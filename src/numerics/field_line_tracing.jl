@@ -34,6 +34,7 @@ struct FieldLineGeometry{FT <: AbstractFloat, M <: AbstractMatrix{FT}, I, P, W, 
     dR::FT
     dZ::FT
     ψ::M
+    ψ_scale::FT                             # largest |ψ| on the grid: what rounding is relative to
     itp::I
     Bϕ::P                                   # nothing, or Bϕ on the nodes
     inside::W                               # nothing (the whole grid), or the in-wall cells
@@ -60,7 +61,7 @@ function FieldLineGeometry(
             Bϕ = my_interpolation(R1D, Z1D, Bϕ === nothing ? zeros(FT, dims) : Matrix{FT}(Bϕ)),
         )
     end
-    return FieldLineGeometry(R1D, Z1D, FT(G.dR), FT(G.dZ), ψ, psi_interpolant(G, ψ), Bϕ, inside, B)
+    return FieldLineGeometry(R1D, Z1D, FT(G.dR), FT(G.dZ), ψ, FT(maximum(abs, ψ)), psi_interpolant(G, ψ), Bϕ, inside, B)
 end
 
 FieldLineGeometry(RP::RAPID; nodal_B::Bool = false) = FieldLineGeometry(
@@ -108,15 +109,27 @@ end
         (1 - t) * u * g.Bϕ[i, j + 1] + t * u * g.Bϕ[i + 1, j + 1]
 end
 
+# The cell indices a chord can start in, along one axis, from the position `f` in cells and the
+# displacement Δ: on a grid line the cell on the side it moves to (both when it moves along it).
+@inline function start_cells(f, Δ)
+    k = round(f)
+    abs(f - k) <= 64 * eps(typeof(f)) * max(one(f), abs(f)) || return (floor(Int, f) + 1, floor(Int, f) + 1)
+    return Δ > 0 ? (Int(k) + 1, Int(k) + 1) : Δ < 0 ? (Int(k), Int(k)) : (Int(k) + 1, Int(k))
+end
+
 # The fraction along the chord from x to xn at which it first enters a cell outside the wall,
 # or `nothing`. It walks every cell the chord crosses, so no corner of the wall is stepped over.
 function chord_exit(g::FieldLineGeometry{FT}, x, xn) where {FT}
     R1, Z1 = g.R1D[1], g.Z1D[1]
     ΔR, ΔZ = xn[1] - x[1], xn[2] - x[2]
-    # the cell the chord starts into: a start on a grid line (a node) belongs to the side it leaves by
-    i = floor(Int, (x[1] + FT(1.0e-6) * ΔR - R1) / g.dR) + 1
-    j = floor(Int, (x[2] + FT(1.0e-6) * ΔZ - Z1) / g.dZ) + 1
-    cell_inside(g, i, j) || return zero(FT)
+    # the cell the chord starts into: from a grid line (a node), the one on the side it leaves by;
+    # along a grid line, an inside one of the two
+    is, js = start_cells((x[1] - R1) / g.dR, ΔR), start_cells((x[2] - Z1) / g.dZ, ΔZ)
+    i, j = 0, 0
+    for a in is, b in js
+        cell_inside(g, a, b) && ((i, j) = (a, b); break)
+    end
+    i == 0 && return zero(FT)
     tR = ΔR == 0 ? FT(Inf) : (R1 + (ΔR > 0 ? i : i - 1) * g.dR - x[1]) / ΔR
     tZ = ΔZ == 0 ? FT(Inf) : (Z1 + (ΔZ > 0 ? j : j - 1) * g.dZ - x[2]) / ΔZ
     dtR = ΔR == 0 ? FT(Inf) : g.dR / abs(ΔR)
@@ -313,25 +326,39 @@ a node whose level is a single point of the bilinear ψ, as next to an O-point).
 """
 function trace_from_node!(v, ::MarchingSquaresTracer, g::FieldLineGeometry{FT}, i::Int, j::Int, sgn::Int; max_length::Real = Inf) where {FT}
     ψ = g.ψ
-    NR, NZ = size(ψ)
     L = ψ[i, j]
-    # An edge from the node to a neighbour below its level carries the crossing at the node
-    # itself; of the two cells beside that edge, the contour goes along B_pol into one.
+    seed = ms_node_seed(ψ, L, i, j, sgn)
+    seed === nothing && return (; termination = :degenerate, R = g.R1D[i], Z = g.Z1D[j])   # the level is the node alone
+    if !cell_inside(g, seed[1], seed[2])
+        # Nodes at the level count as above it, so a contour along a grid line runs in the cells on
+        # its lower side. When those are outside the wall, the level a rounding above the node's
+        # value runs in the cells on the other side.
+        up = ms_node_seed(ψ, nextfloat(L), i, j, sgn)
+        up !== nothing && cell_inside(g, up[1], up[2]) && ((L, seed) = (nextfloat(L), up))
+    end
+    ci, cj, ce = seed
+    visit!(v, g.R1D[i], g.Z1D[j], ms_node_field(g, i, j)...)
+    e, Lpol = ms_march!(v, g, L, ci, cj, ce, ms_edge_id(size(ψ, 1), ci, cj, ce), max_length)
+    # a closed path of no length is a point: the level does not leave the node
+    return e.termination === :closed && Lpol == 0 ? (; termination = :degenerate, e.R, e.Z) : e
+end
+
+# The cell and entry edge by which the contour of `L` leaves node (i, j) along `sgn` B_pol, or
+# `nothing`: an edge from the node to a neighbour on the other side of the level carries the
+# crossing at the node itself, and of the two cells beside it the contour goes along B_pol into
+# one (either may lie off the grid; its orientation reads only the edge's own two nodes).
+function ms_node_seed(ψ, L, i, j, sgn)
+    NR, NZ = size(ψ)
+    node_above = ms_above(ψ, L, (i, j))
     for (ia, ja, ea, ib, jb, eb, nbr) in (
             (i, j, 1, i, j - 1, 3, (i + 1, j)), (i, j, 4, i - 1, j, 2, (i, j + 1)),
             (i - 1, j, 1, i - 1, j - 1, 3, (i - 1, j)), (i, j - 1, 4, i - 1, j - 1, 2, (i, j - 1)),
         )
         (1 <= nbr[1] <= NR && 1 <= nbr[2] <= NZ) || continue
-        ms_above(ψ, L, nbr) && continue
-        # either cell may lie off the grid; its orientation reads only the edge's own two nodes
-        ci, cj, ce = (ms_forward(ψ, L, ia, ja, ea) == (sgn > 0)) ? (ia, ja, ea) : (ib, jb, eb)
-        start = ms_edge_id(NR, ci, cj, ce)
-        visit!(v, g.R1D[i], g.Z1D[j], ms_node_field(g, i, j)...)
-        e, Lpol = ms_march!(v, g, L, ci, cj, ce, start, max_length)
-        # a closed path of no length is a point: the level does not leave the node
-        return e.termination === :closed && Lpol == 0 ? (; termination = :degenerate, e.R, e.Z) : e
+        ms_above(ψ, L, nbr) == node_above && continue
+        return ms_forward(ψ, L, ia, ja, ea) == (sgn > 0) ? (ia, ja, ea) : (ib, jb, eb)
     end
-    return (; termination = :degenerate, R = g.R1D[i], Z = g.Z1D[j])   # no neighbour below: the level is the node alone
+    return nothing
 end
 
 @inline function ms_node_field(g::FieldLineGeometry, i, j)
@@ -393,6 +420,9 @@ function project_to_level(itp, level, x, h)
     return nothing
 end
 
+# whether ψ changes by no more than its rounding over a step h at x: B_pol is zero there
+flat(g::FieldLineGeometry, x, h) = (gr = gradient(g.itp, x); hypot(gr[1], gr[2]) * h <= 64 * eps(g.ψ_scale))
+
 trace_from_node!(v, p::CubicTracer, g::FieldLineGeometry, i::Int, j::Int, sgn::Int; max_length::Real = Inf) =
     cubic_trace!(v, p, g, (g.R1D[i], g.Z1D[j]), g.itp((g.R1D[i], g.Z1D[j])), sgn, max_length)
 
@@ -403,7 +433,7 @@ function cubic_trace!(v, p::CubicTracer, g::FieldLineGeometry{FT}, x0, level, sg
     h_max = p.max_step_cells * min(g.dR, g.dZ)
     h_min = FT(1.0e-6) * h_max
     tw0 = tangent_and_weight(itp, x0, sgn)
-    tw0 === nothing && return (; termination = :null, R = x0[1], Z = x0[2])
+    (tw0 === nothing || flat(g, x0, h_max)) && return (; termination = :null, R = x0[1], Z = x0[2])
     t0, w0 = tw0
     visit!(v, x0[1], x0[2], inv(w0), toroidal_field(g, x0))
     t, w = t0, w0
@@ -421,7 +451,9 @@ function cubic_trace!(v, p::CubicTracer, g::FieldLineGeometry{FT}, x0, level, sg
                 abs(turn) <= p.max_turn && abs(wn - w) <= p.max_weight_change * max(w, wn) && break
             end
             h /= 2
-            h < h_min && return (; termination = :null, R = x[1], Z = x[2])
+            # B_pol is zero to rounding, or the contour cannot be resolved here (smaller than the
+            # shortest step): a null, or a failed measurement
+            h < h_min && return (; termination = flat(g, x, h_max) ? :null : :trace_limit, R = x[1], Z = x[2])
         end
         s = chord_exit(g, x, xn)
         if s !== nothing

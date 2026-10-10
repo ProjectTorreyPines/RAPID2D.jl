@@ -101,7 +101,11 @@ function trace_line!(lw, m, tracer, g, i, j, max_length)
     start_line!(lw, m)
     e = trace_from_node!(start_direction!(lw), tracer, g, i, j, 1; max_length)
     if e.termination === :degenerate
-        lw.acc[view(lw.reached, 1:lw.nreached)] .= 0
+        # the attempt's weights and marks must not hide the fallback's
+        for node in view(lw.reached, 1:lw.nreached)
+            lw.acc[node] = 0
+            lw.stamp[node] = 0
+        end
         return trace_line!(lw, m, fallback_tracer(tracer), g, i, j, max_length)
     end
     if e.termination === :closed

@@ -28,8 +28,15 @@ function find_o_point(
     isempty(region) && return nothing
     itp === nothing && (itp = psi_interpolant(G, ψ))
     k0 = o_point_seed(G, ψ, region)
-    x = (G.R2D[k0], G.Z2D[k0])
-    h = min(G.dR, G.dZ)
+    x, converged = newton_extremum(itp, (G.R2D[k0], G.Z2D[k0]), min(G.dR, G.dZ); tol, maxit)
+    return (; R = x[1], Z = x[2], ψ = itp(x), converged = converged && in_region_cell(G, region, x))
+end
+
+# Damped Newton on ∇ψ = 0 from x, h the grid spacing: the point reached, and whether a full Newton
+# correction fell below `tol` h there with a definite Hessian (an extremum, not an X-point). A line
+# search that cannot lower |∇ψ| stops it unconverged.
+function newton_extremum(itp, x, h; tol, maxit)
+    FT = typeof(h)
     converged = false
     for _ in 1:maxit
         g = gradient(itp, x)
@@ -56,7 +63,7 @@ function find_o_point(
         decreased || break
         x = xn
     end
-    return (; R = x[1], Z = x[2], ψ = itp(x), converged = converged && in_region_cell(G, region, x))
+    return x, converged
 end
 
 # Whether the cell containing `x` has a corner in `region`.
@@ -107,23 +114,29 @@ function surface_levels(
     return (; ψ_axis, ψ_edge, ψN, ψ = ψ_axis .+ ψN .* (ψ_edge - ψ_axis))
 end
 
-# The region's nodes where ψ is strictly above, or strictly below, all eight neighbours: one per
-# O-point of a closed region.
-function count_extrema(ψ::AbstractMatrix, region)
+# The O-points of a region: stationary points of the bicubic ψ with a definite Hessian in cells of
+# the region, found by Newton from each region node at least as high, or as low, as all eight
+# neighbours, and merged within half a cell. Grid extrema alone miss an O-point between two nodes of
+# equal ψ and count several along a tilted valley.
+function count_o_points(G::GridGeometry{FT}, ψ::AbstractMatrix, region, itp; tol) where {FT}
     NR, NZ = size(ψ)
-    n = 0
+    h = min(G.dR, G.dZ)
+    found = NTuple{2, FT}[]
     for k in region
         i, j = mod1(k, NR), cld(k, NR)
-        above = below = true
+        high = low = true
         for b in -1:1, a in -1:1
             (a, b) == (0, 0) && continue
             (1 <= i + a <= NR && 1 <= j + b <= NZ) || continue
-            above &= ψ[i + a, j + b] < ψ[k]
-            below &= ψ[i + a, j + b] > ψ[k]
+            high &= ψ[i + a, j + b] <= ψ[k]
+            low &= ψ[i + a, j + b] >= ψ[k]
         end
-        n += above | below
+        (high || low) || continue
+        x, converged = newton_extremum(itp, (G.R2D[k], G.Z2D[k]), h; tol, maxit = 50)
+        (converged && in_region_cell(G, region, x)) || continue
+        any(y -> hypot(x[1] - y[1], x[2] - y[2]) < h / 2, found) || push!(found, x)
     end
-    return n
+    return length(found)
 end
 
 # About one surface per grid spacing across a roughly round region.
@@ -217,8 +230,8 @@ function flux_surface_average(
     lv = surface_levels(o, ψ, region; nsurf)
     # Without an O-point there are no closed surfaces to average over, and around several (separate
     # islands, a doublet) no single family of them: report, do not guess.
-    n_o = count_extrema(ψ, region)
-    n_o > 1 && @warn "the region holds $n_o O-points (extrema of ψ); its surfaces are not averaged. Pass one closed region." maxlog = 1
+    n_o = count_o_points(G, ψ, region, g.itp; tol = max(1.0e-10, 64 * eps(FT)))
+    n_o > 1 && @warn "the region holds $n_o O-points; its surfaces are not averaged. Pass one closed region." maxlog = 1
     weights, dVdψ, valid = o.converged && n_o <= 1 ? surface_weights(policy, G, g, region, o, lv) :
         (spzeros(FT, length(ψ), nsurf), fill(FT(NaN), nsurf), fill(false, nsurf))
     grid_weights = level_interpolation(ψ, region, lv, valid)

@@ -143,7 +143,7 @@ function flf_analysis_field_lines_rz_plane!(
     dZ === nothing && (dZ = length(Z1D) > 1 ? Z1D[2] - Z1D[1] : one(FT))
     B = (BR = my_interpolation(R1D, Z1D, BR), BZ = my_interpolation(R1D, Z1D, BZ), Bϕ = my_interpolation(R1D, Z1D, Bϕ))
     # RK4 reads the grid, the wall and these interpolants, not ψ
-    g = FieldLineGeometry(R1D, Z1D, dR, dZ, zeros(FT, size(BR)), nothing, Bϕ, cell_state, B)
+    g = FieldLineGeometry(R1D, Z1D, dR, dZ, zeros(FT, size(BR)), zero(FT), nothing, Bϕ, cell_state, B)
     field_line_analysis!(flf, g, RK4Tracer())
     out_wall_idx !== nothing && (flf.min_Bpol[out_wall_idx] .= FT(NaN))
     return flf

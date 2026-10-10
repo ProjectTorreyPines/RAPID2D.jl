@@ -282,3 +282,44 @@ end
     @test isfinite(flf.Lpol_tot[k]) && flf.Lpol_forward[k] == flf.Lpol_backward[k] > 0
     @test k in flf.closed_surface_nids
 end
+
+@testitem "Tracers: a contour too small to follow is a failure, not a null" setup = [TracingFixtures] tags = [:numerics] begin
+    using RAPID2D: CubicTracer
+    # The node sits 1e-7 m from the O-point: B_pol there is small but not zero, and the circle is
+    # smaller than the shortest step. That is a measurement that failed (`:trace_limit`, which the
+    # validation handles), not a B_pol null, whose Lpol = Inf would reach the mixing length.
+    G = test_grid(17)
+    g = FieldLineGeometry(G, @. (G.R2D - 1.5 - 1.0e-7)^2 + G.Z2D^2)
+    @test trace_from_node!(PathLengths{Float64}(), CubicTracer(), g, 9, 9, 1).termination === :trace_limit
+end
+
+@testitem "Marching squares: a contour along a wall line is followed inside the wall" setup = [TracingFixtures] tags = [:numerics] begin
+    # ψ = ±R with the wall on the grid line R = 1.5 through the node: the contour runs along the
+    # wall. Nodes at the level count as above it, which puts such a contour in the cells on one
+    # side; that side must not depend on the sign of ψ, and must be the inside one.
+    G = test_grid(17)
+    for s in (1, -1)
+        g = FieldLineGeometry(G, s .* G.R2D; inside = [i >= 9 for i in 1:G.NR, _ in 1:G.NZ])
+        for sgn in (1, -1)
+            L = PathLengths{Float64}()
+            @test trace_from_node!(L, MarchingSquaresTracer(), g, 9, 9, sgn).termination === :wall
+            @test L.Lpol ≈ 0.5 atol = 1.0e-12
+        end
+    end
+end
+
+@testitem "Bicubic tracer: a start on a grid line takes the cell it leaves into, in Float32 too" setup = [TracingFixtures] tags = [:numerics] begin
+    using RAPID2D: CubicTracer, initialize_grid_geometry!, GridGeometry
+    # ψ = Z: lines towards −R from node (9, 9) on R = 1.5, which is the wall line: the cells left of it
+    # are inside. The cell a chord starts into follows from its direction, not from a nudge that
+    # Float32 rounds away.
+    for G in (test_grid(17), initialize_grid_geometry!(GridGeometry{Float32}(17, 17), (1.0f0, 2.0f0), (-0.5f0, 0.5f0)))
+        FT = eltype(G.R1D)
+        g = FieldLineGeometry(G, copy(G.Z2D); inside = [i < 9 for i in 1:G.NR, _ in 1:G.NZ])
+        tracer = CubicTracer(max_turn = FT(0.08), max_weight_change = FT(0.02), max_step_cells = FT(0.5))
+        L = PathLengths{FT}()
+        e = trace_from_node!(L, tracer, g, 9, 9, 1)
+        @test e.termination === :wall
+        @test L.Lpol ≈ 0.5 rtol = 1.0e-5
+    end
+end
