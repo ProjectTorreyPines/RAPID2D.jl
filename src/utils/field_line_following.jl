@@ -74,7 +74,7 @@ Field-line following on every node of the geometry `g`: the line through each no
 forward and backward along B_pol by `tracer` (backward is skipped when forward closed), and the
 lengths, terminations and closed nodes it publishes stored in `flf`. A node the tracer cannot
 follow (`:degenerate`, marching squares next to an O-point) is traced by its fallback,
-[`CubicTracer`](@ref).
+[`CubicTracer`](@ref). A contour tracer's line that closes one way is closed both ways.
 """
 function field_line_analysis!(
         flf::FieldLineFollowingResult{FT}, g::FieldLineGeometry, tracer::FieldLineTracer;
@@ -97,8 +97,10 @@ function field_line_analysis!(
             # a closed forward trace already covers the circuit
             bwd, eb, Lb = fwd, ef, Lf
         else
-            bwd, eb, _ = node_trace!(reset!(Lb_visitor), t, g, i, j, -1, max_length)
+            bwd, eb, t = node_trace!(reset!(Lb_visitor), t, g, i, j, -1, max_length)
             Lb = published_lengths(bwd, eb.termination, eb.R)
+            # a contour that came back to its node is closed, however the other way ended
+            eb.termination === :closed && closes_by_return(t) && ((fwd, ef, Lf) = (bwd, eb, Lb))
         end
         flf.Lpol_forward[i, j], flf.Lpol_backward[i, j] = Lf.Lpol, Lb.Lpol
         flf.Lc_forward[i, j], flf.Lc_backward[i, j] = Lf.Lc, Lb.Lc

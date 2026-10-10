@@ -81,6 +81,11 @@ step_budget(p::RK4Tracer, g::FieldLineGeometry{FT}, max_length) where {FT} =
 path_lengths(::FieldLineTracer, ::Type{FT}) where {FT} = PathLengths{FT}()
 path_lengths(::RK4Tracer, ::Type{FT}) where {FT} = StepLengths{FT}()
 
+# whether `:closed` means the path came back to its start (a contour tracer), so that one closed
+# direction closes the line; RK4 closes on turning angle, which an open line can reach
+closes_by_return(::FieldLineTracer) = true
+closes_by_return(::RK4Tracer) = false
+
 # the tracer for a node a tracer cannot follow (`:degenerate`)
 fallback_tracer(::MarchingSquaresTracer) = CubicTracer()
 
@@ -381,7 +386,9 @@ function project_to_level(itp, level, x, h)
         g2 > 0 || return nothing
         x = (x[1] - v * g[1] / g2, x[2] - v * g[2] / g2)
         hypot(x[1] - x_pred[1], x[2] - x_pred[2]) <= h || return nothing
-        abs(v) / sqrt(g2) < max(1.0e-10, 64 * eps(typeof(v))) * h && return x
+        # on the level to a fraction of the step, or to ψ's own rounding where |∇ψ| is too small
+        # for that (a large flux near an O-point)
+        (abs(v) / sqrt(g2) < max(1.0e-10, 64 * eps(typeof(v))) * h || abs(v) <= 16 * eps(abs(level))) && return x
     end
     return nothing
 end

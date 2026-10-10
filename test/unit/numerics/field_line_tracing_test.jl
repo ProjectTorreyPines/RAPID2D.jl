@@ -246,3 +246,39 @@ end
         @test (L.Lpol, L.Lc, L.min_Bpol, e.R, e.Z) === (ref.Lpol, ref.Lc, ref.min_Bpol, ref.final_R, ref.final_Z)
     end
 end
+
+@testitem "Bicubic tracer: a level is found to the flux's own rounding" tags = [:numerics] begin
+    using RAPID2D: project_to_level
+    # Near an O-point on a large flux, |∇ψ| is tiny against ψ, and an interpolant evaluates the level
+    # only to a few ulps of ψ. A tolerance relative to the step alone then cannot be met: the
+    # projection failed, the step halved, and the trace stopped as if at a null. This flux is a plane
+    # of slope 1e-5 on ψ ≈ 1, evaluated two ulps off with alternating sign, so it never reads exact.
+    mutable struct RoundedPlane
+        sign::Int
+    end
+    (p::RoundedPlane)(x) = (p.sign = -p.sign; 1.0 + 1.0e-5 * (x[1] - 1.5) + 2 * p.sign * eps(1.0))
+    RAPID2D.FastInterpolations.gradient(::RoundedPlane, x) = (1.0e-5, 0.0)
+    level = 1.0 + 1.0e-5 * 0.1
+    x = project_to_level(RoundedPlane(1), level, (1.601, 0.0), 0.01)
+    @test x !== nothing
+    @test abs(x[1] - 1.6) < 1.0e-9
+end
+
+@testitem "Field lines: a contour that closes one way is closed" setup = [TracingFixtures] tags = [:numerics] begin
+    using RAPID2D: FieldLineTracer, CubicTracer, FieldLineFollowingResult, field_line_analysis!
+    import RAPID2D: trace_from_node!, step_budget
+    # A tracer that fails forward (as a stalled projection did) but follows the contour backward
+    # back to its node: returning to the start proves the line closed, so both directions publish
+    # the circuit.
+    struct ForwardFails <: FieldLineTracer end
+    trace_from_node!(v, ::ForwardFails, g, i, j, sgn; max_length = Inf) =
+        sgn > 0 ? (; termination = :null, R = g.R1D[i], Z = g.Z1D[j]) : trace_from_node!(v, CubicTracer(), g, i, j, sgn; max_length)
+    step_budget(::ForwardFails, g, max_length) = 1
+    G = test_grid(21)
+    g = FieldLineGeometry(G, @. (G.R2D - 1.5113)^2 + (G.Z2D - 0.0071)^2)
+    flf = field_line_analysis!(FieldLineFollowingResult{Float64}(G.NR, G.NZ), g, ForwardFails())
+    k = LinearIndices(g.ψ)[14, 11]
+    @test flf.termination_forward[k] === flf.termination_backward[k] === :closed
+    @test isfinite(flf.Lpol_tot[k]) && flf.Lpol_forward[k] == flf.Lpol_backward[k] > 0
+    @test k in flf.closed_surface_nids
+end
