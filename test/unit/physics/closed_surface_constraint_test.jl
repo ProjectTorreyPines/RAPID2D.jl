@@ -129,3 +129,48 @@ end
     @test snap.Ke_tot > 0
     @test isfinite(snap.cs_E_activation) && snap.cs_E_activation > 0
 end
+
+@testitem "Closed-surface density: the parallel flow leaves Ω_c unmoved, the perpendicular drift stays" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: update_ue_para!, solve_electron_continuity_equation!, cache_electron_operators!
+    flags = (; diffu = false, src = false, mean_ExB = false, turb_ExB_mixing = false)
+    RPc = closed_RP(; flags...)
+    RPf = closed_RP(; policy = FreeParallelFlow(), flags...)
+    Ω = RPc.closed_surface.basis.nodes
+    inΩ = falses(RPc.G.NR, RPc.G.NZ)
+    inΩ[Ω] .= true
+    for (RP, upar) in ((RPc, 1.0e5), (RPf, 0.0))
+        pla = RP.plasma
+        # a parallel drift on Ω_c only (none in the free run), the same perpendicular drift in both
+        @. pla.ue_para = ifelse(inΩ, upar * (1 + 0.5 * RP.G.Z2D), 0.0)
+        @. pla.ueR = pla.ue_para * RP.fields.bR + 300.0
+        @. pla.ueZ = pla.ue_para * RP.fields.bZ - 200.0
+        cache_electron_operators!(RP)
+    end
+    n0 = copy(RPc.plasma.ne)
+    solve_electron_continuity_equation!(RPc)
+    solve_electron_continuity_equation!(RPf)
+    @test RPc.plasma.ne ≈ RPf.plasma.ne
+    @test RPc.plasma.ne != n0                       # the perpendicular drift did move it
+end
+
+@testitem "Closed-surface transport: Te and u∥ ride the stream-function flux" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: update_ue_para!, ue_Te_operators, cache_electron_operators!, pressure_operator
+    RP = closed_RP(; mean_ExB = false, turb_ExB_mixing = false)
+    update_ue_para!(RP)                               # K and the stream-function fluxes of the step
+    s, pla, G = RP.closed_surface, RP.plasma, RP.G
+    @. pla.ueR = pla.ue_para * RP.fields.bR          # no perpendicular drift
+    @. pla.ueZ = pla.ue_para * RP.fields.bZ
+    cache_electron_operators!(RP)
+    ops = ue_Te_operators(RP)
+    Ω = s.basis.nodes
+    V = 2π .* G.R2D .* G.dR .* G.dZ
+    # a constant is carried unchanged, and Σ V n (u·∇)f vanishes: the flux is divergence-free
+    @test maximum(abs, (ops.A_adv * ones(length(pla.ne)))[Ω]) < 1.0e-6 * maximum(abs, ops.A_adv.matrix)
+    f = sin.(3 .* vec(G.R2D)) .+ vec(G.Z2D)
+    Af = ops.A_adv * f
+    @test abs(sum(vec(V)[Ω] .* vec(pla.ne)[Ω] .* Af[Ω])) < 1.0e-8 * sum(abs.(vec(V)[Ω] .* vec(pla.ne)[Ω] .* Af[Ω]))
+    # on Ω_c the compression is the pressure operator's adjoint: −(B_pᵀ K)/(n V)
+    Bp = pressure_operator(s.basis, log.(max.(pla.ne, 1.0)))
+    c = Bp' * s.K
+    @test ops.div_u[Ω] ≈ -c ./ (pla.ne[Ω] .* V[Ω])
+end

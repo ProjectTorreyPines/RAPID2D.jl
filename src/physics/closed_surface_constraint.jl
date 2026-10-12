@@ -60,10 +60,10 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
         A2[k, k] -= θu * dt * pla.ν_en_iz_tot[k]
         rhs2[k] += (1 - θu) * dt * pla.ν_en_iz_tot[k] * u0[k]
     end
+    Bp = pressure_operator(b, log.(max.(pla.ne, CLOSED_SURFACE_N_FLOOR)))
     extra = nothing
     if RP.flags.Include_ud_pressure_term
         a_p = vec(calculate_electron_acceleration_by_pressure(RP))
-        Bp = pressure_operator(b, log.(max.(pla.ne, CLOSED_SURFACE_N_FLOOR)))
         F_p = -(Bp * (ee .* vec(pla.Te_eV)[b.nodes])) ./ me
         extra = dt .* (F_p .- Pin' * (b.V[sel] .* B[cu] .* a_p[cu]))
     end
@@ -80,6 +80,10 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
     u, K = constrained_momentum_solve(A2, rhs2, b, n, B; extra)
     vec(pla.ue_para) .= u
     s.K, s.signature = K, signature
+    # what the density, Te and u∥ transport of the step read: the stream-function fluxes of K and
+    # the compression that pairs with the pressure force (PLAN D6, D7, D17)
+    s.ΓR, s.ΓZ = stream_function_fluxes(b, K)
+    s.compression = Bp' * K
     return RP
 end
 
@@ -102,4 +106,39 @@ function remap_surface_flux!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla.ue_para[cu] .= u_new
     update_Jϕ!(RP)
     return RP
+end
+
+"""
+    add_stream_function_transport!(A_adv, RP) -> A_adv
+
+Add the carriage of a per-particle variable by the stream-function fluxes of the last solve to
+the advection operator `A_adv` (df/dt = −A_adv f): each face's flux takes the value upwind of it
+into the node it enters, M_lk = −Γ/(V_l n_l), M_ll = +Γ/(V_l n_l), with the density of this call,
+so the flux carried is Γ whatever the density has become (PLAN D7). Nodes at the per-particle
+floor are skipped, like the per-particle operators' empty rows.
+"""
+function add_stream_function_transport!(A_adv::DiscretizedOperator{FT}, RP::RAPID{FT}) where {FT <: AbstractFloat}
+    s, G, n = RP.closed_surface, RP.G, RP.plasma.ne
+    nz, k2c, nid = nonzeros(A_adv.matrix), A_adv.k2csc, G.nodes.nid
+    V(i, j) = FT(2π) * G.R2D[i, j] * G.dR * G.dZ
+    function enter!(i, j, Γ, slot)              # Γ > 0 enters node (i, j) from its neighbour at `slot`
+        n[i, j] > CLOSED_SURFACE_N_FLOOR || return
+        w = Γ / (V(i, j) * n[i, j])
+        r = nid[i, j]
+        nz[slot_position(k2c, r, SLOT_C)] += w
+        nz[slot_position(k2c, r, slot)] -= w
+        return
+    end
+    NR, NZ = G.NR, G.NZ
+    for j in 1:NZ, i in 1:(NR - 1)
+        Γ = s.ΓR[i, j]
+        iszero(Γ) && continue
+        Γ > 0 ? enter!(i + 1, j, Γ, SLOT_W) : enter!(i, j, -Γ, SLOT_E)
+    end
+    for j in 1:(NZ - 1), i in 1:NR
+        Γ = s.ΓZ[i, j]
+        iszero(Γ) && continue
+        Γ > 0 ? enter!(i, j + 1, Γ, SLOT_S) : enter!(i, j, -Γ, SLOT_N)
+    end
+    return A_adv
 end
