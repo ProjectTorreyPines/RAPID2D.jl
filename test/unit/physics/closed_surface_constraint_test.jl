@@ -174,3 +174,46 @@ end
     c = Bp' * s.K
     @test ops.div_u[Ω] ≈ -c ./ (pla.ne[Ω] .* V[Ω])
 end
+
+@testitem "DEFECT: a depleted sector of the closed surfaces overheats under the constraint" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: run_simulation!
+    # The constraint holds J∥/B = K_e on a surface, so a sector a thousand times thinner carries the
+    # same current density with u = K_e B/n: the drift passes v_te and the friction and viscous heating
+    # per electron grow as 1/n. Spitzer friction is outside its range there (kinetic current
+    # limiting, runaway), and nothing along the surface (parallel conduction, pressure balance)
+    # evens it out. The peak is a transient: the hot sector ionizes and refills (178 eV at step 87,
+    # 45 eV at step 300). Free flow stays near the bulk. As thermal energy the sector stays small.
+    # internal/docs/src/notes/plans/PLAN_closed-surface-flux.md, [gap] low-density overheating.
+    function depleted_run(policy; nsteps = 100, contrast = 1.0e-3)
+        RP = closed_RP(; policy)
+        G, pla = RP.G, RP.plasma
+        inwall = G.nodes.state .> 0.5
+        @. pla.ne = ifelse(inwall, 1.0e17 * ifelse(G.R2D > 1.62, contrast, 1.0), 0.0)
+        pla.ni .= pla.ne
+        fill!(pla.ue_para, 0.0)
+        update_transport_quantities!(RP)
+        flf_analysis_field_lines_rz_plane!(RP)
+        update_closed_surface_basis!(RP)
+        closed = [k for k in RP.flf.closed_surface_nids if inwall[k]]
+        sector = filter(k -> G.R2D[k] > 1.62, closed)
+        vte(k) = sqrt(pla.Te_eV[k] * RP.config.constants.ee / RP.config.constants.me)
+        peak = (Te = 0.0, drift = 0.0)
+        record(RP) = (
+            peak = (
+                Te = max(peak.Te, maximum(pla.Te_eV[sector])),
+                drift = max(peak.drift, maximum(k -> abs(pla.ue_para[k]) / vte(k), sector)),
+            )
+        )
+        RP.config.t_end_s = RP.t_end_s = RP.time_s + nsteps * RP.dt
+        run_simulation!(RP; callback_after_step = record)
+        V = 2π .* G.R2D
+        Eth(ks) = sum(k -> pla.ne[k] * pla.Te_eV[k] * V[k], ks)
+        return (; peak.Te, peak.drift, share = Eth(sector) / Eth(closed))
+    end
+    c = depleted_run(SurfaceFluxConstraint())
+    f = depleted_run(FreeParallelFlow())
+    @test_broken c.Te < 50                       # 178 eV today, bulk ~6 eV
+    @test_broken c.drift <= 1                    # 2.2 today, at the start
+    @test f.Te < 20 && f.drift < 1               # the overheating is the constraint's
+    @test c.share < 0.1                          # 2 % today: local, not an energy sink
+end
