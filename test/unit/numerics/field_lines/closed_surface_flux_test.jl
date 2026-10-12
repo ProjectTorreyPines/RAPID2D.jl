@@ -1,0 +1,216 @@
+# Surface functions on the closed region, and the electron parallel flux they carry.
+#
+# On closed flux surfaces the electron parallel particle flux per B is constrained to a surface
+# function, n u∥ / B = K_e(ψ). Its poloidal part K_e ∇ψ × ∇ϕ = ∇H × ∇ϕ with H′ = K_e, so the flux
+# through a face of a control volume is 2π (H(ψ_end) − H(ψ_start)) at the face's two corners and
+# the divergence of every control volume telescopes to zero. The constraint domain is the support
+# of H on the admissible nodes, which puts every face between it and the rest at H = const.
+# internal/docs/src/notes/plans/PLAN_closed-surface-flux.md (D1, D2, D6, D17).
+
+@testsnippet ClosedSurfaceFixtures begin
+    using RAPID2D: initialize_grid_geometry
+
+    const R0, Z0, κ, c = 1.5113, 0.0071, 1.4, 0.01   # c scales ψ to a few mT of B_pol
+
+    "A uniform N × N grid on R ∈ [1, 2], Z ∈ [−0.5, 0.5]."
+    grid(N) = initialize_grid_geometry(N, N, (1.0, 2.0), (-0.5, 0.5))
+
+    "ψ = s c ((R − R0)² + ((Z − Z0)/κ)²): elliptic surfaces about an axis off the nodes."
+    ellipse(R, Z; s = 1.0) = s * c * ((R - R0)^2 + ((Z - Z0) / κ)^2)
+    ellipse_ψR(R, Z; s = 1.0) = s * c * 2 * (R - R0)
+    ellipse_ψZ(R, Z; s = 1.0) = s * c * 2 * (Z - Z0) / κ^2
+    ellipse(G::RAPID2D.GridGeometry; s = 1.0) = ellipse.(G.R2D, G.Z2D; s)
+
+    "Nodes inside the surface of minor radius a, and inside R < R_wall."
+    admissible_ellipse(G; a = 0.3, R_wall = Inf) =
+        Matrix{Bool}(@. (G.R2D - R0)^2 + ((G.Z2D - Z0) / κ)^2 < a^2 && G.R2D < R_wall)
+
+    "The cells left of R_wall, as `inside` for the tracer: (NR, NZ) like `cell_state`, cell (i, j)
+    spanning nodes i..i+1 × j..j+1."
+    cells_left_of(G, R_wall) = [i < G.NR && j < G.NZ && G.R1D[i] + G.dR / 2 < R_wall for i in 1:G.NR, j in 1:G.NZ]
+
+    "Deterministic values in (−1, 1), for tests that need arbitrary data."
+    arbitrary(dims...; seed = 1) = reshape([sin(12.9898 * k + 78.233 * seed) for k in 1:prod(dims)], dims...)
+
+    "The piecewise-linear function of the knot values `v` at x."
+    function hat_interp(knots, v, x)
+        length(knots) == 1 && return v[1]
+        x >= knots[end] && return x > knots[end] ? zero(x) : v[end]
+        s = searchsortedlast(knots, x)
+        t = (x - knots[s]) / (knots[s + 1] - knots[s])
+        return (1 - t) * v[s] + t * v[s + 1]
+    end
+end
+
+@testitem "Closed-surface basis: the cut, the support and the hats" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis
+    for N in (31, 61), s in (1.0, -1.0)
+        G = grid(N)
+        ψ = ellipse(G; s)
+        A = admissible_ellipse(G)
+        b = closed_surface_basis(G, ψ, A)
+        @test b !== nothing
+        @test abs(b.axis.R - R0) < 1.0e-6 * G.dR && abs(b.axis.Z - Z0) < 1.0e-6 * G.dZ
+        @test sign(b.ψ_cut - b.axis.ψ) == s                     # ψ_N′ grows outward either way
+        @test all(k -> A[k], b.nodes)                           # Ω_c ⊆ admissible
+        @test length(b.nodes) > 0.8 * count(A)
+        # hats: one per knot from the axis (0) to the cut (1), a partition of unity inside the cut
+        # and zero beyond it, where K_e ends
+        @test b.knots[1] == 0 && b.knots[end] == 1 && issorted(b.knots)
+        rows = vec(sum(b.P; dims = 2))
+        @test all(r -> r ≈ 1, rows[b.ψN .<= 1]) && all(iszero, rows[b.ψN .> 1])
+        # the τ basis continues the hats as constants beyond the cut
+        @test all(≈(1), vec(sum(b.Pτ; dims = 2)))
+    end
+end
+
+@testitem "Closed-surface flux: the stream-function flux telescopes and matches K_e B_pol" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, stream_function_fluxes, face_outflow
+    using RAPID2D.Statistics: median
+    errs = Float64[]
+    for N in (31, 61)
+        G = grid(N)
+        ψ = ellipse(G)
+        b = closed_surface_basis(G, ψ, admissible_ellipse(G))
+        K = [1 + x - 2x^2 for x in b.knots]
+        ΓR, ΓZ = stream_function_fluxes(b, K)
+        # every control volume of the grid: zero divergence
+        out = face_outflow(ΓR, ΓZ)
+        scale = maximum(abs, ΓR) + maximum(abs, ΓZ)
+        @test maximum(abs, out) <= 1.0e-13 * scale
+        # the faces between Ω_c and the rest carry nothing: both corners lie beyond the cut
+        inΩ = falses(G.NR, G.NZ)
+        inΩ[b.nodes] .= true
+        @test all(iszero(ΓR[i, j]) for i in 1:(G.NR - 1), j in 1:G.NZ if inΩ[i, j] != inΩ[i + 1, j])
+        @test all(iszero(ΓZ[i, j]) for i in 1:G.NR, j in 1:(G.NZ - 1) if inΩ[i, j] != inΩ[i, j + 1])
+        # against the analytic flux of K_e B_pol through each face (midpoint rule), sign included
+        xN(R, Z) = (ellipse(R, Z) - b.axis.ψ) / (b.ψ_cut - b.axis.ψ)
+        rel, mismatch = Float64[], 0
+        for j in 2:(G.NZ - 1), i in 1:(G.NR - 1)
+            R, Z = G.R1D[i] + G.dR / 2, G.Z1D[j]
+            x = xN(R, Z)
+            0 < x < 0.95 || continue
+            ref = hat_interp(b.knots, K, x) * (-ellipse_ψZ(R, Z) / R) * 2π * R * G.dZ
+            abs(ref) > 1.0e-2 * scale || continue
+            push!(rel, abs(ΓR[i, j] / ref - 1))
+            mismatch += sign(ΓR[i, j]) != sign(ref)
+        end
+        for j in 1:(G.NZ - 1), i in 2:(G.NR - 1)
+            R, Z = G.R1D[i], G.Z1D[j] + G.dZ / 2
+            x = xN(R, Z)
+            0 < x < 0.95 || continue
+            ref = hat_interp(b.knots, K, x) * (ellipse_ψR(R, Z) / R) * 2π * R * G.dR
+            abs(ref) > 1.0e-2 * scale || continue
+            push!(rel, abs(ΓZ[i, j] / ref - 1))
+            mismatch += sign(ΓZ[i, j]) != sign(ref)
+        end
+        @test mismatch == 0
+        push!(errs, median(rel))
+    end
+    @test errs[2] < errs[1] / 2      # second order in the grid
+    @test errs[2] < 1.0e-2
+    # ψ → −ψ reverses B_pol, and so the flux of the same K_e
+    G = grid(31)
+    bp = closed_surface_basis(G, ellipse(G), admissible_ellipse(G))
+    bm = closed_surface_basis(G, ellipse(G; s = -1.0), admissible_ellipse(G))
+    K = [1 + x for x in bp.knots]
+    @test all(stream_function_fluxes(bm, K)[1] .≈ .-stream_function_fluxes(bp, K)[1])
+end
+
+@testitem "Closed-surface basis: a region against the wall keeps its flux inside" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, stream_function_fluxes, face_outflow
+    G = grid(41)
+    ψ = ellipse(G)
+    R_wall = 1.72                                        # cuts the a = 0.3 surface on its outboard side
+    A = admissible_ellipse(G; R_wall)
+    b = closed_surface_basis(G, ψ, A; inside = cells_left_of(G, R_wall))
+    @test b !== nothing
+    @test all(k -> G.R2D[k] < R_wall, b.nodes)
+    # the cut sits inside the surface that touches the wall
+    @test (b.ψ_cut - b.axis.ψ) < ellipse(R_wall, Z0) - b.axis.ψ
+    ΓR, ΓZ = stream_function_fluxes(b, ones(length(b.knots)))
+    @test maximum(abs, face_outflow(ΓR, ΓZ)) <= 1.0e-13 * maximum(abs, ΓR)
+    inΩ = falses(G.NR, G.NZ)
+    inΩ[b.nodes] .= true
+    @test all(iszero(ΓR[i, j]) for i in 1:(G.NR - 1), j in 1:G.NZ if inΩ[i, j] != inΩ[i + 1, j])
+end
+
+@testitem "Closed-surface basis: no O-point, or two, gives no basis; one level is one constant" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis
+    G = grid(31)
+    # no closed surface: ψ = R has no O-point
+    @test closed_surface_basis(G, Matrix(G.R2D), fill(true, G.NR, G.NZ)) === nothing
+    # two islands in one region
+    ψ2 = @. ((G.R2D - 1.5)^2 - 0.25^2)^2 + (G.Z2D - 0.03125)^2
+    @test closed_surface_basis(G, ψ2, Matrix{Bool}(ψ2 .< 0.002)) === nothing
+    # a few nodes around the axis keep several levels
+    b = closed_surface_basis(G, ellipse(G), admissible_ellipse(G; a = 0.045))
+    @test b !== nothing && length(b.knots) >= 2
+    # four nodes on one level (circles about a dual corner): one constant surface function
+    Rc, Zc = G.R1D[16] + G.dR / 2, G.Z1D[16] + G.dZ / 2
+    ψc = @. c * ((G.R2D - Rc)^2 + (G.Z2D - Zc)^2)
+    A4 = fill(false, G.NR, G.NZ)
+    A4[16:17, 16:17] .= true
+    b = closed_surface_basis(G, ψc, A4)
+    @test b !== nothing
+    @test length(b.knots) == 1
+    @test all(isone, b.P[b.ψN .<= 1, 1]) && all(iszero, b.P[b.ψN .> 1, 1])
+end
+
+@testitem "Closed-surface basis: hats merge deterministically under a large weight contrast" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis
+    using LinearAlgebra: cond, Diagonal
+    G = grid(31)
+    ψ = ellipse(G)
+    A = admissible_ellipse(G)
+    w = @. exp(12 * (G.R2D - R0))                       # weight contrast ≈ e^6 across the region
+    b1 = closed_surface_basis(G, ψ, A; weights = w)
+    b2 = closed_surface_basis(G, ψ, A; weights = w)
+    @test b1.knots == b2.knots
+    @test cond(Matrix(b1.P' * Diagonal(w[b1.nodes]) * b1.P)) < 1.0e8
+end
+
+@testitem "Closed-surface pressure: zero for surface T, the continuous force otherwise" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, pressure_operator, stream_function_fluxes
+    errs = Float64[]
+    for N in (31, 61)
+        G = grid(N)
+        ψ = ellipse(G)
+        b = closed_surface_basis(G, ψ, admissible_ellipse(G))
+        R, Z = G.R2D[b.nodes], G.Z2D[b.nodes]
+        # g = ln n single-valued and arbitrary; τ a surface function, or a constant: zero force
+        g = arbitrary(G.NR, G.NZ; seed = N)
+        Bp = pressure_operator(b, g)
+        for τ in (b.Pτ * arbitrary(size(b.Pτ, 2); seed = 2), fill(3.0, length(b.nodes)))
+            F = Bp * τ
+            @test maximum(abs, F) <= 1.0e-12 * maximum(abs, abs.(Bp) * abs.(τ))
+        end
+        # the pressure work on the flux and the compression power are one sum
+        K = arbitrary(length(b.knots); seed = 3)
+        τ = arbitrary(length(b.nodes); seed = 4)
+        @test K' * (Bp * τ) ≈ sum(τ .* (Bp' * K))
+        # a temperature that varies along the surfaces: ∫ h_s τ B·∇g dV, by midpoint quadrature
+        gfun(R, Z) = 0.5 * (R - R0) / 0.3 + 0.2 * ((Z - Z0) / 0.3)^2
+        τfun(R, Z) = 1 + 0.3 * (Z - Z0) / 0.3
+        Bps = pressure_operator(b, gfun.(G.R2D, G.Z2D))
+        F = Bps * τfun.(R, Z)
+        nq = 401
+        Rq = range(1.0, 2.0; length = nq + 1)
+        Zq = range(-0.5, 0.5; length = nq + 1)
+        ref = zeros(length(b.knots))
+        for jq in 1:nq, iq in 1:nq
+            Rm, Zm = (Rq[iq] + Rq[iq + 1]) / 2, (Zq[jq] + Zq[jq + 1]) / 2
+            x = (ellipse(Rm, Zm) - b.axis.ψ) / (b.ψ_cut - b.axis.ψ)
+            0 <= x <= 1 || continue
+            BgradG = (-ellipse_ψZ(Rm, Zm) / Rm) * (0.5 / 0.3) + (ellipse_ψR(Rm, Zm) / Rm) * (0.4 * (Zm - Z0) / 0.3^2)
+            dV = 2π * Rm * step(Rq) * step(Zq)
+            for s in eachindex(b.knots)
+                h = hat_interp(b.knots, [t == s ? 1.0 : 0.0 for t in eachindex(b.knots)], x)
+                ref[s] += h * τfun(Rm, Zm) * BgradG * dV
+            end
+        end
+        push!(errs, maximum(abs, F .- ref) / maximum(abs, ref))
+    end
+    @test errs[2] < errs[1]
+    @test errs[2] < 0.1
+end
