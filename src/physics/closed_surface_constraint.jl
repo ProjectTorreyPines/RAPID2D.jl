@@ -83,7 +83,8 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
     # what the density, Te and u∥ transport of the step read: the stream-function fluxes of K and
     # the compression that pairs with the pressure force (PLAN D6, D7, D17)
     s.ΓR, s.ΓZ = stream_function_fluxes(b, K)
-    s.compression = Bp' * K
+    fill!(s.compression, zero(FT))
+    s.compression[b.nodes] .= Bp' * K
     return RP
 end
 

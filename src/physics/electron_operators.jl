@@ -109,8 +109,10 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
         add_stream_function_transport!(op.A_adv_e, RP)
         cs, G = RP.closed_surface, RP.G
         div_u = copy(op.div_ue)
-        for (r, k) in enumerate(cs.basis.nodes)
-            div_u[k] -= cs.compression[r] / (pla.ne[k] * 2π * G.R2D[k] * G.dR * G.dZ)
+        for k in eachindex(cs.compression)
+            c = cs.compression[k]
+            (iszero(c) || !(pla.ne[k] > CLOSED_SURFACE_N_FLOOR)) && continue
+            div_u[k] -= c / (pla.ne[k] * 2π * G.R2D[k] * G.dR * G.dZ)
         end
     end
     # u∥ and Te ride the particles the density diffusion moves. One matrix holds the viscosity
