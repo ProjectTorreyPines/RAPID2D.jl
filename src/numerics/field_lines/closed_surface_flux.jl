@@ -270,3 +270,83 @@ function pressure_operator(b::ClosedSurfaceBasis{FT}, g::AbstractMatrix) where {
     WPτ = b.V .* Pτ
     return X .- ((X * Pτ) / (Pτ' * WPτ)) * WPτ'
 end
+
+# ── diagnostics on Ω_c ───────────────────────────────────────────────────────────
+
+"""
+    galerkin_flux(basis, n, u, B) -> K
+
+The surface flux closest to the electron velocity `u` in the kinetic-energy metric: the Galerkin
+projection (Pᵀ diag(V B²/n) P) K = Pᵀ diag(V B) u over Ω_c. A velocity that is a surface flux,
+u = (B/n) P K, gives back its K. `n`, `u`, `B` are grid arrays.
+"""
+function galerkin_flux(b::ClosedSurfaceBasis, n::AbstractVecOrMat, u::AbstractVecOrMat, B::AbstractVecOrMat)
+    Bk, nk = B[b.nodes], n[b.nodes]
+    return Matrix(b.P' * Diagonal(b.V .* Bk .^ 2 ./ nk) * b.P) \ (b.P' * (b.V .* Bk .* u[b.nodes]))
+end
+
+"""
+    surface_residual(basis, n, u, B; K = galerkin_flux(basis, n, u, B)) -> Real
+
+How far n u/B on Ω_c is from the surface function P K, as the volume-weighted rms of the
+difference over that of n u/B: 0 for a surface flux. Beyond the cut, where K_e ends, all of
+n u/B counts.
+"""
+function surface_residual(
+        b::ClosedSurfaceBasis, n::AbstractVecOrMat, u::AbstractVecOrMat, B::AbstractVecOrMat;
+        K = galerkin_flux(b, n, u, B),
+    )
+    f = n[b.nodes] .* u[b.nodes] ./ B[b.nodes]
+    total = sum(b.V .* f .^ 2)
+    iszero(total) && return zero(total)
+    return sqrt(sum(b.V .* (f .- b.P * K) .^ 2) / total)
+end
+
+"""
+    electron_kinetic_energy(G, n, u, nodes; me) -> Real
+
+½ mₑ n u² summed over the toroidal control volumes 2πR ΔR ΔZ of `nodes` [J].
+"""
+electron_kinetic_energy(G::GridGeometry, n::AbstractVecOrMat, u::AbstractVecOrMat, nodes; me::Real) =
+    sum(me / 2 * n[k] * u[k]^2 * 2π * G.R2D[k] * G.dR * G.dZ for k in nodes; init = zero(me * G.dR))
+
+"""
+    surface_statistics(basis, ne, ni, ue, ui, Te_eV; me, ee) -> (; n_min, drift, imbalance)
+
+Per hat of `basis`, over the Ω_c nodes it covers: the smallest electron density, the largest
+electron–ion drift against the electron thermal speed, |uₑ − uᵢ| / √(e Tₑ / mₑ), and the largest
+relative density imbalance |nₑ − nᵢ| / nₑ.
+"""
+function surface_statistics(
+        b::ClosedSurfaceBasis{FT}, ne, ni, ue, ui, Te_eV; me::Real, ee::Real,
+    ) where {FT}
+    M = length(b.knots)
+    n_min, drift, imbalance = fill(FT(Inf), M), zeros(FT, M), zeros(FT, M)
+    rows, vals = rowvals(b.P), nonzeros(b.P)
+    for s in 1:M, p in nzrange(b.P, s)
+        iszero(vals[p]) && continue
+        k = b.nodes[rows[p]]
+        n_min[s] = min(n_min[s], ne[k])
+        drift[s] = max(drift[s], abs(ue[k] - ui[k]) / sqrt(ee * Te_eV[k] / me))
+        imbalance[s] = max(imbalance[s], abs(ne[k] - ni[k]) / ne[k])
+    end
+    return (; n_min, drift, imbalance)
+end
+
+"""
+    current_outside_constraint(basis, closed, J) -> Real
+
+The share of the toroidal current `J` (grid array) on the closed nodes `closed` that the
+constraint leaves out: nodes outside Ω_c, and Ω_c nodes beyond the cut, where K_e = 0.
+PLAN_closed-surface-flux.md D19.
+"""
+function current_outside_constraint(b::ClosedSurfaceBasis, closed::AbstractVector{<:Integer}, J::AbstractVecOrMat)
+    total = sum(J[k] for k in closed; init = zero(eltype(J)))
+    iszero(total) && return zero(total)
+    lost = zero(total)
+    for k in closed
+        r = searchsortedfirst(b.nodes, k)
+        (r > length(b.nodes) || b.nodes[r] != k || b.ψN[r] > 1) && (lost += J[k])
+    end
+    return lost / total
+end

@@ -29,9 +29,6 @@
     spanning nodes i..i+1 × j..j+1."
     cells_left_of(G, R_wall) = [i < G.NR && j < G.NZ && G.R1D[i] + G.dR / 2 < R_wall for i in 1:G.NR, j in 1:G.NZ]
 
-    "Deterministic values in (−1, 1), for tests that need arbitrary data."
-    arbitrary(dims...; seed = 1) = reshape([sin(12.9898 * k + 78.233 * seed) for k in 1:prod(dims)], dims...)
-
     "The piecewise-linear function of the knot values `v` at x."
     function hat_interp(knots, v, x)
         length(knots) == 1 && return v[1]
@@ -172,6 +169,8 @@ end
 
 @testitem "Closed-surface pressure: zero for surface T, the continuous force otherwise" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis, pressure_operator, stream_function_fluxes
+    using Random: MersenneTwister
+    rng = MersenneTwister(7)
     errs = Float64[]
     for N in (31, 61)
         G = grid(N)
@@ -179,15 +178,15 @@ end
         b = closed_surface_basis(G, ψ, admissible_ellipse(G))
         R, Z = G.R2D[b.nodes], G.Z2D[b.nodes]
         # g = ln n single-valued and arbitrary; τ a surface function, or a constant: zero force
-        g = arbitrary(G.NR, G.NZ; seed = N)
+        g = randn(rng, G.NR, G.NZ)
         Bp = pressure_operator(b, g)
-        for τ in (b.Pτ * arbitrary(size(b.Pτ, 2); seed = 2), fill(3.0, length(b.nodes)))
+        for τ in (b.Pτ * randn(rng, size(b.Pτ, 2)), fill(3.0, length(b.nodes)))
             F = Bp * τ
             @test maximum(abs, F) <= 1.0e-12 * maximum(abs, abs.(Bp) * abs.(τ))
         end
         # the pressure work on the flux and the compression power are one sum
-        K = arbitrary(length(b.knots); seed = 3)
-        τ = arbitrary(length(b.nodes); seed = 4)
+        K = randn(rng, length(b.knots))
+        τ = randn(rng, length(b.nodes))
         @test K' * (Bp * τ) ≈ sum(τ .* (Bp' * K))
         # a temperature that varies along the surfaces: ∫ h_s τ B·∇g dV, by midpoint quadrature
         gfun(R, Z) = 0.5 * (R - R0) / 0.3 + 0.2 * ((Z - Z0) / 0.3)^2
@@ -213,4 +212,59 @@ end
     end
     @test errs[2] < errs[1]
     @test errs[2] < 0.1
+end
+
+@testitem "Closed-surface diagnostics: the flux of a velocity, and how far it is from one" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, galerkin_flux, surface_residual
+    using Random: MersenneTwister
+    rng = MersenneTwister(5)
+    G = grid(31)
+    b = closed_surface_basis(G, ellipse(G), admissible_ellipse(G))
+    B = @. sqrt((3.0 / G.R2D)^2 + 1.0e-6)
+    n = @. 1.0e17 * (1 + 0.5 * (G.R2D - R0) / 0.3)
+    # a velocity that is a surface flux (zero beyond the cut) gives back its K_e, with no residual
+    K = [1 + x - 2x^2 for x in b.knots]
+    u = zeros(G.NR, G.NZ)
+    u[b.nodes] .= (B[b.nodes] ./ n[b.nodes]) .* (b.P * K)
+    @test galerkin_flux(b, n, u, B) ≈ K
+    @test surface_residual(b, n, u, B) < 1.0e-12
+    # any other velocity: its kinetic-metric projection, and a residual between 0 and 1
+    u2 = copy(u)
+    u2[b.nodes] .*= 1 .+ 0.3 .* (2 .* rand(rng, length(b.nodes)) .- 1)
+    K2 = galerkin_flux(b, n, u2, B)
+    P, V = b.P, b.V
+    Bk, nk = B[b.nodes], n[b.nodes]
+    @test P' * (V .* Bk .* (Bk ./ nk .* (P * K2))) ≈ P' * (V .* Bk .* u2[b.nodes])
+    @test 0 < surface_residual(b, n, u2, B) < 1
+end
+
+@testitem "Closed-surface diagnostics: kinetic energy, surface statistics, current beyond the cut" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, electron_kinetic_energy, surface_statistics, current_outside_constraint
+    me, ee = 9.1093837e-31, 1.602176634e-19
+    G = grid(31)
+    b = closed_surface_basis(G, ellipse(G), admissible_ellipse(G))
+    # kinetic energy: ½ mₑ n u² over the toroidal control volumes of the nodes given
+    n = fill(1.0e17, G.NR, G.NZ)
+    u = fill(2.0e5, G.NR, G.NZ)
+    E = electron_kinetic_energy(G, n, u, b.nodes; me)
+    @test E ≈ sum(0.5 * me * 1.0e17 * 4.0e10 * 2π * G.R2D[k] * G.dR * G.dZ for k in b.nodes)
+    # per hat: the smallest density, the largest drift against the thermal speed and the largest
+    # relative imbalance of the nodes it covers
+    ne = @. 1.0e17 * (1 + 0.5 * (G.R2D - R0) / 0.3)
+    ni = 1.02 .* ne
+    Te = fill(10.0, G.NR, G.NZ)
+    ue, ui = fill(1.0e5, G.NR, G.NZ), zeros(G.NR, G.NZ)
+    st = surface_statistics(b, ne, ni, ue, ui, Te; me, ee)
+    @test length(st.n_min) == length(b.knots)
+    @test all(st.drift .≈ 1.0e5 / sqrt(10.0 * ee / me))
+    @test all(st.imbalance .≈ 0.02)
+    cov = [findall(>(0), b.P[:, s]) for s in eachindex(b.knots)]
+    @test st.n_min ≈ [minimum(ne[b.nodes[r]]) for r in cov]
+    # current carried by closed nodes the constraint leaves out (outside Ω_c or beyond the cut)
+    closed = findall(vec(admissible_ellipse(G)))
+    J = ones(G.NR, G.NZ)
+    f = current_outside_constraint(b, closed, J)
+    out = count(k -> !(k in b.nodes) || b.ψN[searchsortedfirst(b.nodes, k)] > 1, closed)
+    @test f ≈ out / length(closed)
+    @test 0 < f < 0.5
 end
