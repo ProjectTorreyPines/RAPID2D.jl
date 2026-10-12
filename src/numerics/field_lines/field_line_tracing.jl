@@ -2,7 +2,7 @@
 # line is a ψ contour, so a trace follows one: from a grid node in either direction along B_pol
 # (field-line lengths), or around an O-point at a given level (flux surfaces). A tracer reports
 # every vertex of its path to a visitor, `visit!(v, R, Z, Bpol, Bϕ)`, which integrates what it
-# needs as the path goes; no path is stored. The tracer policies are in `field_line_tracers.jl`.
+# needs as the path goes; no path is stored. The tracer policies are in `field_line_tracer_policies.jl`.
 # internal/docs/src/notes/plans/PLAN_flf-contours.md §6.
 
 """

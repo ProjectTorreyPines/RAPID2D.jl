@@ -1,6 +1,6 @@
 # How a field line is followed in the poloidal plane: the tracer policies. Their methods are in
-# `field_line_tracing.jl`; the types sit here, before `types.jl`, so the simulation flags can
-# hold one. internal/docs/src/notes/plans/PLAN_flf-contours.md §6.
+# `field_line_tracing.jl`; the types sit here, before `types.jl`, so the simulation flags can hold
+# one. internal/docs/src/notes/plans/PLAN_flf-contours.md §6.
 
 """
     FieldLineTracer

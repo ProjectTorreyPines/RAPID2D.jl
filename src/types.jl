@@ -1318,7 +1318,7 @@ Contains boolean flags that control various aspects of the simulation.
     # Numerical settings
     Ampere_nstep::Int = 10                    # Not used: Ampère runs every step and Eϕ_self is the change over one step
     FLF_nstep::Int = 10                       # Steps between field line following updates
-    field_line_tracer::FieldLineTracer = MarchingSquaresTracer()   # how field-line following traces: `field_line_tracers.jl`
+    field_line_tracer::FieldLineTracer = MarchingSquaresTracer()   # how field-line following traces: `numerics/field_lines/field_line_tracer_policies.jl`
     Implicit::Bool = true                     # Use implicit methods
     # θ of the θ-scheme, one per family of terms, split by the sign and stiffness
     # of the operator — see `ImplicitWeights`. Replaces the single `Implicit_weight`

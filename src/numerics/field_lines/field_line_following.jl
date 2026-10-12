@@ -1,14 +1,7 @@
-"""
-Field Line Following (FLF) Analysis in RZ Plane
-
-This module provides functions for magnetic field line tracing in cylindrical (RZ) coordinates,
-including forward/backward field line following, closed field line detection, and connection
-length calculations.
-"""
-
-using FastInterpolations
-using LinearAlgebra
-using RAPID2D
+# Field-line following (FLF) on the grid: the line through every node inside the wall, traced
+# both ways along B_pol to the wall or once around, gives the node its connection length
+# Lc = ∫ (B/B_pol) dl and poloidal length, and the closed lines their nodes. Any tracer does it;
+# a run uses `flags.field_line_tracer`.
 
 """
     trace_single_field_line(R0, Z0, direction, interp_BR, interp_BZ, interp_Bphi,

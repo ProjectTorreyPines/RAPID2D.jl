@@ -38,7 +38,7 @@ include("numerics/coupled_block.jl")         # the coupled solve's u∥–ψ blo
 include("numerics/fixed_point.jl")           # the fixed-point solve, and Newton's step for an affine map
 include("numerics/anderson.jl")              # Anderson mixing for the coupled solve's fixed point
 include("physics/ion_species.jl")   # IonSpecies and the transport policies; types.jl needs both
-include("numerics/field_line_tracers.jl")   # how a field line is followed: the tracer policies the flags hold
+include("numerics/field_lines/field_line_tracer_policies.jl")   # how a field line is followed: the tracer policies the flags hold
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")
@@ -94,12 +94,14 @@ include("coils/circuit_equations.jl")
 
 # Include utility functions
 include("utils/grid.jl")  # Grid-related utility functions
-include("numerics/field_line_tracing.jl")  # following ψ contours: geometry, visitors, the tracers
-include("utils/field_line_following.jl")
-include("numerics/flux_surface_average.jl")  # averages over flux surfaces, and back to the grid
-include("numerics/field_line_average.jl")    # averages along the field line through each node
 include("utils/green_function.jl")  # Green's function utilities
 include("utils/utils.jl")
+
+# Field lines: the tracers, and what is built on them
+include("numerics/field_lines/field_line_tracing.jl")    # following ψ contours: geometry, visitors, the tracers
+include("numerics/field_lines/field_line_following.jl")  # field-line lengths and closed lines on the grid (FLF)
+include("numerics/field_lines/flux_surface_average.jl")  # averages over flux surfaces, and back to the grid
+include("numerics/field_lines/field_line_average.jl")    # averages along the field line through each node
 
 # Export types from various modules for convenience
 export PlasmaConstants  # Physical constants
