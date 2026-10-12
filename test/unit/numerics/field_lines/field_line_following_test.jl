@@ -519,3 +519,72 @@ end
         @test itp(1.5, last(Z1D) + 0.3) ≈ itp(1.5, last(Z1D))
     end
 end
+
+@testitem "FLF by contours: straight lines end exactly on the wall cells" setup = [FLFStartup] begin
+    # The manual field is uniform: B_Z with ψ = B_Z R²/2, so every line is vertical and runs
+    # from its node to the first cell outside the wall in its column, with B/B_pol constant
+    # along it. Marching squares, the default, stops on that cell's edge.
+    RP = startup_RP()
+    @test RP.flags.field_line_tracer isa RAPID2D.MarchingSquaresTracer
+    G, F, flf = RP.G, RP.fields, RP.flf
+    up = F.BZ[1] > 0                                         # B_pol points up
+    for n in RP.G.nodes.in_wall_nids
+        i, j = G.nodes.rid[n], G.nodes.zid[n]
+        jtop = j
+        while RP.G.cell_state[i, jtop] >= 0 && RP.G.cell_state[i - 1, jtop] >= 0
+            jtop += 1
+        end
+        jbot = j
+        while RP.G.cell_state[i, jbot - 1] >= 0 && RP.G.cell_state[i - 1, jbot - 1] >= 0
+            jbot -= 1
+        end
+        Lup, Ldown = G.Z1D[jtop] - G.Z1D[j], G.Z1D[j] - G.Z1D[jbot]
+        @test flf.Lpol_forward[n] ≈ (up ? Lup : Ldown) atol = 1.0e-12
+        @test flf.Lpol_backward[n] ≈ (up ? Ldown : Lup) atol = 1.0e-12
+        @test flf.Lc_forward[n] ≈ flf.Lpol_forward[n] * F.Btot[n] / F.Bpol[n] rtol = 1.0e-10
+    end
+end
+
+@testitem "FLF by contours: marching squares, bicubic and RK4 on closed and open lines" begin
+    using RAPID2D: initialize_grid_geometry, FieldLineGeometry, FieldLineFollowingResult, field_line_analysis!,
+        MarchingSquaresTracer, CubicTracer, RK4Tracer
+    # Elliptic surfaces about an axis off the nodes, inside a box of cells: closed below the
+    # level that touches the box, open beyond it. Marching squares and the bicubic tracer agree
+    # on every node's topology; the node next to the O-point, a single point of the bilinear ψ,
+    # is closed by the bicubic fallback.
+    G = initialize_grid_geometry(30, 50, (1.0, 2.0), (-1.0, 1.0))
+    R0, Z0, κ = 1.5113, 0.0071, 1.6
+    ψ = @. (G.R2D - R0)^2 + ((G.Z2D - Z0) / κ)^2
+    inside = [1.1 < G.R1D[i] + G.dR / 2 < 1.9 && abs(G.Z1D[j] + G.dZ / 2) < 0.9 for i in 1:G.NR, j in 1:G.NZ]
+    g = FieldLineGeometry(G, ψ; Bϕ = 3.0 ./ G.R2D, inside, nodal_B = true)
+    run(t) = field_line_analysis!(FieldLineFollowingResult{Float64}(G.NR, G.NZ), g, t)
+    ms, bc, rk = run(MarchingSquaresTracer()), run(CubicTracer()), run(RK4Tracer())
+    # nodes inside the wall: all four cells around them inside (a node on the wall line has a
+    # contour tangent to the wall, which either reading may cut)
+    in_wall = [LinearIndices(ψ)[i, j] for i in 2:(G.NR - 1), j in 2:(G.NZ - 1) if all(inside[(i - 1):i, (j - 1):j])]
+    closed(f) = intersect(f.closed_surface_nids, in_wall)
+    @test sort(closed(ms)) == sort(closed(bc))
+    @test !isempty(closed(ms))
+    k = LinearIndices(ψ)[argmin(ψ)]                          # the node nearest the O-point
+    @test k in ms.closed_surface_nids
+    @test 0 < ms.Lpol_forward[k] < 2π * hypot(G.dR, G.dZ)
+    open = [n for n in in_wall if ms.termination_forward[n] === :wall && bc.termination_forward[n] === :wall]
+    @test !isempty(open)
+    @test maximum(abs.(ms.Lpol_forward[open] .- bc.Lpol_forward[open])) < 0.03
+    # RK4 sees the same closed region, up to the nodes its drift moves across the edge
+    @test length(symdiff(closed(rk), closed(bc))) <= 3
+end
+
+@testitem "FLF by contours: the flags choose the tracer, and RK4 is the first following" setup = [FLFStartup] begin
+    using RAPID2D: RK4Tracer, flf_analysis_field_lines_rz_plane, FieldLineFollowingResult
+    RP = startup_RP()
+    RP.flags.field_line_tracer = RK4Tracer()
+    flf_analysis_field_lines_rz_plane!(RP)
+    ref = flf_analysis_field_lines_rz_plane(
+        RP.G.R1D, RP.G.Z1D, RP.fields.BR, RP.fields.BZ, RP.fields.Bϕ, RP.G.cell_state .>= 0;
+        dR = RP.G.dR, dZ = RP.G.dZ, out_wall_idx = RP.G.nodes.out_wall_nids,
+    )
+    for k in fieldnames(FieldLineFollowingResult)
+        @test isequal(getfield(RP.flf, k), getfield(ref, k))
+    end
+end

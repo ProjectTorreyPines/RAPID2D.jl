@@ -131,13 +131,13 @@ end
 end
 
 @testitem "Flux surfaces: marching squares matches the ellipse" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: flux_surface_average, surface_average, MarchingSquaresAverage, CubicContourAverage
+    using RAPID2D: flux_surface_average, surface_average, ContourAverage, MarchingSquaresTracer, CubicTracer
     G = test_grid(61)
-    @test flux_surface_average(G, ellipse_ψ(G), inside(ellipse_ψ(G))).policy isa CubicContourAverage   # the default
+    @test flux_surface_average(G, ellipse_ψ(G), inside(ellipse_ψ(G))).policy.tracer isa CubicTracer   # the default
     for κ in (1.0, 1.6)
         ψ = ellipse_ψ(G; κ)
-        fsa = flux_surface_average(G, ψ, inside(ψ); policy = MarchingSquaresAverage(), nsurf = 10)
-        @test fsa.policy isa MarchingSquaresAverage
+        fsa = flux_surface_average(G, ψ, inside(ψ); policy = ContourAverage(MarchingSquaresTracer()), nsurf = 10)
+        @test fsa.policy.tracer isa MarchingSquaresTracer
         @test all(fsa.valid)
         @test maximum(abs, surface_average(fsa, ones(G.NR, G.NZ)) .- 1) < 1.0e-13
         # measured at 61²: 0.024, 4.7e-5, 2.3e-3 at most (the smallest surface is the worst)
@@ -155,7 +155,7 @@ end
 end
 
 @testitem "Flux surfaces: marching squares converges with the grid, binning does not" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: flux_surface_average, surface_average, HatBinningAverage, MarchingSquaresAverage
+    using RAPID2D: flux_surface_average, surface_average, HatBinningAverage, ContourAverage, MarchingSquaresTracer
     κ = 1.6
     err(policy, N) = begin
         G = test_grid(N)
@@ -164,20 +164,20 @@ end
         avg = surface_average(fsa, 1 ./ G.R2D .^ 2)
         maximum(abs(avg[s] / reference_average((R, Z) -> 1 / R^2, sqrt(ψs); κ)[1] - 1) for (s, ψs) in pairs(fsa.ψ))
     end
-    e31, e61, e121 = (err(MarchingSquaresAverage(), N) for N in (31, 61, 121))
+    e31, e61, e121 = (err(ContourAverage(MarchingSquaresTracer()), N) for N in (31, 61, 121))
     @test e61 < e31 / 2.5 && e121 < e61 / 2.5        # about second order
     b61, b121 = (err(HatBinningAverage(), N) for N in (61, 121))
     @test e121 < b121 / 10
 end
 
 @testitem "Flux surfaces: a level too close to the axis is skipped, not an error" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: flux_surface_average, surface_average, to_grid, MarchingSquaresAverage
+    using RAPID2D: flux_surface_average, surface_average, to_grid, ContourAverage, MarchingSquaresTracer
     G = test_grid(31)
     ψ = ellipse_ψ(G)
     region = inside(ψ)
     # The nearest node is 0.013 m from the axis, so only levels with ψN below about 0.002 lie
     # inside the axis cell, where marching squares sees no contour: 400 levels put one there.
-    fsa = flux_surface_average(G, ψ, region; policy = MarchingSquaresAverage(), nsurf = 400)
+    fsa = flux_surface_average(G, ψ, region; policy = ContourAverage(MarchingSquaresTracer()), nsurf = 400)
     @test !all(fsa.valid) && any(fsa.valid)
     avg = surface_average(fsa, G.R2D)
     @test all(isnan, avg[.!fsa.valid]) && all(isfinite, avg[fsa.valid])
@@ -202,14 +202,14 @@ end
 end
 
 @testitem "Flux surfaces: beside an X-point, the surfaces stay around their own O-point" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: flux_surface_average, surface_average, MarchingSquaresAverage, HatBinningAverage
+    using RAPID2D: flux_surface_average, surface_average, ContourAverage, MarchingSquaresTracer, HatBinningAverage
     # A doublet: two O-points at Z = ±Zc and an X-point between them at Z = 0.
     G = test_grid(61)
     Zc, w = 0.2, 0.15
     ψ = @. -exp(-((G.R2D - R0)^2 + (G.Z2D - Zc)^2) / w^2) - exp(-((G.R2D - R0)^2 + (G.Z2D + Zc)^2) / w^2)
     ψX = -2 * exp(-Zc^2 / w^2)
     upper = [k for k in eachindex(ψ) if ψ[k] < ψX && G.Z2D[k] > 0]
-    for policy in (MarchingSquaresAverage(), HatBinningAverage())
+    for policy in (ContourAverage(MarchingSquaresTracer()), HatBinningAverage())
         fsa = flux_surface_average(G, ψ, upper; policy)
         @test fsa.axis.converged
         # a Gaussian is not cubic, so the axis carries interpolation error (5e-4 dR at 61²)
@@ -233,7 +233,7 @@ end
 end
 
 @testitem "Flux surfaces: contour tracing on the bicubic flux keeps small coarse surfaces accurate" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: initialize_grid_geometry, flux_surface_average, surface_average, CubicContourAverage, MarchingSquaresAverage
+    using RAPID2D: initialize_grid_geometry, flux_surface_average, surface_average, ContourAverage, CubicTracer, MarchingSquaresTracer
     # The start-up grid: 30 × 50 over R 1–2 m, Z ±1 m (dR 3.4 cm, dZ 4.1 cm). A region 2–5 cells
     # across: marching squares sees a polygon of a handful of vertices, so its dV/dψ is off by
     # 4–11 %; tracing the bicubic level set is not limited by the cells.
@@ -243,8 +243,8 @@ end
     ψ = ellipse_ψ(G; κ)
     for a in (0.08, 0.15)
         region = inside(ψ; a)
-        fsa = flux_surface_average(G, ψ, region; policy = CubicContourAverage(), nsurf = 6)
-        @test fsa.policy isa CubicContourAverage
+        fsa = flux_surface_average(G, ψ, region; policy = ContourAverage(), nsurf = 6)
+        @test fsa.policy.tracer isa CubicTracer
         @test all(fsa.valid)
         @test maximum(abs, surface_average(fsa, ones(G.NR, G.NZ)) .- 1) < 1.0e-13
         invR2 = surface_average(fsa, 1 ./ G.R2D .^ 2)
@@ -254,30 +254,30 @@ end
             @test abs(invR2[s] / refI - 1) < 5.0e-3      # f itself is still bilinear between nodes
         end
         # and better than marching squares where marching squares is weakest
-        ms = flux_surface_average(G, ψ, region; policy = MarchingSquaresAverage(), nsurf = 6)
+        ms = flux_surface_average(G, ψ, region; policy = ContourAverage(MarchingSquaresTracer()), nsurf = 6)
         refV1 = reference_average((R, Z) -> 1.0, sqrt(ms.ψ[1]); κ)[2]
         @test abs(fsa.dVdψ[1] / refV1 - 1) < abs(ms.dVdψ[1] / refV1 - 1) / 10
     end
 end
 
 @testitem "Flux surfaces: contour tracing beside an X-point and without an O-point" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: flux_surface_average, surface_average, CubicContourAverage
+    using RAPID2D: flux_surface_average, surface_average, ContourAverage
     G = test_grid(61)
     Zc, w = 0.2, 0.15
     ψ = @. -exp(-((G.R2D - R0)^2 + (G.Z2D - Zc)^2) / w^2) - exp(-((G.R2D - R0)^2 + (G.Z2D + Zc)^2) / w^2)
     ψX = -2 * exp(-Zc^2 / w^2)
     upper = [k for k in eachindex(ψ) if ψ[k] < ψX && G.Z2D[k] > 0]
-    fsa = flux_surface_average(G, ψ, upper; policy = CubicContourAverage())
+    fsa = flux_surface_average(G, ψ, upper; policy = ContourAverage())
     @test all(fsa.valid)
     @test all(>(0), surface_average(fsa, G.Z2D))
     @test issorted(fsa.dVdψ)
     # no extremum: nothing to trace
-    flat = flux_surface_average(G, copy(G.R2D), upper; policy = CubicContourAverage())
+    flat = flux_surface_average(G, copy(G.R2D), upper; policy = ContourAverage())
     @test !flat.axis.converged && !any(flat.valid)
 end
 
 @testitem "Flux surfaces: tracing stays accurate up to a separatrix (exact cubic saddle)" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: find_o_point, psi_interpolant, surface_weights, CubicContourAverage
+    using RAPID2D: find_o_point, FieldLineGeometry, surface_weights, ContourAverage
     # ψ = x² + y² − y³, x = (R − 1.5)/0.4, y = Z/0.4: an O-point at the origin and an X-point at
     # y = 2/3, ψX = 4/27. Exactly cubic, so the bicubic interpolant is exact. Inside the level c,
     # c − y² + y³ = (y − y₁)(y₂ − y)(y₃ − y), and dV/dψ = 0.48π ∫ dy/√(…) = 0.48π · 2K(m)/√(y₃ − y₁),
@@ -305,12 +305,12 @@ end
         m = (y2 - y1) / (y3 - y1)
         return 0.48π * 2 * (π / (2 * agm(1.0, sqrt(1 - m)))) / sqrt(y3 - y1)
     end
-    itp = psi_interpolant(G, ψ)
-    o = find_o_point(G, ψ, region; itp)
+    g = FieldLineGeometry(G, ψ)
+    o = find_o_point(G, ψ, region; itp = g.itp)
     fractions = [0.5, 0.9, 0.99, 0.999, 0.9999]
     levels = fractions .* ψX
     lv = (; ψ_axis = o.ψ, ψ_edge = ψX, ψN = fractions, ψ = levels)
-    _, dVdψ, valid = surface_weights(CubicContourAverage(), G, ψ, region, o, lv, itp)
+    _, dVdψ, valid = surface_weights(ContourAverage(), G, g, region, o, lv)
     @test all(valid)
     for (s, c) in pairs(levels)
         @test abs(dVdψ[s] / exact_dVdψ(c) - 1) < 2.0e-3
@@ -318,14 +318,14 @@ end
 end
 
 @testitem "Flux surfaces: edge cases of the contour start and of the O-point" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
-    using RAPID2D: initialize_grid_geometry, initialize_grid_geometry!, GridGeometry, closed_contour!, find_o_point,
-        flux_surface_average, CubicContourAverage, IMASutils
-    # A level equal to the last radial node on the axis row: marching squares must not start
-    # its trace in the cell past the grid.
+    using RAPID2D: initialize_grid_geometry, initialize_grid_geometry!, GridGeometry, find_o_point,
+        flux_surface_average, ContourAverage, CubicTracer, FieldLineGeometry, MarchingSquaresTracer, PathLengths, trace_around!
+    # A level through the last node of the midplane row (the contour touches the grid edge there):
+    # marching squares starts on the last edge of the row and stays on the grid.
     G5 = initialize_grid_geometry(5, 5, (1.0, 2.0), (-0.5, 0.5))
-    ψ5 = @. (G5.R2D - 1.5)^2 + G5.Z2D^2
-    Rc, Zc = IMASutils.contour_cache(G5.R1D, G5.Z1D)
-    @test closed_contour!(Rc, Zc, ψ5, G5, 0.25, (; R = 1.5, Z = 0.0, ψ = 0.0)) == (nothing, nothing)
+    g5 = FieldLineGeometry(G5, @. (G5.R2D - 1.5)^2 + G5.Z2D^2)
+    e = trace_around!(PathLengths{Float64}(), MarchingSquaresTracer(), g5, 0.25, (; R = 1.5, Z = 0.0, ψ = 0.0))
+    @test e.termination in (:closed, :wall)
     # A region whose outermost surfaces reach within a quarter cell of the grid edge.
     G = test_grid(31)
     ψ = @. (G.R2D - R0)^2 + G.Z2D^2
@@ -340,7 +340,41 @@ end
     G32.inVol2D .= 2.0f0 * Float32(π) .* G32.R2D .* G32.dR .* G32.dZ
     ψ32 = @. (G32.R2D - Float32(R0))^2 + (G32.Z2D - Float32(Z0))^2
     region32 = findall(<(0.09f0), vec(ψ32))
-    for policy in (CubicContourAverage(), CubicContourAverage(max_turn = Float32(deg2rad(5)), max_step_cells = 0.5f0))
+    for policy in (ContourAverage(), ContourAverage(CubicTracer(max_turn = Float32(deg2rad(5)), max_step_cells = 0.5f0)))
         @test all(flux_surface_average(G32, ψ32, region32; policy).valid)
     end
+end
+
+@testitem "Flux surfaces: a region around two O-points is reported, not averaged" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: flux_surface_average, surface_average, to_grid
+    # Built around one O-point, the average would paint that island's profile onto the other's
+    # nodes: two separate islands, or a doublet whose closed nodes are one connected region.
+    G = test_grid(61)
+    island(Zc, w) = @. -exp(-((G.R2D - R0)^2 + (G.Z2D - Zc)^2) / w^2)
+    for ψ in (island(0.25, 0.08) .+ island(-0.25, 0.08), island(0.1, 0.12) .+ island(-0.1, 0.12))
+        region = findall(<(-0.3), vec(ψ))
+        fsa = @test_logs (:warn, r"O-points") match_mode = :any flux_surface_average(G, ψ, region)
+        @test !any(fsa.valid)
+        @test all(iszero, to_grid(fsa, surface_average(fsa, G.R2D)))
+    end
+    # one island of the same pair is averaged
+    ψ = island(0.25, 0.08) .+ island(-0.25, 0.08)
+    upper = [k for k in findall(<(-0.3), vec(ψ)) if G.Z2D[k] > 0]
+    @test all(flux_surface_average(G, ψ, upper).valid)
+end
+
+@testitem "Flux surfaces: O-points are counted on the interpolated flux" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: initialize_grid_geometry, flux_surface_average, count_o_points, psi_interpolant
+    # Grid extrema miss two islands whose minima each fall between two nodes of equal ψ, and count
+    # several along a tilted valley around one O-point. Stationary points of the bicubic ψ do not.
+    G = initialize_grid_geometry(17, 17, (1.0, 2.0), (-0.5, 0.5))
+    G.inVol2D .= 2π .* G.R2D .* G.dR .* G.dZ
+    two = @. ((G.R2D - 1.5)^2 - 0.25^2)^2 + (G.Z2D - 0.03125)^2
+    fsa = @test_logs (:warn, r"O-points") match_mode = :any flux_surface_average(G, two, findall(<(0.002), vec(two)); nsurf = 3)
+    @test !any(fsa.valid)
+    one = @. ((G.R2D - 1.5) - 3 * G.Z2D)^2 + 0.01 * G.Z2D^2
+    region = findall(<(0.0005), vec(one))
+    @test count_o_points(G, one, region, psi_interpolant(G, one); tol = 1.0e-10) == 1
+    fsa = @test_logs flux_surface_average(G, one, region; nsurf = 3)
+    @test fsa.axis.converged
 end

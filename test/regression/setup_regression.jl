@@ -32,6 +32,10 @@
         fill!(RP.fields.BZ, 0.0)
         fill!(RP.fields.BR_ext, 0.0)
         fill!(RP.fields.BZ_ext, 0.0)
+        # and their flux: field-line following traces ψ = ψ_ext + ψ_self, and the manual
+        # setup's ψ_ext holds its vertical field
+        fill!(RP.fields.ψ_ext, 0.0)
+        @. RP.fields.ψ = RP.fields.ψ_self
 
         # Set Jacobian for toroidal geometry
         @. RP.G.Jacob = RP.G.R2D
