@@ -51,6 +51,13 @@ function closed_surface_basis(
     nodes = [lin[i, j] for j in 2:(NZ - 1), i in 2:(NR - 1) if A[i, j] && corner_min(dc, i, j) < L]
     sort!(nodes)
     isempty(nodes) && return nothing
+    active = falses(NR - 1, NZ - 1)
+    for k in nodes
+        i, j = mod1(k, NR), cld(k, NR)
+        for (a, c) in ((i - 1, j - 1), (i, j - 1), (i - 1, j), (i, j))
+            dc[a, c] < L && (active[a, c] = true)
+        end
+    end
     ψN = [s * (ψ[k] - ψ_axis) / L for k in nodes]
     V = [FT(2π) * G.R2D[k] * G.dR * G.dZ for k in nodes]
     w = weights === nothing ? ones(FT, length(nodes)) : FT.(vec(weights)[nodes])
@@ -58,7 +65,7 @@ function closed_surface_basis(
     knots = merge_knots(collect(range(zero(FT), one(FT); length = max(n0, 2))), ψN, w)
     axis = (; R = FT(o.R), Z = FT(o.Z), ψ = ψ_axis)
     return ClosedSurfaceBasis{FT}(
-        nodes, V, axis, ψ_axis + s * L, ψN, dc ./ L, knots,
+        nodes, V, axis, ψ_axis + s * L, ψN, dc ./ L, active, knots,
         hat_matrix(knots, ψN; beyond = :zero), hat_matrix(knots, ψN; beyond = :constant), (NR, NZ),
     )
 end
@@ -187,12 +194,14 @@ The poloidal particle flux of n u∥ b = K_e B through every control-volume face
 the surface function with values `K` at the knots: `ΓR[i, j]` through the face between nodes
 (i, j) and (i + 1, j) along +R, `ΓZ[i, j]` between (i, j) and (i, j + 1) along +Z, each
 2π (H(ψ_end) − H(ψ_start)) at the face's corners (ψ per radian, B_R = −∂_Zψ/R, B_Z = ∂_Rψ/R).
-Zero beyond the cut, so on every face between Ω_c and the rest.
+H varies only at the corners of Ω_c inside the cut (`corner_active`), so every face outside Ω_c
+and between Ω_c and the rest carries none.
 """
 function stream_function_fluxes(b::ClosedSurfaceBasis{FT}, K::AbstractVector) where {FT}
     NR, NZ = b.dims
     J = b.ψ_cut - b.axis.ψ
-    H = [J * hat_integral(b.knots, K, x) for x in b.corner_ψN]
+    H_cut = J * hat_integral(b.knots, K, one(FT))
+    H = [b.corner_active[c] ? J * hat_integral(b.knots, K, b.corner_ψN[c]) : H_cut for c in CartesianIndices(b.corner_ψN)]
     T = promote_type(FT, eltype(K))
     ΓR = zeros(T, NR - 1, NZ)
     ΓZ = zeros(T, NR, NZ - 1)

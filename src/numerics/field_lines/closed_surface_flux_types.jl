@@ -54,6 +54,9 @@ The constraint domain Ω_c and its surface functions at one ψ:
 - `axis` = (; R, Z, ψ): the O-point. `ψ_cut`: the level where the surface functions end.
 - `ψN`, `corner_ψN`: ψN′ = (ψ − ψ_axis)/(ψ_cut − ψ_axis) at the nodes and at the dual corners,
   `corner_ψN[i, j]` at (R_i + ΔR/2, Z_j + ΔZ/2).
+  `corner_active`: the corners of Ω_c's control volumes inside the cut, where H varies; at
+  every other corner H takes its value at the cut, so no flux appears where ψ elsewhere in the
+  plane runs through the region's range.
 - `knots`: in ψN′ from the axis (0) to the cut (1); a single knot is one constant function.
 - `P`: the hats of `knots` at the nodes, zero beyond the cut, where K_e ends.
   `Pτ`: the same continued as constants beyond the cut, for temperatures, which do not end there.
@@ -67,6 +70,7 @@ struct ClosedSurfaceBasis{FT <: AbstractFloat}
     ψ_cut::FT
     ψN::Vector{FT}
     corner_ψN::Matrix{FT}
+    corner_active::BitMatrix
     knots::Vector{FT}
     P::SparseMatrixCSC{FT, Int}
     Pτ::SparseMatrixCSC{FT, Int}

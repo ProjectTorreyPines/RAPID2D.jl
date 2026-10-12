@@ -338,3 +338,21 @@ end
     @test b.ψ_cut == b0.ψ_cut
     @test k0 in b.nodes
 end
+
+@testitem "Closed-surface flux: no flux outside Ω_c where ψ leaves the region's range" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, stream_function_fluxes, face_outflow
+    G = grid(41)
+    # a deeper well away from the region, outside the admissible nodes: ψ there runs below the
+    # axis level, which a flux function of ψ alone would turn into flux
+    ψ = @. ellipse(G.R2D, G.Z2D) - 0.3 * c * exp(-((G.R2D - 1.88)^2 + (G.Z2D - 0.38)^2) / 0.004)
+    A = admissible_ellipse(G; a = 0.25)
+    b = closed_surface_basis(G, ψ, A)
+    @test b !== nothing
+    @test minimum(b.corner_ψN) < 0                     # the case this test is about
+    ΓR, ΓZ = stream_function_fluxes(b, [1 + x for x in b.knots])
+    inΩ = falses(G.NR, G.NZ)
+    inΩ[b.nodes] .= true
+    @test all(iszero(ΓR[i, j]) for i in 1:(G.NR - 1), j in 1:G.NZ if !(inΩ[i, j] && inΩ[i + 1, j]))
+    @test all(iszero(ΓZ[i, j]) for i in 1:G.NR, j in 1:(G.NZ - 1) if !(inΩ[i, j] && inΩ[i, j + 1]))
+    @test maximum(abs, face_outflow(ΓR, ΓZ)) <= 1.0e-13 * maximum(abs, ΓR)
+end
