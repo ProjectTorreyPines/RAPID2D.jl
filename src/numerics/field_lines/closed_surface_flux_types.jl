@@ -77,14 +77,16 @@ end
     ClosedSurfaceState{FT}(NR, NZ)
 
 The constraint's state in a run: the basis of the step (`nothing` when there is none), the
-surface flux `K` of its last solve at the basis knots, the stream-function face fluxes `ΓR`,
-`ΓZ` laid out as in [`stream_function_fluxes`](@ref), and the cumulative signed energy ledger [J]:
-kinetic energy the constraint removed on its first step, on steps where the basis changed, and on
-other steps, and the change from remapping u∥ to the new density.
+surface flux `K` of its last solve at the basis knots and the `signature` of the basis it used,
+the stream-function face fluxes `ΓR`, `ΓZ` laid out as in [`stream_function_fluxes`](@ref), and the
+cumulative signed energy ledger [J]: kinetic energy the constraint removed on its first step, on
+steps where the basis changed, and on other steps, and the change from remapping u∥ to the new
+density.
 """
 mutable struct ClosedSurfaceState{FT <: AbstractFloat}
     basis::Union{Nothing, ClosedSurfaceBasis{FT}}
     K::Vector{FT}
+    signature::UInt
     ΓR::Matrix{FT}
     ΓZ::Matrix{FT}
     E_activation::FT
@@ -93,5 +95,5 @@ mutable struct ClosedSurfaceState{FT <: AbstractFloat}
     E_remap::FT
 end
 ClosedSurfaceState{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat} = ClosedSurfaceState{FT}(
-    nothing, FT[], zeros(FT, NR - 1, NZ), zeros(FT, NR, NZ - 1), zero(FT), zero(FT), zero(FT), zero(FT),
+    nothing, FT[], UInt(0), zeros(FT, NR - 1, NZ), zeros(FT, NR, NZ - 1), zero(FT), zero(FT), zero(FT), zero(FT),
 )

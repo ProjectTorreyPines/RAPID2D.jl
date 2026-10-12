@@ -51,6 +51,16 @@ Contains volume-averaged quantities
     ν_ii::FT = zero(FT)             # Ion-ion coulomb collision frequency [1/s]
 
 
+    # Electron kinetic energy, and the closed-surface flux constraint (SurfaceFluxConstraint)
+    Ke_tot::FT = zero(FT)            # ½ mₑ n u∥² over the in-wall volume [J]
+    cs_nodes::Int = 0                # nodes of the constraint domain Ω_c (0: no constraint)
+    cs_knots::Int = 0                # surface functions (hats) of its basis
+    cs_current_out::FT = zero(FT)    # share of the closed current the constraint leaves out
+    cs_E_activation::FT = zero(FT)   # cumulative kinetic energy removed on activation [J]
+    cs_E_basis_change::FT = zero(FT) # ... on steps where the basis changed [J]
+    cs_E_projection::FT = zero(FT)   # ... on other steps [J]
+    cs_E_remap::FT = zero(FT)        # cumulative kinetic-energy change of the remap [J]
+
     # Electron Heating Powers
     Pe_diffu::FT = zero(FT)       # Diffusion power
     Pe_visc_heat::FT = zero(FT)    # Viscous heating of u∥, mₑ Γ_M(u∥)

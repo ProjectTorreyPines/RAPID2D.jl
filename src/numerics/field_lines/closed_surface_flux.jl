@@ -12,7 +12,8 @@
 
 The constraint domain and its surface functions for the nodes marked `admissible` (an `(NR, NZ)`
 mask: closed field lines inside the wall, not empty). Nodes on the grid's perimeter are never
-admitted.
+admitted; nodes the admissible ones enclose are (the node on the O-point, where field-line
+following meets a null).
 - The cut is the smallest corner level of any face between an admissible node and the rest,
   and no higher than the outermost level the bicubic tracer closes around the O-point inside the
   wall cells `inside`. Ω_c is every admissible node with a corner inside the cut, so the faces
@@ -31,6 +32,7 @@ function closed_surface_basis(
     A = copy(admissible)
     A[[1, NR], :] .= false
     A[:, [1, NZ]] .= false
+    fill_holes!(A)
     region = findall(vec(A))
     isempty(region) && return nothing
     itp === nothing && (itp = psi_interpolant(G, ψ))
@@ -59,6 +61,29 @@ function closed_surface_basis(
         nodes, V, axis, ψ_axis + s * L, ψN, dc ./ L, knots,
         hat_matrix(knots, ψN; beyond = :zero), hat_matrix(knots, ψN; beyond = :constant), (NR, NZ),
     )
+end
+
+# Admit the non-admissible nodes the admissible ones enclose: those not reached from the grid's
+# perimeter through non-admissible nodes. Field-line following ends at the null of a node on the
+# O-point and leaves it out; the cut must come from the region's outer edge.
+function fill_holes!(A::AbstractMatrix{Bool})
+    NR, NZ = size(A)
+    reached = falses(NR, NZ)
+    stack = Tuple{Int, Int}[]
+    for j in 1:NZ, i in 1:NR
+        (i in (1, NR) || j in (1, NZ)) && !A[i, j] && (reached[i, j] = true; push!(stack, (i, j)))
+    end
+    while !isempty(stack)
+        i, j = pop!(stack)
+        for (a, c) in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1))
+            (1 <= a <= NR && 1 <= c <= NZ) || continue
+            (A[a, c] || reached[a, c]) && continue
+            reached[a, c] = true
+            push!(stack, (a, c))
+        end
+    end
+    A .|= .!reached
+    return A
 end
 
 # the smallest of the four corners of node (i, j)'s control volume

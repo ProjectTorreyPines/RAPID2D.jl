@@ -323,3 +323,18 @@ end
     u0, K0 = constrained_momentum_solve(A2, r, nothing, n, B)
     @test u0 ≈ A2 \ r && isempty(K0)
 end
+
+@testitem "Closed-surface basis: a hole inside the region (the axis node) does not set the cut" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis
+    G = grid(31)
+    ψ = ellipse(G)
+    A = admissible_ellipse(G)
+    b0 = closed_surface_basis(G, ψ, A)
+    # field-line following ends at the null of the node nearest the O-point and leaves it out
+    k0 = argmin(vec(ψ))
+    A[k0] = false
+    b = closed_surface_basis(G, ψ, A)
+    @test b !== nothing
+    @test b.ψ_cut == b0.ψ_cut
+    @test k0 in b.nodes
+end

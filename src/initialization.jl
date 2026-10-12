@@ -159,6 +159,7 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # reads as zero length and would cap D∥ at zero everywhere on step 0. The step-1
     # refresh in `run_simulation!` answers a different question ("has the field moved").
     flf_analysis_field_lines_rz_plane!(RP)
+    update_closed_surface_basis!(RP)
 
     # Operators first: they depend on the grid alone, and the transport refresh at the end of
     # `initialize_plasma_and_transport!` writes the electron in-wall operators into them.

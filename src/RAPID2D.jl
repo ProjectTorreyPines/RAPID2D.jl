@@ -104,6 +104,7 @@ include("numerics/field_lines/field_line_following.jl")  # field-line lengths an
 include("numerics/field_lines/flux_surface_average.jl")  # averages over flux surfaces, and back to the grid
 include("numerics/field_lines/closed_surface_flux.jl")   # surface functions on the closed region, their stream-function flux
 include("numerics/field_lines/field_line_average.jl")    # averages along the field line through each node
+include("physics/closed_surface_constraint.jl")          # the closed-surface flux constraint in a run
 
 # Export types from various modules for convenience
 export PlasmaConstants  # Physical constants
