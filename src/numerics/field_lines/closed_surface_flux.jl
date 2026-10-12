@@ -7,33 +7,6 @@
 # internal/docs/src/notes/plans/PLAN_closed-surface-flux.md (D1, D2, D6, D17).
 
 """
-    ClosedSurfaceBasis{FT}
-
-The constraint domain Ω_c and its surface functions at one ψ:
-- `nodes`: the linear ids of Ω_c; `V`: their control volumes 2πR ΔR ΔZ.
-- `axis` = (; R, Z, ψ): the O-point. `ψ_cut`: the level where the surface functions end.
-- `ψN`, `corner_ψN`: ψN′ = (ψ − ψ_axis)/(ψ_cut − ψ_axis) at the nodes and at the dual corners,
-  `corner_ψN[i, j]` at (R_i + ΔR/2, Z_j + ΔZ/2).
-- `knots`: in ψN′ from the axis (0) to the cut (1); a single knot is one constant function.
-- `P`: the hats of `knots` at the nodes, zero beyond the cut, where K_e ends.
-  `Pτ`: the same continued as constants beyond the cut, for temperatures, which do not end there.
-
-Build with [`closed_surface_basis`](@ref).
-"""
-struct ClosedSurfaceBasis{FT <: AbstractFloat}
-    nodes::Vector{Int}
-    V::Vector{FT}
-    axis::@NamedTuple{R::FT, Z::FT, ψ::FT}
-    ψ_cut::FT
-    ψN::Vector{FT}
-    corner_ψN::Matrix{FT}
-    knots::Vector{FT}
-    P::SparseMatrixCSC{FT, Int}
-    Pτ::SparseMatrixCSC{FT, Int}
-    dims::Tuple{Int, Int}
-end
-
-"""
     closed_surface_basis(G, ψ, admissible; inside = nothing, weights = nothing, nknots = default,
                          itp = psi_interpolant(G, ψ)) -> ClosedSurfaceBasis or nothing
 
@@ -349,4 +322,44 @@ function current_outside_constraint(b::ClosedSurfaceBasis, closed::AbstractVecto
         (r > length(b.nodes) || b.nodes[r] != k || b.ψN[r] > 1) && (lost += J[k])
     end
     return lost / total
+end
+
+# ── the constrained momentum step ────────────────────────────────────────────────
+
+"""
+    constrained_momentum_solve(A, r, basis, n, B; extra = nothing) -> (u, K)
+
+Solve the per-electron momentum step A u = r on the grid's nodes (`A` sparse, vectors over all
+nodes) with the surface-flux constraint on the nodes of Ω_c inside the cut: there
+u = (B/n) P K, and their momentum rows are replaced by the Galerkin rows
+Q (A u − r) = `extra` (zero by default), Q = Pᵀ diag(V B). Nodes beyond the cut and outside Ω_c
+keep their rows, so their current is not removed (PLAN_closed-surface-flux.md D19). The residual of
+the replaced rows then does no work on the constrained flow (P.5). `basis === nothing` is the
+plain solve, with an empty K.
+"""
+function constrained_momentum_solve(
+        A::SparseMatrixCSC{FT}, r::AbstractVector, b::Union{Nothing, ClosedSurfaceBasis}, n::AbstractVector, B::AbstractVector;
+        extra::Union{Nothing, AbstractVector} = nothing,
+    ) where {FT <: AbstractFloat}
+    b === nothing && return (A \ r, FT[])
+    N = size(A, 1)
+    sel = findall(<=(1), b.ψN)
+    cu = b.nodes[sel]
+    Pin = b.P[sel, :]
+    M = size(Pin, 2)
+    nk, Bk = n[cu], B[cu]
+    κ = mean(Bk ./ nk)                                   # K is solved as κ K, of the order of u
+    Q = Pin' * Diagonal(b.V[sel] .* Bk)
+    qs = vec(sum(abs, Q; dims = 2))                      # Galerkin rows normalized
+    Qs = Diagonal(one(FT) ./ qs) * Q
+    keep = ones(FT, N)
+    keep[cu] .= zero(FT)
+    Arows = Diagonal(keep) * A + Diagonal(one(FT) .- keep)   # constrained rows: u_k − (T K)_k = 0
+    T = sparse(Diagonal((Bk ./ nk) ./ κ) * Pin)
+    rows, cols, vals = findnz(T)
+    Tcols = sparse(cu[rows], cols, -vals, N, M)
+    Aaug = [Arows Tcols; sparse(Qs * A[cu, :]) spzeros(FT, M, M)]
+    rhs = vcat(keep .* r, Qs * r[cu] .+ (extra === nothing ? zero(FT) : extra ./ qs))
+    x = Aaug \ rhs
+    return x[1:N], x[(N + 1):end] ./ κ
 end

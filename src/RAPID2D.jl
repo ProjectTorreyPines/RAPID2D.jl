@@ -39,6 +39,7 @@ include("numerics/fixed_point.jl")           # the fixed-point solve, and Newton
 include("numerics/anderson.jl")              # Anderson mixing for the coupled solve's fixed point
 include("physics/ion_species.jl")   # IonSpecies and the transport policies; types.jl needs both
 include("numerics/field_lines/field_line_tracer_policies.jl")   # how a field line is followed: the tracer policies the flags hold
+include("numerics/field_lines/closed_surface_flux_types.jl")   # the closed-surface flux constraint: policies, basis, state
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")

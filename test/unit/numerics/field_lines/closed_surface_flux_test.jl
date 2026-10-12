@@ -268,3 +268,58 @@ end
     @test f ≈ out / length(closed)
     @test 0 < f < 0.5
 end
+
+@testitem "Closed-surface policy: free flow by default, the constraint by choice" tags = [:numerics] begin
+    using RAPID2D: FreeParallelFlow, SurfaceFluxConstraint, PostProjection, ClosedSurfaceState
+    @test SimulationFlags{Float64}().closed_surface_flow isa FreeParallelFlow
+    @test SurfaceFluxConstraint().coupling isa PostProjection
+    s = ClosedSurfaceState{Float64}(5, 7)
+    @test s.basis === nothing && isempty(s.K)
+    @test size(s.ΓR) == (4, 7) && size(s.ΓZ) == (5, 6)
+end
+
+@testitem "Constrained momentum: surface flux inside the cut, ordinary rows elsewhere" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, constrained_momentum_solve
+    using RAPID2D.SparseArrays: sparse, spdiagm, SparseMatrixCSC
+    using LinearAlgebra: Diagonal, I
+    using Random: MersenneTwister
+    rng = MersenneTwister(11)
+    G = grid(31)
+    b = closed_surface_basis(G, ellipse(G), admissible_ellipse(G))
+    N = G.NR * G.NZ
+    B = vec(@. sqrt((3.0 / G.R2D)^2 + 1.0e-6))
+    n = vec(@. 1.0e17 * (1 + 0.5 * (G.R2D - R0) / 0.3))
+    ν = vec(@. 1.0e6 * (1 + 0.6 * (G.Z2D - Z0) / 0.3))
+    dt = 1.0e-6
+    # a diagonal step operator: friction only, so open rows decouple
+    A = spdiagm(0 => 1 .+ dt .* ν)
+    r = randn(rng, N) .* 1.0e4
+    u, K = constrained_momentum_solve(A, r, b, n, B)
+    inside = [b.nodes[k] for k in eachindex(b.nodes) if b.ψN[k] <= 1]
+    rest = setdiff(1:N, inside)
+    # the constraint, the ordinary rows, and the Galerkin rows
+    @test n[inside] .* u[inside] ./ B[inside] ≈ b.P[b.ψN .<= 1, :] * K
+    @test A[rest, :] * u ≈ r[rest]
+    Pin = b.P[b.ψN .<= 1, :]
+    Vin = b.V[b.ψN .<= 1]
+    Q = Pin' * Diagonal(Vin .* B[inside])
+    f = (A * u .- r)[inside]
+    @test maximum(abs, Q * f) <= 1.0e-10 * maximum(abs, Q * abs.(r[inside]))
+    # (P.5): the constraint force does no work on the constrained flow
+    @test abs(sum(Vin .* n[inside] .* u[inside] .* f)) <= 1.0e-10 * sum(abs.(Vin .* n[inside] .* u[inside] .* f))
+    # with friction only, the series formula: (Pᵀ V B a B/n P) K = Pᵀ V B r
+    a = 1 .+ dt .* ν[inside]
+    @test K ≈ (Pin' * Diagonal(Vin .* B[inside] .^ 2 .* a ./ n[inside]) * Pin) \ (Pin' * (Vin .* B[inside] .* r[inside]))
+    # nodes of Ω_c beyond the cut keep their ordinary rows: their current is not removed
+    beyond = [b.nodes[k] for k in eachindex(b.nodes) if b.ψN[k] > 1]
+    @test !isempty(beyond) && u[beyond] ≈ r[beyond] ./ (1 .+ dt .* ν[beyond])
+    # a coupling across the cut (a transport-like stencil) is honoured by both kinds of rows
+    L = spdiagm(1 => fill(-0.1, N - 1), -1 => fill(-0.1, N - 1), 0 => fill(0.2, N))
+    A2 = A + L
+    u2, K2 = constrained_momentum_solve(A2, r, b, n, B)
+    @test A2[rest, :] * u2 ≈ r[rest]
+    @test maximum(abs, Q * (A2 * u2 .- r)[inside]) <= 1.0e-10 * maximum(abs, Q * abs.(r[inside]))
+    # no basis: the ordinary solve
+    u0, K0 = constrained_momentum_solve(A2, r, nothing, n, B)
+    @test u0 ≈ A2 \ r && isempty(K0)
+end
