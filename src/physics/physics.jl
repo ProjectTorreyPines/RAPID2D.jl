@@ -534,8 +534,13 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # no switch of its own: on exactly when u∥ is diffused (off, no kinetic energy is erased;
         # on without it, the erased energy would be lost).
         visc_heat_on = RP.flags.ud_evolve && RP.flags.Include_ud_diffu_term
-        # one build of the operator Te diffuses with, for both powers below
-        A_diffu = RP.flags.Include_Te_diffu_term || visc_heat_on ? ue_Te_operators(RP).A_diffu : nothing
+        # SurfaceFluxConstraint: on the closed region Te rides the stream-function flux and is
+        # compressed by the pressure operator's adjoint, which only the operators `update_Te!`
+        # solves with carry
+        surface_carriage = RP.flags.Include_Te_convec_term && closed_surface_active(RP) && !isempty(RP.closed_surface.K)
+        # one build of the operators Te is solved with, for the powers below that take them
+        pops = RP.flags.Include_Te_diffu_term || visc_heat_on || surface_carriage ? ue_Te_operators(RP) : nothing
+        A_diffu = pops === nothing ? nothing : pops.A_diffu
 
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
@@ -554,7 +559,13 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # If convection term is included in temperature equation
         if RP.flags.Include_Te_convec_term
             # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)  =  -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)
-            ePowers.conv .= ee * (-FT(1.5) * u∇(pla.Te_eV) .- pla.Te_eV .* op_e.div_ue)
+            if !surface_carriage
+                ePowers.conv .= ee * (-FT(1.5) * u∇(pla.Te_eV) .- pla.Te_eV .* op_e.div_ue)
+            else
+                # the operators `update_Te!` puts on its left-hand side, so the explicit and the
+                # implicit halves of the θ-scheme agree on the closed region too
+                ePowers.conv .= ee * (-FT(1.5) * (pops.A_adv * pla.Te_eV) .- pla.Te_eV .* pops.div_u)
+            end
         end
 
         if RP.flags.Include_heat_flux_term

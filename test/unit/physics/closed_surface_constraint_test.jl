@@ -219,6 +219,28 @@ end
     @test ops.div_u[Ω] ≈ -c ./ (pla.ne[Ω] .* V[Ω])
 end
 
+@testitem "Closed-surface transport: Te's explicit convection takes the carriage and compression of its implicit half" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: update_ue_para!, ue_Te_operators, cache_electron_operators!, update_electron_heating_powers!
+    # The θ-scheme for Te puts (1 − θ) of P_conv = −1.5 (u·∇)Te − Te ∇·u on the right-hand side,
+    # from ePowers.conv, and θ of it on the left, from ue_Te_operators. On the closed region both
+    # halves must carry Te by the stream-function flux and compress it with the pressure
+    # operator's adjoint, or the parallel carriage and the compression act with weight θ only.
+    RP = closed_RP(; mean_ExB = false, turb_ExB_mixing = false)
+    update_ue_para!(RP)                               # K and the stream-function fluxes of the step
+    pla, G = RP.plasma, RP.G
+    @. pla.ueR = pla.ue_para * RP.fields.bR          # no perpendicular drift: all carriage is parallel
+    @. pla.ueZ = pla.ue_para * RP.fields.bZ
+    cache_electron_operators!(RP)
+    @. pla.Te_eV = 10.0 + 4.0 * sin(3 * G.R2D) * cos(2 * G.Z2D)   # varies along the surfaces
+    update_electron_heating_powers!(RP)
+    ops = ue_Te_operators(RP)
+    ee = RP.config.constants.ee
+    implicit_half = ee .* (-1.5 .* (ops.A_adv * pla.Te_eV) .- pla.Te_eV .* ops.div_u)
+    Ω = RP.closed_surface.basis.nodes
+    @test maximum(abs, implicit_half[Ω]) > 0           # the parallel carriage does act on Ω_c
+    @test pla.ePowers.conv[Ω] ≈ implicit_half[Ω]
+end
+
 @testitem "DEFECT: a depleted sector of the closed surfaces overheats under the constraint" setup = [ClosedSurfaceRun] tags = [:physics] begin
     using RAPID2D: run_simulation!
     # The constraint holds J∥/B = K_e on a surface, so a sector a thousand times thinner carries the
