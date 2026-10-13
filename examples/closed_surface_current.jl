@@ -9,9 +9,9 @@
 # J∥/B = ⟨E∥B⟩/⟨B²/σ⟩ in steady state, and the surfaces are coupled inductively while the current
 # rises. Three treatments of the electron parallel flow:
 # - free flow (`FreeParallelFlow`): u∥ node by node, so each node carries its local Ohmic current;
-# - post-projection (`SurfaceFluxConstraint(; coupling = PostProjection())`): n u∥/B = K(ψ) on the
+# - post-projection (`SurfaceFluxConstraint(; coupling = PostProjection())`): n u∥/B a function of ψ on the
 #   closed region, with ψ and the induced field solved for the unconstrained current;
-# - block constraint (`SurfaceFluxConstraint()`): K solved inside the coupled u∥–ψ step.
+# - block constraint (`SurfaceFluxConstraint()`): n u∥/B solved inside the coupled u∥–ψ step.
 # The reference is a 1-D model of the same physics: nested elliptic shells, each with its
 # shell-averaged Ohm's law and electron inertia, coupled by free-space Green's functions, solved
 # exactly in time.
@@ -88,7 +88,7 @@ electron_current(RP) = sum(QE .* RP.plasma.ne .* RP.plasma.ue_para .* RP.fields.
 flux_per_B(RP) = [n > 0 ? n * u / B : 0.0 for (n, u, B) in zip(RP.plasma.ne, RP.plasma.ue_para, RP.fields.Btot)]
 
 # ── the reference: shells of the ellipse, the momentum equation averaged over each with the
-# weight B, J∥/B = q K on each, coupled by the free-space flux of every shell's current ───────
+# weight B, J∥/B = q n u∥/B on each, coupled by the free-space flux of every shell's current ───
 const GL2 = ([-1 / sqrt(3), 1 / sqrt(3)], [1.0, 1.0])
 const GL4 = (
     [-0.8611363115940526, -0.3399810435848563, 0.3399810435848563, 0.8611363115940526],
@@ -106,8 +106,8 @@ function shell_points(edges, rule, nθ, θ_offset)
     return (; R, Z, dA, shell)
 end
 
-# m A (dK/dt + ν K) = q (F − G dK/dt) per shell: A = ∫ B²/n dV, F = ∫ Bϕ Eϕ dV, and G dK/dt the
-# induced part, G_jk = ∫_j (Bϕ/R) ψ_k dV with ψ_k the flux of shell k's current per unit K.
+# m A (dg/dt + ν g) = q (F − G dg/dt) per shell, g = n u∥/B: A = ∫ B²/n dV, F = ∫ Bϕ Eϕ dV, and
+# G dg/dt the induced part, G_jk = ∫_j (Bϕ/R) ψ_k dV with ψ_k the flux of shell k's current per unit g.
 function shell_reference(α; nshell = 40)
     edges = collect(range(0.0, RHO_N; length = nshell + 1))
     d, s = shell_points(edges, GL2, 64, 0.5), shell_points(edges, GL4, 128, 0.25)
@@ -127,12 +127,12 @@ function shell_reference(α; nshell = 40)
             G[d.shell[i], k] += 2π * Bϕ(d.R[i]) * d.dA[i] * ψ[i]
         end
     end
-    K∞ = QE .* F ./ (ME * NU0 .* A)
-    W = (ME .* Diagonal(A) .+ QE .* G) \ (ME * NU0 .* Matrix(Diagonal(A)))    # dK/dt = W (K∞ − K)
-    K(t) = isinf(t) ? copy(K∞) : K∞ .- exp(-t .* W) * K∞
+    Γ_over_B∞ = QE .* F ./ (ME * NU0 .* A)
+    W = (ME .* Diagonal(A) .+ QE .* G) \ (ME * NU0 .* Matrix(Diagonal(A)))    # dg/dt = W (g∞ − g)
+    Γ_over_B(t) = isinf(t) ? copy(Γ_over_B∞) : Γ_over_B∞ .- exp(-t .* W) * Γ_over_B∞
     ρ = (edges[1:(end - 1)] .+ edges[2:end]) ./ 2
     at(Kv, x) = (j = clamp(searchsortedlast(ρ, x), 1, nshell - 1); t = clamp((x - ρ[j]) / (ρ[j + 1] - ρ[j]), 0, 1); (1 - t) * Kv[j] + t * Kv[j + 1])
-    return (; ρ, K, I = t -> sum(QE .* K(t) .* C), at)
+    return (; ρ, Γ_over_B, I = t -> sum(QE .* Γ_over_B(t) .* C), at)
 end
 
 # ── runs ────────────────────────────────────────────────────────────────────────────────────
@@ -166,15 +166,15 @@ stills = Dict(key => steady(key, 0.8) for key in (:free, :block))
 
 # ── steady state, α = 0.8: J∥/B on the grid and along the surfaces ──────────────────────────
 let ref = refs[0.8], G = stills[:block].G
-    K∞ = ref.K(Inf)
-    scale = K∞[argmax(abs.(K∞))]
+    Γ_over_B∞ = ref.Γ_over_B(Inf)
+    scale = Γ_over_B∞[argmax(abs.(Γ_over_B∞))]
     ρ = minor_radius.(G.R2D, G.Z2D)
     inside = stills[:block].plasma.ne .> 0
     map_of(v) = (M = fill(NaN, G.NR, G.NZ); M[inside] .= v[inside]; M')
     panels = [
         heatmap(G.R1D, G.Z1D, map_of(flux_per_B(stills[:free]) ./ scale); title = "J∥/B, free flow"),
         heatmap(G.R1D, G.Z1D, map_of(flux_per_B(stills[:block]) ./ scale); title = "J∥/B, surface-flux constraint"),
-        heatmap(G.R1D, G.Z1D, map_of([ref.at(K∞, x) / scale for x in ρ]); title = "J∥/B, shell reference"),
+        heatmap(G.R1D, G.Z1D, map_of([ref.at(Γ_over_B∞, x) / scale for x in ρ]); title = "J∥/B, shell reference"),
     ]
     foreach(p -> plot!(p; aspect_ratio = :equal, xlims = (1.05, 1.95), ylims = (-0.6, 0.6), c = :inferno, clims = (0, 2.5), xlabel = "R (m)"), panels)
     band = findall(x -> 0.15 < x < 0.25, ρ) ∩ findall(inside)
@@ -182,7 +182,7 @@ let ref = refs[0.8], G = stills[:block].G
     p4 = plot(; xlabel = "poloidal angle θ (0 outboard)", ylabel = "(J∥/B) / reference", title = "surfaces 0.15 < ρ < 0.25 m", ylims = (0, 3.4))
     for (key, label) in ((:free, "free flow"), (:block, "surface-flux constraint"))
         f = flux_per_B(stills[key])
-        scatter!(p4, θ, [f[k] / ref.at(K∞, ρ[k]) for k in band]; ms = 2, msw = 0, color = COLORS[key], label)
+        scatter!(p4, θ, [f[k] / ref.at(Γ_over_B∞, ρ[k]) for k in band]; ms = 2, msw = 0, color = COLORS[key], label)
     end
     hline!(p4, [1]; color = :black, ls = :dash, label = "reference")
     I_ref, I_free, I_block = (abs(x) for x in (ref.I(Inf), electron_current(stills[:free]), electron_current(stills[:block])))
@@ -227,14 +227,14 @@ end
 # ── the profile during the rise, α = 0.8 ────────────────────────────────────────────────────
 let ref = refs[0.8], G = runs[(:block, 0.8)].RP.G
     ρ = vec(minor_radius.(G.R2D, G.Z2D))
-    K∞ = ref.K(Inf)
-    scale = K∞[argmax(abs.(K∞))]
+    Γ_over_B∞ = ref.Γ_over_B(Inf)
+    scale = Γ_over_B∞[argmax(abs.(Γ_over_B∞))]
     b = runs[(:block, 0.8)].RP.closed_surface.basis
     constrained = b.nodes[b.ψN .<= 1]
     panels = map(sort(collect(keys(runs[(:block, 0.8)].profiles)))) do step
         t = step * DT
         p = plot(
-            ref.ρ, ref.K(t) ./ scale; color = :black, lw = 2, label = "shell reference", xlabel = "ρ (m)", ylabel = "J∥/B (normalized)",
+            ref.ρ, ref.Γ_over_B(t) ./ scale; color = :black, lw = 2, label = "shell reference", xlabel = "ρ (m)", ylabel = "J∥/B (normalized)",
             title = @sprintf("t = %.0f μs", 1.0e6 * t), ylims = (-0.05, 1.15), legend = step == 25 ? :topright : false
         )
         for key in (:post, :block)
@@ -258,14 +258,14 @@ for α in (0.0, 0.8)
     has_density = runs[(:block, α)].RP.plasma.ne .> 0
     b = runs[(:block, α)].RP.closed_surface.basis
     constrained = b.nodes[b.ψN .<= 1]
-    K∞ = ref.K(Inf)
-    scale = K∞[argmax(abs.(K∞))]
+    Γ_over_B∞ = ref.Γ_over_B(Inf)
+    scale = Γ_over_B∞[argmax(abs.(Γ_over_B∞))]
     map_of(v) = (M = fill(NaN, G.NR, G.NZ); M[has_density] .= v[has_density]; M')
     panels = []
     for step in sort(collect(keys(runs[(:block, α)].profiles)))
         t = step * DT
-        f_ref = [ref.at(ref.K(t), x) for x in ρ] ./ scale
-        peak = maximum(abs, ref.K(t)) / abs(scale)
+        f_ref = [ref.at(ref.Γ_over_B(t), x) for x in ρ] ./ scale
+        peak = maximum(abs, ref.Γ_over_B(t)) / abs(scale)
         push!(panels, heatmap(G.R1D, G.Z1D, map_of(f_ref); title = @sprintf("shell reference, t = %.0f μs", 1.0e6t), clims = (0, 1.05peak)))
         for key in keys(POLICIES)
             f = runs[(key, α)].profiles[step] ./ scale

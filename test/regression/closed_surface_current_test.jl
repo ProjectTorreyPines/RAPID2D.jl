@@ -63,9 +63,9 @@
     electron_current(RP) = sum(QE .* RP.plasma.ne .* RP.plasma.ue_para .* RP.fields.bϕ) * RP.G.dR * RP.G.dZ
 
     """
-    The shell reference: m A (dK/dt + ν K) = q (F − G dK/dt) per shell of the ellipse, with
-    A = ∫ B²/n dV, F = ∫ Bϕ Eϕ dV and G_jk = ∫_j (Bϕ/R) ψ_k dV, ψ_k the free-space flux of shell k's
-    current per unit K. Returns the total current I(t).
+    The shell reference: m A (dg/dt + ν g) = q (F − G dg/dt) per shell of the ellipse, g = n u∥/B on
+    the shell, with A = ∫ B²/n dV, F = ∫ Bϕ Eϕ dV and G_jk = ∫_j (Bϕ/R) ψ_k dV, ψ_k the free-space flux
+    of shell k's current per unit g. Returns the total current I(t).
     """
     function shell_current(α; nshell = 24, nθ = 48)
         edges = collect(range(0.0, RHO_N; length = nshell + 1))
@@ -102,9 +102,9 @@
                 G[d.shell[i], k] += 2π * Bϕ(d.R[i]) * d.dA[i] * ψ[i]
             end
         end
-        K∞ = QE .* F ./ (ME * NU0 .* A)
+        Γ_over_B∞ = QE .* F ./ (ME * NU0 .* A)
         W = (ME .* Diagonal(A) .+ QE .* G) \ (ME * NU0 .* Matrix(Diagonal(A)))
-        return t -> sum(QE .* (isinf(t) ? K∞ : K∞ .- exp(-t .* W) * K∞) .* C)
+        return t -> sum(QE .* (isinf(t) ? Γ_over_B∞ : Γ_over_B∞ .- exp(-t .* W) * Γ_over_B∞) .* C)
     end
 end
 

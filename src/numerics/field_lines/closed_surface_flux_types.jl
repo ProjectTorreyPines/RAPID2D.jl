@@ -27,7 +27,7 @@ abstract type ClosedSurfaceCoupling end
 """
     BlockConstraint()
 
-**The default.** Above the Ampère gate the surface flux K_e is an unknown of the coupled
+**The default.** Above the Ampère gate the surface values of n u∥/B are unknowns of the coupled
 u∥–ψ block: the constrained rows and the Galerkin rows join it, so ψ and the coil currents are
 solved with the constrained current. Below the gate the constraint is in the u∥ solve.
 """
@@ -46,10 +46,9 @@ struct PostProjection <: ClosedSurfaceCoupling end
 """
     SurfaceFluxConstraint(; coupling = BlockConstraint())
 
-On the closed region the electron parallel particle flux per B is a surface function,
-n u∥ / B = K_e(ψ), solved from the momentum equation averaged over each surface, and the
-density's parallel flux there is the stream-function flux of K_e, which leaves the density
-unmoved.
+On the closed region the electron parallel particle flux per B, n u∥ / B, is a surface function,
+solved from the momentum equation averaged over each surface, and the density's parallel flux
+there is its stream-function flux, which leaves the density unmoved.
 """
 struct SurfaceFluxConstraint{C <: ClosedSurfaceCoupling} <: ClosedSurfaceFlow
     coupling::C
@@ -68,7 +67,7 @@ The constraint domain Ω_c and its surface functions at one ψ:
   every other corner H takes its value at the cut, so no flux appears where ψ elsewhere in the
   plane runs through the region's range.
 - `knots`: in ψN′ from the axis (0) to the cut (1); a single knot is one constant function.
-- `P`: the hats of `knots` at the nodes, zero beyond the cut, where K_e ends.
+- `P`: the hats of `knots` at the nodes, zero beyond the cut, where n u∥/B ends.
   `Pτ`: the same continued as constants beyond the cut, for temperatures, which do not end there.
 
 Build with [`closed_surface_basis`](@ref).
@@ -91,9 +90,9 @@ end
     ConstrainedSystem{FT}
 
 A square sparse system S x = r whose first unknowns are u∥ on the grid's nodes, with the
-surface-flux constraint on the nodes `cu` inside the cut: their rows become u_k − (T K)_k = 0,
-T = diag(B/(n κ)) P, and M Galerkin rows Q (S x − r) = extra, Q = Pᵀ diag(V B) normalized by
-`qs`, are appended; the unknowns are [x; κ K]. The pattern, of S and of the hats at `cu`, is
+surface-flux constraint on the nodes `cu` inside the cut: with y = κ (n u∥/B) at the knots, their
+rows become u_k − (T y)_k = 0, T = diag(B/(n κ)) P, and M Galerkin rows Q (S x − r) = extra,
+Q = Pᵀ diag(V B) normalized by `qs`, are appended; the unknowns are [x; y]. The pattern, of S and of the hats at `cu`, is
 built once; [`update_constrained_system!`](@ref) writes values and refactorizes with the LU's
 symbolic analysis kept. [`constrained_system`](@ref) gives a new one when the pattern changes.
 """
@@ -113,7 +112,7 @@ mutable struct ConstrainedSystem{FT <: AbstractFloat}
     gal_pos::Vector{Int}            # and the position (L + s, column) they add to
     q::Vector{FT}                   # the Galerkin weight of each hat value, P V B / qs
     qs::Vector{FT}                  # each Galerkin row's norm
-    κ::FT                           # the mean B/n: κ K is a velocity
+    κ::FT                           # the mean B/n: y = κ (n u∥/B) is a velocity
     solver::SparseLUSolver{FT}
     fresh::Bool                     # the pattern has not been factorized yet
 end
@@ -121,13 +120,13 @@ end
 """
     SurfaceFluxSolve{FT}(NR, NZ)
 
-What the constraint's last u∥ solve leaves for the rest of the step: the surface flux `K` at the
-knots of the basis with `signature` (empty: none yet on this basis), its stream-function face
-fluxes `ΓR`, `ΓZ` laid out as in [`stream_function_fluxes`](@ref), and the `compression` B_pᵀK
-on the grid (the pressure operator's adjoint; zero off its domain).
+What the constraint's last u∥ solve leaves for the rest of the step: `Γe_para_over_B`, the
+electron parallel particle flux over B, n u∥/B, a surface function, at the knots of the basis with `signature` (empty: none yet on this
+basis), its stream-function face fluxes `ΓR`, `ΓZ` laid out as in [`stream_function_fluxes`](@ref),
+and the `compression` B_pᵀ(n u∥/B) on the grid (the pressure operator's adjoint; zero off its domain).
 """
 mutable struct SurfaceFluxSolve{FT <: AbstractFloat}
-    K::Vector{FT}
+    Γe_para_over_B::Vector{FT}
     signature::UInt
     ΓR::Matrix{FT}
     ΓZ::Matrix{FT}

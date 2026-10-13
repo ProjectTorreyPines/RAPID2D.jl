@@ -1,7 +1,7 @@
 # Surface functions on the closed region, and the electron parallel flux they carry.
 #
 # On closed flux surfaces the electron parallel particle flux per B is constrained to a surface
-# function, n u∥ / B = K_e(ψ). Its poloidal part K_e ∇ψ × ∇ϕ = ∇H × ∇ϕ with H′ = K_e, so the flux
+# function of ψ. Its poloidal part (n u∥/B) ∇ψ × ∇ϕ = ∇H × ∇ϕ with H′ = n u∥/B, so the flux
 # through a face of a control volume is 2π (H(ψ_end) − H(ψ_start)) at the face's two corners and
 # the divergence of every control volume telescopes to zero. The constraint domain is the support
 # of H on the admissible nodes, which puts every face between it and the rest at H = const.
@@ -51,7 +51,7 @@ end
         @test all(k -> A[k], b.nodes)                           # Ω_c ⊆ admissible
         @test length(b.nodes) > 0.8 * count(A)
         # hats: one per knot from the axis (0) to the cut (1), a partition of unity inside the cut
-        # and zero beyond it, where K_e ends
+        # and zero beyond it, where n u∥/B ends
         @test b.knots[1] == 0 && b.knots[end] == 1 && issorted(b.knots)
         rows = vec(sum(b.P; dims = 2))
         @test all(r -> r ≈ 1, rows[b.ψN .<= 1]) && all(iszero, rows[b.ψN .> 1])
@@ -60,7 +60,7 @@ end
     end
 end
 
-@testitem "Closed-surface flux: the stream-function flux telescopes and matches K_e B_pol" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+@testitem "Closed-surface flux: the stream-function flux telescopes and matches (n u∥/B) B_pol" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis, stream_function_fluxes, face_outflow
     using RAPID2D.Statistics: median
     errs = Float64[]
@@ -68,8 +68,8 @@ end
         G = grid(N)
         ψ = ellipse(G)
         b = closed_surface_basis(G, ψ, admissible_ellipse(G))
-        K = [1 + x - 2x^2 for x in b.knots]
-        ΓR, ΓZ = stream_function_fluxes(b, K)
+        Γ_over_B = [1 + x - 2x^2 for x in b.knots]
+        ΓR, ΓZ = stream_function_fluxes(b, Γ_over_B)
         # every control volume of the grid: zero divergence
         out = face_outflow(ΓR, ΓZ)
         scale = maximum(abs, ΓR) + maximum(abs, ΓZ)
@@ -79,14 +79,14 @@ end
         inΩ[b.nodes] .= true
         @test all(iszero(ΓR[i, j]) for i in 1:(G.NR - 1), j in 1:G.NZ if inΩ[i, j] != inΩ[i + 1, j])
         @test all(iszero(ΓZ[i, j]) for i in 1:G.NR, j in 1:(G.NZ - 1) if inΩ[i, j] != inΩ[i, j + 1])
-        # against the analytic flux of K_e B_pol through each face (midpoint rule), sign included
+        # against the analytic flux of (n u∥/B) B_pol through each face (midpoint rule), sign included
         xN(R, Z) = (ellipse(R, Z) - b.axis.ψ) / (b.ψ_cut - b.axis.ψ)
         rel, mismatch = Float64[], 0
         for j in 2:(G.NZ - 1), i in 1:(G.NR - 1)
             R, Z = G.R1D[i] + G.dR / 2, G.Z1D[j]
             x = xN(R, Z)
             0 < x < 0.95 || continue
-            ref = hat_interp(b.knots, K, x) * (-ellipse_ψZ(R, Z) / R) * 2π * R * G.dZ
+            ref = hat_interp(b.knots, Γ_over_B, x) * (-ellipse_ψZ(R, Z) / R) * 2π * R * G.dZ
             abs(ref) > 1.0e-2 * scale || continue
             push!(rel, abs(ΓR[i, j] / ref - 1))
             mismatch += sign(ΓR[i, j]) != sign(ref)
@@ -95,7 +95,7 @@ end
             R, Z = G.R1D[i], G.Z1D[j] + G.dZ / 2
             x = xN(R, Z)
             0 < x < 0.95 || continue
-            ref = hat_interp(b.knots, K, x) * (ellipse_ψR(R, Z) / R) * 2π * R * G.dR
+            ref = hat_interp(b.knots, Γ_over_B, x) * (ellipse_ψR(R, Z) / R) * 2π * R * G.dR
             abs(ref) > 1.0e-2 * scale || continue
             push!(rel, abs(ΓZ[i, j] / ref - 1))
             mismatch += sign(ΓZ[i, j]) != sign(ref)
@@ -105,12 +105,12 @@ end
     end
     @test errs[2] < errs[1] / 2      # second order in the grid
     @test errs[2] < 1.0e-2
-    # ψ → −ψ reverses B_pol, and so the flux of the same K_e
+    # ψ → −ψ reverses B_pol, and so the flux of the same n u∥/B
     G = grid(31)
     bp = closed_surface_basis(G, ellipse(G), admissible_ellipse(G))
     bm = closed_surface_basis(G, ellipse(G; s = -1.0), admissible_ellipse(G))
-    K = [1 + x for x in bp.knots]
-    @test all(stream_function_fluxes(bm, K)[1] .≈ .-stream_function_fluxes(bp, K)[1])
+    Γ_over_B = [1 + x for x in bp.knots]
+    @test all(stream_function_fluxes(bm, Γ_over_B)[1] .≈ .-stream_function_fluxes(bp, Γ_over_B)[1])
 end
 
 @testitem "Closed-surface basis: a region against the wall keeps its flux inside" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
@@ -184,9 +184,9 @@ end
             @test maximum(abs, F) <= 1.0e-12 * maximum(abs, abs.(Bp) * abs.(τ))
         end
         # the pressure work on the flux and the compression power are one sum
-        K = randn(rng, length(b.knots))
+        Γ_over_B = randn(rng, length(b.knots))
         τ = randn(rng, length(b.nodes))
-        @test K' * (Bp * τ) ≈ sum(τ .* (Bp' * K))
+        @test Γ_over_B' * (Bp * τ) ≈ sum(τ .* (Bp' * Γ_over_B))
         # a temperature that varies along the surfaces: ∫ h_s τ B·∇g dV, by midpoint quadrature
         gfun(R, Z) = 0.5 * (R - R0) / 0.3 + 0.2 * ((Z - Z0) / 0.3)^2
         τfun(R, Z) = 1 + 0.3 * (Z - Z0) / 0.3
@@ -221,11 +221,11 @@ end
     b = closed_surface_basis(G, ellipse(G), admissible_ellipse(G))
     B = @. sqrt((3.0 / G.R2D)^2 + 1.0e-6)
     n = @. 1.0e17 * (1 + 0.5 * (G.R2D - R0) / 0.3)
-    # a velocity that is a surface flux (zero beyond the cut) gives back its K_e, with no residual
-    K = [1 + x - 2x^2 for x in b.knots]
+    # a velocity that is a surface flux (zero beyond the cut) gives back its n u∥/B, with no residual
+    Γ_over_B = [1 + x - 2x^2 for x in b.knots]
     u = zeros(G.NR, G.NZ)
-    u[b.nodes] .= (B[b.nodes] ./ n[b.nodes]) .* (b.P * K)
-    @test galerkin_flux(b, n, u, B) ≈ K
+    u[b.nodes] .= (B[b.nodes] ./ n[b.nodes]) .* (b.P * Γ_over_B)
+    @test galerkin_flux(b, n, u, B) ≈ Γ_over_B
     @test surface_residual(b, n, u, B) < 1.0e-12
     # any other velocity: its kinetic-metric projection, and a residual between 0 and 1
     u2 = copy(u)
@@ -274,7 +274,7 @@ end
     @test SurfaceFluxConstraint().coupling isa BlockConstraint
     @test SurfaceFluxConstraint(; coupling = PostProjection()).coupling isa PostProjection
     s = ClosedSurfaceState{Float64}(5, 7)
-    @test s.basis === nothing && isempty(s.solve.K)
+    @test s.basis === nothing && isempty(s.solve.Γe_para_over_B)
     @test size(s.solve.ΓR) == (4, 7) && size(s.solve.ΓZ) == (5, 6) && size(s.solve.compression) == (5, 7)
     @test s.ledger.activation == s.ledger.basis_change == s.ledger.projection == s.ledger.remap == 0
 end
@@ -295,11 +295,11 @@ end
     # a diagonal step operator: friction only, so open rows decouple
     A = spdiagm(0 => 1 .+ dt .* ν)
     r = randn(rng, N) .* 1.0e4
-    u, K = constrained_momentum_solve(A, r, b, n, B)
+    u, Γ_over_B = constrained_momentum_solve(A, r, b, n, B)
     inside = [b.nodes[k] for k in eachindex(b.nodes) if b.ψN[k] <= 1]
     rest = setdiff(1:N, inside)
     # the constraint, the ordinary rows, and the Galerkin rows
-    @test n[inside] .* u[inside] ./ B[inside] ≈ b.P[b.ψN .<= 1, :] * K
+    @test n[inside] .* u[inside] ./ B[inside] ≈ b.P[b.ψN .<= 1, :] * Γ_over_B
     @test A[rest, :] * u ≈ r[rest]
     Pin = b.P[b.ψN .<= 1, :]
     Vin = b.V[b.ψN .<= 1]
@@ -308,9 +308,9 @@ end
     @test maximum(abs, Q * f) <= 1.0e-10 * maximum(abs, Q * abs.(r[inside]))
     # the constraint force does no work on the constrained flow
     @test abs(sum(Vin .* n[inside] .* u[inside] .* f)) <= 1.0e-10 * sum(abs.(Vin .* n[inside] .* u[inside] .* f))
-    # with friction only, the series formula: (Pᵀ V B a B/n P) K = Pᵀ V B r
+    # with friction only, the series formula: (Pᵀ V B a B/n P) Γ_over_B = Pᵀ V B r
     a = 1 .+ dt .* ν[inside]
-    @test K ≈ (Pin' * Diagonal(Vin .* B[inside] .^ 2 .* a ./ n[inside]) * Pin) \ (Pin' * (Vin .* B[inside] .* r[inside]))
+    @test Γ_over_B ≈ (Pin' * Diagonal(Vin .* B[inside] .^ 2 .* a ./ n[inside]) * Pin) \ (Pin' * (Vin .* B[inside] .* r[inside]))
     # nodes of Ω_c beyond the cut keep their ordinary rows: their current is not removed
     beyond = [b.nodes[k] for k in eachindex(b.nodes) if b.ψN[k] > 1]
     @test !isempty(beyond) && u[beyond] ≈ r[beyond] ./ (1 .+ dt .* ν[beyond])
@@ -321,8 +321,8 @@ end
     @test A2[rest, :] * u2 ≈ r[rest]
     @test maximum(abs, Q * (A2 * u2 .- r)[inside]) <= 1.0e-10 * maximum(abs, Q * abs.(r[inside]))
     # no basis: the ordinary solve
-    u0, K0 = constrained_momentum_solve(A2, r, nothing, n, B)
-    @test u0 ≈ A2 \ r && isempty(K0)
+    u0, Γ_over_B0 = constrained_momentum_solve(A2, r, nothing, n, B)
+    @test u0 ≈ A2 \ r && isempty(Γ_over_B0)
 end
 
 @testitem "Constrained system: one pattern per basis, refactorized by value" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
@@ -353,9 +353,9 @@ end
             for (c, k) in enumerate(sys.cu)
                 A_shift[k, k] += shift[c]
             end
-            u_ref, K_ref = constrained_momentum_solve(A_shift, r, b, n, B; extra)
+            u_ref, Γ_over_B_ref = constrained_momentum_solve(A_shift, r, b, n, B; extra)
             @test x[1:N] ≈ u_ref
-            @test x[(N + 1):end] ./ sys.κ ≈ K_ref
+            @test x[(N + 1):end] ./ sys.κ ≈ Γ_over_B_ref
         end
         sys
     end

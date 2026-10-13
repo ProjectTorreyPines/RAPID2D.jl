@@ -1,6 +1,6 @@
 # The closed-surface flux constraint in a run.
 # At the end of each step the basis is rebuilt from the field-line analysis; the next u∥ solve
-# takes n u∥/B = K_e(ψ) on the closed region inside the cut, below the Ampère gate in the u∥ step
+# takes n u∥/B a function of ψ on the closed region inside the cut, below the Ampère gate in the u∥ step
 # and above it inside the coupled u∥–ψ block (`BlockConstraint`) or after it (`PostProjection`);
 # after continuity u∥ is remapped to the density the step left. The kinetic energy the constraint
 # removes and the remap changes is booked.
@@ -31,7 +31,7 @@ function update_closed_surface_basis!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     s.basis = any(A) ? closed_surface_basis(
             G, F.ψ, A; inside = G.cell_state .>= 0, weights = F.Btot .^ 2 ./ max.(pla.ne, CLOSED_SURFACE_N_FLOOR),
         ) : nothing
-    s.basis === nothing && empty!(s.solve.K)
+    s.basis === nothing && empty!(s.solve.Γe_para_over_B)
     return RP
 end
 
@@ -103,33 +103,33 @@ function surface_constraint_terms(RP::RAPID{FT}, θu::Real) where {FT <: Abstrac
 end
 
 """
-    commit_surface_flux!(RP, K, Bp) -> RP
+    commit_surface_flux!(RP, Γ_over_B, Bp) -> RP
 
-Keep the step's surface flux `K` and what the step's transport reads from it: the
+Keep the step's n u∥/B at the knots, `Γ_over_B`, and what the step's transport reads from it: the
 stream-function fluxes and the compression `Bp`ᵀK that pairs with the pressure force. Called
 while u∥ is still the step's starting drift: the kinetic energy of its part that is not a
 surface flux, which the constraint removes, is booked as activation (no surface flux before),
 basis change, or projection.
 """
-function commit_surface_flux!(RP::RAPID{FT}, K::Vector{FT}, Bp::AbstractMatrix) where {FT <: AbstractFloat}
+function commit_surface_flux!(RP::RAPID{FT}, Γ_over_B::Vector{FT}, Bp::AbstractMatrix) where {FT <: AbstractFloat}
     s, pla = RP.closed_surface, RP.plasma
     b, sol, led = s.basis, s.solve, s.ledger
     n, B, u = pla.ne, RP.fields.Btot, pla.ue_para
     sel, cu, Pin = inside_cut(b)
-    K0 = galerkin_flux(b, n, u, B)
-    removed = RP.config.constants.me / 2 * sum(b.V[sel] .* n[cu] .* (u[cu] .- (B[cu] ./ n[cu]) .* (Pin * K0)) .^ 2)
+    Γ_over_B0 = galerkin_flux(b, n, u, B)
+    removed = RP.config.constants.me / 2 * sum(b.V[sel] .* n[cu] .* (u[cu] .- (B[cu] ./ n[cu]) .* (Pin * Γ_over_B0)) .^ 2)
     signature = hash((b.nodes, b.knots))
-    if isempty(sol.K)
+    if isempty(sol.Γe_para_over_B)
         led.activation += removed
     elseif signature != sol.signature
         led.basis_change += removed
     else
         led.projection += removed
     end
-    sol.K, sol.signature = K, signature
-    sol.ΓR, sol.ΓZ = stream_function_fluxes(b, K)
+    sol.Γe_para_over_B, sol.signature = Γ_over_B, signature
+    sol.ΓR, sol.ΓZ = stream_function_fluxes(b, Γ_over_B)
     fill!(sol.compression, zero(FT))
-    sol.compression[b.nodes] .= Bp' * K
+    sol.compression[b.nodes] .= Bp' * Γ_over_B
     return RP
 end
 
@@ -137,16 +137,16 @@ end
     remap_surface_flux!(RP) -> RP
 
 After continuity, put u∥ on the constrained nodes back on the surface flux of the step,
-u∥ = K_e B / n with the density the step left, so the current follows the surfaces and not
+u∥ = (n u∥/B) B / n with the density the step left, so the current follows the surfaces and not
 the density; book the kinetic-energy change and update Jϕ.
 """
 function remap_surface_flux!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    (closed_surface_active(RP) && !isempty(RP.closed_surface.solve.K)) || return RP
+    (closed_surface_active(RP) && !isempty(RP.closed_surface.solve.Γe_para_over_B)) || return RP
     s, pla, F = RP.closed_surface, RP.plasma, RP.fields
     b = s.basis
     me = RP.config.constants.me
     sel, cu, Pin = inside_cut(b)
-    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (Pin * s.solve.K)
+    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (Pin * s.solve.Γe_para_over_B)
     s.ledger.remap += me / 2 * sum(b.V[sel] .* pla.ne[cu] .* (u_new .^ 2 .- pla.ue_para[cu] .^ 2))
     pla.ue_para[cu] .= u_new
     update_Jϕ!(RP)

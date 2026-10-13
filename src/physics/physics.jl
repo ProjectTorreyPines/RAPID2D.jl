@@ -537,7 +537,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # SurfaceFluxConstraint: on the closed region Te rides the stream-function flux and is
         # compressed by the pressure operator's adjoint, which only the operators `update_Te!`
         # solves with carry
-        surface_carriage = RP.flags.Include_Te_convec_term && closed_surface_active(RP) && !isempty(RP.closed_surface.solve.K)
+        surface_carriage = RP.flags.Include_Te_convec_term && closed_surface_active(RP) && !isempty(RP.closed_surface.solve.Γe_para_over_B)
         # one build of the operators Te is solved with, for the powers below that take them
         pops = RP.flags.Include_Te_diffu_term || visc_heat_on || surface_carriage ? ue_Te_operators(RP) : nothing
         A_diffu = pops === nothing ? nothing : pops.A_diffu
@@ -1950,7 +1950,7 @@ induced field is the step's mean, −(ψⁿ⁺¹ − ψⁿ)/(RΔt), which carrie
 
 The block matrix of u∥ and ψ inside the domain (`CoupledBlock`, on a pattern fixed for the
 run) is factorized once. With `SurfaceFluxConstraint()` on a closed region the surface flux
-K_e joins it as M more unknowns ([`coupled_block_solver!`](@ref)), so ψ and the coils are
+n u∥/B at the knots joins it as M more unknowns ([`coupled_block_solver!`](@ref)), so ψ and the coils are
 solved with the constrained current (`BlockConstraint`, the default; `PostProjection` solves
 u∥ again with the constraint after the block). The free boundary and the circuits close it by
 an outer iteration on x = (boundary flux, coil currents):
@@ -2117,8 +2117,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # one so far
         ue_k, ψ_k, Jϕ_k = similar(pla.ue_para), similar(F.ψ_self), similar(pla.ue_para)
         I_k, Φ_k, res_k = similar(coils_I_n), similar(ψ_pla_coils_n), zeros(FT, 2)
-        K_k = zeros(FT, length(sol) - 2N)
-        best = (ue = similar(ue_k), ψ = similar(ψ_k), I = similar(I_k), Φ = similar(Φ_k), K = similar(K_k), res = zeros(FT, 2))
+        Γ_over_B_k = zeros(FT, length(sol) - 2N)
+        best = (ue = similar(ue_k), ψ = similar(ψ_k), I = similar(I_k), Φ = similar(Φ_k), Γ_over_B = similar(Γ_over_B_k), res = zeros(FT, 2))
 
         function evaluate!(x)
             ψ_bdy, I_in = view(x, 1:Nb), view(x, (Nb + 1):(Nb + Nc))
@@ -2133,7 +2133,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             solve!(sol, solver, sys === nothing ? rhs : constrained_rhs(sys, rhs; ct.extra))
             vec(ue_k) .= view(sol, 1:N)
             vec(ψ_k) .= view(sol, (N + 1):(2N))
-            sys === nothing || (K_k .= view(sol, (2N + 1):length(sol)) ./ sys.κ)
+            sys === nothing || (Γ_over_B_k .= view(sol, (2N + 1):length(sol)) ./ sys.κ)
 
             # the circuits and the boundary flux of that current
             @. Jϕ_k = (qe * pla.ne * ue_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
@@ -2157,7 +2157,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             best.ψ .= ψ_k
             best.I .= I_k
             best.Φ .= Φ_k
-            best.K .= K_k
+            best.Γ_over_B .= Γ_over_B_k
             best.res .= res_k
             return nothing
         end
@@ -2166,7 +2166,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             ψ_k .= best.ψ
             I_k .= best.I
             Φ_k .= best.Φ
-            K_k .= best.K
+            Γ_over_B_k .= best.Γ_over_B
             res_k .= best.res
             return nothing
         end
@@ -2188,7 +2188,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             pla.ue_para .= ue_k
         elseif sys !== nothing
             # BlockConstraint: the accepted u∥ is constrained, and its surface flux is the step's
-            commit_surface_flux!(RP, copy(K_k), ct.Bp)
+            commit_surface_flux!(RP, copy(Γ_over_B_k), ct.Bp)
             pla.ue_para .= ue_k
         else
             # PostProjection: u∥ solved again from uⁿ with the constraint, at the induced field the

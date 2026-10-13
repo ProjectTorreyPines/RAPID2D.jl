@@ -1,6 +1,6 @@
 # Surface functions on the closed region, and the electron parallel flux they carry. On closed
 # flux surfaces the electron parallel particle flux per B is a surface function,
-# n u∥ / B = K_e(ψ). Its poloidal part is K_e ∇ψ × ∇ϕ = ∇H × ∇ϕ with H′ = K_e, so the flux through
+# n u∥ / B is a function of ψ. Its poloidal part is (n u∥/B) ∇ψ × ∇ϕ = ∇H × ∇ϕ with H′ = n u∥/B, so the flux through
 # a control-volume face is 2π (H(ψ_end) − H(ψ_start)) at the face's two corners (the dual vertices),
 # and the divergence of every control volume telescopes to zero. The constraint domain is the
 # support of H on the admissible nodes, which leaves every face between it and the rest at one H.
@@ -171,37 +171,37 @@ function merge_knots(knots::Vector{FT}, x::Vector{FT}, w::Vector{FT}) where {FT}
     return [zero(FT)]
 end
 
-# ∫₀^min(x, 1) of the piecewise-linear function with values Kk at the knots (one knot: a constant)
-function hat_integral(knots::Vector{FT}, Kk::AbstractVector, x::FT) where {FT}
+# ∫₀^min(x, 1) of the piecewise-linear function with values vk at the knots (one knot: a constant)
+function hat_integral(knots::Vector{FT}, vk::AbstractVector, x::FT) where {FT}
     x = clamp(x, zero(FT), one(FT))
-    length(knots) == 1 && return Kk[1] * x
-    acc = zero(promote_type(FT, eltype(Kk)))
+    length(knots) == 1 && return vk[1] * x
+    acc = zero(promote_type(FT, eltype(vk)))
     for s in 1:(length(knots) - 1)
         a, b = knots[s], knots[s + 1]
         x <= a && break
         e = min(x, b)
-        Ke = Kk[s] + (Kk[s + 1] - Kk[s]) * (e - a) / (b - a)
-        acc += (Kk[s] + Ke) / 2 * (e - a)
+        ve = vk[s] + (vk[s + 1] - vk[s]) * (e - a) / (b - a)
+        acc += (vk[s] + ve) / 2 * (e - a)
     end
     return acc
 end
 
 """
-    stream_function_fluxes(basis, K) -> (ΓR, ΓZ)
+    stream_function_fluxes(basis, Γ_over_B) -> (ΓR, ΓZ)
 
-The poloidal particle flux of n u∥ b = K_e B through every control-volume face of the grid, for
-the surface function with values `K` at the knots: `ΓR[i, j]` through the face between nodes
+The poloidal particle flux of n u∥ b through every control-volume face of the grid, for the
+surface function n u∥/B with values `Γ_over_B` at the knots: `ΓR[i, j]` through the face between nodes
 (i, j) and (i + 1, j) along +R, `ΓZ[i, j]` between (i, j) and (i, j + 1) along +Z, each
 2π (H(ψ_end) − H(ψ_start)) at the face's corners (ψ per radian, B_R = −∂_Zψ/R, B_Z = ∂_Rψ/R).
 H varies only at the corners of Ω_c inside the cut (`corner_active`), so every face outside Ω_c
 and between Ω_c and the rest carries none.
 """
-function stream_function_fluxes(b::ClosedSurfaceBasis{FT}, K::AbstractVector) where {FT}
+function stream_function_fluxes(b::ClosedSurfaceBasis{FT}, Γ_over_B::AbstractVector) where {FT}
     NR, NZ = b.dims
     J = b.ψ_cut - b.axis.ψ
-    H_cut = J * hat_integral(b.knots, K, one(FT))
-    H = [b.corner_active[c] ? J * hat_integral(b.knots, K, b.corner_ψN[c]) : H_cut for c in CartesianIndices(b.corner_ψN)]
-    T = promote_type(FT, eltype(K))
+    H_cut = J * hat_integral(b.knots, Γ_over_B, one(FT))
+    H = [b.corner_active[c] ? J * hat_integral(b.knots, Γ_over_B, b.corner_ψN[c]) : H_cut for c in CartesianIndices(b.corner_ψN)]
+    T = promote_type(FT, eltype(Γ_over_B))
     ΓR = zeros(T, NR - 1, NZ)
     ΓZ = zeros(T, NR, NZ - 1)
     for j in 2:(NZ - 1), i in 1:(NR - 1)
@@ -241,7 +241,8 @@ nodal τ = e T_e on Ω_c and g = ln n on the grid. It is built on the stream-fun
 of each hat, Σ_f Γ_f^(s) Δg_f τ̄_f, applied to the part of τ that is not a surface function
 (τ minus its volume-weighted projection on `basis.Pτ`): the surface part gives exactly zero, as
 ∫ h_s τ̄ B·∇g dV does, so a constant or surface temperature exerts no force. The Galerkin row
-takes −B_p τ / m_e; the matching compression power of node i is τ_i (B_pᵀ K)_i.
+takes −B_p τ / m_e; the matching compression power of node i is τ_i (B_pᵀ Γ_over_B)_i, Γ_over_B the knot
+values of n u∥/B.
 """
 function pressure_operator(b::ClosedSurfaceBasis{FT}, g::AbstractMatrix) where {FT}
     NR, NZ = b.dims
@@ -301,11 +302,11 @@ end
 # ── diagnostics on Ω_c ───────────────────────────────────────────────────────────
 
 """
-    galerkin_flux(basis, n, u, B) -> K
+    galerkin_flux(basis, n, u, B) -> Γ_over_B
 
 The surface flux closest to the electron velocity `u` in the kinetic-energy metric: the Galerkin
-projection (Pᵀ diag(V B²/n) P) K = Pᵀ diag(V B) u over Ω_c. A velocity that is a surface flux,
-u = (B/n) P K, gives back its K. `n`, `u`, `B` are grid arrays.
+projection (Pᵀ diag(V B²/n) P) Γ_over_B = Pᵀ diag(V B) u over Ω_c, Γ_over_B the knot values of n u∥/B.
+A velocity that is a surface flux, u = (B/n) P Γ_over_B, gives back its Γ_over_B. `n`, `u`, `B` are grid arrays.
 """
 function galerkin_flux(b::ClosedSurfaceBasis, n::AbstractVecOrMat, u::AbstractVecOrMat, B::AbstractVecOrMat)
     Bk, nk = B[b.nodes], n[b.nodes]
@@ -313,20 +314,20 @@ function galerkin_flux(b::ClosedSurfaceBasis, n::AbstractVecOrMat, u::AbstractVe
 end
 
 """
-    surface_residual(basis, n, u, B; K = galerkin_flux(basis, n, u, B)) -> Real
+    surface_residual(basis, n, u, B; Γ_over_B = galerkin_flux(basis, n, u, B)) -> Real
 
-How far n u/B on Ω_c is from the surface function P K, as the volume-weighted rms of the
-difference over that of n u/B: 0 for a surface flux. Beyond the cut, where K_e ends, all of
+How far n u/B on Ω_c is from the surface function P Γ_over_B, as the volume-weighted rms of the
+difference over that of n u/B: 0 for a surface flux. Beyond the cut, where the surface function ends, all of
 n u/B counts.
 """
 function surface_residual(
         b::ClosedSurfaceBasis, n::AbstractVecOrMat, u::AbstractVecOrMat, B::AbstractVecOrMat;
-        K = galerkin_flux(b, n, u, B),
+        Γ_over_B = galerkin_flux(b, n, u, B),
     )
     f = n[b.nodes] .* u[b.nodes] ./ B[b.nodes]
     total = sum(b.V .* f .^ 2)
     iszero(total) && return zero(total)
-    return sqrt(sum(b.V .* (f .- b.P * K) .^ 2) / total)
+    return sqrt(sum(b.V .* (f .- b.P * Γ_over_B) .^ 2) / total)
 end
 
 """
@@ -364,7 +365,7 @@ end
     current_outside_constraint(basis, closed, J) -> Real
 
 The share of the toroidal current `J` (grid array) on the closed nodes `closed` that the
-constraint leaves out: nodes outside Ω_c, and Ω_c nodes beyond the cut, where K_e = 0.
+constraint leaves out: nodes outside Ω_c, and Ω_c nodes beyond the cut, where n u∥/B is not constrained.
 """
 function current_outside_constraint(b::ClosedSurfaceBasis, closed::AbstractVector{<:Integer}, J::AbstractVecOrMat)
     total = sum(J[k] for k in closed; init = zero(eltype(J)))
@@ -502,14 +503,14 @@ function constrained_rhs(sys::ConstrainedSystem{FT}, r::AbstractVector; extra::U
 end
 
 """
-    constrained_momentum_solve(A, r, basis, n, B; extra = nothing) -> (u, K)
+    constrained_momentum_solve(A, r, basis, n, B; extra = nothing) -> (u, Γ_over_B)
 
 Solve the per-electron momentum step A u = r on the grid's nodes (`A` sparse, vectors over all
 nodes) with the surface-flux constraint on the nodes of Ω_c inside the cut: there
-u = (B/n) P K, and their momentum rows are replaced by the Galerkin rows
+u = (B/n) P Γ_over_B, Γ_over_B the knot values of n u∥/B, and their momentum rows are replaced by the Galerkin rows
 Q (A u − r) = `extra` (zero by default), Q = Pᵀ diag(V B). Nodes beyond the cut and outside Ω_c
 keep their rows, so their current is not removed. The residual of the replaced rows then does
-no work on the constrained flow. `basis === nothing` is the plain solve, with an empty K.
+no work on the constrained flow. `basis === nothing` is the plain solve, with an empty Γ_over_B.
 A run keeps the system between steps ([`constrained_system`](@ref)); this builds it afresh.
 """
 function constrained_momentum_solve(
