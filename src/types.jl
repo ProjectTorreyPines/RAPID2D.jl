@@ -1367,6 +1367,8 @@ Refuse [`TimeScheme`](@ref) choices that the rest of `flags` cannot support.
 - **`decay = ExpRB` + the Ampère routing conjunction**: that solver builds the same
   `u∥` equation with `θ = 1` fixed and `advance_timestep!` routes to it on a *runtime*
   condition, so the pairing would silently revert to backward Euler mid-run.
+- **`decay = ExpRB` + `closed_surface_flow = SurfaceFluxConstraint()`**: the constrained `u∥`
+  solve takes the constant `θ_imp.decay`, and it starts when closed surfaces form, mid-run.
 
 Refusal is one-directional — nothing here narrows what already works. Called from
 `initialize!`, because the conflicts are between independent fields and
@@ -1402,6 +1404,16 @@ function validate_scheme_flags(flags::SimulationFlags)
                     "and would silently revert to the Theta scheme mid-run. Only update_ue_para! " *
                     "carries bern(z) today. Turn one of those flags off, or use " *
                     "scheme.decay = Theta."
+            )
+        )
+    end
+    if flags.scheme.decay === ExpRB && flags.closed_surface_flow isa SurfaceFluxConstraint
+        throw(
+            ArgumentError(
+                "scheme.decay = ExpRB is not available with closed_surface_flow = " *
+                    "SurfaceFluxConstraint(): its constrained u∥ solve takes the constant " *
+                    "θ_imp.decay, and it starts when closed surfaces form, partway through a " *
+                    "run. Use scheme.decay = Theta, or closed_surface_flow = FreeParallelFlow()."
             )
         )
     end

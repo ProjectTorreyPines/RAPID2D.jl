@@ -1,7 +1,6 @@
 # The closed-surface flux constraint in a run: u∥ is solved with n u∥/B a surface function on
 # the closed region inside the cut, then remapped to the density the step left, and the
 # kinetic energy the constraint removes or the remap changes is booked.
-# internal/docs/src/notes/plans/PLAN_closed-surface-flux.md (D5, D8, D9, D13, D17, D19).
 
 @testsnippet ClosedSurfaceRun begin
     using RAPID2D: SimulationConfig, SimulationFlags, RAPID, initialize!, flf_analysis_field_lines_rz_plane!,
@@ -65,6 +64,31 @@ end
     @test s.E_projection >= 0
 end
 
+@testitem "Closed-surface run: above the gate the coupled step is projected onto a surface flux" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        run_simulation!
+    RP = closed_RP(; Ampere = true)
+    initialize_coupled_fields!(RP)                     # what run_simulation! does at step 0
+    prepare_timestep!(RP)
+    # the drift's current is above the gate, so solve_timestep! takes the coupled route
+    @test abs(sum(RP.plasma.Jϕ) * RP.G.dR * RP.G.dZ) >= RP.flags.Ampere_Itor_threshold
+    ψ0 = copy(RP.fields.ψ_self)
+    solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
+    s = RP.closed_surface
+    @test RP.fields.ψ_self != ψ0                      # the coupled solve's ψ is kept
+    @test length(s.K) == length(s.basis.knots) && all(isfinite, s.K)
+    @test surface_flux_error(RP) < 1.0e-10
+    @test s.E_activation > 0
+
+    # and through the run loop, step after step
+    RP = closed_RP(; Ampere = true)
+    RP.config.t_end_s = RP.t_end_s = RP.time_s + 5 * RP.dt
+    run_simulation!(RP)
+    @test !isempty(RP.closed_surface.K) && all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_self)
+    snap = RP.diagnostics.snaps0D[end]
+    @test isfinite(snap.cs_E_projection) && snap.cs_E_projection >= 0
+end
+
 @testitem "Closed-surface run: free flow builds no basis" setup = [ClosedSurfaceRun] tags = [:physics] begin
     using RAPID2D: update_ue_para!
     RP = closed_RP(; policy = FreeParallelFlow())
@@ -110,7 +134,12 @@ end
 end
 
 @testitem "Closed-surface run: ExpRB with the constraint is refused" setup = [ClosedSurfaceRun] tags = [:physics] begin
-    using RAPID2D: update_ue_para!, ExpRB
+    using RAPID2D: update_ue_para!, ExpRB, validate_scheme_flags, SimulationFlags, SurfaceFluxConstraint
+    # at setup, before closed surfaces form partway through a run
+    flags = SimulationFlags{Float64}(; closed_surface_flow = SurfaceFluxConstraint())
+    flags.scheme.decay = ExpRB
+    @test_throws ArgumentError validate_scheme_flags(flags)
+    # and at the u∥ solve, for flags changed after initialize!
     RP = closed_RP()
     RP.flags.scheme.decay = ExpRB
     @test_throws ArgumentError update_ue_para!(RP)
@@ -183,7 +212,7 @@ end
     # limiting, runaway), and nothing along the surface (parallel conduction, pressure balance)
     # evens it out. The peak is a transient: the hot sector ionizes and refills (178 eV at step 87,
     # 45 eV at step 300). Free flow stays near the bulk. As thermal energy the sector stays small.
-    # internal/docs/src/notes/plans/PLAN_closed-surface-flux.md, [gap] low-density overheating.
+    # internal/docs/src/notes/issues/closed-surface-depleted-sector-overheats.md
     function depleted_run(policy; nsteps = 100, contrast = 1.0e-3)
         RP = closed_RP(; policy)
         G, pla = RP.G, RP.plasma
@@ -198,7 +227,7 @@ end
         sector = filter(k -> G.R2D[k] > 1.62, closed)
         vte(k) = sqrt(pla.Te_eV[k] * RP.config.constants.ee / RP.config.constants.me)
         peak = (Te = 0.0, drift = 0.0)
-        record(RP) = (
+        record(_) = (
             peak = (
                 Te = max(peak.Te, maximum(pla.Te_eV[sector])),
                 drift = max(peak.drift, maximum(k -> abs(pla.ue_para[k]) / vte(k), sector)),

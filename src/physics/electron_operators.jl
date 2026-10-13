@@ -21,10 +21,13 @@ replaced ([`electron_operator_cache`](@ref) refuses a changed flag).
 function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op, tp, G = RP.plasma, RP.operators, RP.transport, RP.G
     check_electron_operators(op)
-    if closed_surface_active(RP)
+    if !closed_surface_active(RP)
+        build_face_flux_divergence!(op.A_conv_e, G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
+        wall_divergence!(op.div_ue, G, pla.ueR, pla.ueZ)
+    else
         # SurfaceFluxConstraint: on every face of the constraint domain the density moves with the
         # perpendicular drift only; the parallel flux there is the stream-function flux, which
-        # leaves every control volume as it found it (PLAN D6)
+        # leaves every control volume as it found it
         F = RP.fields
         mask = falses(G.NR, G.NZ)
         mask[RP.closed_surface.basis.nodes] .= true
@@ -34,9 +37,6 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         div⊥ = similar(op.div_ue)
         wall_divergence!(div⊥, G, uR⊥, uZ⊥)
         op.div_ue[mask] .= div⊥[mask]
-    else
-        build_face_flux_divergence!(op.A_conv_e, G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
-        wall_divergence!(op.div_ue, G, pla.ueR, pla.ueZ)
     end
     op.A_conv_e_upwind = RP.flags.upwind
     build_wall_diffusion_matrix!(op.A_diffu_e, G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
@@ -105,7 +105,7 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     div_u = op.div_ue
     if closed_surface_active(RP) && !isempty(RP.closed_surface.K)
         # the parallel carriage on the constraint domain is the stream-function flux, and its
-        # compression the pressure operator's adjoint (PLAN D7, D17)
+        # compression the pressure operator's adjoint
         add_stream_function_transport!(op.A_adv_e, RP)
         cs, G = RP.closed_surface, RP.G
         div_u = copy(op.div_ue)

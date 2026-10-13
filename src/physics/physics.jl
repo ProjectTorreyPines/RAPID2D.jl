@@ -60,8 +60,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # weight where the step resolves ν, but still first order and LESS implicit
         # than BE (θ_fit < 1 on a decay branch). See exprb-implementation.md §5 phase 2.
         decay_is_exprb = RP.flags.scheme.decay === ExpRB
-        decay_is_exprb && closed_surface_active(RP) &&
-            throw(ArgumentError("SurfaceFluxConstraint takes a constant θ for the decay; ExpRB is not supported with it"))
+        decay_is_exprb && RP.flags.closed_surface_flow isa SurfaceFluxConstraint &&
+            _refuse_exprb_decay(RP.flags, "SurfaceFluxConstraint", "solves u∥ with the constant θ_imp.decay")
         decay_is_exprb && _refuse_full_response_decay(RP.flags)
         decay_exponent = decay_is_exprb ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
         bern_decay = decay_is_exprb ? exprb_bern.(decay_exponent) : nothing
@@ -137,22 +137,25 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             RP.flags.Include_ud_diffu_term && add_scaled!(A, -θ_op * dt, pops.A_diffu)
 
             @timeit RAPID_TIMER "ue_para LinearSolve" begin
-                if closed_surface_active(RP)
-                    surface_constrained_ue!(RP, A.matrix, vec(OP.RHS), θu)
-                else
+                if !closed_surface_active(RP)
                     factorize!(OP.ue_solver, A)
                     solve!(view(pla.ue_para, :), OP.ue_solver, view(OP.RHS, :))
+                else
+                    # SurfaceFluxConstraint: n u∥/B a surface function on the closed region
+                    surface_constrained_ue!(RP, A.matrix, vec(OP.RHS), θu)
                 end
             end
-        elseif closed_surface_active(RP)
-            # θ_op = 0 with the constraint: the friction's diagonal, solved with it
-            surface_constrained_ue!(RP, spdiagm(0 => vec(@. one_FT + θu * ν_sum_mom_iz_ei * dt)), vec(OP.RHS), θu)
         else
             # θ_op = 0: the matrix is the friction's diagonal, bern(z) under ExpRB
-            if decay_is_exprb
-                @. pla.ue_para = OP.RHS / bern_decay
+            if !closed_surface_active(RP)
+                if decay_is_exprb
+                    @. pla.ue_para = OP.RHS / bern_decay
+                else
+                    @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt)
+                end
             else
-                @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt)
+                # SurfaceFluxConstraint: the same diagonal, solved with the constraint
+                surface_constrained_ue!(RP, spdiagm(0 => vec(@. one_FT + θu * ν_sum_mom_iz_ei * dt)), vec(OP.RHS), θu)
             end
         end
 
@@ -2159,13 +2162,13 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θu) * pla.ue_para)
         end
         F.ψ_self .= ψ_k
-        if closed_surface_active(RP)
+        if !closed_surface_active(RP)
+            pla.ue_para .= ue_k
+        else
             # SurfaceFluxConstraint (PostProjection): u∥ solved again from uⁿ with the constraint,
             # at the induced field the coupled solve found; ψ stays that solve's
             c_uψ, _ = uψ_coupling_terms(RP)
             surface_constrained_ue!(RP, A_u.matrix, RHS_u .- c_uψ .* vec(ψ_k), θu)
-        else
-            pla.ue_para .= ue_k
         end
 
         # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
