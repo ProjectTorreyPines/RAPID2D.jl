@@ -324,6 +324,89 @@ end
     @test u0 ≈ A2 \ r && isempty(K0)
 end
 
+@testitem "Constrained system: one pattern per basis, refactorized by value" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, constrained_momentum_solve, constrained_system, update_constrained_system!,
+        constrained_rhs, solve!
+    using RAPID2D.SparseArrays: spdiagm
+    using Random: MersenneTwister
+    rng = MersenneTwister(5)
+    G = grid(31)
+    b = closed_surface_basis(G, ellipse(G), admissible_ellipse(G))
+    N = G.NR * G.NZ
+    B = vec(@. sqrt((3.0 / G.R2D)^2 + 1.0e-6))
+    stencil(a) = spdiagm(0 => 1.0 .+ a, 1 => fill(-0.1, N - 1), -1 => fill(-0.1, N - 1), G.NR => fill(-0.05, N - G.NR))
+    sys = let sys = nothing
+        for step in 1:3
+            n = vec(@. 1.0e17 * (1 + 0.5 * (G.R2D - R0) / 0.3 + 0.1 * step))
+            A = stencil(rand(rng, N))
+            r = randn(rng, N) .* 1.0e4
+            extra = randn(rng, length(b.knots)) .* 1.0e-3
+            shift = -rand(rng, count(<=(1), b.ψN))
+            # the cached system against a fresh solve of the same equations: the shift is part of the
+            # constrained rows' diagonal, which only the Galerkin rows read
+            sys = constrained_system(sys, A, b)
+            update_constrained_system!(sys, A, b, n, B; shift)
+            y = constrained_rhs(sys, r; extra)
+            x = solve!(similar(y), sys.solver, y)
+            A_shift = copy(A)
+            for (c, k) in enumerate(sys.cu)
+                A_shift[k, k] += shift[c]
+            end
+            u_ref, K_ref = constrained_momentum_solve(A_shift, r, b, n, B; extra)
+            @test x[1:N] ≈ u_ref
+            @test x[(N + 1):end] ./ sys.κ ≈ K_ref
+        end
+        sys
+    end
+    # three steps on one pattern: one symbolic analysis
+    @test sys.solver.nfactor == 3 && sys.solver.nsymbolic == 1
+    # another basis (fewer knots) or another matrix pattern gives a new system
+    b2 = closed_surface_basis(G, ellipse(G), admissible_ellipse(G); nknots = 4)
+    @test constrained_system(sys, stencil(zeros(N)), b) === sys
+    @test constrained_system(sys, stencil(zeros(N)), b2) !== sys
+    @test constrained_system(sys, spdiagm(0 => ones(N)), b) !== sys
+end
+
+@testitem "Closed-surface pressure: one pass over the faces is the sum of the hats' fluxes" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: closed_surface_basis, pressure_operator, stream_function_fluxes
+    using Random: MersenneTwister
+    rng = MersenneTwister(3)
+    # the definition, hat by hat: Σ_f Γ_f^(s) Δg_f τ̄_f over each hat's stream-function fluxes,
+    # then the surface part of τ removed
+    function pressure_by_hats(b, g)
+        NR, NZ = b.dims
+        M, Nn = length(b.knots), length(b.nodes)
+        col = zeros(Int, NR * NZ)
+        col[b.nodes] .= 1:Nn
+        X = zeros(M, Nn)
+        for s in 1:M
+            ΓR, ΓZ = stream_function_fluxes(b, [t == s ? 1.0 : 0.0 for t in 1:M])
+            for j in 1:NZ, i in 1:(NR - 1)
+                iszero(ΓR[i, j]) && continue
+                a, h = col[i + (j - 1) * NR], col[i + 1 + (j - 1) * NR]
+                X[s, a] += ΓR[i, j] * (g[i + 1, j] - g[i, j]) / 2
+                X[s, h] += ΓR[i, j] * (g[i + 1, j] - g[i, j]) / 2
+            end
+            for j in 1:(NZ - 1), i in 1:NR
+                iszero(ΓZ[i, j]) && continue
+                a, h = col[i + (j - 1) * NR], col[i + j * NR]
+                X[s, a] += ΓZ[i, j] * (g[i, j + 1] - g[i, j]) / 2
+                X[s, h] += ΓZ[i, j] * (g[i, j + 1] - g[i, j]) / 2
+            end
+        end
+        Pτ = Matrix(b.Pτ)
+        WPτ = b.V .* Pτ
+        return X .- ((X * Pτ) / (Pτ' * WPτ)) * WPτ'
+    end
+    for N in (31, 61), nknots in (nothing, 3)
+        G = grid(N)
+        b = closed_surface_basis(G, ellipse(G), admissible_ellipse(G); nknots)
+        g = randn(rng, G.NR, G.NZ)
+        ref = pressure_by_hats(b, g)
+        @test pressure_operator(b, g) ≈ ref rtol = 1.0e-12 atol = 1.0e-12 * maximum(abs, ref)
+    end
+end
+
 @testitem "Closed-surface basis: a hole inside the region (the axis node) does not set the cut" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis
     G = grid(31)

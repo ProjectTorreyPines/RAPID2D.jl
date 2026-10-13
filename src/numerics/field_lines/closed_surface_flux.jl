@@ -249,31 +249,53 @@ function pressure_operator(b::ClosedSurfaceBasis{FT}, g::AbstractMatrix) where {
     col = zeros(Int, NR * NZ)
     col[b.nodes] .= 1:N
     X = zeros(FT, M, N)
-    for s in 1:M
-        ΓR, ΓZ = stream_function_fluxes(b, [t == s ? one(FT) : zero(FT) for t in 1:M])
-        for j in 1:NZ, i in 1:(NR - 1)
-            Γ = ΓR[i, j]
+    I1, I2 = zeros(FT, M), zeros(FT, M)
+    scale = 2π * (b.ψ_cut - b.axis.ψ)
+    # a hat's H at a corner: ∫₀^x of it, x the corner's ψN′ inside the cut and 1 elsewhere
+    x(i, j) = b.corner_active[i, j] ? b.corner_ψN[i, j] : one(FT)
+    # every hat's flux 2π (H(c1) − H(c2)) through the face from node a to node h, at once
+    function face!(c1, c2, a, h, Δg)
+        (b.corner_active[c1...] || b.corner_active[c2...]) || return
+        hat_integrals!(I1, b.knots, x(c1...))
+        hat_integrals!(I2, b.knots, x(c2...))
+        for s in 1:M
+            Γ = scale * (I1[s] - I2[s])
             iszero(Γ) && continue
-            a, h = col[i + (j - 1) * NR], col[i + 1 + (j - 1) * NR]
-            (a > 0 && h > 0) || error("a face carrying flux leaves Ω_c")
-            c = Γ * (g[i + 1, j] - g[i, j]) / 2
-            X[s, a] += c
-            X[s, h] += c
+            (col[a] > 0 && col[h] > 0) || error("a face carrying flux leaves Ω_c")
+            X[s, col[a]] += Γ * Δg / 2
+            X[s, col[h]] += Γ * Δg / 2
         end
-        for j in 1:(NZ - 1), i in 1:NR
-            Γ = ΓZ[i, j]
-            iszero(Γ) && continue
-            a, h = col[i + (j - 1) * NR], col[i + j * NR]
-            (a > 0 && h > 0) || error("a face carrying flux leaves Ω_c")
-            c = Γ * (g[i, j + 1] - g[i, j]) / 2
-            X[s, a] += c
-            X[s, h] += c
-        end
+        return
+    end
+    for j in 2:(NZ - 1), i in 1:(NR - 1)          # +R faces, corners (i, j − 1) and (i, j)
+        a = i + (j - 1) * NR
+        face!((i, j - 1), (i, j), a, a + 1, g[i + 1, j] - g[i, j])
+    end
+    for j in 1:(NZ - 1), i in 2:(NR - 1)          # +Z faces, corners (i, j) and (i − 1, j)
+        a = i + (j - 1) * NR
+        face!((i, j), (i - 1, j), a, a + NR, g[i, j + 1] - g[i, j])
     end
     # remove the surface part of τ: X (I − S), S = Pτ (Pτᵀ W Pτ)⁻¹ Pτᵀ W
     Pτ = Matrix(b.Pτ)
     WPτ = b.V .* Pτ
     return X .- ((X * Pτ) / (Pτ' * WPτ)) * WPτ'
+end
+
+# ∫₀^min(x, 1) of each hat of `knots` into v; one knot is one constant
+function hat_integrals!(v::AbstractVector, knots::Vector{FT}, x::FT) where {FT}
+    x = clamp(x, zero(FT), one(FT))
+    length(knots) == 1 && (v[1] = x; return v)
+    fill!(v, zero(FT))
+    for t in 1:(length(knots) - 1)
+        a = knots[t]
+        x <= a && break
+        h = knots[t + 1] - a
+        d = min(x, knots[t + 1]) - a
+        # on [a, a + h] hat t falls from 1 to 0 and hat t + 1 rises from 0 to 1
+        v[t] += d - d^2 / (2h)
+        v[t + 1] += d^2 / (2h)
+    end
+    return v
 end
 
 # ── diagnostics on Ω_c ───────────────────────────────────────────────────────────
@@ -357,6 +379,128 @@ end
 
 # ── the constrained momentum step ────────────────────────────────────────────────
 
+# the constrained rows: their positions in Ω_c, their grid nodes and the hats there (inside the cut)
+function inside_cut(b::ClosedSurfaceBasis)
+    sel = findall(<=(1), b.ψN)
+    return sel, b.nodes[sel], b.P[sel, :]
+end
+
+"""
+    constrained_system(sys, S, basis) -> ConstrainedSystem
+
+`sys` when it was built for the pattern of `S` and of `basis`'s hats inside the cut; a new
+[`ConstrainedSystem`](@ref) otherwise, or for `sys === nothing`.
+"""
+function constrained_system(
+        sys::Union{Nothing, ConstrainedSystem{FT}}, S::SparseMatrixCSC{FT}, b::ClosedSurfaceBasis,
+    ) where {FT <: AbstractFloat}
+    _, cu, Pin = inside_cut(b)
+    key = hash((size(S), S.colptr, S.rowval, cu, Pin.colptr, Pin.rowval))
+    sys !== nothing && sys.key == key && return sys
+    return ConstrainedSystem(S, cu, Pin, key)
+end
+
+function ConstrainedSystem(S::SparseMatrixCSC{FT}, cu::Vector{Int}, Pin::SparseMatrixCSC, key::UInt) where {FT <: AbstractFloat}
+    L, M = size(S, 1), size(Pin, 2)
+    Sr = rowvals(S)
+    c_of = zeros(Int, L)                  # a row's position in cu, 0 when it keeps its equation
+    c_of[cu] .= eachindex(cu)
+    col_S = zeros(Int, length(Sr))
+    for j in 1:L, p in nzrange(S, j)
+        col_S[p] = j
+    end
+    hat_row = copy(rowvals(Pin))
+    hat_col = [s for s in 1:M for _ in nzrange(Pin, s)]
+    on_row = [Int[] for _ in cu]          # S's stored entries on each constrained row
+    I, J = Int[], Int[]
+    for p in eachindex(Sr)
+        c = c_of[Sr[p]]
+        c == 0 ? (push!(I, Sr[p]); push!(J, col_S[p])) : push!(on_row[c], p)
+    end
+    append!(I, cu)
+    append!(J, cu)
+    for (c, s) in zip(hat_row, hat_col)
+        push!(I, cu[c], L + s)         # T at (k, L + s), the shift at (L + s, k)
+        push!(J, L + s, cu[c])
+        for p in on_row[c]
+            push!(I, L + s)
+            push!(J, col_S[p])
+        end
+    end
+    A = sparse(I, J, ones(FT, length(I)), L + M, L + M)
+    fill!(nonzeros(A), zero(FT))
+    pos(r, c) = first(nzrange(A, c)) + searchsortedfirst(view(rowvals(A), nzrange(A, c)), r) - 1
+    pos_S = [c_of[Sr[p]] == 0 ? pos(Sr[p], col_S[p]) : 0 for p in eachindex(Sr)]
+    gal = [(p, g) for g in eachindex(hat_row) for p in on_row[hat_row[g]]]
+    return ConstrainedSystem{FT}(
+        key, L, cu, A, pos_S, [pos(k, k) for k in cu], hat_row, hat_col,
+        [pos(cu[c], L + s) for (c, s) in zip(hat_row, hat_col)], [pos(L + s, cu[c]) for (c, s) in zip(hat_row, hat_col)],
+        first.(gal), last.(gal), [pos(L + hat_col[g], col_S[p]) for (p, g) in gal],
+        zeros(FT, length(hat_row)), zeros(FT, M), one(FT), SparseLUSolver{FT}(), true,
+    )
+end
+
+"""
+    update_constrained_system!(sys, S, basis, n, B; shift = nothing) -> sys
+
+Write the values of `S` (on the pattern `sys` was built for), of the constraint at the density
+`n` and field `B` (grid arrays) and of the Galerkin rows into `sys`, and refactorize it.
+`shift`, one value per constrained row, is added to those rows' diagonal of S, which only the
+Galerkin rows read.
+"""
+function update_constrained_system!(
+        sys::ConstrainedSystem{FT}, S::SparseMatrixCSC{FT}, b::ClosedSurfaceBasis, n::AbstractVecOrMat, B::AbstractVecOrMat;
+        shift::Union{Nothing, AbstractVector} = nothing,
+    ) where {FT <: AbstractFloat}
+    sel, cu, Pin = inside_cut(b)
+    cu == sys.cu || throw(ArgumentError("update_constrained_system!: the basis is not the one the system was built for"))
+    Pv, Sv, nz = nonzeros(Pin), nonzeros(S), nonzeros(sys.matrix)
+    length(Sv) == length(sys.pos_S) || throw(ArgumentError("update_constrained_system!: S is not on the system's pattern"))
+    # the Galerkin weights P V B, each row normalized by its sum
+    fill!(sys.qs, zero(FT))
+    for g in eachindex(sys.q)
+        c = sys.hat_row[g]
+        sys.q[g] = Pv[g] * b.V[sel[c]] * B[cu[c]]
+        sys.qs[sys.hat_col[g]] += abs(sys.q[g])
+    end
+    sys.q ./= view(sys.qs, sys.hat_col)
+    sys.κ = sum(B[k] / n[k] for k in cu) / length(cu)
+    fill!(nz, zero(FT))
+    for p in eachindex(Sv)
+        sys.pos_S[p] > 0 && (nz[sys.pos_S[p]] = Sv[p])
+    end
+    nz[sys.pos_I] .= one(FT)
+    for g in eachindex(sys.q)
+        k = cu[sys.hat_row[g]]
+        nz[sys.pos_T[g]] = -B[k] / (n[k] * sys.κ) * Pv[g]
+        shift === nothing || (nz[sys.pos_shift[g]] += sys.q[g] * shift[sys.hat_row[g]])
+    end
+    for i in eachindex(sys.gal_S)
+        nz[sys.gal_pos[i]] += sys.q[sys.gal_hat[i]] * Sv[sys.gal_S[i]]
+    end
+    factorize!(sys.solver, sys.matrix; reuse = !sys.fresh)
+    sys.fresh = false
+    return sys
+end
+
+"""
+    constrained_rhs(sys, r; extra = nothing) -> Vector
+
+The right-hand side of `sys` for S x = r: r with the constrained rows' zero, then the Galerkin
+rows' Q r + `extra`, normalized as their rows are.
+"""
+function constrained_rhs(sys::ConstrainedSystem{FT}, r::AbstractVector; extra::Union{Nothing, AbstractVector} = nothing) where {FT}
+    L = sys.L
+    y = zeros(promote_type(FT, eltype(r)), L + length(sys.qs))
+    y[1:L] .= r
+    y[sys.cu] .= zero(FT)
+    for g in eachindex(sys.q)
+        y[L + sys.hat_col[g]] += sys.q[g] * r[sys.cu[sys.hat_row[g]]]
+    end
+    extra === nothing || (y[(L + 1):end] .+= extra ./ sys.qs)
+    return y
+end
+
 """
     constrained_momentum_solve(A, r, basis, n, B; extra = nothing) -> (u, K)
 
@@ -366,30 +510,15 @@ u = (B/n) P K, and their momentum rows are replaced by the Galerkin rows
 Q (A u − r) = `extra` (zero by default), Q = Pᵀ diag(V B). Nodes beyond the cut and outside Ω_c
 keep their rows, so their current is not removed. The residual of the replaced rows then does
 no work on the constrained flow. `basis === nothing` is the plain solve, with an empty K.
+A run keeps the system between steps ([`constrained_system`](@ref)); this builds it afresh.
 """
 function constrained_momentum_solve(
-        A::SparseMatrixCSC{FT}, r::AbstractVector, b::Union{Nothing, ClosedSurfaceBasis}, n::AbstractVector, B::AbstractVector;
+        A::SparseMatrixCSC{FT}, r::AbstractVector, b::Union{Nothing, ClosedSurfaceBasis}, n::AbstractVecOrMat, B::AbstractVecOrMat;
         extra::Union{Nothing, AbstractVector} = nothing,
     ) where {FT <: AbstractFloat}
     b === nothing && return (A \ r, FT[])
-    N = size(A, 1)
-    sel = findall(<=(1), b.ψN)
-    cu = b.nodes[sel]
-    Pin = b.P[sel, :]
-    M = size(Pin, 2)
-    nk, Bk = n[cu], B[cu]
-    κ = mean(Bk ./ nk)                                   # K is solved as κ K, of the order of u
-    Q = Pin' * Diagonal(b.V[sel] .* Bk)
-    qs = vec(sum(abs, Q; dims = 2))                      # Galerkin rows normalized
-    Qs = Diagonal(one(FT) ./ qs) * Q
-    keep = ones(FT, N)
-    keep[cu] .= zero(FT)
-    Arows = Diagonal(keep) * A + Diagonal(one(FT) .- keep)   # constrained rows: u_k − (T K)_k = 0
-    T = sparse(Diagonal((Bk ./ nk) ./ κ) * Pin)
-    rows, cols, vals = findnz(T)
-    Tcols = sparse(cu[rows], cols, -vals, N, M)
-    Aaug = [Arows Tcols; sparse(Qs * A[cu, :]) spzeros(FT, M, M)]
-    rhs = vcat(keep .* r, Qs * r[cu] .+ (extra === nothing ? zero(FT) : extra ./ qs))
-    x = Aaug \ rhs
-    return x[1:N], x[(N + 1):end] ./ κ
+    sys = update_constrained_system!(constrained_system(nothing, A, b), A, b, n, B)
+    y = constrained_rhs(sys, r; extra)
+    x = solve!(similar(y), sys.solver, y)
+    return x[1:sys.L], x[(sys.L + 1):end] ./ sys.κ
 end

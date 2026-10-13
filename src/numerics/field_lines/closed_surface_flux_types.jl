@@ -78,6 +78,37 @@ struct ClosedSurfaceBasis{FT <: AbstractFloat}
 end
 
 """
+    ConstrainedSystem{FT}
+
+A square sparse system S x = r whose first unknowns are u∥ on the grid's nodes, with the
+surface-flux constraint on the nodes `cu` inside the cut: their rows become u_k − (T K)_k = 0,
+T = diag(B/(n κ)) P, and M Galerkin rows Q (S x − r) = extra, Q = Pᵀ diag(V B) normalized by
+`qs`, are appended; the unknowns are [x; κ K]. The pattern, of S and of the hats at `cu`, is
+built once; [`update_constrained_system!`](@ref) writes values and refactorizes with the LU's
+symbolic analysis kept. [`constrained_system`](@ref) gives a new one when the pattern changes.
+"""
+mutable struct ConstrainedSystem{FT <: AbstractFloat}
+    key::UInt                       # hash of S's pattern, cu and the hats' pattern at cu
+    L::Int                          # S's size
+    cu::Vector{Int}
+    matrix::SparseMatrixCSC{FT, Int}  # (L + M) × (L + M)
+    pos_S::Vector{Int}              # each stored entry of S: its position, 0 on a constrained row
+    pos_I::Vector{Int}              # (k, k) of each constrained row
+    hat_row::Vector{Int}            # each stored hat value at cu (P's CSC order): its row in cu
+    hat_col::Vector{Int}            # and its hat
+    pos_T::Vector{Int}              # (cu[c], L + s) of each
+    pos_shift::Vector{Int}          # (L + s, cu[c]) of each
+    gal_S::Vector{Int}              # the Galerkin rows' products: a stored entry of S,
+    gal_hat::Vector{Int}            # a hat value in its row,
+    gal_pos::Vector{Int}            # and the position (L + s, column) they add to
+    q::Vector{FT}                   # the Galerkin weight of each hat value, P V B / qs
+    qs::Vector{FT}                  # each Galerkin row's norm
+    κ::FT                           # the mean B/n: κ K is a velocity
+    solver::SparseLUSolver{FT}
+    fresh::Bool                     # the pattern has not been factorized yet
+end
+
+"""
     SurfaceFluxSolve{FT}(NR, NZ)
 
 What the constraint's last u∥ solve leaves for the rest of the step: the surface flux `K` at the
@@ -114,14 +145,16 @@ SurfaceFluxLedger{FT}() where {FT <: AbstractFloat} = SurfaceFluxLedger{FT}(zero
     ClosedSurfaceState{FT}(NR, NZ)
 
 The constraint in a run, by lifetime: the `basis` of the step (`nothing` when there is none),
-rebuilt after each field-line analysis; the `solve` of the step ([`SurfaceFluxSolve`](@ref));
-and the cumulative `ledger` ([`SurfaceFluxLedger`](@ref)). A step solved again above the Ampère
-gate puts `solve` and `ledger` back as they were.
+rebuilt after each field-line analysis; the constrained u∥ system `u_system`
+([`ConstrainedSystem`](@ref)), kept while its pattern holds; the `solve` of the step
+([`SurfaceFluxSolve`](@ref)); and the cumulative `ledger` ([`SurfaceFluxLedger`](@ref)). A step
+solved again above the Ampère gate puts `solve` and `ledger` back as they were.
 """
 mutable struct ClosedSurfaceState{FT <: AbstractFloat}
     basis::Union{Nothing, ClosedSurfaceBasis{FT}}
+    u_system::Union{Nothing, ConstrainedSystem{FT}}
     solve::SurfaceFluxSolve{FT}
     ledger::SurfaceFluxLedger{FT}
 end
 ClosedSurfaceState{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat} =
-    ClosedSurfaceState{FT}(nothing, SurfaceFluxSolve{FT}(NR, NZ), SurfaceFluxLedger{FT}())
+    ClosedSurfaceState{FT}(nothing, nothing, SurfaceFluxSolve{FT}(NR, NZ), SurfaceFluxLedger{FT}())

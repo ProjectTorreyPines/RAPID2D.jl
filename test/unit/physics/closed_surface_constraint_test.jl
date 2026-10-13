@@ -62,6 +62,8 @@ end
     update_ue_para!(RP)
     @test surface_flux_error(RP) < 1.0e-10
     @test s.ledger.projection >= 0
+    # the second solve on the same basis refactorizes the constrained system by value
+    @test s.u_system.solver.nfactor == 2 && s.u_system.solver.nsymbolic == 1
 end
 
 @testitem "Closed-surface run: above the gate the coupled step is projected onto a surface flux" setup = [ClosedSurfaceRun] tags = [:physics] begin

@@ -38,39 +38,65 @@ end
     surface_constrained_ue!(RP, A, rhs, θu) -> RP
 
 Solve the u∥ step `A u = rhs` (`A` sparse over all nodes) with the closed-surface constraint
-inside the cut ([`constrained_momentum_solve`](@ref)), and write u∥ and the surface flux.
-- The constrained rows leave ionization out of the decay: the newborn electrons' dilution is
-  applied once, by the remap after continuity.
-- The pressure enters the Galerkin rows as its generalized force on the stream-function fluxes
-  ([`pressure_operator`](@ref)), in place of the nodal force the rows of `rhs` carry.
-- The kinetic energy the constraint removes from the step's starting drift is booked as
-  activation (no surface flux before), basis change, or projection.
+inside the cut ([`constrained_momentum_solve`](@ref), on the run's [`ConstrainedSystem`](@ref),
+kept while its pattern holds), and write u∥ and the surface flux
+([`surface_constraint_terms`](@ref), [`commit_surface_flux!`](@ref)).
 """
 function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::AbstractVector, θu::Real) where {FT <: AbstractFloat}
-    s, pla, F = RP.closed_surface, RP.plasma, RP.fields
-    b = s.basis
+    s, pla = RP.closed_surface, RP.plasma
+    t = surface_constraint_terms(RP, θu)
+    rhs_c = Vector{FT}(rhs)
+    rhs_c[t.cu] .+= t.ionization
+    s.u_system = constrained_system(s.u_system, A, s.basis)
+    sys = update_constrained_system!(s.u_system, A, s.basis, pla.ne, RP.fields.Btot; t.shift)
+    y = constrained_rhs(sys, rhs_c; t.extra)
+    x = solve!(similar(y), sys.solver, y)
+    commit_surface_flux!(RP, x[(sys.L + 1):end] ./ sys.κ, t.Bp)
+    copyto!(pla.ue_para, view(x, 1:sys.L))
+    return RP
+end
+
+"""
+    surface_constraint_terms(RP, θu) -> (; cu, shift, ionization, extra, Bp)
+
+What the constrained u∥ rows take that the plain step does not, on the nodes `cu` inside the cut:
+- ionization leaves their decay, `shift` on the diagonal and `ionization` on the right-hand
+  side: the newborn electrons' dilution is applied once, by the remap after continuity;
+- the pressure enters the Galerkin rows as its generalized force on the stream-function fluxes
+  ([`pressure_operator`](@ref) `Bp`), `extra`, in place of the nodal force of the plain rows.
+"""
+function surface_constraint_terms(RP::RAPID{FT}, θu::Real) where {FT <: AbstractFloat}
+    pla, b, dt = RP.plasma, RP.closed_surface.basis, RP.dt
     @unpack me, ee = RP.config.constants
-    dt = RP.dt
-    n, B, u0 = vec(pla.ne), vec(F.Btot), vec(pla.ue_para)
-    sel = findall(<=(1), b.ψN)
-    cu = b.nodes[sel]
-    Pin = b.P[sel, :]
-    A2, rhs2 = copy(A), Vector{FT}(rhs)
-    for k in cu
-        A2[k, k] -= θu * dt * pla.ν_en_iz_tot[k]
-        rhs2[k] += (1 - θu) * dt * pla.ν_en_iz_tot[k] * u0[k]
-    end
+    sel, cu, Pin = inside_cut(b)
+    ν_iz = pla.ν_en_iz_tot[cu]
     Bp = pressure_operator(b, log.(max.(pla.ne, CLOSED_SURFACE_N_FLOOR)))
     extra = nothing
     if RP.flags.Include_ud_pressure_term
-        a_p = vec(calculate_electron_acceleration_by_pressure(RP))
-        F_p = -(Bp * (ee .* vec(pla.Te_eV)[b.nodes])) ./ me
-        extra = dt .* (F_p .- Pin' * (b.V[sel] .* B[cu] .* a_p[cu]))
+        a_p = calculate_electron_acceleration_by_pressure(RP)
+        F_p = -(Bp * (ee .* pla.Te_eV[b.nodes])) ./ me
+        extra = dt .* (F_p .- Pin' * (b.V[sel] .* RP.fields.Btot[cu] .* a_p[cu]))
     end
+    return (; cu, shift = -θu * dt .* ν_iz, ionization = (1 - θu) * dt .* ν_iz .* pla.ue_para[cu], extra, Bp)
+end
+
+"""
+    commit_surface_flux!(RP, K, Bp) -> RP
+
+Keep the step's surface flux `K` and what the step's transport reads from it: the
+stream-function fluxes and the compression `Bp`ᵀK that pairs with the pressure force. Called
+while u∥ is still the step's starting drift: the kinetic energy of its part that is not a
+surface flux, which the constraint removes, is booked as activation (no surface flux before),
+basis change, or projection.
+"""
+function commit_surface_flux!(RP::RAPID{FT}, K::Vector{FT}, Bp::AbstractMatrix) where {FT <: AbstractFloat}
+    s, pla = RP.closed_surface, RP.plasma
+    b, sol, led = s.basis, s.solve, s.ledger
+    n, B, u = pla.ne, RP.fields.Btot, pla.ue_para
+    sel, cu, Pin = inside_cut(b)
+    K0 = galerkin_flux(b, n, u, B)
+    removed = RP.config.constants.me / 2 * sum(b.V[sel] .* n[cu] .* (u[cu] .- (B[cu] ./ n[cu]) .* (Pin * K0)) .^ 2)
     signature = hash((b.nodes, b.knots))
-    K0 = galerkin_flux(b, n, u0, B)
-    removed = me / 2 * sum(b.V[sel] .* n[cu] .* (u0[cu] .- (B[cu] ./ n[cu]) .* (Pin * K0)) .^ 2)
-    sol, led = s.solve, s.ledger
     if isempty(sol.K)
         led.activation += removed
     elseif signature != sol.signature
@@ -78,11 +104,7 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
     else
         led.projection += removed
     end
-    u, K = constrained_momentum_solve(A2, rhs2, b, n, B; extra)
-    vec(pla.ue_para) .= u
     sol.K, sol.signature = K, signature
-    # what the density, Te and u∥ transport of the step read: the stream-function fluxes of K and
-    # the compression that pairs with the pressure force
     sol.ΓR, sol.ΓZ = stream_function_fluxes(b, K)
     fill!(sol.compression, zero(FT))
     sol.compression[b.nodes] .= Bp' * K
@@ -101,9 +123,8 @@ function remap_surface_flux!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     s, pla, F = RP.closed_surface, RP.plasma, RP.fields
     b = s.basis
     me = RP.config.constants.me
-    sel = findall(<=(1), b.ψN)
-    cu = b.nodes[sel]
-    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (b.P[sel, :] * s.solve.K)
+    sel, cu, Pin = inside_cut(b)
+    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (Pin * s.solve.K)
     s.ledger.remap += me / 2 * sum(b.V[sel] .* pla.ne[cu] .* (u_new .^ 2 .- pla.ue_para[cu] .^ 2))
     pla.ue_para[cu] .= u_new
     update_Jϕ!(RP)
