@@ -91,6 +91,81 @@ end
     @test isfinite(snap.cs_E_projection) && snap.cs_E_projection >= 0
 end
 
+@testitem "Closed-surface block: Ampère's law holds for the constrained current" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        uψ_coupling_terms, bulk_ion_charge, BlockConstraint, PostProjection
+    # the interior rows of the coupled block's ψ equation, ΔGS ψ + c_ψu u∥ = −μ0 R n_i e Z u_i∥ bϕ
+    # (no coils in the grid), with the u∥ the step keeps
+    function ampere_residual(RP)
+        G, pla, F = RP.G, RP.plasma, RP.fields
+        ee, μ0 = RP.config.constants.ee, RP.config.constants.μ0
+        Zi = bulk_ion_charge(RP)
+        _, c_ψu = uψ_coupling_terms(RP)
+        ions = vec(@. -μ0 * G.R2D * pla.ni * ee * Zi * pla.ui_para * F.bϕ)
+        res = RP.operators.ΔGS.matrix * vec(F.ψ_self) .+ c_ψu .* vec(pla.ue_para) .- ions
+        res[G.BDY_idx] .= 0
+        return maximum(abs, res) / maximum(abs, c_ψu .* vec(pla.ue_para))
+    end
+    res = Dict()
+    for coupling in (BlockConstraint(), PostProjection())
+        RP = closed_RP(; Ampere = true, policy = SurfaceFluxConstraint(; coupling))
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+        solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
+        @test surface_flux_error(RP) < 1.0e-10
+        res[coupling] = ampere_residual(RP)
+    end
+    # the block solves ψ with the constrained drift; the post-projection with the free one
+    @test res[BlockConstraint()] < 1.0e-10
+    @test res[PostProjection()] > 1.0e-3
+end
+
+@testitem "Closed-surface block: its u∥, K and Rue_ei are the below-gate solve's at the field it induces" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        update_ue_para!
+    # The coupled block and the below-gate u∥ system hold the same constrained equation; given the
+    # step's induced field bϕ Eϕ_self, the two give the same u∥, surface flux and friction ledger.
+    a, b = (closed_RP(; Ampere = true, E_para_self_ES = false) for _ in 1:2)
+    for RP in (a, b)
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+    end
+    u0 = copy(a.plasma.ue_para)
+    solve_combined_momentum_Ampere_equations_with_coils!(a; NamedTuple(a.flags.ampere_picard)...)
+    @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_self
+    update_ue_para!(b)
+    Δu = a.plasma.ue_para .- u0
+    @test maximum(abs, Δu) > 1.0e-3 * maximum(abs, u0)
+    @test maximum(abs, a.plasma.ue_para .- b.plasma.ue_para) <= 1.0e-10 * maximum(abs, Δu)
+    Ka, Kb = a.closed_surface.solve.K, b.closed_surface.solve.K
+    @test maximum(abs, Ka .- Kb) <= 1.0e-10 * maximum(abs, Kb)
+    @test maximum(abs, a.plasma.Rue_ei .- b.plasma.Rue_ei) <= 1.0e-10 * maximum(abs, b.plasma.Rue_ei)
+end
+
+@testitem "Closed-surface block: the direct solve agrees, and one symbolic analysis serves a basis" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        AndersonOuterSolve, DirectOuterSolve
+    tight = (tolerance = 1.0e-12, max_iter = 200, E_floor = 0.0, I_floor = 0.0)
+    a, b = (closed_RP(; Ampere = true) for _ in 1:2)
+    for RP in (a, b)
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+    end
+    solve_combined_momentum_Ampere_equations_with_coils!(a; tight..., method = AndersonOuterSolve())
+    solve_combined_momentum_Ampere_equations_with_coils!(b; tight..., method = DirectOuterSolve())
+    agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
+    @test a.diagnostics.ampere_picard.nunconverged == 0 && b.diagnostics.ampere_picard.nunconverged == 0
+    @test agree(b.plasma.ue_para, a.plasma.ue_para)
+    @test agree(b.fields.ψ_self, a.fields.ψ_self)
+    @test agree(b.closed_surface.solve.K, a.closed_surface.solve.K)
+    # a second step on the same basis refactorizes the block by value; the plain block is not used
+    prepare_timestep!(a)
+    solve_combined_momentum_Ampere_equations_with_coils!(a; tight...)
+    sys = a.closed_surface.block_system
+    @test sys.solver.nfactor == 2 && sys.solver.nsymbolic == 1
+    @test a.operators.uψ_solver.nfactor == 0
+end
+
 @testitem "Closed-surface run: the gate puts the constraint's last solve back" setup = [ClosedSurfaceRun] tags = [:physics] begin
     using RAPID2D: update_ue_para!, below_gate_entry_state, restore_below_gate_entry_state!
     RP = closed_RP()

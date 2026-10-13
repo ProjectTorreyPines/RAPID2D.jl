@@ -269,9 +269,10 @@ end
 end
 
 @testitem "Closed-surface policy: free flow by default, the constraint by choice" tags = [:numerics] begin
-    using RAPID2D: FreeParallelFlow, SurfaceFluxConstraint, PostProjection, ClosedSurfaceState
+    using RAPID2D: FreeParallelFlow, SurfaceFluxConstraint, BlockConstraint, PostProjection, ClosedSurfaceState
     @test SimulationFlags{Float64}().closed_surface_flow isa FreeParallelFlow
-    @test SurfaceFluxConstraint().coupling isa PostProjection
+    @test SurfaceFluxConstraint().coupling isa BlockConstraint
+    @test SurfaceFluxConstraint(; coupling = PostProjection()).coupling isa PostProjection
     s = ClosedSurfaceState{Float64}(5, 7)
     @test s.basis === nothing && isempty(s.solve.K)
     @test size(s.solve.ΓR) == (4, 7) && size(s.solve.ΓZ) == (5, 6) && size(s.solve.compression) == (5, 7)

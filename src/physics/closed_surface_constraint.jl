@@ -1,8 +1,9 @@
 # The closed-surface flux constraint in a run.
 # At the end of each step the basis is rebuilt from the field-line analysis; the next u∥ solve
-# takes n u∥/B = K_e(ψ) on the closed region inside the cut, below the Ampère gate directly and
-# above it after the coupled solve (`PostProjection`); after continuity u∥ is remapped to the
-# density the step left. The kinetic energy the constraint removes and the remap changes is booked.
+# takes n u∥/B = K_e(ψ) on the closed region inside the cut, below the Ampère gate in the u∥ step
+# and above it inside the coupled u∥–ψ block (`BlockConstraint`) or after it (`PostProjection`);
+# after continuity u∥ is remapped to the density the step left. The kinetic energy the constraint
+# removes and the remap changes is booked.
 
 # the density below which a node is not admitted to the constraint (the per-particle operators' floor)
 const CLOSED_SURFACE_N_FLOOR = 1.0
@@ -54,6 +55,27 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
     commit_surface_flux!(RP, x[(sys.L + 1):end] ./ sys.κ, t.Bp)
     copyto!(pla.ue_para, view(x, 1:sys.L))
     return RP
+end
+
+"""
+    coupled_block_solver!(RP, A_u_ψ, θu) -> (solver, sys, terms)
+
+The coupled u∥–ψ block's factorized solver for the step. With `SurfaceFluxConstraint(;
+coupling = BlockConstraint())` on a closed region, the block with the surface flux as M more
+unknowns: the run's [`ConstrainedSystem`](@ref) `sys`, kept while its pattern holds, and the
+terms its constrained rows take ([`surface_constraint_terms`](@ref)). Otherwise the plain block's
+LU, with `sys` and `terms` `nothing`.
+"""
+function coupled_block_solver!(RP::RAPID{FT}, A_u_ψ::SparseMatrixCSC{FT}, θu::Real) where {FT <: AbstractFloat}
+    if !(closed_surface_active(RP) && RP.flags.closed_surface_flow.coupling isa BlockConstraint)
+        factorize!(RP.operators.uψ_solver, A_u_ψ)
+        return RP.operators.uψ_solver, nothing, nothing
+    end
+    cs = RP.closed_surface
+    t = surface_constraint_terms(RP, θu)
+    cs.block_system = constrained_system(cs.block_system, A_u_ψ, cs.basis)
+    sys = update_constrained_system!(cs.block_system, A_u_ψ, cs.basis, RP.plasma.ne, RP.fields.Btot; t.shift)
+    return sys.solver, sys, t
 end
 
 """

@@ -25,16 +25,26 @@ How the surface-flux constraint enters the step that solves u∥.
 abstract type ClosedSurfaceCoupling end
 
 """
+    BlockConstraint()
+
+**The default.** Above the Ampère gate the surface flux K_e is an unknown of the coupled
+u∥–ψ block: the constrained rows and the Galerkin rows join it, so ψ and the coil currents are
+solved with the constrained current. Below the gate the constraint is in the u∥ solve.
+"""
+struct BlockConstraint <: ClosedSurfaceCoupling end
+
+"""
     PostProjection()
 
-Above the Ampère gate the coupled step is solved as before, then u∥ is solved again with the
-constraint at the induced field it found; the step keeps that solve's ψ, so Ampère's law is met
-for the unconstrained current (an experiment). Below the gate the constraint is in the u∥ solve.
+Above the Ampère gate the coupled step is solved without the constraint, then u∥ is solved
+again with it at the induced field that solve found; the step keeps that ψ, so Ampère's law is
+met for the unconstrained current. Kept for comparison with [`BlockConstraint`](@ref). Below
+the gate the constraint is in the u∥ solve.
 """
 struct PostProjection <: ClosedSurfaceCoupling end
 
 """
-    SurfaceFluxConstraint(; coupling = PostProjection())
+    SurfaceFluxConstraint(; coupling = BlockConstraint())
 
 On the closed region the electron parallel particle flux per B is a surface function,
 n u∥ / B = K_e(ψ), solved from the momentum equation averaged over each surface, and the
@@ -44,7 +54,7 @@ unmoved.
 struct SurfaceFluxConstraint{C <: ClosedSurfaceCoupling} <: ClosedSurfaceFlow
     coupling::C
 end
-SurfaceFluxConstraint(; coupling::ClosedSurfaceCoupling = PostProjection()) = SurfaceFluxConstraint(coupling)
+SurfaceFluxConstraint(; coupling::ClosedSurfaceCoupling = BlockConstraint()) = SurfaceFluxConstraint(coupling)
 
 """
     ClosedSurfaceBasis{FT}
@@ -145,16 +155,18 @@ SurfaceFluxLedger{FT}() where {FT <: AbstractFloat} = SurfaceFluxLedger{FT}(zero
     ClosedSurfaceState{FT}(NR, NZ)
 
 The constraint in a run, by lifetime: the `basis` of the step (`nothing` when there is none),
-rebuilt after each field-line analysis; the constrained u∥ system `u_system`
-([`ConstrainedSystem`](@ref)), kept while its pattern holds; the `solve` of the step
-([`SurfaceFluxSolve`](@ref)); and the cumulative `ledger` ([`SurfaceFluxLedger`](@ref)). A step
-solved again above the Ampère gate puts `solve` and `ledger` back as they were.
+rebuilt after each field-line analysis; the constrained systems ([`ConstrainedSystem`](@ref)) of
+the u∥ step (`u_system`) and of the coupled u∥–ψ block (`block_system`), each kept while its
+pattern holds; the `solve` of the step ([`SurfaceFluxSolve`](@ref)); and the cumulative `ledger`
+([`SurfaceFluxLedger`](@ref)). A step solved again above the Ampère gate puts `solve` and
+`ledger` back as they were.
 """
 mutable struct ClosedSurfaceState{FT <: AbstractFloat}
     basis::Union{Nothing, ClosedSurfaceBasis{FT}}
     u_system::Union{Nothing, ConstrainedSystem{FT}}
+    block_system::Union{Nothing, ConstrainedSystem{FT}}
     solve::SurfaceFluxSolve{FT}
     ledger::SurfaceFluxLedger{FT}
 end
 ClosedSurfaceState{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat} =
-    ClosedSurfaceState{FT}(nothing, nothing, SurfaceFluxSolve{FT}(NR, NZ), SurfaceFluxLedger{FT}())
+    ClosedSurfaceState{FT}(nothing, nothing, nothing, SurfaceFluxSolve{FT}(NR, NZ), SurfaceFluxLedger{FT}())
