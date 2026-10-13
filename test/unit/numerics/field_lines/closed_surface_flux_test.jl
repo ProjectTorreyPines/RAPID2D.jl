@@ -273,8 +273,9 @@ end
     @test SimulationFlags{Float64}().closed_surface_flow isa FreeParallelFlow
     @test SurfaceFluxConstraint().coupling isa PostProjection
     s = ClosedSurfaceState{Float64}(5, 7)
-    @test s.basis === nothing && isempty(s.K)
-    @test size(s.ΓR) == (4, 7) && size(s.ΓZ) == (5, 6)
+    @test s.basis === nothing && isempty(s.solve.K)
+    @test size(s.solve.ΓR) == (4, 7) && size(s.solve.ΓZ) == (5, 6) && size(s.solve.compression) == (5, 7)
+    @test s.ledger.activation == s.ledger.basis_change == s.ledger.projection == s.ledger.remap == 0
 end
 
 @testitem "Constrained momentum: surface flux inside the cut, ordinary rows elsewhere" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin

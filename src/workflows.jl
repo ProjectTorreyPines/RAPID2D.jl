@@ -111,7 +111,7 @@ end
 # What a step below the Ampère gate writes before it knows whether its current crosses the gate,
 # put back when the step is solved again by the coupled solve: u∥, Jϕ, the induced field and
 # its parallel projection, the coils' currents, memory and clock, and the closed-surface
-# constraint's last solve (K, its fluxes and compression) and ledger. The rest it writes is
+# constraint's solve and ledger, whole. The rest it writes is
 # assigned afresh by that solve before use (Rue_ei), or is a cache rebuilt from the same state
 # (the u∥ operators and LU, the circuit matrices, the Grad–Shafranov factorization).
 function below_gate_entry_state(RP::RAPID)
@@ -122,12 +122,7 @@ function below_gate_entry_state(RP::RAPID)
         E_para_self_EM = copy(F.E_para_self_EM), E_para_tot = copy(F.E_para_tot),
         coil_current = csys.n_total > 0 ? copy(get_all_currents(csys)) : nothing,
         coil_ψ_pla = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : nothing, coil_time = csys.time_s,
-        closed_surface = (;
-            K = copy(RP.closed_surface.K), signature = RP.closed_surface.signature,
-            ΓR = copy(RP.closed_surface.ΓR), ΓZ = copy(RP.closed_surface.ΓZ),
-            compression = copy(RP.closed_surface.compression),
-            E = (RP.closed_surface.E_activation, RP.closed_surface.E_basis_change, RP.closed_surface.E_projection),
-        ),
+        closed_surface = (; solve = deepcopy(RP.closed_surface.solve), ledger = deepcopy(RP.closed_surface.ledger)),
     )
 end
 
@@ -144,11 +139,8 @@ function restore_below_gate_entry_state!(RP::RAPID, entry)
         csys.coils.ψ_pla = entry.coil_ψ_pla
     end
     csys.time_s = entry.coil_time
-    cs = RP.closed_surface
-    cs.K, cs.signature = entry.closed_surface.K, entry.closed_surface.signature
-    cs.ΓR, cs.ΓZ = entry.closed_surface.ΓR, entry.closed_surface.ΓZ
-    cs.compression .= entry.closed_surface.compression
-    cs.E_activation, cs.E_basis_change, cs.E_projection = entry.closed_surface.E
+    RP.closed_surface.solve = deepcopy(entry.closed_surface.solve)
+    RP.closed_surface.ledger = deepcopy(entry.closed_surface.ledger)
     return RP
 end
 

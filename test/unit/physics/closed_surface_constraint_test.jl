@@ -45,7 +45,7 @@
         sel = findall(<=(1), b.ψN)
         k = b.nodes[sel]
         f = pla.ne[k] .* pla.ue_para[k] ./ F.Btot[k]
-        return maximum(abs, f .- b.P[sel, :] * RP.closed_surface.K) / maximum(abs, f)
+        return maximum(abs, f .- b.P[sel, :] * RP.closed_surface.solve.K) / maximum(abs, f)
     end
 end
 
@@ -55,13 +55,13 @@ end
     s = RP.closed_surface
     @test s.basis !== nothing && length(s.basis.nodes) > 20
     update_ue_para!(RP)
-    @test length(s.K) == length(s.basis.knots)
+    @test length(s.solve.K) == length(s.basis.knots)
     @test surface_flux_error(RP) < 1.0e-10
     # the first constrained step removes the non-surface part of the drift
-    @test s.E_activation > 0 && s.E_projection == 0
+    @test s.ledger.activation > 0 && s.ledger.projection == 0
     update_ue_para!(RP)
     @test surface_flux_error(RP) < 1.0e-10
-    @test s.E_projection >= 0
+    @test s.ledger.projection >= 0
 end
 
 @testitem "Closed-surface run: above the gate the coupled step is projected onto a surface flux" setup = [ClosedSurfaceRun] tags = [:physics] begin
@@ -76,15 +76,15 @@ end
     solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
     s = RP.closed_surface
     @test RP.fields.ψ_self != ψ0                      # the coupled solve's ψ is kept
-    @test length(s.K) == length(s.basis.knots) && all(isfinite, s.K)
+    @test length(s.solve.K) == length(s.basis.knots) && all(isfinite, s.solve.K)
     @test surface_flux_error(RP) < 1.0e-10
-    @test s.E_activation > 0
+    @test s.ledger.activation > 0
 
     # and through the run loop, step after step
     RP = closed_RP(; Ampere = true)
     RP.config.t_end_s = RP.t_end_s = RP.time_s + 5 * RP.dt
     run_simulation!(RP)
-    @test !isempty(RP.closed_surface.K) && all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_self)
+    @test !isempty(RP.closed_surface.solve.K) && all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_self)
     snap = RP.diagnostics.snaps0D[end]
     @test isfinite(snap.cs_E_projection) && snap.cs_E_projection >= 0
 end
@@ -94,12 +94,15 @@ end
     RP = closed_RP()
     update_ue_para!(RP)                                # the previous step's solve
     s = RP.closed_surface
-    saved() = (copy(s.K), s.signature, copy(s.ΓR), copy(s.ΓZ), copy(s.compression), s.E_activation, s.E_basis_change, s.E_projection)
+    saved() = (
+        copy(s.solve.K), s.solve.signature, copy(s.solve.ΓR), copy(s.solve.ΓZ), copy(s.solve.compression),
+        s.ledger.activation, s.ledger.basis_change, s.ledger.projection, s.ledger.remap,
+    )
     before = saved()
     entry = below_gate_entry_state(RP)
     RP.plasma.ue_para .*= 1.5                          # a below-gate attempt, discarded at the gate
     update_ue_para!(RP)
-    @test s.ΓR != before[3]
+    @test s.solve.ΓR != before[3]
     restore_below_gate_entry_state!(RP, entry)
     @test saved() == before
 end
@@ -109,7 +112,7 @@ end
     RP = closed_RP(; policy = FreeParallelFlow())
     @test RP.closed_surface.basis === nothing
     update_ue_para!(RP)
-    @test isempty(RP.closed_surface.K) && RP.closed_surface.E_activation == 0
+    @test isempty(RP.closed_surface.solve.K) && RP.closed_surface.ledger.activation == 0
 end
 
 @testitem "Closed-surface run: the remap keeps the surface flux on the new density" setup = [ClosedSurfaceRun] tags = [:physics] begin
@@ -124,7 +127,7 @@ end
     @test surface_flux_error(RP) < 1.0e-12
     # the current follows the surfaces, not the density: n u∥ is unchanged where u∥ is constrained
     @test pla.Jϕ[k] ≈ (pla.ne[k] .* pla.ue_para[k] .* RP.config.constants.qe .* RP.fields.bϕ[k])
-    @test s.E_remap != 0
+    @test s.ledger.remap != 0
 end
 
 @testitem "Closed-surface run: ionization dilutes the drift once" setup = [ClosedSurfaceRun] tags = [:physics] begin
@@ -142,7 +145,7 @@ end
     fill!(pla.ν_en_mom_tot, 0.0); fill!(pla.ν_ei_eff, 0.0); fill!(pla.ν_en_iz_tot, 1.0e6)
     nu0 = pla.ne[k] .* pla.ue_para[k]
     update_ue_para!(RP)
-    @test s.K ≈ K0                        # momentum density untouched by newborn electrons
+    @test s.solve.K ≈ K0                  # momentum density untouched by newborn electrons
     pla.ne[k] .*= 2.0                      # the step's ionization, as continuity would leave it
     remap_surface_flux!(RP)
     @test pla.ne[k] .* pla.ue_para[k] ≈ nu0   # diluted once: n u∥ kept, u∥ halved
@@ -215,7 +218,7 @@ end
     @test abs(sum(vec(V)[Ω] .* vec(pla.ne)[Ω] .* Af[Ω])) < 1.0e-8 * sum(abs.(vec(V)[Ω] .* vec(pla.ne)[Ω] .* Af[Ω]))
     # on Ω_c the compression is the pressure operator's adjoint: −(B_pᵀ K)/(n V)
     Bp = pressure_operator(s.basis, log.(max.(pla.ne, 1.0)))
-    c = Bp' * s.K
+    c = Bp' * s.solve.K
     @test ops.div_u[Ω] ≈ -c ./ (pla.ne[Ω] .* V[Ω])
 end
 

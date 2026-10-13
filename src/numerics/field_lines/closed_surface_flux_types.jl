@@ -78,27 +78,50 @@ struct ClosedSurfaceBasis{FT <: AbstractFloat}
 end
 
 """
+    SurfaceFluxSolve{FT}(NR, NZ)
+
+What the constraint's last u∥ solve leaves for the rest of the step: the surface flux `K` at the
+knots of the basis with `signature` (empty: none yet on this basis), its stream-function face
+fluxes `ΓR`, `ΓZ` laid out as in [`stream_function_fluxes`](@ref), and the `compression` B_pᵀK
+on the grid (the pressure operator's adjoint; zero off its domain).
+"""
+mutable struct SurfaceFluxSolve{FT <: AbstractFloat}
+    K::Vector{FT}
+    signature::UInt
+    ΓR::Matrix{FT}
+    ΓZ::Matrix{FT}
+    compression::Matrix{FT}
+end
+SurfaceFluxSolve{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat} =
+    SurfaceFluxSolve{FT}(FT[], UInt(0), zeros(FT, NR - 1, NZ), zeros(FT, NR, NZ - 1), zeros(FT, NR, NZ))
+
+"""
+    SurfaceFluxLedger{FT}()
+
+The constraint's cumulative signed energy ledger [J]: the kinetic energy it removed on its first
+step (`activation`), on steps where the basis changed (`basis_change`) and on other steps
+(`projection`), and the change from remapping u∥ to the step's new density (`remap`).
+"""
+mutable struct SurfaceFluxLedger{FT <: AbstractFloat}
+    activation::FT
+    basis_change::FT
+    projection::FT
+    remap::FT
+end
+SurfaceFluxLedger{FT}() where {FT <: AbstractFloat} = SurfaceFluxLedger{FT}(zero(FT), zero(FT), zero(FT), zero(FT))
+
+"""
     ClosedSurfaceState{FT}(NR, NZ)
 
-The constraint's state in a run: the basis of the step (`nothing` when there is none), the
-surface flux `K` of its last solve at the basis knots and the `signature` of the basis it used,
-the `compression` B_pᵀK of that solve on the grid (the pressure operator's adjoint; zero off its domain), the stream-function face fluxes `ΓR`, `ΓZ` laid out as in [`stream_function_fluxes`](@ref), and the
-cumulative signed energy ledger [J]: kinetic energy the constraint removed on its first step, on
-steps where the basis changed, and on other steps, and the change from remapping u∥ to the new
-density.
+The constraint in a run, by lifetime: the `basis` of the step (`nothing` when there is none),
+rebuilt after each field-line analysis; the `solve` of the step ([`SurfaceFluxSolve`](@ref));
+and the cumulative `ledger` ([`SurfaceFluxLedger`](@ref)). A step solved again above the Ampère
+gate puts `solve` and `ledger` back as they were.
 """
 mutable struct ClosedSurfaceState{FT <: AbstractFloat}
     basis::Union{Nothing, ClosedSurfaceBasis{FT}}
-    K::Vector{FT}
-    signature::UInt
-    compression::Matrix{FT}
-    ΓR::Matrix{FT}
-    ΓZ::Matrix{FT}
-    E_activation::FT
-    E_basis_change::FT
-    E_projection::FT
-    E_remap::FT
+    solve::SurfaceFluxSolve{FT}
+    ledger::SurfaceFluxLedger{FT}
 end
-ClosedSurfaceState{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat} = ClosedSurfaceState{FT}(
-    nothing, FT[], UInt(0), zeros(FT, NR, NZ), zeros(FT, NR - 1, NZ), zeros(FT, NR, NZ - 1), zero(FT), zero(FT), zero(FT), zero(FT),
-)
+ClosedSurfaceState{FT}(NR::Int, NZ::Int) where {FT <: AbstractFloat} =
+    ClosedSurfaceState{FT}(nothing, SurfaceFluxSolve{FT}(NR, NZ), SurfaceFluxLedger{FT}())

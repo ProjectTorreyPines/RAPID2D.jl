@@ -30,7 +30,7 @@ function update_closed_surface_basis!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     s.basis = any(A) ? closed_surface_basis(
             G, F.ψ, A; inside = G.cell_state .>= 0, weights = F.Btot .^ 2 ./ max.(pla.ne, CLOSED_SURFACE_N_FLOOR),
         ) : nothing
-    s.basis === nothing && empty!(s.K)
+    s.basis === nothing && empty!(s.solve.K)
     return RP
 end
 
@@ -70,21 +70,22 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
     signature = hash((b.nodes, b.knots))
     K0 = galerkin_flux(b, n, u0, B)
     removed = me / 2 * sum(b.V[sel] .* n[cu] .* (u0[cu] .- (B[cu] ./ n[cu]) .* (Pin * K0)) .^ 2)
-    if isempty(s.K)
-        s.E_activation += removed
-    elseif signature != s.signature
-        s.E_basis_change += removed
+    sol, led = s.solve, s.ledger
+    if isempty(sol.K)
+        led.activation += removed
+    elseif signature != sol.signature
+        led.basis_change += removed
     else
-        s.E_projection += removed
+        led.projection += removed
     end
     u, K = constrained_momentum_solve(A2, rhs2, b, n, B; extra)
     vec(pla.ue_para) .= u
-    s.K, s.signature = K, signature
+    sol.K, sol.signature = K, signature
     # what the density, Te and u∥ transport of the step read: the stream-function fluxes of K and
     # the compression that pairs with the pressure force
-    s.ΓR, s.ΓZ = stream_function_fluxes(b, K)
-    fill!(s.compression, zero(FT))
-    s.compression[b.nodes] .= Bp' * K
+    sol.ΓR, sol.ΓZ = stream_function_fluxes(b, K)
+    fill!(sol.compression, zero(FT))
+    sol.compression[b.nodes] .= Bp' * K
     return RP
 end
 
@@ -96,14 +97,14 @@ u∥ = K_e B / n with the density the step left, so the current follows the surf
 the density; book the kinetic-energy change and update Jϕ.
 """
 function remap_surface_flux!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    (closed_surface_active(RP) && !isempty(RP.closed_surface.K)) || return RP
+    (closed_surface_active(RP) && !isempty(RP.closed_surface.solve.K)) || return RP
     s, pla, F = RP.closed_surface, RP.plasma, RP.fields
     b = s.basis
     me = RP.config.constants.me
     sel = findall(<=(1), b.ψN)
     cu = b.nodes[sel]
-    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (b.P[sel, :] * s.K)
-    s.E_remap += me / 2 * sum(b.V[sel] .* pla.ne[cu] .* (u_new .^ 2 .- pla.ue_para[cu] .^ 2))
+    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (b.P[sel, :] * s.solve.K)
+    s.ledger.remap += me / 2 * sum(b.V[sel] .* pla.ne[cu] .* (u_new .^ 2 .- pla.ue_para[cu] .^ 2))
     pla.ue_para[cu] .= u_new
     update_Jϕ!(RP)
     return RP
@@ -119,12 +120,11 @@ so the flux carried is Γ whatever the density has become. Nodes at the per-part
 skipped, like the per-particle operators' empty rows.
 """
 function add_stream_function_transport!(A_adv::DiscretizedOperator{FT}, RP::RAPID{FT}) where {FT <: AbstractFloat}
-    s, G, n = RP.closed_surface, RP.G, RP.plasma.ne
+    sol, G, n = RP.closed_surface.solve, RP.G, RP.plasma.ne
     nz, k2c, nid = nonzeros(A_adv.matrix), A_adv.k2csc, G.nodes.nid
-    V(i, j) = FT(2π) * G.R2D[i, j] * G.dR * G.dZ
     function enter!(i, j, Γ, slot)              # Γ > 0 enters node (i, j) from its neighbour at `slot`
         n[i, j] > CLOSED_SURFACE_N_FLOOR || return
-        w = Γ / (V(i, j) * n[i, j])
+        w = Γ / (G.inVol2D[i, j] * n[i, j])
         r = nid[i, j]
         nz[slot_position(k2c, r, SLOT_C)] += w
         nz[slot_position(k2c, r, slot)] -= w
@@ -132,12 +132,12 @@ function add_stream_function_transport!(A_adv::DiscretizedOperator{FT}, RP::RAPI
     end
     NR, NZ = G.NR, G.NZ
     for j in 1:NZ, i in 1:(NR - 1)
-        Γ = s.ΓR[i, j]
+        Γ = sol.ΓR[i, j]
         iszero(Γ) && continue
         Γ > 0 ? enter!(i + 1, j, Γ, SLOT_W) : enter!(i, j, -Γ, SLOT_E)
     end
     for j in 1:(NZ - 1), i in 1:NR
-        Γ = s.ΓZ[i, j]
+        Γ = sol.ΓZ[i, j]
         iszero(Γ) && continue
         Γ > 0 ? enter!(i, j + 1, Γ, SLOT_S) : enter!(i, j, -Γ, SLOT_N)
     end

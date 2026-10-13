@@ -537,7 +537,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # SurfaceFluxConstraint: on the closed region Te rides the stream-function flux and is
         # compressed by the pressure operator's adjoint, which only the operators `update_Te!`
         # solves with carry
-        surface_carriage = RP.flags.Include_Te_convec_term && closed_surface_active(RP) && !isempty(RP.closed_surface.K)
+        surface_carriage = RP.flags.Include_Te_convec_term && closed_surface_active(RP) && !isempty(RP.closed_surface.solve.K)
         # one build of the operators Te is solved with, for the powers below that take them
         pops = RP.flags.Include_Te_diffu_term || visc_heat_on || surface_carriage ? ue_Te_operators(RP) : nothing
         A_diffu = pops === nothing ? nothing : pops.A_diffu
