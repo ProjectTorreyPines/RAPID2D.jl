@@ -118,7 +118,7 @@ end
 # the region, found by Newton from each region node at least as high, or as low, as all eight
 # neighbours, and merged within half a cell. Grid extrema alone miss an O-point between two nodes of
 # equal ψ and count several along a tilted valley.
-function count_o_points(G::GridGeometry{FT}, ψ::AbstractMatrix, region, itp; tol) where {FT}
+function count_o_points(G::GridGeometry{FT}, ψ::AbstractMatrix, region, itp; tol = max(1.0e-10, 64 * eps(FT))) where {FT}
     NR, NZ = size(ψ)
     h = min(G.dR, G.dZ)
     found = NTuple{2, FT}[]
@@ -230,7 +230,7 @@ function flux_surface_average(
     lv = surface_levels(o, ψ, region; nsurf)
     # Without an O-point there are no closed surfaces to average over, and around several (separate
     # islands, a doublet) no single family of them: report, do not guess.
-    n_o = count_o_points(G, ψ, region, g.itp; tol = max(1.0e-10, 64 * eps(FT)))
+    n_o = count_o_points(G, ψ, region, g.itp)
     n_o > 1 && @warn "the region holds $n_o O-points; its surfaces are not averaged. Pass one closed region." maxlog = 1
     weights, dVdψ, valid = o.converged && n_o <= 1 ? surface_weights(policy, G, g, region, o, lv) :
         (spzeros(FT, length(ψ), nsurf), fill(FT(NaN), nsurf), fill(false, nsurf))

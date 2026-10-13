@@ -5,7 +5,6 @@
 # through a face of a control volume is 2π (H(ψ_end) − H(ψ_start)) at the face's two corners and
 # the divergence of every control volume telescopes to zero. The constraint domain is the support
 # of H on the admissible nodes, which puts every face between it and the rest at H = const.
-# internal/docs/src/notes/plans/PLAN_closed-surface-flux.md (D1, D2, D6, D17).
 
 @testsnippet ClosedSurfaceFixtures begin
     using RAPID2D: initialize_grid_geometry
@@ -305,7 +304,7 @@ end
     Q = Pin' * Diagonal(Vin .* B[inside])
     f = (A * u .- r)[inside]
     @test maximum(abs, Q * f) <= 1.0e-10 * maximum(abs, Q * abs.(r[inside]))
-    # (P.5): the constraint force does no work on the constrained flow
+    # the constraint force does no work on the constrained flow
     @test abs(sum(Vin .* n[inside] .* u[inside] .* f)) <= 1.0e-10 * sum(abs.(Vin .* n[inside] .* u[inside] .* f))
     # with friction only, the series formula: (Pᵀ V B a B/n P) K = Pᵀ V B r
     a = 1 .+ dt .* ν[inside]

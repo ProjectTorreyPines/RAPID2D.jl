@@ -4,11 +4,10 @@
 # a control-volume face is 2π (H(ψ_end) − H(ψ_start)) at the face's two corners (the dual vertices),
 # and the divergence of every control volume telescopes to zero. The constraint domain is the
 # support of H on the admissible nodes, which leaves every face between it and the rest at one H.
-# internal/docs/src/notes/plans/PLAN_closed-surface-flux.md (D1, D2, D6, D17).
 
 """
-    closed_surface_basis(G, ψ, admissible; inside = nothing, weights = nothing, nknots = default,
-                         itp = psi_interpolant(G, ψ)) -> ClosedSurfaceBasis or nothing
+    closed_surface_basis(G, ψ, admissible; inside = nothing, weights = nothing, nknots = default)
+        -> ClosedSurfaceBasis or nothing
 
 The constraint domain and its surface functions for the nodes marked `admissible` (an `(NR, NZ)`
 mask: closed field lines inside the wall, not empty). Nodes on the grid's perimeter are never
@@ -26,7 +25,7 @@ following meets a null).
 function closed_surface_basis(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, admissible::AbstractMatrix{Bool};
         inside::Union{Nothing, AbstractMatrix{Bool}} = nothing, weights = nothing,
-        nknots::Union{Nothing, Int} = nothing, itp = nothing,
+        nknots::Union{Nothing, Int} = nothing,
     ) where {FT <: AbstractFloat}
     NR, NZ = size(ψ)
     A = copy(admissible)
@@ -35,17 +34,18 @@ function closed_surface_basis(
     fill_holes!(A)
     region = findall(vec(A))
     isempty(region) && return nothing
-    itp === nothing && (itp = psi_interpolant(G, ψ))
-    o = find_o_point(G, ψ, region; itp)
+    # one interpolant for the O-point and for the tracer that verifies the cut
+    g = FieldLineGeometry(G, ψ; inside)
+    o = find_o_point(G, ψ, region; itp = g.itp)
     (o === nothing || !o.converged) && return nothing
-    count_o_points(G, ψ, region, itp; tol = max(1.0e-10, 64 * eps(FT))) > 1 && return nothing
+    count_o_points(G, ψ, region, g.itp) > 1 && return nothing
     ψ_axis = FT(o.ψ)
     s = sign(sum(ψ[region]) - length(region) * ψ_axis)
     s == 0 && return nothing
     # flux from the axis, growing outward, at the dual corners
     dc = [s * ((ψ[i, j] + ψ[i + 1, j] + ψ[i, j + 1] + ψ[i + 1, j + 1]) / 4 - ψ_axis) for i in 1:(NR - 1), j in 1:(NZ - 1)]
     L = first_boundary_corner(A, dc)
-    L = closed_cut(G, ψ, inside, o, s, L)
+    L = closed_cut(g, o, s, L)
     L === nothing && return nothing
     lin = LinearIndices((NR, NZ))
     nodes = [lin[i, j] for j in 2:(NZ - 1), i in 2:(NR - 1) if A[i, j] && corner_min(dc, i, j) < L]
@@ -116,9 +116,8 @@ end
 # inside the wall: L0 itself, or the outermost closed level between the axis and L0, found from a
 # level confirmed closed by bisection. A trace that hits the wall, runs out of budget, meets a null
 # or is not seeded counts as not closed. `nothing` when no level closes.
-function closed_cut(G, ψ::AbstractMatrix{FT}, inside, o, s, L0) where {FT}
+function closed_cut(g::FieldLineGeometry{FT}, o, s, L0) where {FT}
     isfinite(L0) && L0 > 0 || return nothing
-    g = FieldLineGeometry(G, ψ; inside)
     closes(L) = trace_around!(PathLengths{FT}(), CubicTracer(), g, FT(o.ψ) + s * L, o).termination === :closed
     closes(L0) && return L0
     lo = L0
@@ -243,7 +242,6 @@ of each hat, Σ_f Γ_f^(s) Δg_f τ̄_f, applied to the part of τ that is not a
 (τ minus its volume-weighted projection on `basis.Pτ`): the surface part gives exactly zero, as
 ∫ h_s τ̄ B·∇g dV does, so a constant or surface temperature exerts no force. The Galerkin row
 takes −B_p τ / m_e; the matching compression power of node i is τ_i (B_pᵀ K)_i.
-PLAN_closed-surface-flux.md D17.
 """
 function pressure_operator(b::ClosedSurfaceBasis{FT}, g::AbstractMatrix) where {FT}
     NR, NZ = b.dims
@@ -345,7 +343,6 @@ end
 
 The share of the toroidal current `J` (grid array) on the closed nodes `closed` that the
 constraint leaves out: nodes outside Ω_c, and Ω_c nodes beyond the cut, where K_e = 0.
-PLAN_closed-surface-flux.md D19.
 """
 function current_outside_constraint(b::ClosedSurfaceBasis, closed::AbstractVector{<:Integer}, J::AbstractVecOrMat)
     total = sum(J[k] for k in closed; init = zero(eltype(J)))
@@ -367,9 +364,8 @@ Solve the per-electron momentum step A u = r on the grid's nodes (`A` sparse, ve
 nodes) with the surface-flux constraint on the nodes of Ω_c inside the cut: there
 u = (B/n) P K, and their momentum rows are replaced by the Galerkin rows
 Q (A u − r) = `extra` (zero by default), Q = Pᵀ diag(V B). Nodes beyond the cut and outside Ω_c
-keep their rows, so their current is not removed (PLAN_closed-surface-flux.md D19). The residual of
-the replaced rows then does no work on the constrained flow (P.5). `basis === nothing` is the
-plain solve, with an empty K.
+keep their rows, so their current is not removed. The residual of the replaced rows then does
+no work on the constrained flow. `basis === nothing` is the plain solve, with an empty K.
 """
 function constrained_momentum_solve(
         A::SparseMatrixCSC{FT}, r::AbstractVector, b::Union{Nothing, ClosedSurfaceBasis}, n::AbstractVector, B::AbstractVector;

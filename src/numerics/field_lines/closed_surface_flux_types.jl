@@ -1,6 +1,6 @@
 # The closed-surface flux constraint: its policies, its basis and its state, as types only. They
 # sit here, before `types.jl`, so the flags and the run can hold them; the methods are in
-# `closed_surface_flux.jl`. internal/docs/src/notes/plans/PLAN_closed-surface-flux.md.
+# `closed_surface_flux.jl`.
 
 """
     ClosedSurfaceFlow
@@ -39,7 +39,7 @@ struct PostProjection <: ClosedSurfaceCoupling end
 On the closed region the electron parallel particle flux per B is a surface function,
 n u∥ / B = K_e(ψ), solved from the momentum equation averaged over each surface, and the
 density's parallel flux there is the stream-function flux of K_e, which leaves the density
-unmoved. PLAN_closed-surface-flux.md.
+unmoved.
 """
 struct SurfaceFluxConstraint{C <: ClosedSurfaceCoupling} <: ClosedSurfaceFlow
     coupling::C

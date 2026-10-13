@@ -1,4 +1,4 @@
-# The closed-surface flux constraint in a run (internal/docs/src/notes/plans/PLAN_closed-surface-flux.md).
+# The closed-surface flux constraint in a run.
 # At the end of each step the basis is rebuilt from the field-line analysis; the next u∥ solve
 # takes n u∥/B = K_e(ψ) on the closed region inside the cut, below the Ampère gate directly and
 # above it after the coupled solve (`PostProjection`); after continuity u∥ is remapped to the
@@ -81,7 +81,7 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
     vec(pla.ue_para) .= u
     s.K, s.signature = K, signature
     # what the density, Te and u∥ transport of the step read: the stream-function fluxes of K and
-    # the compression that pairs with the pressure force (PLAN D6, D7, D17)
+    # the compression that pairs with the pressure force
     s.ΓR, s.ΓZ = stream_function_fluxes(b, K)
     fill!(s.compression, zero(FT))
     s.compression[b.nodes] .= Bp' * K
@@ -115,8 +115,8 @@ end
 Add the carriage of a per-particle variable by the stream-function fluxes of the last solve to
 the advection operator `A_adv` (df/dt = −A_adv f): each face's flux takes the value upwind of it
 into the node it enters, M_lk = −Γ/(V_l n_l), M_ll = +Γ/(V_l n_l), with the density of this call,
-so the flux carried is Γ whatever the density has become (PLAN D7). Nodes at the per-particle
-floor are skipped, like the per-particle operators' empty rows.
+so the flux carried is Γ whatever the density has become. Nodes at the per-particle floor are
+skipped, like the per-particle operators' empty rows.
 """
 function add_stream_function_transport!(A_adv::DiscretizedOperator{FT}, RP::RAPID{FT}) where {FT <: AbstractFloat}
     s, G, n = RP.closed_surface, RP.G, RP.plasma.ne
