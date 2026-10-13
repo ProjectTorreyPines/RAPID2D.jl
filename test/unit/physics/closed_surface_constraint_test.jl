@@ -166,6 +166,31 @@ end
     @test a.operators.uψ_solver.nfactor == 0
 end
 
+@testitem "Closed-surface block: a solve that does not converge keeps the surface flux of its best evaluation" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        AndersonOuterSolve
+    # Relaxed (m = 0) with a weight of 4, every iterate after the first is worse; cut at
+    # max_iter = 3 the solve accepts its first evaluation, as the solve cut at max_iter = 1 does.
+    # The surface flux it keeps must be that evaluation's, with its u∥ and ψ.
+    function first_step(; relaxation_w = 0.5, picard...)
+        RP = closed_RP(; Ampere = true)
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+        redirect_stderr(devnull) do
+            solve_combined_momentum_Ampere_equations_with_coils!(
+                RP; method = AndersonOuterSolve(; memory = 0, relaxation_w), E_floor = 0.0, I_floor = 0.0, picard...,
+            )
+        end
+        return RP
+    end
+    ref = first_step(; max_iter = 1)
+    cut = first_step(; relaxation_w = 4.0, max_iter = 3)
+    @test cut.diagnostics.ampere_picard.last_niter == 3 && cut.diagnostics.ampere_picard.nunconverged == 1
+    @test cut.closed_surface.solve.K == ref.closed_surface.solve.K
+    @test cut.plasma.ue_para == ref.plasma.ue_para && cut.fields.ψ_self == ref.fields.ψ_self
+    @test surface_flux_error(cut) < 1.0e-10
+end
+
 @testitem "Closed-surface run: the gate puts the constraint's last solve back" setup = [ClosedSurfaceRun] tags = [:physics] begin
     using RAPID2D: update_ue_para!, below_gate_entry_state, restore_below_gate_entry_state!
     RP = closed_RP()
