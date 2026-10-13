@@ -89,6 +89,21 @@ end
     @test isfinite(snap.cs_E_projection) && snap.cs_E_projection >= 0
 end
 
+@testitem "Closed-surface run: the gate puts the constraint's last solve back" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: update_ue_para!, below_gate_entry_state, restore_below_gate_entry_state!
+    RP = closed_RP()
+    update_ue_para!(RP)                                # the previous step's solve
+    s = RP.closed_surface
+    saved() = (copy(s.K), s.signature, copy(s.ΓR), copy(s.ΓZ), copy(s.compression), s.E_activation, s.E_basis_change, s.E_projection)
+    before = saved()
+    entry = below_gate_entry_state(RP)
+    RP.plasma.ue_para .*= 1.5                          # a below-gate attempt, discarded at the gate
+    update_ue_para!(RP)
+    @test s.ΓR != before[3]
+    restore_below_gate_entry_state!(RP, entry)
+    @test saved() == before
+end
+
 @testitem "Closed-surface run: free flow builds no basis" setup = [ClosedSurfaceRun] tags = [:physics] begin
     using RAPID2D: update_ue_para!
     RP = closed_RP(; policy = FreeParallelFlow())

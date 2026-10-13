@@ -110,7 +110,8 @@ end
 
 # What a step below the Ampère gate writes before it knows whether its current crosses the gate,
 # put back when the step is solved again by the coupled solve: u∥, Jϕ, the induced field and
-# its parallel projection, and the coils' currents, memory and clock. The rest it writes is
+# its parallel projection, the coils' currents, memory and clock, and the closed-surface
+# constraint's last solve (K, its fluxes and compression) and ledger. The rest it writes is
 # assigned afresh by that solve before use (Rue_ei), or is a cache rebuilt from the same state
 # (the u∥ operators and LU, the circuit matrices, the Grad–Shafranov factorization).
 function below_gate_entry_state(RP::RAPID)
@@ -123,6 +124,8 @@ function below_gate_entry_state(RP::RAPID)
         coil_ψ_pla = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : nothing, coil_time = csys.time_s,
         closed_surface = (;
             K = copy(RP.closed_surface.K), signature = RP.closed_surface.signature,
+            ΓR = copy(RP.closed_surface.ΓR), ΓZ = copy(RP.closed_surface.ΓZ),
+            compression = copy(RP.closed_surface.compression),
             E = (RP.closed_surface.E_activation, RP.closed_surface.E_basis_change, RP.closed_surface.E_projection),
         ),
     )
@@ -143,6 +146,8 @@ function restore_below_gate_entry_state!(RP::RAPID, entry)
     csys.time_s = entry.coil_time
     cs = RP.closed_surface
     cs.K, cs.signature = entry.closed_surface.K, entry.closed_surface.signature
+    cs.ΓR, cs.ΓZ = entry.closed_surface.ΓR, entry.closed_surface.ΓZ
+    cs.compression .= entry.closed_surface.compression
     cs.E_activation, cs.E_basis_change, cs.E_projection = entry.closed_surface.E
     return RP
 end
