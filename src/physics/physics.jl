@@ -2133,7 +2133,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             solve!(sol, solver, sys === nothing ? rhs : constrained_rhs(sys, rhs; ct.extra))
             vec(ue_k) .= view(sol, 1:N)
             vec(ψ_k) .= view(sol, (N + 1):(2N))
-            sys === nothing || (Γ_over_B_k .= view(sol, (2N + 1):length(sol)) ./ sys.κ)
+            sys === nothing || (Γ_over_B_k .= view(sol, (2N + 1):length(sol)) ./ sys.scale)
 
             # the circuits and the boundary flux of that current
             @. Jϕ_k = (qe * pla.ne * ue_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ

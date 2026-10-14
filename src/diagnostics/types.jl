@@ -54,7 +54,7 @@ Contains volume-averaged quantities
     # Electron kinetic energy, and the closed-surface flux constraint (SurfaceFluxConstraint)
     Ke_tot::FT = zero(FT)            # ½ mₑ n u∥² over the in-wall volume [J]
     cs_nodes::Int = 0                # nodes of the constraint domain Ω_c (0: no constraint)
-    cs_knots::Int = 0                # surface functions (hats) of its basis
+    cs_knots::Int = 0                # knots of its basis (one basis function each)
     cs_current_out::FT = zero(FT)    # share of the closed current the constraint leaves out
     cs_E_activation::FT = zero(FT)   # cumulative kinetic energy removed on activation [J]
     cs_E_basis_change::FT = zero(FT) # ... on steps where the basis changed [J]

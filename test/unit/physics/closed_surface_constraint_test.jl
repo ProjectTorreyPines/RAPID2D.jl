@@ -1,5 +1,5 @@
 # The closed-surface flux constraint in a run: u∥ is solved with n u∥/B a surface function on
-# the closed region inside the cut, then remapped to the density the step left, and the
+# the closed region inside the LCFS, then remapped to the density the step left, and the
 # kinetic energy the constraint removes or the remap changes is booked.
 
 @testsnippet ClosedSurfaceRun begin

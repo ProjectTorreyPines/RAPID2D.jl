@@ -273,7 +273,7 @@ for α in (0.0, 0.8)
             push!(
                 panels, heatmap(
                     G.R1D, G.Z1D, map_of(f); clims = (0, 1.05peak),
-                    title = @sprintf("%s (inside the cut ≤ %.0f %% off)", POLICIES[key][1], 100gap)
+                    title = @sprintf("%s (inside the LCFS ≤ %.0f %% off)", POLICIES[key][1], 100gap)
                 )
             )
         end

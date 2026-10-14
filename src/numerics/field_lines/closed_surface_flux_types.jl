@@ -60,15 +60,19 @@ SurfaceFluxConstraint(; coupling::ClosedSurfaceCoupling = BlockConstraint()) = S
 
 The constraint domain Ω_c and its surface functions at one ψ:
 - `nodes`: the linear ids of Ω_c; `V`: their control volumes 2πR ΔR ΔZ.
-- `axis` = (; R, Z, ψ): the O-point. `ψ_cut`: the level where the surface functions end.
-- `ψN`, `corner_ψN`: ψN′ = (ψ − ψ_axis)/(ψ_cut − ψ_axis) at the nodes and at the dual corners,
+- `axis` = (; R, Z, ψ): the O-point. `ψ_lcfs`: the last closed flux surface as the grid
+  resolves it, where the surface functions end: the magnetic LCFS, or the last closed surface
+  the plasma fills when the plasma ends inside it (nodes at the per-particle density floor are
+  not admitted). Nodes of Ω_c beyond it form the edge layer.
+- `ψN`, `corner_ψN`: ψN′ = (ψ − ψ_axis)/(ψ_lcfs − ψ_axis) at the nodes and at the dual corners,
   `corner_ψN[i, j]` at (R_i + ΔR/2, Z_j + ΔZ/2).
-  `corner_active`: the corners of Ω_c's control volumes inside the cut, where H varies; at
-  every other corner H takes its value at the cut, so no flux appears where ψ elsewhere in the
+  `corner_active`: the corners of Ω_c's control volumes inside the LCFS, where H varies; at
+  every other corner H takes its value at the LCFS, so no flux appears where ψ elsewhere in the
   plane runs through the region's range.
-- `knots`: in ψN′ from the axis (0) to the cut (1); a single knot is one constant function.
-- `P`: the hats of `knots` at the nodes, zero beyond the cut, where n u∥/B ends.
-  `Pτ`: the same continued as constants beyond the cut, for temperatures, which do not end there.
+- `knots`: in ψN′ from the axis (0) to the LCFS (1); a single knot is one constant function.
+- `P`: the piecewise-linear basis functions of `knots` (one per knot) at the nodes, zero beyond
+  the LCFS, where n u∥/B ends. `P_held`: the same, held at their LCFS values beyond it, for
+  temperatures, which do not end there.
 
 Build with [`closed_surface_basis`](@ref).
 """
@@ -76,13 +80,13 @@ struct ClosedSurfaceBasis{FT <: AbstractFloat}
     nodes::Vector{Int}
     V::Vector{FT}
     axis::@NamedTuple{R::FT, Z::FT, ψ::FT}
-    ψ_cut::FT
+    ψ_lcfs::FT
     ψN::Vector{FT}
     corner_ψN::Matrix{FT}
     corner_active::BitMatrix
     knots::Vector{FT}
     P::SparseMatrixCSC{FT, Int}
-    Pτ::SparseMatrixCSC{FT, Int}
+    P_held::SparseMatrixCSC{FT, Int}
     dims::Tuple{Int, Int}
 end
 
@@ -90,29 +94,29 @@ end
     ConstrainedSystem{FT}
 
 A square sparse system S x = r whose first unknowns are u∥ on the grid's nodes, with the
-surface-flux constraint on the nodes `cu` inside the cut: with y = κ (n u∥/B) at the knots, their
-rows become u_k − (T y)_k = 0, T = diag(B/(n κ)) P, and M Galerkin rows Q (S x − r) = extra,
-Q = Pᵀ diag(V B) normalized by `qs`, are appended; the unknowns are [x; y]. The pattern, of S and of the hats at `cu`, is
-built once; [`update_constrained_system!`](@ref) writes values and refactorizes with the LU's
+surface-flux constraint on the nodes `cu` inside the LCFS: with y = c (n u∥/B) at the knots,
+c = `scale`, their rows become u_k − (T y)_k = 0, T = diag(B/(n c)) P, and M Galerkin rows
+Q (S x − r) = extra, Q = Pᵀ diag(V B) normalized by `qs`, are appended; the unknowns are [x; y].
+The pattern, of S and of the basis functions at `cu`, is built once; [`update_constrained_system!`](@ref) writes values and refactorizes with the LU's
 symbolic analysis kept. [`constrained_system`](@ref) gives a new one when the pattern changes.
 """
 mutable struct ConstrainedSystem{FT <: AbstractFloat}
-    key::UInt                       # hash of S's pattern, cu and the hats' pattern at cu
+    key::UInt                       # hash of S's pattern, cu and the basis functions' pattern at cu
     L::Int                          # S's size
     cu::Vector{Int}
     matrix::SparseMatrixCSC{FT, Int}  # (L + M) × (L + M)
     pos_S::Vector{Int}              # each stored entry of S: its position, 0 on a constrained row
     pos_I::Vector{Int}              # (k, k) of each constrained row
-    hat_row::Vector{Int}            # each stored hat value at cu (P's CSC order): its row in cu
-    hat_col::Vector{Int}            # and its hat
+    basis_row::Vector{Int}          # each stored basis value at cu (P's CSC order): its row in cu
+    basis_col::Vector{Int}          # and its basis function
     pos_T::Vector{Int}              # (cu[c], L + s) of each
     pos_shift::Vector{Int}          # (L + s, cu[c]) of each
     gal_S::Vector{Int}              # the Galerkin rows' products: a stored entry of S,
-    gal_hat::Vector{Int}            # a hat value in its row,
+    gal_basis::Vector{Int}          # a basis value in its row,
     gal_pos::Vector{Int}            # and the position (L + s, column) they add to
-    q::Vector{FT}                   # the Galerkin weight of each hat value, P V B / qs
+    q::Vector{FT}                   # the Galerkin weight of each basis value, P V B / qs
     qs::Vector{FT}                  # each Galerkin row's norm
-    κ::FT                           # the mean B/n: y = κ (n u∥/B) is a velocity
+    scale::FT                       # the mean B/n: y = scale × (n u∥/B) is a velocity
     solver::SparseLUSolver{FT}
     fresh::Bool                     # the pattern has not been factorized yet
 end

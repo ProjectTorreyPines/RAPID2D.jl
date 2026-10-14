@@ -29,7 +29,7 @@
     cells_left_of(G, R_wall) = [i < G.NR && j < G.NZ && G.R1D[i] + G.dR / 2 < R_wall for i in 1:G.NR, j in 1:G.NZ]
 
     "The piecewise-linear function of the knot values `v` at x."
-    function hat_interp(knots, v, x)
+    function basis_interp(knots, v, x)
         length(knots) == 1 && return v[1]
         x >= knots[end] && return x > knots[end] ? zero(x) : v[end]
         s = searchsortedlast(knots, x)
@@ -38,7 +38,7 @@
     end
 end
 
-@testitem "Closed-surface basis: the cut, the support and the hats" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+@testitem "Closed-surface basis: the LCFS, the support and the basis functions" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis
     for N in (31, 61), s in (1.0, -1.0)
         G = grid(N)
@@ -47,16 +47,16 @@ end
         b = closed_surface_basis(G, ψ, A)
         @test b !== nothing
         @test abs(b.axis.R - R0) < 1.0e-6 * G.dR && abs(b.axis.Z - Z0) < 1.0e-6 * G.dZ
-        @test sign(b.ψ_cut - b.axis.ψ) == s                     # ψ_N′ grows outward either way
+        @test sign(b.ψ_lcfs - b.axis.ψ) == s                     # ψ_N′ grows outward either way
         @test all(k -> A[k], b.nodes)                           # Ω_c ⊆ admissible
         @test length(b.nodes) > 0.8 * count(A)
-        # hats: one per knot from the axis (0) to the cut (1), a partition of unity inside the cut
+        # one basis function per knot from the axis (0) to the LCFS (1), a partition of unity inside it
         # and zero beyond it, where n u∥/B ends
         @test b.knots[1] == 0 && b.knots[end] == 1 && issorted(b.knots)
         rows = vec(sum(b.P; dims = 2))
         @test all(r -> r ≈ 1, rows[b.ψN .<= 1]) && all(iszero, rows[b.ψN .> 1])
-        # the τ basis continues the hats as constants beyond the cut
-        @test all(≈(1), vec(sum(b.Pτ; dims = 2)))
+        # P_held holds the basis functions at their LCFS values beyond it
+        @test all(≈(1), vec(sum(b.P_held; dims = 2)))
     end
 end
 
@@ -74,19 +74,19 @@ end
         out = face_outflow(ΓR, ΓZ)
         scale = maximum(abs, ΓR) + maximum(abs, ΓZ)
         @test maximum(abs, out) <= 1.0e-13 * scale
-        # the faces between Ω_c and the rest carry nothing: both corners lie beyond the cut
+        # the faces between Ω_c and the rest carry nothing: both corners lie beyond the LCFS
         inΩ = falses(G.NR, G.NZ)
         inΩ[b.nodes] .= true
         @test all(iszero(ΓR[i, j]) for i in 1:(G.NR - 1), j in 1:G.NZ if inΩ[i, j] != inΩ[i + 1, j])
         @test all(iszero(ΓZ[i, j]) for i in 1:G.NR, j in 1:(G.NZ - 1) if inΩ[i, j] != inΩ[i, j + 1])
         # against the analytic flux of (n u∥/B) B_pol through each face (midpoint rule), sign included
-        xN(R, Z) = (ellipse(R, Z) - b.axis.ψ) / (b.ψ_cut - b.axis.ψ)
+        xN(R, Z) = (ellipse(R, Z) - b.axis.ψ) / (b.ψ_lcfs - b.axis.ψ)
         rel, mismatch = Float64[], 0
         for j in 2:(G.NZ - 1), i in 1:(G.NR - 1)
             R, Z = G.R1D[i] + G.dR / 2, G.Z1D[j]
             x = xN(R, Z)
             0 < x < 0.95 || continue
-            ref = hat_interp(b.knots, Γ_over_B, x) * (-ellipse_ψZ(R, Z) / R) * 2π * R * G.dZ
+            ref = basis_interp(b.knots, Γ_over_B, x) * (-ellipse_ψZ(R, Z) / R) * 2π * R * G.dZ
             abs(ref) > 1.0e-2 * scale || continue
             push!(rel, abs(ΓR[i, j] / ref - 1))
             mismatch += sign(ΓR[i, j]) != sign(ref)
@@ -95,7 +95,7 @@ end
             R, Z = G.R1D[i], G.Z1D[j] + G.dZ / 2
             x = xN(R, Z)
             0 < x < 0.95 || continue
-            ref = hat_interp(b.knots, Γ_over_B, x) * (ellipse_ψR(R, Z) / R) * 2π * R * G.dR
+            ref = basis_interp(b.knots, Γ_over_B, x) * (ellipse_ψR(R, Z) / R) * 2π * R * G.dR
             abs(ref) > 1.0e-2 * scale || continue
             push!(rel, abs(ΓZ[i, j] / ref - 1))
             mismatch += sign(ΓZ[i, j]) != sign(ref)
@@ -122,8 +122,8 @@ end
     b = closed_surface_basis(G, ψ, A; inside = cells_left_of(G, R_wall))
     @test b !== nothing
     @test all(k -> G.R2D[k] < R_wall, b.nodes)
-    # the cut sits inside the surface that touches the wall
-    @test (b.ψ_cut - b.axis.ψ) < ellipse(R_wall, Z0) - b.axis.ψ
+    # the LCFS sits inside the surface that touches the wall
+    @test (b.ψ_lcfs - b.axis.ψ) < ellipse(R_wall, Z0) - b.axis.ψ
     ΓR, ΓZ = stream_function_fluxes(b, ones(length(b.knots)))
     @test maximum(abs, face_outflow(ΓR, ΓZ)) <= 1.0e-13 * maximum(abs, ΓR)
     inΩ = falses(G.NR, G.NZ)
@@ -153,7 +153,7 @@ end
     @test all(isone, b.P[b.ψN .<= 1, 1]) && all(iszero, b.P[b.ψN .> 1, 1])
 end
 
-@testitem "Closed-surface basis: hats merge deterministically under a large weight contrast" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+@testitem "Closed-surface basis: basis functions merge deterministically under a large weight contrast" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis
     using LinearAlgebra: cond, Diagonal
     G = grid(31)
@@ -179,7 +179,7 @@ end
         # g = ln n single-valued and arbitrary; τ a surface function, or a constant: zero force
         g = randn(rng, G.NR, G.NZ)
         Bp = pressure_operator(b, g)
-        for τ in (b.Pτ * randn(rng, size(b.Pτ, 2)), fill(3.0, length(b.nodes)))
+        for τ in (b.P_held * randn(rng, size(b.P_held, 2)), fill(3.0, length(b.nodes)))
             F = Bp * τ
             @test maximum(abs, F) <= 1.0e-12 * maximum(abs, abs.(Bp) * abs.(τ))
         end
@@ -198,12 +198,12 @@ end
         ref = zeros(length(b.knots))
         for jq in 1:nq, iq in 1:nq
             Rm, Zm = (Rq[iq] + Rq[iq + 1]) / 2, (Zq[jq] + Zq[jq + 1]) / 2
-            x = (ellipse(Rm, Zm) - b.axis.ψ) / (b.ψ_cut - b.axis.ψ)
+            x = (ellipse(Rm, Zm) - b.axis.ψ) / (b.ψ_lcfs - b.axis.ψ)
             0 <= x <= 1 || continue
             BgradG = (-ellipse_ψZ(Rm, Zm) / Rm) * (0.5 / 0.3) + (ellipse_ψR(Rm, Zm) / Rm) * (0.4 * (Zm - Z0) / 0.3^2)
             dV = 2π * Rm * step(Rq) * step(Zq)
             for s in eachindex(b.knots)
-                h = hat_interp(b.knots, [t == s ? 1.0 : 0.0 for t in eachindex(b.knots)], x)
+                h = basis_interp(b.knots, [t == s ? 1.0 : 0.0 for t in eachindex(b.knots)], x)
                 ref[s] += h * τfun(Rm, Zm) * BgradG * dV
             end
         end
@@ -221,7 +221,7 @@ end
     b = closed_surface_basis(G, ellipse(G), admissible_ellipse(G))
     B = @. sqrt((3.0 / G.R2D)^2 + 1.0e-6)
     n = @. 1.0e17 * (1 + 0.5 * (G.R2D - R0) / 0.3)
-    # a velocity that is a surface flux (zero beyond the cut) gives back its n u∥/B, with no residual
+    # a velocity that is a surface flux (zero beyond the LCFS) gives back its n u∥/B, with no residual
     Γ_over_B = [1 + x - 2x^2 for x in b.knots]
     u = zeros(G.NR, G.NZ)
     u[b.nodes] .= (B[b.nodes] ./ n[b.nodes]) .* (b.P * Γ_over_B)
@@ -237,7 +237,7 @@ end
     @test 0 < surface_residual(b, n, u2, B) < 1
 end
 
-@testitem "Closed-surface diagnostics: kinetic energy, surface statistics, current beyond the cut" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+@testitem "Closed-surface diagnostics: kinetic energy, surface statistics, current beyond the LCFS" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis, electron_kinetic_energy, surface_statistics, current_outside_constraint
     me, ee = 9.1093837e-31, 1.602176634e-19
     G = grid(31)
@@ -247,7 +247,7 @@ end
     u = fill(2.0e5, G.NR, G.NZ)
     E = electron_kinetic_energy(G, n, u, b.nodes; me)
     @test E ≈ sum(0.5 * me * 1.0e17 * 4.0e10 * 2π * G.R2D[k] * G.dR * G.dZ for k in b.nodes)
-    # per hat: the smallest density, the largest drift against the thermal speed and the largest
+    # per basis function: the smallest density, the largest drift against the thermal speed, the largest
     # relative imbalance of the nodes it covers
     ne = @. 1.0e17 * (1 + 0.5 * (G.R2D - R0) / 0.3)
     ni = 1.02 .* ne
@@ -259,7 +259,7 @@ end
     @test all(st.imbalance .≈ 0.02)
     cov = [findall(>(0), b.P[:, s]) for s in eachindex(b.knots)]
     @test st.n_min ≈ [minimum(ne[b.nodes[r]]) for r in cov]
-    # current carried by closed nodes the constraint leaves out (outside Ω_c or beyond the cut)
+    # current carried by closed nodes the constraint leaves out (outside Ω_c or beyond the LCFS)
     closed = findall(vec(admissible_ellipse(G)))
     J = ones(G.NR, G.NZ)
     f = current_outside_constraint(b, closed, J)
@@ -279,7 +279,7 @@ end
     @test s.ledger.activation == s.ledger.basis_change == s.ledger.projection == s.ledger.remap == 0
 end
 
-@testitem "Constrained momentum: surface flux inside the cut, ordinary rows elsewhere" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+@testitem "Constrained momentum: surface flux inside the LCFS, ordinary rows elsewhere" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis, constrained_momentum_solve
     using RAPID2D.SparseArrays: sparse, spdiagm, SparseMatrixCSC
     using LinearAlgebra: Diagonal, I
@@ -311,10 +311,10 @@ end
     # with friction only, the series formula: (Pᵀ V B a B/n P) Γ_over_B = Pᵀ V B r
     a = 1 .+ dt .* ν[inside]
     @test Γ_over_B ≈ (Pin' * Diagonal(Vin .* B[inside] .^ 2 .* a ./ n[inside]) * Pin) \ (Pin' * (Vin .* B[inside] .* r[inside]))
-    # nodes of Ω_c beyond the cut keep their ordinary rows: their current is not removed
+    # nodes of Ω_c beyond the LCFS keep their ordinary rows: their current is not removed
     beyond = [b.nodes[k] for k in eachindex(b.nodes) if b.ψN[k] > 1]
     @test !isempty(beyond) && u[beyond] ≈ r[beyond] ./ (1 .+ dt .* ν[beyond])
-    # a coupling across the cut (a transport-like stencil) is honoured by both kinds of rows
+    # a coupling across the LCFS (a transport-like stencil) is honoured by both kinds of rows
     L = spdiagm(1 => fill(-0.1, N - 1), -1 => fill(-0.1, N - 1), 0 => fill(0.2, N))
     A2 = A + L
     u2, K2 = constrained_momentum_solve(A2, r, b, n, B)
@@ -355,7 +355,7 @@ end
             end
             u_ref, Γ_over_B_ref = constrained_momentum_solve(A_shift, r, b, n, B; extra)
             @test x[1:N] ≈ u_ref
-            @test x[(N + 1):end] ./ sys.κ ≈ Γ_over_B_ref
+            @test x[(N + 1):end] ./ sys.scale ≈ Γ_over_B_ref
         end
         sys
     end
@@ -368,11 +368,11 @@ end
     @test constrained_system(sys, spdiagm(0 => ones(N)), b) !== sys
 end
 
-@testitem "Closed-surface pressure: one pass over the faces is the sum of the hats' fluxes" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+@testitem "Closed-surface pressure: one pass over the faces is the sum of the basis functions' fluxes" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis, pressure_operator, stream_function_fluxes
     using Random: MersenneTwister
     rng = MersenneTwister(3)
-    # the definition, hat by hat: Σ_f Γ_f^(s) Δg_f τ̄_f over each hat's stream-function fluxes,
+    # the definition, one basis function at a time: Σ_f Γ_f^(s) Δg_f τ̄_f over its stream-function fluxes,
     # then the surface part of τ removed
     function pressure_by_hats(b, g)
         NR, NZ = b.dims
@@ -395,9 +395,9 @@ end
                 X[s, h] += ΓZ[i, j] * (g[i, j + 1] - g[i, j]) / 2
             end
         end
-        Pτ = Matrix(b.Pτ)
-        WPτ = b.V .* Pτ
-        return X .- ((X * Pτ) / (Pτ' * WPτ)) * WPτ'
+        P_held = Matrix(b.P_held)
+        WP_held = b.V .* P_held
+        return X .- ((X * P_held) / (P_held' * WP_held)) * WP_held'
     end
     for N in (31, 61), nknots in (nothing, 3)
         G = grid(N)
@@ -408,7 +408,7 @@ end
     end
 end
 
-@testitem "Closed-surface basis: a hole inside the region (the axis node) does not set the cut" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+@testitem "Closed-surface basis: a hole inside the region (the axis node) does not set the LCFS" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis
     G = grid(31)
     ψ = ellipse(G)
@@ -419,7 +419,7 @@ end
     A[k0] = false
     b = closed_surface_basis(G, ψ, A)
     @test b !== nothing
-    @test b.ψ_cut == b0.ψ_cut
+    @test b.ψ_lcfs == b0.ψ_lcfs
     @test k0 in b.nodes
 end
 

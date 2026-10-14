@@ -1,6 +1,6 @@
 # The closed-surface flux constraint in a run.
 # At the end of each step the basis is rebuilt from the field-line analysis; the next u∥ solve
-# takes n u∥/B a function of ψ on the closed region inside the cut, below the Ampère gate in the u∥ step
+# takes n u∥/B a function of ψ on the closed region inside the LCFS, below the Ampère gate in the u∥ step
 # and above it inside the coupled u∥–ψ block (`BlockConstraint`) or after it (`PostProjection`);
 # after continuity u∥ is remapped to the density the step left. The kinetic energy the constraint
 # removes and the remap changes is booked.
@@ -15,8 +15,8 @@ closed_surface_active(RP::RAPID) =
     update_closed_surface_basis!(RP) -> RP
 
 Rebuild the constraint's basis from the last field-line analysis: the closed nodes inside the
-wall whose density is above the per-particle floor are admissible, the wall cells bound the cut,
-and the hats are merged on the weights B²/n. Without a basis (no single O-point, no closed
+wall whose density is above the per-particle floor are admissible, the wall cells bound the LCFS,
+and the basis functions are merged on the weights B²/n. Without a basis (no single O-point, no closed
 level) the step runs free, and the surface flux of the previous solve is forgotten.
 `run_simulation!` calls it after every field-line analysis; a caller stepping by hand calls it
 after its own.
@@ -39,7 +39,7 @@ end
     surface_constrained_ue!(RP, A, rhs, θu) -> RP
 
 Solve the u∥ step `A u = rhs` (`A` sparse over all nodes) with the closed-surface constraint
-inside the cut ([`constrained_momentum_solve`](@ref), on the run's [`ConstrainedSystem`](@ref),
+inside the LCFS ([`constrained_momentum_solve`](@ref), on the run's [`ConstrainedSystem`](@ref),
 kept while its pattern holds), and write u∥ and the surface flux
 ([`surface_constraint_terms`](@ref), [`commit_surface_flux!`](@ref)).
 """
@@ -52,7 +52,7 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
     sys = update_constrained_system!(s.u_system, A, s.basis, pla.ne, RP.fields.Btot; t.shift)
     y = constrained_rhs(sys, rhs_c; t.extra)
     x = solve!(similar(y), sys.solver, y)
-    commit_surface_flux!(RP, x[(sys.L + 1):end] ./ sys.κ, t.Bp)
+    commit_surface_flux!(RP, x[(sys.L + 1):end] ./ sys.scale, t.Bp)
     copyto!(pla.ue_para, view(x, 1:sys.L))
     return RP
 end
@@ -81,7 +81,7 @@ end
 """
     surface_constraint_terms(RP, θu) -> (; cu, shift, ionization, extra, Bp)
 
-What the constrained u∥ rows take that the plain step does not, on the nodes `cu` inside the cut:
+What the constrained u∥ rows take that the plain step does not, on the nodes `cu` inside the LCFS:
 - ionization leaves their decay, `shift` on the diagonal and `ionization` on the right-hand
   side: the newborn electrons' dilution is applied once, by the remap after continuity;
 - the pressure enters the Galerkin rows as its generalized force on the stream-function fluxes
@@ -90,7 +90,7 @@ What the constrained u∥ rows take that the plain step does not, on the nodes `
 function surface_constraint_terms(RP::RAPID{FT}, θu::Real) where {FT <: AbstractFloat}
     pla, b, dt = RP.plasma, RP.closed_surface.basis, RP.dt
     @unpack me, ee = RP.config.constants
-    sel, cu, Pin = inside_cut(b)
+    sel, cu, Pin = inside_lcfs(b)
     ν_iz = pla.ν_en_iz_tot[cu]
     Bp = pressure_operator(b, log.(max.(pla.ne, CLOSED_SURFACE_N_FLOOR)))
     extra = nothing
@@ -115,7 +115,7 @@ function commit_surface_flux!(RP::RAPID{FT}, Γ_over_B::Vector{FT}, Bp::Abstract
     s, pla = RP.closed_surface, RP.plasma
     b, sol, led = s.basis, s.solve, s.ledger
     n, B, u = pla.ne, RP.fields.Btot, pla.ue_para
-    sel, cu, Pin = inside_cut(b)
+    sel, cu, Pin = inside_lcfs(b)
     Γ_over_B0 = galerkin_flux(b, n, u, B)
     removed = RP.config.constants.me / 2 * sum(b.V[sel] .* n[cu] .* (u[cu] .- (B[cu] ./ n[cu]) .* (Pin * Γ_over_B0)) .^ 2)
     signature = hash((b.nodes, b.knots))
@@ -145,7 +145,7 @@ function remap_surface_flux!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     s, pla, F = RP.closed_surface, RP.plasma, RP.fields
     b = s.basis
     me = RP.config.constants.me
-    sel, cu, Pin = inside_cut(b)
+    sel, cu, Pin = inside_lcfs(b)
     u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (Pin * s.solve.Γe_para_over_B)
     s.ledger.remap += me / 2 * sum(b.V[sel] .* pla.ne[cu] .* (u_new .^ 2 .- pla.ue_para[cu] .^ 2))
     pla.ue_para[cu] .= u_new
