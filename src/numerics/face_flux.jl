@@ -13,7 +13,7 @@
 # internal/docs/src/notes/design/wall-flux-channels.md §2.6, §3.
 
 """
-    build_face_flux_divergence!(A, G, uR, uZ; upwind = true) -> A
+    build_face_flux_divergence!(A, G, uR, uZ; upwind = true, faces_of = nothing) -> A
     build_face_flux_divergence(G, uR, uZ; upwind = true) -> SparseMatrixCSC
 
 `(A f)_i = ∇·(u f)` at every in-wall node `i`, empty rows elsewhere, from face velocities:
@@ -21,10 +21,12 @@ interior faces average the two cell velocities; a wall face uses the owner cell'
 drops the inflow term. The `!` form writes the values into `A`, an operator on the wall pattern
 (`build_wall_pattern`); both upwind sides of every face are in that pattern, so the structure
 is the same for any flow. The allocating form fills a fresh pattern and drops its stored zeros.
+`faces_of = (; mask, uR, uZ)` builds every face that touches a node of `mask` from the
+velocities `uR`, `uZ` instead (the closed-surface constraint's perpendicular drift).
 """
 function build_face_flux_divergence!(
         A::DiscretizedOperator{FT}, G::GridGeometry{FT}, uR::AbstractMatrix{FT}, uZ::AbstractMatrix{FT};
-        upwind::Bool = true,
+        upwind::Bool = true, faces_of = nothing,
     ) where {FT <: AbstractFloat}
     check_wall_pattern(A)
     NR, NZ = G.NR, G.NZ
@@ -54,7 +56,8 @@ function build_face_flux_divergence!(
         for (di, sgn, s_nb) in ((1, one(FT), SLOT_E), (-1, -one(FT), SLOT_W))
             ii = i + di
             nb_in = is_in_wall(G, ii, j)
-            u_face = nb_in ? half * (uR[i, j] + uR[ii, j]) : uR[i, j]
+            vR = face_velocity(uR, faces_of, 1, i, j, ii, j)
+            u_face = nb_in ? half * (vR[i, j] + vR[ii, j]) : vR[i, j]
             # face radius R ± ΔR/2 on every R-face, wall faces included — the same
             # A_f/V_i = R_face/(R_i ΔR) that `wall_faces` books, so the diagonal outflow
             # term and the ledger are one arithmetic
@@ -64,11 +67,21 @@ function build_face_flux_divergence!(
         for (dj, sgn, s_nb) in ((1, one(FT), SLOT_N), (-1, -one(FT), SLOT_S))
             jj = j + dj
             nb_in = is_in_wall(G, i, jj)
-            u_face = nb_in ? half * (uZ[i, j] + uZ[i, jj]) : uZ[i, j]
+            vZ = face_velocity(uZ, faces_of, 2, i, j, i, jj)
+            u_face = nb_in ? half * (vZ[i, j] + vZ[i, jj]) : vZ[i, j]
             add_face!(r, s_nb, nb_in, u_face, sgn * inv_dZ)
         end
     end
     return A
+end
+
+# The velocity a face is built from: `u`, or, for a face that touches a node of `faces_of.mask`,
+# the alternative `faces_of.uR` / `faces_of.uZ` (component `c`), on both of its sides.
+@inline function face_velocity(u, faces_of, c, i, j, ii, jj)
+    faces_of === nothing && return u
+    m = faces_of.mask
+    touches = m[i, j] || (checkbounds(Bool, m, ii, jj) && m[ii, jj])
+    return touches ? (c == 1 ? faces_of.uR : faces_of.uZ) : u
 end
 
 function build_face_flux_divergence(

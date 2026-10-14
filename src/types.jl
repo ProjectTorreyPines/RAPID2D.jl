@@ -1319,6 +1319,7 @@ Contains boolean flags that control various aspects of the simulation.
     Ampere_nstep::Int = 10                    # Not used: Ampère runs every step and Eϕ_self is the change over one step
     FLF_nstep::Int = 10                       # Steps between field line following updates
     field_line_tracer::FieldLineTracer = MarchingSquaresTracer()   # how field-line following traces: `numerics/field_lines/field_line_tracer_policies.jl`
+    closed_surface_flow::ClosedSurfaceFlow = FreeParallelFlow()   # how electrons flow on closed surfaces: `numerics/field_lines/closed_surface_flux_types.jl`
     Implicit::Bool = true                     # Use implicit methods
     # θ of the θ-scheme, one per family of terms, split by the sign and stiffness
     # of the operator — see `ImplicitWeights`. Replaces the single `Implicit_weight`
@@ -1366,6 +1367,8 @@ Refuse [`TimeScheme`](@ref) choices that the rest of `flags` cannot support.
 - **`decay = ExpRB` + the Ampère routing conjunction**: that solver builds the same
   `u∥` equation with `θ = 1` fixed and `advance_timestep!` routes to it on a *runtime*
   condition, so the pairing would silently revert to backward Euler mid-run.
+- **`decay = ExpRB` + `closed_surface_flow = SurfaceFluxConstraint()`**: the constrained `u∥`
+  solve takes the constant `θ_imp.decay`, and it starts when closed surfaces form, mid-run.
 
 Refusal is one-directional — nothing here narrows what already works. Called from
 `initialize!`, because the conflicts are between independent fields and
@@ -1401,6 +1404,16 @@ function validate_scheme_flags(flags::SimulationFlags)
                     "and would silently revert to the Theta scheme mid-run. Only update_ue_para! " *
                     "carries bern(z) today. Turn one of those flags off, or use " *
                     "scheme.decay = Theta."
+            )
+        )
+    end
+    if flags.scheme.decay === ExpRB && flags.closed_surface_flow isa SurfaceFluxConstraint
+        throw(
+            ArgumentError(
+                "scheme.decay = ExpRB is not available with closed_surface_flow = " *
+                    "SurfaceFluxConstraint(): its constrained u∥ solve takes the constant " *
+                    "θ_imp.decay, and it starts when closed surfaces form, partway through a " *
+                    "run. Use scheme.decay = Theta, or closed_surface_flow = FreeParallelFlow()."
             )
         )
     end
@@ -1608,6 +1621,7 @@ mutable struct RAPID{FT <: AbstractFloat}
 
     # Field-Line-Following analysis
     flf::FieldLineFollowingResult{FT}  # Results of field line following analysis
+    closed_surface::ClosedSurfaceState{FT}  # the closed-surface flux constraint's basis, flux and ledger
 
     # File IO: snapshot files are opened, appended and closed on every write, so only
     # the paths are kept. initialize! moves a previous run's files at these paths aside.
@@ -1646,6 +1660,7 @@ mutable struct RAPID{FT <: AbstractFloat}
         diagnostics = Diagnostics{FT}(G.NR, G.NZ)
 
         flf = FieldLineFollowingResult{FT}(NR, NZ)
+        closed_surface = ClosedSurfaceState{FT}(NR, NZ)
 
         # abspath: Output_path defaults to the RELATIVE "./output" and a snapshot may be
         # written under a different working directory than the one active here.
@@ -1664,7 +1679,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             config, flags, plasma, fields, transport, operators,
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
             prev_n, reactions, tElap, diagnostics,
-            flf,
+            flf, closed_surface,
             snap0D_path, snap2D_path,
             coil_system
         )

@@ -110,7 +110,8 @@ end
 
 # What a step below the Ampère gate writes before it knows whether its current crosses the gate,
 # put back when the step is solved again by the coupled solve: u∥, Jϕ, the induced field and
-# its parallel projection, and the coils' currents, memory and clock. The rest it writes is
+# its parallel projection, the coils' currents, memory and clock, and the closed-surface
+# constraint's last solve (K, its fluxes and compression) and ledger. The rest it writes is
 # assigned afresh by that solve before use (Rue_ei), or is a cache rebuilt from the same state
 # (the u∥ operators and LU, the circuit matrices, the Grad–Shafranov factorization).
 function below_gate_entry_state(RP::RAPID)
@@ -121,6 +122,12 @@ function below_gate_entry_state(RP::RAPID)
         E_para_self_EM = copy(F.E_para_self_EM), E_para_tot = copy(F.E_para_tot),
         coil_current = csys.n_total > 0 ? copy(get_all_currents(csys)) : nothing,
         coil_ψ_pla = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : nothing, coil_time = csys.time_s,
+        closed_surface = (;
+            K = copy(RP.closed_surface.K), signature = RP.closed_surface.signature,
+            ΓR = copy(RP.closed_surface.ΓR), ΓZ = copy(RP.closed_surface.ΓZ),
+            compression = copy(RP.closed_surface.compression),
+            E = (RP.closed_surface.E_activation, RP.closed_surface.E_basis_change, RP.closed_surface.E_projection),
+        ),
     )
 end
 
@@ -137,6 +144,11 @@ function restore_below_gate_entry_state!(RP::RAPID, entry)
         csys.coils.ψ_pla = entry.coil_ψ_pla
     end
     csys.time_s = entry.coil_time
+    cs = RP.closed_surface
+    cs.K, cs.signature = entry.closed_surface.K, entry.closed_surface.signature
+    cs.ΓR, cs.ΓZ = entry.closed_surface.ΓR, entry.closed_surface.ΓZ
+    cs.compression .= entry.closed_surface.compression
+    cs.E_activation, cs.E_basis_change, cs.E_projection = entry.closed_surface.E
     return RP
 end
 
@@ -197,6 +209,8 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
 
         # Update electron density
         solve_electron_continuity_equation!(RP)
+        # the constrained u∥ follows the density it left (SurfaceFluxConstraint)
+        remap_surface_flux!(RP)
 
         # Ion dynamics
         if RP.flags.update_ni_independently
@@ -337,12 +351,14 @@ function run_simulation!(
                 book_ionization_sources!(RP)
                 correct_negative_densities!(RP)
 
-                if RP.step == 1 || mod(RP.step, RP.flags.FLF_nstep) == 0
+                # every step under the surface-flux constraint, whose domain follows the closed lines
+                if RP.step == 1 || mod(RP.step, RP.flags.FLF_nstep) == 0 || RP.flags.closed_surface_flow isa SurfaceFluxConstraint
                     @timeit RAPID_TIMER "field_line_following" begin
                         # `strict = false`: a mid-run refresh warns and substitutes a
                         # conservative length instead of killing the run; setup
                         # (`initialize!`) keeps the strict default.
                         flf_analysis_field_lines_rz_plane!(RP; strict = false)
+                        update_closed_surface_basis!(RP)
                         # if !isempty(RP.flf.closed_surface_nids)
                         #     RP.flags.FLF_nstep=1;
                         # end

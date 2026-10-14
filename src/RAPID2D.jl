@@ -39,6 +39,7 @@ include("numerics/fixed_point.jl")           # the fixed-point solve, and Newton
 include("numerics/anderson.jl")              # Anderson mixing for the coupled solve's fixed point
 include("physics/ion_species.jl")   # IonSpecies and the transport policies; types.jl needs both
 include("numerics/field_lines/field_line_tracer_policies.jl")   # how a field line is followed: the tracer policies the flags hold
+include("numerics/field_lines/closed_surface_flux_types.jl")   # the closed-surface flux constraint: policies, basis, state
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")
@@ -101,7 +102,9 @@ include("utils/utils.jl")
 include("numerics/field_lines/field_line_tracing.jl")    # following ψ contours: geometry, visitors, the tracers
 include("numerics/field_lines/field_line_following.jl")  # field-line lengths and closed lines on the grid (FLF)
 include("numerics/field_lines/flux_surface_average.jl")  # averages over flux surfaces, and back to the grid
+include("numerics/field_lines/closed_surface_flux.jl")   # surface functions on the closed region, their stream-function flux
 include("numerics/field_lines/field_line_average.jl")    # averages along the field line through each node
+include("physics/closed_surface_constraint.jl")          # the closed-surface flux constraint in a run
 
 # Export types from various modules for convenience
 export PlasmaConstants  # Physical constants

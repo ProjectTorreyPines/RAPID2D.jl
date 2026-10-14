@@ -60,6 +60,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # weight where the step resolves ν, but still first order and LESS implicit
         # than BE (θ_fit < 1 on a decay branch). See exprb-implementation.md §5 phase 2.
         decay_is_exprb = RP.flags.scheme.decay === ExpRB
+        decay_is_exprb && RP.flags.closed_surface_flow isa SurfaceFluxConstraint &&
+            _refuse_exprb_decay(RP.flags, "SurfaceFluxConstraint", "solves u∥ with the constant θ_imp.decay")
         decay_is_exprb && _refuse_full_response_decay(RP.flags)
         decay_exponent = decay_is_exprb ? (@. exprb_cap_exponent(-ν_sum_mom_iz_ei * dt)) : nothing
         bern_decay = decay_is_exprb ? exprb_bern.(decay_exponent) : nothing
@@ -135,15 +137,25 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             RP.flags.Include_ud_diffu_term && add_scaled!(A, -θ_op * dt, pops.A_diffu)
 
             @timeit RAPID_TIMER "ue_para LinearSolve" begin
-                factorize!(OP.ue_solver, A)
-                solve!(view(pla.ue_para, :), OP.ue_solver, view(OP.RHS, :))
+                if !closed_surface_active(RP)
+                    factorize!(OP.ue_solver, A)
+                    solve!(view(pla.ue_para, :), OP.ue_solver, view(OP.RHS, :))
+                else
+                    # SurfaceFluxConstraint: n u∥/B a surface function on the closed region
+                    surface_constrained_ue!(RP, A.matrix, vec(OP.RHS), θu)
+                end
             end
         else
             # θ_op = 0: the matrix is the friction's diagonal, bern(z) under ExpRB
-            if decay_is_exprb
-                @. pla.ue_para = OP.RHS / bern_decay
+            if !closed_surface_active(RP)
+                if decay_is_exprb
+                    @. pla.ue_para = OP.RHS / bern_decay
+                else
+                    @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt)
+                end
             else
-                @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt)
+                # SurfaceFluxConstraint: the same diagonal, solved with the constraint
+                surface_constrained_ue!(RP, spdiagm(0 => vec(@. one_FT + θu * ν_sum_mom_iz_ei * dt)), vec(OP.RHS), θu)
             end
         end
 
@@ -522,8 +534,13 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # no switch of its own: on exactly when u∥ is diffused (off, no kinetic energy is erased;
         # on without it, the erased energy would be lost).
         visc_heat_on = RP.flags.ud_evolve && RP.flags.Include_ud_diffu_term
-        # one build of the operator Te diffuses with, for both powers below
-        A_diffu = RP.flags.Include_Te_diffu_term || visc_heat_on ? ue_Te_operators(RP).A_diffu : nothing
+        # SurfaceFluxConstraint: on the closed region Te rides the stream-function flux and is
+        # compressed by the pressure operator's adjoint, which only the operators `update_Te!`
+        # solves with carry
+        surface_carriage = RP.flags.Include_Te_convec_term && closed_surface_active(RP) && !isempty(RP.closed_surface.K)
+        # one build of the operators Te is solved with, for the powers below that take them
+        pops = RP.flags.Include_Te_diffu_term || visc_heat_on || surface_carriage ? ue_Te_operators(RP) : nothing
+        A_diffu = pops === nothing ? nothing : pops.A_diffu
 
         # If diffusion term is included in temperature equation
         if RP.flags.Include_Te_diffu_term
@@ -542,7 +559,13 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # If convection term is included in temperature equation
         if RP.flags.Include_Te_convec_term
             # P_conv = -1.5*∇⋅(𝐮 Te) + 0.5*Te*(∇⋅𝐮)  =  -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)
-            ePowers.conv .= ee * (-FT(1.5) * u∇(pla.Te_eV) .- pla.Te_eV .* op_e.div_ue)
+            if !surface_carriage
+                ePowers.conv .= ee * (-FT(1.5) * u∇(pla.Te_eV) .- pla.Te_eV .* op_e.div_ue)
+            else
+                # the operators `update_Te!` puts on its left-hand side, so the explicit and the
+                # implicit halves of the θ-scheme agree on the closed region too
+                ePowers.conv .= ee * (-FT(1.5) * (pops.A_adv * pla.Te_eV) .- pla.Te_eV .* pops.div_u)
+            end
         end
 
         if RP.flags.Include_heat_flux_term
@@ -2150,7 +2173,14 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θu) * pla.ue_para)
         end
         F.ψ_self .= ψ_k
-        pla.ue_para .= ue_k
+        if !closed_surface_active(RP)
+            pla.ue_para .= ue_k
+        else
+            # SurfaceFluxConstraint (PostProjection): u∥ solved again from uⁿ with the constraint,
+            # at the induced field the coupled solve found; ψ stays that solve's
+            c_uψ, _ = uψ_coupling_terms(RP)
+            surface_constrained_ue!(RP, A_u.matrix, RHS_u .- c_uψ .* vec(ψ_k), θu)
+        end
 
         # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
         F.Eϕ_self_prev .= F.Eϕ_self

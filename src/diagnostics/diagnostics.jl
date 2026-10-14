@@ -49,6 +49,19 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     # Toroidal current
     snap0D.I_tor = sum(pla.Jϕ * RP.G.dR * RP.G.dZ)
 
+    # Electron kinetic energy, and the closed-surface flux constraint's domain and ledger
+    snap0D.Ke_tot = electron_kinetic_energy(RP.G, pla.ne, pla.ue_para, RP.G.nodes.in_wall_nids; me)
+    cs = RP.closed_surface
+    if cs.basis === nothing
+        snap0D.cs_nodes, snap0D.cs_knots, snap0D.cs_current_out = 0, 0, zero(FT)
+    else
+        closed = [k for k in RP.flf.closed_surface_nids if RP.G.nodes.state[k] > 0.5]
+        snap0D.cs_nodes, snap0D.cs_knots = length(cs.basis.nodes), length(cs.basis.knots)
+        snap0D.cs_current_out = current_outside_constraint(cs.basis, closed, pla.Jϕ)
+    end
+    snap0D.cs_E_activation, snap0D.cs_E_basis_change = cs.E_activation, cs.E_basis_change
+    snap0D.cs_E_projection, snap0D.cs_E_remap = cs.E_projection, cs.E_remap
+
     # Electric fields (density-weighted averages)
     snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
     snap0D.Epara_ext = sum(@. F.E_para_ext * Ne2D) / total_Ne

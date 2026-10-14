@@ -21,10 +21,25 @@ replaced ([`electron_operator_cache`](@ref) refuses a changed flag).
 function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op, tp, G = RP.plasma, RP.operators, RP.transport, RP.G
     check_electron_operators(op)
-    build_face_flux_divergence!(op.A_conv_e, G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
+    if !closed_surface_active(RP)
+        build_face_flux_divergence!(op.A_conv_e, G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind)
+        wall_divergence!(op.div_ue, G, pla.ueR, pla.ueZ)
+    else
+        # SurfaceFluxConstraint: on every face of the constraint domain the density moves with the
+        # perpendicular drift only; the parallel flux there is the stream-function flux, which
+        # leaves every control volume as it found it
+        F = RP.fields
+        mask = falses(G.NR, G.NZ)
+        mask[RP.closed_surface.basis.nodes] .= true
+        uR⊥, uZ⊥ = pla.ueR .- pla.ue_para .* F.bR, pla.ueZ .- pla.ue_para .* F.bZ
+        build_face_flux_divergence!(op.A_conv_e, G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind, faces_of = (; mask, uR = uR⊥, uZ = uZ⊥))
+        wall_divergence!(op.div_ue, G, pla.ueR, pla.ueZ)
+        div⊥ = similar(op.div_ue)
+        wall_divergence!(div⊥, G, uR⊥, uZ⊥)
+        op.div_ue[mask] .= div⊥[mask]
+    end
     op.A_conv_e_upwind = RP.flags.upwind
     build_wall_diffusion_matrix!(op.A_diffu_e, G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
-    wall_divergence!(op.div_ue, G, pla.ueR, pla.ueZ)
     return RP
 end
 
@@ -87,12 +102,25 @@ All three are buffers, overwritten by the next refresh or call.
 function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op = RP.plasma, electron_operator_cache(RP)
     advection_operator!(op.A_adv_e, op.A_conv_e, pla.ne; n_floor = FT(1.0))
+    div_u = op.div_ue
+    if closed_surface_active(RP) && !isempty(RP.closed_surface.K)
+        # the parallel carriage on the constraint domain is the stream-function flux, and its
+        # compression the pressure operator's adjoint
+        add_stream_function_transport!(op.A_adv_e, RP)
+        cs, G = RP.closed_surface, RP.G
+        div_u = copy(op.div_ue)
+        for k in eachindex(cs.compression)
+            c = cs.compression[k]
+            (iszero(c) || !(pla.ne[k] > CLOSED_SURFACE_N_FLOOR)) && continue
+            div_u[k] -= c / (pla.ne[k] * 2π * G.R2D[k] * G.dR * G.dZ)
+        end
+    end
     # u∥ and Te ride the particles the density diffusion moves. One matrix holds the viscosity
     # (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
     # A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
     # the second (electron-diffusive-transport.md §4).
     per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, pla.ne; n_floor = FT(1.0))
-    return (A_adv = op.A_adv_e, A_diffu = op.A_visc_drift_e, div_u = op.div_ue)
+    return (A_adv = op.A_adv_e, A_diffu = op.A_visc_drift_e, div_u)
 end
 
 
