@@ -146,7 +146,7 @@ end
         pla.ne[k] = -bZ * (G.R2D[k] - Rc) + bR * (G.Z2D[k] - Zc) < 0 ? 1.0e17 : 1.0e5
     end
     raw() = build_wall_diffusion_matrix!(build_wall_pattern(G), G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
-    limited = limit_antidiffusive_pairs!(raw(), G, pla.ne; r0 = 20.0)
+    limited = limit_antidiffusive_pairs!(raw(), G, pla.ne; max_ratio = 20.0)
     @test RP.flags.limit_antidiffusive_pairs == (state = true, factor = 20.0)     # the default
     cache_electron_operators!(RP)
     @test op.A_diffu_e.matrix == limited.matrix

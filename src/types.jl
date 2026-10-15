@@ -1318,7 +1318,7 @@ Contains boolean flags that control various aspects of the simulation.
     # neighbouring ne differ by more than `factor` (`limit_antidiffusive_pairs!`)
     limit_antidiffusive_pairs::@NamedTuple{state::Bool, factor::FT} = (
         state = true,                         # Enable the pair limiter
-        factor = FT(20),                      # r₀: the neighbour density ratio it starts at
+        factor = FT(20),                      # max_ratio: the neighbour density ratio it starts above
     )
     # u∥ and Te relaxed implicitly where there is almost no plasma (`vacuum_relaxation_weights`):
     # u∥ → 0 and Te → the density-weighted local mean; nothing changes at ne ≥ 100·factor

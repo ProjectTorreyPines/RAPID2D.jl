@@ -398,7 +398,7 @@ end
     smooth_density(G) = @. 1.0e16 * (1 + 0.5 * sin(3 * G.R2D) * cos(2 * G.Z2D))
 
     "The off-diagonal entries (k, l, value) of a sparse matrix."
-    offdiag(M) = [(k, l, v) for (k, l, v) in zip(findnz(M)...) if k != l]
+    offdiag(matrix) = [(k, l, v) for (k, l, v) in zip(findnz(matrix)...) if k != l]
 end
 
 @testitem "pair limiter: a resolved density gives back the operator bit for bit" setup = [PairLimiterFixtures] begin
@@ -408,81 +408,81 @@ end
     for kw in ((;), (; faces = c.faces, v_absorb))
         A0 = diffusion(c.G, c.D; kw...)
         A = diffusion(c.G, c.D; kw...)
-        limit_antidiffusive_pairs!(A, c.G, smooth_density(c.G); r0 = 20.0)
+        limit_antidiffusive_pairs!(A, c.G, smooth_density(c.G); max_ratio = 20.0)
         @test nonzeros(A.matrix) == nonzeros(A0.matrix)
     end
 end
 
-@testitem "pair limiter: conserves Σ J n, keeps row sums, and only adds diffusion on cliff pairs" setup = [PairLimiterFixtures] begin
+@testitem "pair limiter: conserves Σ Jacob·n, keeps row sums, and only adds diffusion on cliff pairs" setup = [PairLimiterFixtures] begin
     c = tilted_case()
-    G, J = c.G, vec(c.G.Jacob)
+    G, Jacob = c.G, vec(c.G.Jacob)
     n = cliff_density(G, c.across)
-    r0 = 20.0
+    max_ratio = 20.0
     v_absorb = fill(40.0, length(c.faces))
     for kw in ((;), (; faces = c.faces, v_absorb))
         A0 = diffusion(G, c.D; kw...)
         A = diffusion(G, c.D; kw...)
-        limit_antidiffusive_pairs!(A, G, n; r0)
-        M0, M = A0.matrix, A.matrix
-        scale = maximum(J) * maximum(abs, M0)
+        limit_antidiffusive_pairs!(A, G, n; max_ratio)
+        before, after = A0.matrix, A.matrix
+        scale = maximum(Jacob) * maximum(abs, before)
 
-        # J·A is not symmetric here, so this does not follow from symmetry: it is the pair form
-        @test maximum(abs, J' * M0 - J' * M) < 1.0e-13 * scale
-        @test maximum(abs, sum(M; dims = 2) - sum(M0; dims = 2)) < 1.0e-13 * maximum(abs, M0)
+        # Jacob·A is not symmetric here, so this does not follow from symmetry: it is the pair form
+        @test maximum(abs, Jacob' * before - Jacob' * after) < 1.0e-13 * scale
+        @test maximum(abs, sum(after; dims = 2) - sum(before; dims = 2)) < 1.0e-13 * maximum(abs, before)
 
-        # it acts, and only on pairs across a ratio above r0 with a negative side
-        changed = [(k, l) for (k, l, v) in offdiag(M) if v != M0[k, l]]
+        # it acts, and only on pairs across a ratio above max_ratio with a negative side
+        changed = [(k, l) for (k, l, v) in offdiag(after) if v != before[k, l]]
         @test length(changed) > 50
         ratio(k, l) = max(n[k], n[l]) / max(min(n[k], n[l]), eps())
-        @test all(ratio(k, l) > r0 for (k, l) in changed)
-        @test all(min(J[k] * M0[k, l], J[l] * M0[l, k]) < 0 for (k, l) in changed)
+        @test all(ratio(k, l) > max_ratio for (k, l) in changed)
+        @test all(min(Jacob[k] * before[k, l], Jacob[l] * before[l, k]) < 0 for (k, l) in changed)
 
-        # an added pair diffusion: no off-diagonal decreases, a negative one keeps at most φ of itself
-        tol = 1.0e-12 * maximum(abs, M0)
-        @test all(v >= M0[k, l] - tol for (k, l, v) in offdiag(M))
+        # an added pair diffusion: no off-diagonal decreases, a negative one shrinks to at most `keep` of its size
+        tol = 1.0e-12 * maximum(abs, before)
+        @test all(v >= before[k, l] - tol for (k, l, v) in offdiag(after))
         for (k, l) in changed
-            φ = r0 * min(n[k], n[l]) / max(n[k], n[l])
-            M0[k, l] < 0 && @test M[k, l] >= φ * M0[k, l] - tol
+            keep = max_ratio * min(n[k], n[l]) / max(n[k], n[l])
+            before[k, l] < 0 && @test after[k, l] >= keep * before[k, l] - tol
         end
     end
 end
 
-@testitem "pair limiter: a negative entry of the per-particle operator stays above −r0 |A| at the cliff" setup = [PairLimiterFixtures] begin
+@testitem "pair limiter: a negative entry of the per-particle operator stays above −max_ratio |A| at the cliff" setup = [PairLimiterFixtures] begin
     using RAPID2D: per_particle_operator!
     using RAPID2D.SparseArrays: nonzeros
     c = tilted_case()
     G = c.G
     n = cliff_density(G, c.across)
-    r0 = 20.0
+    max_ratio = 20.0
     A0 = diffusion(G, c.D)
     A = diffusion(G, c.D)
-    limit_antidiffusive_pairs!(A, G, n; r0)
-    M0, M = build_wall_pattern(G), build_wall_pattern(G)
-    per_particle_operator!(M0, A0, n; n_floor = 1.0)
-    per_particle_operator!(M, A, n; n_floor = 1.0)
-    # M_kl = A_kl n_l/n_k: without the limiter the cliff multiplies a negative pair by up to 1e12
+    limit_antidiffusive_pairs!(A, G, n; max_ratio)
+    per_particle_raw, per_particle_limited = build_wall_pattern(G), build_wall_pattern(G)
+    per_particle_operator!(per_particle_raw, A0, n; n_floor = 1.0)
+    per_particle_operator!(per_particle_limited, A, n; n_floor = 1.0)
+    # per-particle entries A_kl n_l/n_k: without the limiter the cliff multiplies a negative pair by up to 1e12
     amax = maximum(abs, nonzeros(A0.matrix))
-    @test minimum(v for (k, l, v) in offdiag(M0.matrix)) < -1.0e6 * amax
-    # with it, every off-diagonal is at least r0 times the negative part of the original entry
-    @test all(v >= r0 * min(A0.matrix[k, l], 0.0) * (1 + 1.0e-12) for (k, l, v) in offdiag(M.matrix))
+    @test minimum(v for (k, l, v) in offdiag(per_particle_raw.matrix)) < -1.0e6 * amax
+    # with it, every off-diagonal is at least max_ratio times the negative part of the original entry
+    @test all(v >= max_ratio * min(A0.matrix[k, l], 0.0) * (1 + 1.0e-12) for (k, l, v) in offdiag(per_particle_limited.matrix))
 end
 
 @testitem "pair limiter: an implicit step across a cliff leaves orders of magnitude less negative mass" setup = [PairLimiterFixtures] begin
     # Not a positivity guarantee. Inside (I − Δt A)⁻¹ a negative pair between two empty nodes
-    # (ratio ≤ r0, so not limited) can still pass the full side's density on in two hops.
+    # (ratio ≤ max_ratio, so not limited) can still pass the full side's density on in two hops.
     using RAPID2D.SparseArrays: nonzeros
     using RAPID2D.LinearAlgebra: I, dot
     c = tilted_case()
-    G, J = c.G, vec(c.G.Jacob)
+    G, Jacob = c.G, vec(c.G.Jacob)
     inw = G.nodes.in_wall_nids
     n0 = vec(cliff_density(G, c.across))
     A0 = diffusion(G, c.D)
     A = diffusion(G, c.D)
-    limit_antidiffusive_pairs!(A, G, n0; r0 = 20.0)
+    limit_antidiffusive_pairs!(A, G, n0; max_ratio = 20.0)
     Δt = 0.1 / maximum(abs, nonzeros(A0.matrix))
-    function negative_mass(M)
-        n1 = (I - Δt * M) \ n0
-        return -sum(J[k] * min(n1[k], 0.0) for k in inw) / dot(J, n0)
+    function negative_mass(matrix)
+        n1 = (I - Δt * matrix) \ n0
+        return -sum(Jacob[k] * min(n1[k], 0.0) for k in inw) / dot(Jacob, n0)
     end
     base, limited = negative_mass(A0.matrix), negative_mass(A.matrix)
     @test base > 1.0e-4                       # the stencil's own defect at this cliff
@@ -494,16 +494,16 @@ end
     G = c.G
     n = cliff_density(G, c.across)
     A = diffusion(G, c.D)
-    limit_antidiffusive_pairs!(A, G, n; r0 = 20.0)
-    alloc(A, G, n) = @allocated limit_antidiffusive_pairs!(A, G, n; r0 = 20.0)
+    limit_antidiffusive_pairs!(A, G, n; max_ratio = 20.0)
+    alloc(A, G, n) = @allocated limit_antidiffusive_pairs!(A, G, n; max_ratio = 20.0)
     alloc(A, G, n)
     @test alloc(A, G, n) == 0
     alloc(A, G, vec(n))
     @test alloc(A, G, vec(n)) == 0
     bad = copy(n)
     bad[G.nodes.in_wall_nids[1]] = NaN
-    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, bad; r0 = 20.0)
-    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, n; r0 = 0.5)
-    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, n; r0 = Inf)
-    @test_throws DimensionMismatch limit_antidiffusive_pairs!(A, G, vec(n)[1:(end - 1)]; r0 = 20.0)
+    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, bad; max_ratio = 20.0)
+    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, n; max_ratio = 0.5)
+    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, n; max_ratio = Inf)
+    @test_throws DimensionMismatch limit_antidiffusive_pairs!(A, G, vec(n)[1:(end - 1)]; max_ratio = 20.0)
 end

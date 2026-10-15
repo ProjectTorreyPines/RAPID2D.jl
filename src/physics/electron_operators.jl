@@ -43,8 +43,10 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     build_wall_diffusion_matrix!(op.A_diffu_e, G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
     # lagged: the density at the start of the step sets the limiter for the density solve and
     # for the u∥ and Te operators built from it
-    lim = RP.flags.limit_antidiffusive_pairs
-    lim.state && limit_antidiffusive_pairs!(op.A_diffu_e, G, pla.ne; r0 = lim.factor)
+    pair_limiter = RP.flags.limit_antidiffusive_pairs
+    if pair_limiter.state
+        limit_antidiffusive_pairs!(op.A_diffu_e, G, pla.ne; max_ratio = pair_limiter.factor)
+    end
     return RP
 end
 

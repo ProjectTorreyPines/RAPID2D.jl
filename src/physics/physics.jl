@@ -54,7 +54,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # momentum-Ampère solvers build the identical sum.
         ν_sum_mom_iz_ei = @. pla.ν_en_iz_tot + pla.ν_en_mom_tot + pla.ν_ei_eff
         # u∥ → 0 where there is almost no plasma: backward Euler, on the diagonal only
-        c_vac = vacuum_relaxation_weights(RP, pla.ne)
+        relax_weight = vacuum_relaxation_weights(RP, pla.ne)
 
         # Backward Euler by default (θ_imp.decay = 1): friction-dominated, so at large
         # Δt BE lands on u∞ = S/ν while CN rings about it. ExpRB replaces the constant
@@ -136,7 +136,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             else
                 add_diagonal!(A, vec(ν_sum_mom_iz_ei); scale = θu * dt)
             end
-            add_diagonal!(A, vec(c_vac))
+            add_diagonal!(A, vec(relax_weight))
             RP.flags.Include_ud_diffu_term && add_scaled!(A, -θ_op * dt, pops.A_diffu)
 
             @timeit RAPID_TIMER "ue_para LinearSolve" begin
@@ -152,13 +152,13 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # θ_op = 0: the matrix is the friction's diagonal, bern(z) under ExpRB
             if !closed_surface_active(RP)
                 if decay_is_exprb
-                    @. pla.ue_para = OP.RHS / (bern_decay + c_vac)
+                    @. pla.ue_para = OP.RHS / (bern_decay + relax_weight)
                 else
-                    @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt + c_vac)
+                    @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt + relax_weight)
                 end
             else
                 # SurfaceFluxConstraint: the same diagonal, solved with the constraint
-                surface_constrained_ue!(RP, spdiagm(0 => vec(@. one_FT + θu * ν_sum_mom_iz_ei * dt + c_vac)), vec(OP.RHS), θu)
+                surface_constrained_ue!(RP, spdiagm(0 => vec(@. one_FT + θu * ν_sum_mom_iz_ei * dt + relax_weight)), vec(OP.RHS), θu)
             end
         end
 
@@ -306,8 +306,8 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         two_thirds_FT = FT(2.0) / FT(3.0)
 
         # the near-vacuum relaxation, from the density and Te at this stage's entry
-        c_vac = vacuum_relaxation_weights(RP, pla.ne)
-        T_ref = vacuum_reference_Te(RP, pla.ne, pla.Te_eV)
+        relax_weight = vacuum_relaxation_weights(RP, pla.ne)
+        Te_ref = vacuum_reference_Te(RP, pla.ne, pla.Te_eV)
 
         # `bern(z)` with `z = exprb.eig_Te·Δt`. Branched rather than relying on bern(0) = 1, so
         # the off path does no arithmetic at all and "unchanged" holds structurally.
@@ -363,8 +363,8 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
 
             # Te → the local plasma's Te where there is almost no plasma (backward Euler)
-            add_diagonal!(A, vec(c_vac))
-            @. OP.RHS += ifelse(c_vac > 0, c_vac * T_ref, zero(FT))
+            add_diagonal!(A, vec(relax_weight))
+            @. OP.RHS += ifelse(relax_weight > 0, relax_weight * Te_ref, zero(FT))
 
             # Solve the linear system (cached factorization; pattern is step-stable)
             @timeit RAPID_TIMER "Te_eV LinearSolve" begin
@@ -375,15 +375,15 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # Forward Euler with bern as a divisor on the increment. With the near-vacuum
             # relaxation the diagonal is bern + c, as in the implicit branch.
             @. pla.Te_eV = ifelse(
-                c_vac > 0,
-                (bern_atomic * pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee + c_vac * T_ref) / (bern_atomic + c_vac),
+                relax_weight > 0,
+                (bern_atomic * pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee + relax_weight * Te_ref) / (bern_atomic + relax_weight),
                 pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee / bern_atomic,
             )
         else
             # Explicit method (forward Euler); the near-vacuum relaxation stays backward Euler
             @. pla.Te_eV = ifelse(
-                c_vac > 0,
-                (pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee + c_vac * T_ref) / (one(FT) + c_vac),
+                relax_weight > 0,
+                (pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee + relax_weight * Te_ref) / (one(FT) + relax_weight),
                 pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee,
             )
         end

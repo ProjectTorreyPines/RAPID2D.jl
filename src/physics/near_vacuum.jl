@@ -11,19 +11,19 @@
 # ── near-vacuum relaxation of u∥ and Te ──────────────────────────────────────────
 
 """
-    vacuum_relaxation_weight(n, n_vac) -> c
+    vacuum_relaxation_weight(n, n_vac) -> weight
 
-The backward-Euler weight `c = Δt·ν_vac` of the near-vacuum relaxation at density `n`:
-`c = (n_vac/n)²`, capped at 1e12. Below `10·n_vac` the relaxed value keeps
-`1/(1 + c) = n²/(n² + n_vac²)` of itself. Above it `c` fades out smoothly in `log n` and is
-exactly zero from `100·n_vac`.
+The backward-Euler weight `Δt·ν_vac` of the near-vacuum relaxation at density `n`:
+`(n_vac/n)²`, capped at 1e12. Below `10·n_vac` the relaxed value keeps
+`1/(1 + weight) = n²/(n² + n_vac²)` of itself. Above it the weight fades out smoothly in
+`log n` and is exactly zero from `100·n_vac`.
 """
 @inline function vacuum_relaxation_weight(n::FT, n_vac::FT) where {FT <: AbstractFloat}
     n >= 100 * n_vac && return zero(FT)
-    c = n > zero(FT) ? min((n_vac / n)^2, FT(1.0e12)) : FT(1.0e12)
-    n <= 10 * n_vac && return c
+    weight = n > zero(FT) ? min((n_vac / n)^2, FT(1.0e12)) : FT(1.0e12)
+    n <= 10 * n_vac && return weight
     x = log10(n / (10 * n_vac))                  # 0 → 1 over the last decade
-    return c * (one(FT) - x^2 * (3 - 2x))
+    return weight * (one(FT) - x^2 * (3 - 2x))   # smoothstep from 1 to 0
 end
 
 """
@@ -41,13 +41,16 @@ end
   are unchanged bit for bit.
 """
 function vacuum_relaxation_weights(RP::RAPID{FT}, n::AbstractMatrix{FT}) where {FT <: AbstractFloat}
-    c = zeros(FT, size(n))
-    vr = RP.flags.vacuum_relaxation
-    vr.state || return c
-    @inbounds for k in RP.G.nodes.in_wall_nids
-        c[k] = vacuum_relaxation_weight(n[k], vr.factor)
+    weights = zeros(FT, size(n))
+    relaxation = RP.flags.vacuum_relaxation       # (state = on/off, factor = n_vac)
+    if !relaxation.state
+        return weights
     end
-    return c
+    n_vac = relaxation.factor
+    @inbounds for k in RP.G.nodes.in_wall_nids
+        weights[k] = vacuum_relaxation_weight(n[k], n_vac)
+    end
+    return weights
 end
 
 """
@@ -59,20 +62,22 @@ temperature of the plasma next to it. A neighbourhood with no density keeps its 
 """
 function vacuum_reference_Te(RP::RAPID{FT}, n::AbstractMatrix{FT}, Te::AbstractMatrix{FT}) where {FT <: AbstractFloat}
     G = RP.G
-    T_ref = copy(Te)
+    Te_ref = copy(Te)
     @inbounds for k in G.nodes.in_wall_nids
         i, j = G.nodes.rid[k], G.nodes.zid[k]
-        s, w = zero(FT), zero(FT)
+        sum_nTe, sum_n = zero(FT), zero(FT)
         for dj in -1:1, di in -1:1
             ii, jj = i + di, j + dj
             is_in_wall(G, ii, jj) || continue
-            m = max(n[ii, jj], zero(FT))
-            s += m * Te[ii, jj]
-            w += m
+            n_nb = max(n[ii, jj], zero(FT))
+            sum_nTe += n_nb * Te[ii, jj]
+            sum_n += n_nb
         end
-        w > zero(FT) && (T_ref[k] = s / w)
+        if sum_n > zero(FT)
+            Te_ref[k] = sum_nTe / sum_n
+        end
     end
-    return T_ref
+    return Te_ref
 end
 
 """
@@ -82,33 +87,34 @@ At the start of a run: when the near-vacuum relaxation would not end at least a 
 initial plasma, `1000·n_vac > n̄`, lower n_vac (`flags.vacuum_relaxation.factor`) to `n̄/10⁴` with
 a warning. That is the default's margin, 10² m⁻³ under the 10⁶ m⁻³ seed of `initialize_density!`.
 
-`n̄ = Σ J n² / Σ J n` over the in-wall nodes is the density an average electron sits in, so empty
+`n̄ = Σ R n² / Σ R n` over the in-wall nodes (`R = G.Jacob`, the volume factor) is the density an
+average electron sits in, so empty
 corners do not pull it down. The minimum would, and they are where the relaxation is meant to act.
 No plasma, or the relaxation off: nothing changes.
 """
 function check_vacuum_relaxation_density!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    # vr.state: the relaxation on or off; vr.factor: its n_vac [m⁻³]
-    vr = RP.flags.vacuum_relaxation
-    if !vr.state
+    relaxation = RP.flags.vacuum_relaxation       # (state = on/off, factor = n_vac [m⁻³])
+    if !relaxation.state
         return RP                                 # relaxation off: n_vac is never used
     end
+    n_vac = relaxation.factor
 
-    # n̄ = Σ J n² / Σ J n over the in-wall nodes
+    # n̄ = Σ R n² / Σ R n over the in-wall nodes
     in_wall = RP.G.nodes.in_wall_nids
     n = max.(RP.plasma.ne[in_wall], zero(FT))     # a negative transient counts as empty
-    w = RP.G.Jacob[in_wall] .* n                  # particles per node, up to 2π dR dZ
-    if sum(w) <= zero(FT)
+    particles = RP.G.Jacob[in_wall] .* n          # per node, up to 2π dR dZ
+    if sum(particles) <= zero(FT)
         return RP                                 # no plasma to protect
     end
-    n_bar = sum((w ./ sum(w)) .* n)               # weights first: n² overflows Float32 above 1.8e19
+    n_bar = sum((particles ./ sum(particles)) .* n)   # weights first: n² overflows Float32 above 1.8e19
 
     # the relaxation acts up to 100·n_vac: keep that a decade or more below n̄
-    if 1000 * vr.factor > n_bar
-        n_vac = n_bar / 10_000
-        @warn "flags.vacuum_relaxation: n_vac = $(vr.factor) m⁻³ would damp the initial plasma " *
+    if 1000 * n_vac > n_bar
+        n_vac_new = n_bar / 10_000
+        @warn "flags.vacuum_relaxation: n_vac = $(n_vac) m⁻³ would damp the initial plasma " *
             "(particle-weighted mean density $(round(n_bar; sigdigits = 3)) m⁻³); " *
-            "lowered to $(round(n_vac; sigdigits = 3)) m⁻³"
-        RP.flags.vacuum_relaxation = (state = true, factor = n_vac)
+            "lowered to $(round(n_vac_new; sigdigits = 3)) m⁻³"
+        RP.flags.vacuum_relaxation = (state = true, factor = n_vac_new)
     end
     return RP
 end

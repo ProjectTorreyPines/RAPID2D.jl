@@ -202,62 +202,69 @@ end
 const PAIR_SLOTS = ((SLOT_E, SLOT_W), (SLOT_N, SLOT_S), (SLOT_NE, SLOT_SW), (SLOT_NW, SLOT_SE))
 
 """
-    limit_antidiffusive_pairs!(A, G, n; r0) -> A
+    limit_antidiffusive_pairs!(A, G, n; max_ratio) -> A
 
 Limit the anti-diffusive node pairs of `A` where the density is not resolved.
 
 - **Problem.** A negative off-diagonal `A_kl` moves particles from the lower density to the
   higher one. Across an unresolved cliff the low node loses `|A_kl| n_l`, more than it holds.
-- **Fix.** With `B = J·A` and `φ = min(1, r0·min(n_k, n_l)/max(n_k, n_l))`, add
-  `w = (1 − φ)·|min(B_kl, B_lk)|` to both `B_kl` and `B_lk`, and take it off both diagonals.
-  This is a symmetric pair diffusion, so row sums and the column sums of `J·A` (`Σ J n`) stay
-  as they were. A negative entry ends up at least `φ` times itself.
-- **Bounds.** The low node then loses at most `r0 |A_kl| n_k`. A negative entry of the
-  per-particle operator, `M_kl = A_kl n_l/n_k`, stays above `−r0 |A_kl|`. The weaker side of an
+- **Transfers.** `R_k A_kl`, with `R_k = G.Jacob[k]` the volume factor of node `k`, is the rate
+  at which node `l` passes particles to node `k` per unit `n_l`. Conservation is
+  `Σ_k R_k A_kl = 0` for every `l`.
+- **Fix.** Where the smaller transfer of a pair, `min(R_k A_kl, R_l A_lk)`, is negative and
+  `n_high > max_ratio·n_low`, add `(1 − keep)·|min(R_k A_kl, R_l A_lk)|` to both transfers and
+  take it off both diagonals, with `keep = max_ratio·n_low/n_high`. This is a symmetric pair
+  diffusion, so the row sums and the conservation sums stay as they were. A negative entry ends
+  up at least `keep` times itself.
+- **Bounds.** The low node then loses at most `max_ratio |A_kl| n_low`. A negative entry of the
+  per-particle operator, `A_kl n_l/n_k`, stays above `−max_ratio |A_kl|`. The weaker side of an
   asymmetric pair may turn positive, which only adds diffusion.
-- **Where it acts.** Only pairs with a negative entry and a density ratio above `r0`. A
+- **Where it acts.** Only pairs with a negative entry and a density ratio above `max_ratio`. A
   resolved density gives back `A` bit for bit. The Robin debit is not changed.
 
-`B` is not symmetric once `D_RZ ≠ 0`, so scaling `A_kl` and `A_lk` by `φ` would not conserve.
+With cross terms `R_k A_kl ≠ R_l A_lk`, so scaling `A_kl` and `A_lk` by `keep` would not conserve.
 `A` is an operator on the wall pattern of `G`. `n` is the node vector or the `(NR, NZ)` grid,
-must be finite, and is read with negative values as zero. `r0 ≥ 1` must be finite. Nothing is
-allocated.
+must be finite, and is read with negative values as zero. `max_ratio ≥ 1` must be finite.
+Nothing is allocated.
 """
 function limit_antidiffusive_pairs!(
-        A::DiscretizedOperator{FT}, G::GridGeometry{FT}, n::AbstractVecOrMat{FT}; r0::FT,
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT}, n::AbstractVecOrMat{FT}; max_ratio::FT,
     ) where {FT <: AbstractFloat}
     check_wall_pattern(A)
-    Ng = size(A.matrix, 1)
-    (A.dims_rz == (G.NR, G.NZ) && length(n) == Ng) ||
+    n_nodes = size(A.matrix, 1)
+    (A.dims_rz == (G.NR, G.NZ) && length(n) == n_nodes) ||
         throw(DimensionMismatch("limit_antidiffusive_pairs!: A and n must be on the grid of G"))
     all(isfinite, n) || throw(ArgumentError("limit_antidiffusive_pairs!: n must be finite"))
-    (isfinite(r0) && r0 >= one(FT)) ||
-        throw(ArgumentError("limit_antidiffusive_pairs!: r0 must be finite and ≥ 1, got $r0"))
-    NR, J = G.NR, G.Jacob
+    (isfinite(max_ratio) && max_ratio >= one(FT)) ||
+        throw(ArgumentError("limit_antidiffusive_pairs!: max_ratio must be finite and ≥ 1, got $max_ratio"))
+    NR, Jacob = G.NR, G.Jacob
     nz, k2c = nonzeros(A.matrix), A.k2csc
-    @inbounds for k in 1:Ng, (s, s_back) in PAIR_SLOTS
-        p = slot_position(k2c, k, s)
-        p == 0 && continue
-        di, dj = STENCIL_OFFSETS[s]
+    @inbounds for k in 1:n_nodes, (slot, slot_back) in PAIR_SLOTS
+        p_kl = slot_position(k2c, k, slot)
+        p_kl == 0 && continue
+        di, dj = STENCIL_OFFSETS[slot]
         l = k + di + dj * NR
-        q = slot_position(k2c, l, s_back)      # the pattern is structurally symmetric
-        Bkl, Blk = J[k] * nz[p], J[l] * nz[q]
-        Bmin = min(Bkl, Blk)
-        Bmin < zero(FT) || continue
-        lo, hi = minmax(max(n[k], zero(FT)), max(n[l], zero(FT)))
-        hi <= r0 * lo && continue               # resolved (or both empty): untouched
-        φ = r0 * lo / hi                        # hi > r0·lo ≥ 0, so hi > 0
-        # B + w written as (B − Bmin) + φ·Bmin: the side at Bmin becomes φ·Bmin without cancellation
-        _set_pair_entry!(nz, p, slot_position(k2c, k, SLOT_C), ((Bkl - Bmin) + φ * Bmin) / J[k])
-        _set_pair_entry!(nz, q, slot_position(k2c, l, SLOT_C), ((Blk - Bmin) + φ * Bmin) / J[l])
+        p_lk = slot_position(k2c, l, slot_back)     # the pattern is structurally symmetric
+        transfer_kl, transfer_lk = Jacob[k] * nz[p_kl], Jacob[l] * nz[p_lk]
+        transfer_min = min(transfer_kl, transfer_lk)
+        transfer_min < zero(FT) || continue
+        n_low, n_high = minmax(max(n[k], zero(FT)), max(n[l], zero(FT)))
+        n_high <= max_ratio * n_low && continue      # resolved (or both empty): untouched
+        keep = max_ratio * n_low / n_high            # n_high > max_ratio·n_low ≥ 0, so n_high > 0
+        # transfer + added written as (transfer − transfer_min) + keep·transfer_min: the negative
+        # side becomes keep·transfer_min without cancellation
+        new_kl = ((transfer_kl - transfer_min) + keep * transfer_min) / Jacob[k]
+        new_lk = ((transfer_lk - transfer_min) + keep * transfer_min) / Jacob[l]
+        _set_pair_entry!(nz, p_kl, slot_position(k2c, k, SLOT_C), new_kl)
+        _set_pair_entry!(nz, p_lk, slot_position(k2c, l, SLOT_C), new_lk)
     end
     return A
 end
 
-# set the off-diagonal at `p` to `new`, and keep the row sum through the diagonal at `d`
-@inline function _set_pair_entry!(nz, p, d, new)
-    @inbounds nz[d] -= new - nz[p]
-    @inbounds nz[p] = new
+# set the off-diagonal at `p_offdiag` to `value`, and keep the row sum through the diagonal at `p_diag`
+@inline function _set_pair_entry!(nz, p_offdiag, p_diag, value)
+    @inbounds nz[p_diag] -= value - nz[p_offdiag]
+    @inbounds nz[p_offdiag] = value
     return nothing
 end
 
