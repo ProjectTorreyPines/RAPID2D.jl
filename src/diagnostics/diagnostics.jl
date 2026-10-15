@@ -59,8 +59,9 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
         snap0D.cs_nodes, snap0D.cs_knots = length(cs.basis.nodes), length(cs.basis.knots)
         snap0D.cs_current_out = current_outside_constraint(cs.basis, closed, pla.Jϕ)
     end
-    snap0D.cs_E_activation, snap0D.cs_E_basis_change = cs.E_activation, cs.E_basis_change
-    snap0D.cs_E_projection, snap0D.cs_E_remap = cs.E_projection, cs.E_remap
+    led = cs.ledger
+    snap0D.cs_E_activation, snap0D.cs_E_basis_change = led.activation, led.basis_change
+    snap0D.cs_E_projection, snap0D.cs_E_remap = led.projection, led.remap
 
     # Electric fields (density-weighted averages)
     snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne

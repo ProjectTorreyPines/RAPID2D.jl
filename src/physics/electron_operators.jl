@@ -103,16 +103,16 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op = RP.plasma, electron_operator_cache(RP)
     advection_operator!(op.A_adv_e, op.A_conv_e, pla.ne; n_floor = FT(1.0))
     div_u = op.div_ue
-    if closed_surface_active(RP) && !isempty(RP.closed_surface.K)
+    if closed_surface_active(RP) && !isempty(RP.closed_surface.solve.Γe_para_over_B)
         # the parallel carriage on the constraint domain is the stream-function flux, and its
         # compression the pressure operator's adjoint
         add_stream_function_transport!(op.A_adv_e, RP)
-        cs, G = RP.closed_surface, RP.G
+        compression, V = RP.closed_surface.solve.compression, RP.G.inVol2D
         div_u = copy(op.div_ue)
-        for k in eachindex(cs.compression)
-            c = cs.compression[k]
+        for k in eachindex(compression)
+            c = compression[k]
             (iszero(c) || !(pla.ne[k] > CLOSED_SURFACE_N_FLOOR)) && continue
-            div_u[k] -= c / (pla.ne[k] * 2π * G.R2D[k] * G.dR * G.dZ)
+            div_u[k] -= c / (pla.ne[k] * V[k])
         end
     end
     # u∥ and Te ride the particles the density diffusion moves. One matrix holds the viscosity

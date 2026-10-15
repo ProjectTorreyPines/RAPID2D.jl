@@ -537,7 +537,7 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         # SurfaceFluxConstraint: on the closed region Te rides the stream-function flux and is
         # compressed by the pressure operator's adjoint, which only the operators `update_Te!`
         # solves with carry
-        surface_carriage = RP.flags.Include_Te_convec_term && closed_surface_active(RP) && !isempty(RP.closed_surface.K)
+        surface_carriage = RP.flags.Include_Te_convec_term && closed_surface_active(RP) && !isempty(RP.closed_surface.solve.Γe_para_over_B)
         # one build of the operators Te is solved with, for the powers below that take them
         pops = RP.flags.Include_Te_diffu_term || visc_heat_on || surface_carriage ? ue_Te_operators(RP) : nothing
         A_diffu = pops === nothing ? nothing : pops.A_diffu
@@ -1949,8 +1949,11 @@ induced field is the step's mean, −(ψⁿ⁺¹ − ψⁿ)/(RΔt), which carrie
 `θ_imp.circuit`, as below the gate.
 
 The block matrix of u∥ and ψ inside the domain (`CoupledBlock`, on a pattern fixed for the
-run) is factorized once. The free boundary and the circuits close it by an outer iteration on
-x = (boundary flux, coil currents):
+run) is factorized once. With `SurfaceFluxConstraint()` on a closed region the surface flux
+n u∥/B at the knots joins it as M more unknowns ([`coupled_block_solver!`](@ref)), so ψ and the coils are
+solved with the constrained current (`BlockConstraint`, the default; `PostProjection` solves
+u∥ again with the constraint after the block). The free boundary and the circuits close it by
+an outer iteration on x = (boundary flux, coil currents):
 - a block solve with the boundary flux as Dirichlet values and the coils inside the grid as ψ's
   source gives u∥ and ψ;
 - from the plasma current J, the circuits give the coil currents, with the plasma term
@@ -2085,12 +2088,14 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # The u∥–ψ block on its fixed pattern, so the step refactorizes values only. It does not
         # change inside the iteration below: factorized once per step here, and every iteration
-        # only back-substitutes.
+        # only back-substitutes. With BlockConstraint on a closed region the surface flux joins it
+        # (`sys`), with the terms its constrained rows take (`ct`).
         isnothing(OP.uψ_block) && (OP.uψ_block = CoupledBlock(A_u, OP.ΔGS))
         A_u_ψ = update_coupled_block!(OP.uψ_block, A_u, OP.ΔGS, uψ_coupling_terms(RP)...)
-        factorize!(OP.uψ_solver, A_u_ψ)
-        sol = Vector{FT}(undef, size(A_u_ψ, 1))
+        solver, sys, ct = coupled_block_solver!(RP, A_u_ψ, θu)
+        sol = Vector{FT}(undef, sys === nothing ? 2N : size(sys.matrix, 1))
         RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde)       # the same for every iteration
+        sys === nothing || (RHS_u[ct.cu] .+= ct.ionization)
         RHS_ψ_ions = @. -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
         RHS_ψ = similar(RHS_ψ_ions)
 
@@ -2101,17 +2106,19 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         coil_R = FT[c.location.r for c in csys.coils]
         coil_L = FT[c.self_inductance for c in csys.coils]
         W = vcat(one(FT) ./ R_bdy, coil_L ./ (2π .* coil_R))
-        stepper = outer_stepper(method, RP, W)
+        stepper = outer_stepper(method, RP, W, solver, length(sol))
         # the field a coil's current residual makes on itself, for the coils inside the grid
         coil_field = zeros(FT, Nc)
         for c in csys.inside_domain_indices
             coil_field[c] = coil_L[c] / (2π * coil_R[c] * dt)
         end
 
-        # one evaluation of the map, with its E and I residuals, and the best one so far
+        # one evaluation of the map, with its E and I residuals (and surface flux), and the best
+        # one so far
         ue_k, ψ_k, Jϕ_k = similar(pla.ue_para), similar(F.ψ_self), similar(pla.ue_para)
         I_k, Φ_k, res_k = similar(coils_I_n), similar(ψ_pla_coils_n), zeros(FT, 2)
-        best = (ue = similar(ue_k), ψ = similar(ψ_k), I = similar(I_k), Φ = similar(Φ_k), res = zeros(FT, 2))
+        Γ_over_B_k = zeros(FT, length(sol) - 2N)
+        best = (ue = similar(ue_k), ψ = similar(ψ_k), I = similar(I_k), Φ = similar(Φ_k), Γ_over_B = similar(Γ_over_B_k), res = zeros(FT, 2))
 
         function evaluate!(x)
             ψ_bdy, I_in = view(x, 1:Nb), view(x, (Nb + 1):(Nb + Nc))
@@ -2122,9 +2129,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
                 RHS_ψ .+= -μ0 .* G.R2D .* distribute_coil_currents_to_Jϕ(csys, G; currents = Vector(I_in))
             end
             RHS_ψ[G.BDY_idx] .= ψ_bdy
-            solve!(sol, OP.uψ_solver, vcat(RHS_u, vec(RHS_ψ)))
+            rhs = vcat(RHS_u, vec(RHS_ψ))
+            solve!(sol, solver, sys === nothing ? rhs : constrained_rhs(sys, rhs; ct.extra))
             vec(ue_k) .= view(sol, 1:N)
             vec(ψ_k) .= view(sol, (N + 1):(2N))
+            sys === nothing || (Γ_over_B_k .= view(sol, (2N + 1):length(sol)) ./ sys.scale)
 
             # the circuits and the boundary flux of that current
             @. Jϕ_k = (qe * pla.ne * ue_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
@@ -2148,6 +2157,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             best.ψ .= ψ_k
             best.I .= I_k
             best.Φ .= Φ_k
+            best.Γ_over_B .= Γ_over_B_k
             best.res .= res_k
             return nothing
         end
@@ -2156,6 +2166,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             ψ_k .= best.ψ
             I_k .= best.I
             Φ_k .= best.Φ
+            Γ_over_B_k .= best.Γ_over_B
             res_k .= best.res
             return nothing
         end
@@ -2175,9 +2186,13 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         F.ψ_self .= ψ_k
         if !closed_surface_active(RP)
             pla.ue_para .= ue_k
+        elseif sys !== nothing
+            # BlockConstraint: the accepted u∥ is constrained, and its surface flux is the step's
+            commit_surface_flux!(RP, copy(Γ_over_B_k), ct.Bp)
+            pla.ue_para .= ue_k
         else
-            # SurfaceFluxConstraint (PostProjection): u∥ solved again from uⁿ with the constraint,
-            # at the induced field the coupled solve found; ψ stays that solve's
+            # PostProjection: u∥ solved again from uⁿ with the constraint, at the induced field the
+            # coupled solve found; ψ stays that solve's
             c_uψ, _ = uψ_coupling_terms(RP)
             surface_constrained_ue!(RP, A_u.matrix, RHS_u .- c_uψ .* vec(ψ_k), θu)
         end
@@ -2208,27 +2223,29 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 end
 
 # The outer iteration's stepper, by policy. W puts its unknowns in one unit: the edge flux per
-# unit R, and a coil current as the flux it makes on itself, L_c I_c/(2π R_c).
-function outer_stepper(p::AndersonOuterSolve, RP::RAPID{FT}, W::Vector{FT}) where {FT <: AbstractFloat}
+# unit R, and a coil current as the flux it makes on itself, L_c I_c/(2π R_c). `solver` is the
+# step's factorized block, of `nsol` unknowns.
+function outer_stepper(p::AndersonOuterSolve, RP::RAPID{FT}, W::Vector{FT}, solver, nsol::Int) where {FT <: AbstractFloat}
     Nb, Nc = length(RP.G.BDY_idx), RP.coil_system.n_total
     return AndersonMixer{FT}(Nb + Nc, p.memory; β = vcat(fill(FT(p.relaxation_w), Nb), ones(FT, Nc)), W)
 end
 
 # ── The reference (DirectOuterSolve): the outer map's linear part assembled, and solved ─────
-function outer_stepper(::DirectOuterSolve, RP::RAPID{FT}, W::Vector{FT}) where {FT <: AbstractFloat}
-    T = coupled_map_jacobian(RP, RP.operators.uψ_solver)
+function outer_stepper(::DirectOuterSolve, RP::RAPID{FT}, W::Vector{FT}, solver, nsol::Int) where {FT <: AbstractFloat}
+    T = coupled_map_jacobian(RP, solver; nsol)
     return NewtonStepper(lu(Diagonal(W) * (LinearAlgebra.I - T) / Diagonal(W)), W)
 end
 
 """
-    coupled_map_jacobian(RP, solver) -> T
+    coupled_map_jacobian(RP, solver; nsol = 2N) -> T
 
 The linear part T of the coupled solve's map g(x) = T x + c, x = (boundary flux, coil currents),
 by columns: what a unit of each x_j gives back through the block solve (`solver`, factorized
-for the step), as the boundary flux and coil currents of the electron current it makes. The ions
-and every forcing are in c. Costs N_b + N_c back-substitutions.
+for the step, of `nsol` unknowns: u∥ and ψ first, then the surface flux with BlockConstraint),
+as the boundary flux and coil currents of the electron current it makes. The ions and every
+forcing are in c. Costs N_b + N_c back-substitutions.
 """
-function coupled_map_jacobian(RP::RAPID{FT}, solver::AbstractLinearSolver{FT}) where {FT <: AbstractFloat}
+function coupled_map_jacobian(RP::RAPID{FT}, solver::AbstractLinearSolver{FT}; nsol::Int = 2 * RP.G.NR * RP.G.NZ) where {FT <: AbstractFloat}
     G, csys = RP.G, RP.coil_system
     @unpack qe, μ0 = RP.config.constants
     N, Nb, Nc = G.NR * G.NZ, length(G.BDY_idx), csys.n_total
@@ -2238,7 +2255,7 @@ function coupled_map_jacobian(RP::RAPID{FT}, solver::AbstractLinearSolver{FT}) w
     for cols in Iterators.partition(1:(Nb + Nc), 64)
         # the block's right-hand sides: a unit flux on a boundary node, or a coil's unit current
         # as ψ's source inside the grid
-        B = zeros(FT, 2N, length(cols))
+        B = zeros(FT, nsol, length(cols))
         for (i, j) in enumerate(cols)
             if j <= Nb
                 B[N + G.BDY_idx[j], i] = one(FT)

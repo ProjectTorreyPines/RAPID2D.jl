@@ -1,5 +1,5 @@
 # The closed-surface flux constraint in a run: u∥ is solved with n u∥/B a surface function on
-# the closed region inside the cut, then remapped to the density the step left, and the
+# the closed region inside the LCFS, then remapped to the density the step left, and the
 # kinetic energy the constraint removes or the remap changes is booked.
 
 @testsnippet ClosedSurfaceRun begin
@@ -39,13 +39,13 @@
         return RP
     end
 
-    "n u∥/B on the constrained nodes against P K."
+    "n u∥/B on the constrained nodes against its surface function at the knots."
     function surface_flux_error(RP)
         b, pla, F = RP.closed_surface.basis, RP.plasma, RP.fields
         sel = findall(<=(1), b.ψN)
         k = b.nodes[sel]
         f = pla.ne[k] .* pla.ue_para[k] ./ F.Btot[k]
-        return maximum(abs, f .- b.P[sel, :] * RP.closed_surface.K) / maximum(abs, f)
+        return maximum(abs, f .- b.knot_weights[sel, :] * RP.closed_surface.solve.Γe_para_over_B) / maximum(abs, f)
     end
 end
 
@@ -55,13 +55,15 @@ end
     s = RP.closed_surface
     @test s.basis !== nothing && length(s.basis.nodes) > 20
     update_ue_para!(RP)
-    @test length(s.K) == length(s.basis.knots)
+    @test length(s.solve.Γe_para_over_B) == length(s.basis.knots)
     @test surface_flux_error(RP) < 1.0e-10
     # the first constrained step removes the non-surface part of the drift
-    @test s.E_activation > 0 && s.E_projection == 0
+    @test s.ledger.activation > 0 && s.ledger.projection == 0
     update_ue_para!(RP)
     @test surface_flux_error(RP) < 1.0e-10
-    @test s.E_projection >= 0
+    @test s.ledger.projection >= 0
+    # the second solve on the same basis refactorizes the constrained system by value
+    @test s.u_system.solver.nfactor == 2 && s.u_system.solver.nsymbolic == 1
 end
 
 @testitem "Closed-surface run: above the gate the coupled step is projected onto a surface flux" setup = [ClosedSurfaceRun] tags = [:physics] begin
@@ -76,17 +78,117 @@ end
     solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
     s = RP.closed_surface
     @test RP.fields.ψ_self != ψ0                      # the coupled solve's ψ is kept
-    @test length(s.K) == length(s.basis.knots) && all(isfinite, s.K)
+    @test length(s.solve.Γe_para_over_B) == length(s.basis.knots) && all(isfinite, s.solve.Γe_para_over_B)
     @test surface_flux_error(RP) < 1.0e-10
-    @test s.E_activation > 0
+    @test s.ledger.activation > 0
 
     # and through the run loop, step after step
     RP = closed_RP(; Ampere = true)
     RP.config.t_end_s = RP.t_end_s = RP.time_s + 5 * RP.dt
     run_simulation!(RP)
-    @test !isempty(RP.closed_surface.K) && all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_self)
+    @test !isempty(RP.closed_surface.solve.Γe_para_over_B) && all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_self)
     snap = RP.diagnostics.snaps0D[end]
     @test isfinite(snap.cs_E_projection) && snap.cs_E_projection >= 0
+end
+
+@testitem "Closed-surface block: Ampère's law holds for the constrained current" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        uψ_coupling_terms, bulk_ion_charge, BlockConstraint, PostProjection
+    # the interior rows of the coupled block's ψ equation, ΔGS ψ + c_ψu u∥ = −μ0 R n_i e Z u_i∥ bϕ
+    # (no coils in the grid), with the u∥ the step keeps
+    function ampere_residual(RP)
+        G, pla, F = RP.G, RP.plasma, RP.fields
+        ee, μ0 = RP.config.constants.ee, RP.config.constants.μ0
+        Zi = bulk_ion_charge(RP)
+        _, c_ψu = uψ_coupling_terms(RP)
+        ions = vec(@. -μ0 * G.R2D * pla.ni * ee * Zi * pla.ui_para * F.bϕ)
+        res = RP.operators.ΔGS.matrix * vec(F.ψ_self) .+ c_ψu .* vec(pla.ue_para) .- ions
+        res[G.BDY_idx] .= 0
+        return maximum(abs, res) / maximum(abs, c_ψu .* vec(pla.ue_para))
+    end
+    res = Dict()
+    for coupling in (BlockConstraint(), PostProjection())
+        RP = closed_RP(; Ampere = true, policy = SurfaceFluxConstraint(; coupling))
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+        solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
+        @test surface_flux_error(RP) < 1.0e-10
+        res[coupling] = ampere_residual(RP)
+    end
+    # the block solves ψ with the constrained drift; the post-projection with the free one
+    @test res[BlockConstraint()] < 1.0e-10
+    @test res[PostProjection()] > 1.0e-3
+end
+
+@testitem "Closed-surface block: its u∥, n u∥/B and Rue_ei are the below-gate solve's at the field it induces" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        update_ue_para!
+    # The coupled block and the below-gate u∥ system hold the same constrained equation; given the
+    # step's induced field bϕ Eϕ_self, the two give the same u∥, surface flux and friction ledger.
+    a, b = (closed_RP(; Ampere = true, E_para_self_ES = false) for _ in 1:2)
+    for RP in (a, b)
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+    end
+    u0 = copy(a.plasma.ue_para)
+    solve_combined_momentum_Ampere_equations_with_coils!(a; NamedTuple(a.flags.ampere_picard)...)
+    @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_self
+    update_ue_para!(b)
+    Δu = a.plasma.ue_para .- u0
+    @test maximum(abs, Δu) > 1.0e-3 * maximum(abs, u0)
+    @test maximum(abs, a.plasma.ue_para .- b.plasma.ue_para) <= 1.0e-10 * maximum(abs, Δu)
+    Γa, Γb = a.closed_surface.solve.Γe_para_over_B, b.closed_surface.solve.Γe_para_over_B
+    @test maximum(abs, Γa .- Γb) <= 1.0e-10 * maximum(abs, Γb)
+    @test maximum(abs, a.plasma.Rue_ei .- b.plasma.Rue_ei) <= 1.0e-10 * maximum(abs, b.plasma.Rue_ei)
+end
+
+@testitem "Closed-surface block: the direct solve agrees, and one symbolic analysis serves a basis" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        AndersonOuterSolve, DirectOuterSolve
+    tight = (tolerance = 1.0e-12, max_iter = 200, E_floor = 0.0, I_floor = 0.0)
+    a, b = (closed_RP(; Ampere = true) for _ in 1:2)
+    for RP in (a, b)
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+    end
+    solve_combined_momentum_Ampere_equations_with_coils!(a; tight..., method = AndersonOuterSolve())
+    solve_combined_momentum_Ampere_equations_with_coils!(b; tight..., method = DirectOuterSolve())
+    agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
+    @test a.diagnostics.ampere_picard.nunconverged == 0 && b.diagnostics.ampere_picard.nunconverged == 0
+    @test agree(b.plasma.ue_para, a.plasma.ue_para)
+    @test agree(b.fields.ψ_self, a.fields.ψ_self)
+    @test agree(b.closed_surface.solve.Γe_para_over_B, a.closed_surface.solve.Γe_para_over_B)
+    # a second step on the same basis refactorizes the block by value; the plain block is not used
+    prepare_timestep!(a)
+    solve_combined_momentum_Ampere_equations_with_coils!(a; tight...)
+    sys = a.closed_surface.block_system
+    @test sys.solver.nfactor == 2 && sys.solver.nsymbolic == 1
+    @test a.operators.uψ_solver.nfactor == 0
+end
+
+@testitem "Closed-surface block: a solve that does not converge keeps the surface flux of its best evaluation" setup = [ClosedSurfaceRun] tags = [:physics] begin
+    using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
+        AndersonOuterSolve
+    # Relaxed (m = 0) with a weight of 4, every iterate after the first is worse; cut at
+    # max_iter = 3 the solve accepts its first evaluation, as the solve cut at max_iter = 1 does.
+    # The surface flux it keeps must be that evaluation's, with its u∥ and ψ.
+    function first_step(; relaxation_w = 0.5, picard...)
+        RP = closed_RP(; Ampere = true)
+        initialize_coupled_fields!(RP)
+        prepare_timestep!(RP)
+        redirect_stderr(devnull) do
+            solve_combined_momentum_Ampere_equations_with_coils!(
+                RP; method = AndersonOuterSolve(; memory = 0, relaxation_w), E_floor = 0.0, I_floor = 0.0, picard...,
+            )
+        end
+        return RP
+    end
+    ref = first_step(; max_iter = 1)
+    cut = first_step(; relaxation_w = 4.0, max_iter = 3)
+    @test cut.diagnostics.ampere_picard.last_niter == 3 && cut.diagnostics.ampere_picard.nunconverged == 1
+    @test cut.closed_surface.solve.Γe_para_over_B == ref.closed_surface.solve.Γe_para_over_B
+    @test cut.plasma.ue_para == ref.plasma.ue_para && cut.fields.ψ_self == ref.fields.ψ_self
+    @test surface_flux_error(cut) < 1.0e-10
 end
 
 @testitem "Closed-surface run: the gate puts the constraint's last solve back" setup = [ClosedSurfaceRun] tags = [:physics] begin
@@ -94,12 +196,15 @@ end
     RP = closed_RP()
     update_ue_para!(RP)                                # the previous step's solve
     s = RP.closed_surface
-    saved() = (copy(s.K), s.signature, copy(s.ΓR), copy(s.ΓZ), copy(s.compression), s.E_activation, s.E_basis_change, s.E_projection)
+    saved() = (
+        copy(s.solve.Γe_para_over_B), s.solve.signature, copy(s.solve.ΓR), copy(s.solve.ΓZ), copy(s.solve.compression),
+        s.ledger.activation, s.ledger.basis_change, s.ledger.projection, s.ledger.remap,
+    )
     before = saved()
     entry = below_gate_entry_state(RP)
     RP.plasma.ue_para .*= 1.5                          # a below-gate attempt, discarded at the gate
     update_ue_para!(RP)
-    @test s.ΓR != before[3]
+    @test s.solve.ΓR != before[3]
     restore_below_gate_entry_state!(RP, entry)
     @test saved() == before
 end
@@ -109,7 +214,7 @@ end
     RP = closed_RP(; policy = FreeParallelFlow())
     @test RP.closed_surface.basis === nothing
     update_ue_para!(RP)
-    @test isempty(RP.closed_surface.K) && RP.closed_surface.E_activation == 0
+    @test isempty(RP.closed_surface.solve.Γe_para_over_B) && RP.closed_surface.ledger.activation == 0
 end
 
 @testitem "Closed-surface run: the remap keeps the surface flux on the new density" setup = [ClosedSurfaceRun] tags = [:physics] begin
@@ -124,7 +229,7 @@ end
     @test surface_flux_error(RP) < 1.0e-12
     # the current follows the surfaces, not the density: n u∥ is unchanged where u∥ is constrained
     @test pla.Jϕ[k] ≈ (pla.ne[k] .* pla.ue_para[k] .* RP.config.constants.qe .* RP.fields.bϕ[k])
-    @test s.E_remap != 0
+    @test s.ledger.remap != 0
 end
 
 @testitem "Closed-surface run: ionization dilutes the drift once" setup = [ClosedSurfaceRun] tags = [:physics] begin
@@ -135,14 +240,14 @@ end
     sel = findall(<=(1), b.ψN)
     k = b.nodes[sel]
     # a drift that is already a surface flux, no field, ionization only
-    K0 = [1.0e21 * (1 + x) for x in b.knots]
+    Γ_over_B0 = [1.0e21 * (1 + x) for x in b.knots]
     fill!(pla.ue_para, 0.0)
-    pla.ue_para[k] .= (F.Btot[k] ./ pla.ne[k]) .* (b.P[sel, :] * K0)
+    pla.ue_para[k] .= (F.Btot[k] ./ pla.ne[k]) .* (b.knot_weights[sel, :] * Γ_over_B0)
     fill!(F.E_para_tot, 0.0)
     fill!(pla.ν_en_mom_tot, 0.0); fill!(pla.ν_ei_eff, 0.0); fill!(pla.ν_en_iz_tot, 1.0e6)
     nu0 = pla.ne[k] .* pla.ue_para[k]
     update_ue_para!(RP)
-    @test s.K ≈ K0                        # momentum density untouched by newborn electrons
+    @test s.solve.Γe_para_over_B ≈ Γ_over_B0                  # momentum density untouched by newborn electrons
     pla.ne[k] .*= 2.0                      # the step's ionization, as continuity would leave it
     remap_surface_flux!(RP)
     @test pla.ne[k] .* pla.ue_para[k] ≈ nu0   # diluted once: n u∥ kept, u∥ halved
@@ -200,7 +305,7 @@ end
 @testitem "Closed-surface transport: Te and u∥ ride the stream-function flux" setup = [ClosedSurfaceRun] tags = [:physics] begin
     using RAPID2D: update_ue_para!, ue_Te_operators, cache_electron_operators!, pressure_operator
     RP = closed_RP(; mean_ExB = false, turb_ExB_mixing = false)
-    update_ue_para!(RP)                               # K and the stream-function fluxes of the step
+    update_ue_para!(RP)                               # n u∥/B and the stream-function fluxes of the step
     s, pla, G = RP.closed_surface, RP.plasma, RP.G
     @. pla.ueR = pla.ue_para * RP.fields.bR          # no perpendicular drift
     @. pla.ueZ = pla.ue_para * RP.fields.bZ
@@ -213,9 +318,9 @@ end
     f = sin.(3 .* vec(G.R2D)) .+ vec(G.Z2D)
     Af = ops.A_adv * f
     @test abs(sum(vec(V)[Ω] .* vec(pla.ne)[Ω] .* Af[Ω])) < 1.0e-8 * sum(abs.(vec(V)[Ω] .* vec(pla.ne)[Ω] .* Af[Ω]))
-    # on Ω_c the compression is the pressure operator's adjoint: −(B_pᵀ K)/(n V)
+    # on Ω_c the compression is the pressure operator's adjoint: −(B_pᵀ Γ_over_B)/(n V)
     Bp = pressure_operator(s.basis, log.(max.(pla.ne, 1.0)))
-    c = Bp' * s.K
+    c = Bp' * s.solve.Γe_para_over_B
     @test ops.div_u[Ω] ≈ -c ./ (pla.ne[Ω] .* V[Ω])
 end
 
@@ -226,7 +331,7 @@ end
     # halves must carry Te by the stream-function flux and compress it with the pressure
     # operator's adjoint, or the parallel carriage and the compression act with weight θ only.
     RP = closed_RP(; mean_ExB = false, turb_ExB_mixing = false)
-    update_ue_para!(RP)                               # K and the stream-function fluxes of the step
+    update_ue_para!(RP)                               # n u∥/B and the stream-function fluxes of the step
     pla, G = RP.plasma, RP.G
     @. pla.ueR = pla.ue_para * RP.fields.bR          # no perpendicular drift: all carriage is parallel
     @. pla.ueZ = pla.ue_para * RP.fields.bZ
@@ -243,8 +348,8 @@ end
 
 @testitem "DEFECT: a depleted sector of the closed surfaces overheats under the constraint" setup = [ClosedSurfaceRun] tags = [:physics] begin
     using RAPID2D: run_simulation!
-    # The constraint holds J∥/B = K_e on a surface, so a sector a thousand times thinner carries the
-    # same current density with u = K_e B/n: the drift passes v_te and the friction and viscous heating
+    # The constraint holds J∥/B constant on a surface, so a sector a thousand times thinner carries the
+    # same current density with u = (n u∥/B) B/n: the drift passes v_te and the friction and viscous heating
     # per electron grow as 1/n. Spitzer friction is outside its range there (kinetic current
     # limiting, runaway), and nothing along the surface (parallel conduction, pressure balance)
     # evens it out. The peak is a transient: the hot sector ionizes and refills (178 eV at step 87,
