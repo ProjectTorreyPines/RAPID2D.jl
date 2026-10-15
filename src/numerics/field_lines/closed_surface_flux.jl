@@ -6,7 +6,7 @@
 # support of H on the admissible nodes, which leaves every face between it and the rest at one H.
 
 """
-    closed_surface_basis(G, ψ, admissible; inside = nothing, weights = nothing, nknots = default)
+    closed_surface_basis(G, ψ, admissible; inside = nothing, gram_weights = nothing, nknots = default)
         -> ClosedSurfaceBasis or nothing
 
 The constraint domain and its surface functions for the nodes marked `admissible` (an `(NR, NZ)`
@@ -19,12 +19,12 @@ following meets a null).
   between Ω_c and the rest have both corners at or beyond it and carry no flux.
 - `nothing` when the region has no O-point, more than one, or no level that closes.
 - `nknots` basis functions (default: one per grid spacing, plus one) are merged, nearest the
-  axis first, until each covers two nodes and the Gram matrix of `weights` (nodal, default 1) has a condition
+  axis first, until each covers two nodes and the Gram matrix of `gram_weights` (nodal, default 1) has a condition
   number below 10⁸; a single remaining level is one constant function.
 """
 function closed_surface_basis(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, admissible::AbstractMatrix{Bool};
-        inside::Union{Nothing, AbstractMatrix{Bool}} = nothing, weights = nothing,
+        inside::Union{Nothing, AbstractMatrix{Bool}} = nothing, gram_weights = nothing,
         nknots::Union{Nothing, Int} = nothing,
     ) where {FT <: AbstractFloat}
     NR, NZ = size(ψ)
@@ -60,9 +60,9 @@ function closed_surface_basis(
     end
     ψN = [s * (ψ[k] - ψ_axis) / L for k in nodes]
     V = [FT(2π) * G.R2D[k] * G.dR * G.dZ for k in nodes]
-    w = weights === nothing ? ones(FT, length(nodes)) : FT.(vec(weights)[nodes])
+    gram_w = gram_weights === nothing ? ones(FT, length(nodes)) : FT.(vec(gram_weights)[nodes])
     n0 = nknots === nothing ? default_surface_count(nodes) + 1 : nknots
-    knots = merge_knots(collect(range(zero(FT), one(FT); length = max(n0, 2))), ψN, w)
+    knots = merge_knots(collect(range(zero(FT), one(FT); length = max(n0, 2))), ψN, gram_w)
     axis = (; R = FT(o.R), Z = FT(o.Z), ψ = ψ_axis)
     return ClosedSurfaceBasis{FT}(
         nodes, V, axis, ψ_axis + s * L, ψN, dc ./ L, active, knots,
@@ -134,8 +134,8 @@ function lcfs_level(g::FieldLineGeometry{FT}, o, s, L0) where {FT}
     return lo
 end
 
-# Values of the basis functions of `knots` at x; beyond the last knot zero (`:zero`) or the last
-# basis function's 1 (`:constant`).
+# The knot weights at x: the values of the basis functions of `knots` (row: point, column: knot);
+# beyond the last knot zero (`:zero`) or the last basis function's 1 (`:constant`).
 # A single knot is one constant function on [0, 1].
 function basis_matrix(knots::Vector{FT}, x::Vector{FT}; beyond::Symbol) where {FT}
     M = length(knots)
@@ -157,18 +157,18 @@ end
 
 # Merge basis functions, the interior knot nearest the axis first, until each covers two nodes and
 # the weighted Gram matrix is well conditioned; one knot left is one constant.
-function merge_knots(knots::Vector{FT}, x::Vector{FT}, w::Vector{FT}) where {FT}
+function merge_knots(knots::Vector{FT}, x::Vector{FT}, gram_w::Vector{FT}) where {FT}
     while length(knots) > 2
-        P = basis_matrix(knots, x; beyond = :zero)
-        covered = vec(sum(P .> 0; dims = 1))
-        gram = Matrix(P' * Diagonal(w) * P)
+        knot_w = basis_matrix(knots, x; beyond = :zero)
+        covered = vec(sum(knot_w .> 0; dims = 1))
+        gram = Matrix(knot_w' * Diagonal(gram_w) * knot_w)
         all(>=(2), covered) && cond(gram) < 1.0e8 && return knots
         bad = findfirst(<(2), covered)
         s = bad === nothing ? argmin(diag(gram)) : bad
         deleteat!(knots, clamp(s, 2, length(knots) - 1))
     end
-    P = basis_matrix(knots, x; beyond = :zero)
-    all(>=(2), vec(sum(P .> 0; dims = 1))) && cond(Matrix(P' * Diagonal(w) * P)) < 1.0e8 && return knots
+    knot_w = basis_matrix(knots, x; beyond = :zero)
+    all(>=(2), vec(sum(knot_w .> 0; dims = 1))) && cond(Matrix(knot_w' * Diagonal(gram_w) * knot_w)) < 1.0e8 && return knots
     return [zero(FT)]
 end
 
@@ -240,7 +240,7 @@ end
 The pressure's generalized force on the surface functions, B_p τ ≈ ∫ h_s τ B·∇g dV for the
 nodal τ = e T_e on Ω_c and g = ln n on the grid. It is built on the stream-function face fluxes
 of each basis function, Σ_f Γ_f^(s) Δg_f τ̄_f, applied to the part of τ that is not a surface function
-(τ minus its volume-weighted projection on `basis.P_held`): the surface part gives exactly zero, as
+(τ minus its volume-weighted projection on `basis.knot_weights_held`): the surface part gives exactly zero, as
 ∫ h_s τ̄ B·∇g dV does, so a constant or surface temperature exerts no force. The Galerkin row
 takes −B_p τ / m_e; the matching compression power of node i is τ_i (B_pᵀ Γ_over_B)_i, Γ_over_B the knot
 values of n u∥/B.
@@ -277,10 +277,11 @@ function pressure_operator(b::ClosedSurfaceBasis{FT}, g::AbstractMatrix) where {
         a = i + (j - 1) * NR
         face!((i, j), (i - 1, j), a, a + NR, g[i, j + 1] - g[i, j])
     end
-    # remove the surface part of τ: X (I − S), S = P_held (P_heldᵀ W P_held)⁻¹ P_heldᵀ W
-    P_held = Matrix(b.P_held)
-    WP_held = b.V .* P_held
-    return X .- ((X * P_held) / (P_held' * WP_held)) * WP_held'
+    # remove the surface part of τ: X (I − S), S = W_h (W_hᵀ diag(V) W_h)⁻¹ W_hᵀ diag(V),
+    # W_h = `knot_weights_held`
+    knot_w_held = Matrix(b.knot_weights_held)
+    vol_knot_w = b.V .* knot_w_held
+    return X .- ((X * knot_w_held) / (knot_w_held' * vol_knot_w)) * vol_knot_w'
 end
 
 # ∫₀^min(x, 1) of each basis function of `knots` into v; one knot is one constant
@@ -306,18 +307,19 @@ end
     galerkin_flux(basis, n, u, B) -> Γ_over_B
 
 The surface flux closest to the electron velocity `u` in the kinetic-energy metric: the Galerkin
-projection (Pᵀ diag(V B²/n) P) Γ_over_B = Pᵀ diag(V B) u over Ω_c, Γ_over_B the knot values of n u∥/B.
-A velocity that is a surface flux, u = (B/n) P Γ_over_B, gives back its Γ_over_B. `n`, `u`, `B` are grid arrays.
+projection (Wᵀ diag(V B²/n) W) Γ_over_B = Wᵀ diag(V B) u over Ω_c, W = `knot_weights` and Γ_over_B the knot
+values of n u∥/B. A velocity that is a surface flux, u = (B/n) W Γ_over_B, gives back its Γ_over_B. `n`, `u`, `B` are grid arrays.
 """
 function galerkin_flux(b::ClosedSurfaceBasis, n::AbstractVecOrMat, u::AbstractVecOrMat, B::AbstractVecOrMat)
     Bk, nk = B[b.nodes], n[b.nodes]
-    return Matrix(b.P' * Diagonal(b.V .* Bk .^ 2 ./ nk) * b.P) \ (b.P' * (b.V .* Bk .* u[b.nodes]))
+    knot_w = b.knot_weights
+    return Matrix(knot_w' * Diagonal(b.V .* Bk .^ 2 ./ nk) * knot_w) \ (knot_w' * (b.V .* Bk .* u[b.nodes]))
 end
 
 """
     surface_residual(basis, n, u, B; Γ_over_B = galerkin_flux(basis, n, u, B)) -> Real
 
-How far n u/B on Ω_c is from the surface function P Γ_over_B, as the volume-weighted rms of the
+How far n u/B on Ω_c is from the surface function W Γ_over_B (W = `knot_weights`), as the volume-weighted rms of the
 difference over that of n u/B: 0 for a surface flux. Beyond the LCFS, where the surface function ends, all of
 n u/B counts.
 """
@@ -328,7 +330,7 @@ function surface_residual(
     f = n[b.nodes] .* u[b.nodes] ./ B[b.nodes]
     total = sum(b.V .* f .^ 2)
     iszero(total) && return zero(total)
-    return sqrt(sum(b.V .* (f .- b.P * Γ_over_B) .^ 2) / total)
+    return sqrt(sum(b.V .* (f .- b.knot_weights * Γ_over_B) .^ 2) / total)
 end
 
 """
@@ -351,8 +353,8 @@ function surface_statistics(
     ) where {FT}
     M = length(b.knots)
     n_min, drift, imbalance = fill(FT(Inf), M), zeros(FT, M), zeros(FT, M)
-    rows, vals = rowvals(b.P), nonzeros(b.P)
-    for s in 1:M, p in nzrange(b.P, s)
+    rows, vals = rowvals(b.knot_weights), nonzeros(b.knot_weights)
+    for s in 1:M, p in nzrange(b.knot_weights, s)
         iszero(vals[p]) && continue
         k = b.nodes[rows[p]]
         n_min[s] = min(n_min[s], ne[k])
@@ -382,10 +384,10 @@ end
 
 # ── the constrained momentum step ────────────────────────────────────────────────
 
-# the constrained rows (inside the LCFS): their positions in Ω_c, their grid nodes, the basis there
+# the constrained rows (inside the LCFS): their positions in Ω_c, their grid nodes, their knot weights
 function inside_lcfs(b::ClosedSurfaceBasis)
     sel = findall(<=(1), b.ψN)
-    return sel, b.nodes[sel], b.P[sel, :]
+    return sel, b.nodes[sel], b.knot_weights[sel, :]
 end
 
 """
@@ -397,14 +399,14 @@ end
 function constrained_system(
         sys::Union{Nothing, ConstrainedSystem{FT}}, S::SparseMatrixCSC{FT}, b::ClosedSurfaceBasis,
     ) where {FT <: AbstractFloat}
-    _, cu, Pin = inside_lcfs(b)
-    key = hash((size(S), S.colptr, S.rowval, cu, Pin.colptr, Pin.rowval))
+    _, cu, knot_w_in = inside_lcfs(b)
+    key = hash((size(S), S.colptr, S.rowval, cu, knot_w_in.colptr, knot_w_in.rowval))
     sys !== nothing && sys.key == key && return sys
-    return ConstrainedSystem(S, cu, Pin, key)
+    return ConstrainedSystem(S, cu, knot_w_in, key)
 end
 
-function ConstrainedSystem(S::SparseMatrixCSC{FT}, cu::Vector{Int}, Pin::SparseMatrixCSC, key::UInt) where {FT <: AbstractFloat}
-    L, M = size(S, 1), size(Pin, 2)
+function ConstrainedSystem(S::SparseMatrixCSC{FT}, cu::Vector{Int}, knot_w_in::SparseMatrixCSC, key::UInt) where {FT <: AbstractFloat}
+    L, M = size(S, 1), size(knot_w_in, 2)
     Sr = rowvals(S)
     c_of = zeros(Int, L)                  # a row's position in cu, 0 when it keeps its equation
     c_of[cu] .= eachindex(cu)
@@ -412,8 +414,8 @@ function ConstrainedSystem(S::SparseMatrixCSC{FT}, cu::Vector{Int}, Pin::SparseM
     for j in 1:L, p in nzrange(S, j)
         col_S[p] = j
     end
-    basis_row = copy(rowvals(Pin))
-    basis_col = [s for s in 1:M for _ in nzrange(Pin, s)]
+    basis_row = copy(rowvals(knot_w_in))
+    basis_col = [s for s in 1:M for _ in nzrange(knot_w_in, s)]
     on_row = [Int[] for _ in cu]          # S's stored entries on each constrained row
     I, J = Int[], Int[]
     for p in eachindex(Sr)
@@ -455,15 +457,15 @@ function update_constrained_system!(
         sys::ConstrainedSystem{FT}, S::SparseMatrixCSC{FT}, b::ClosedSurfaceBasis, n::AbstractVecOrMat, B::AbstractVecOrMat;
         shift::Union{Nothing, AbstractVector} = nothing,
     ) where {FT <: AbstractFloat}
-    sel, cu, Pin = inside_lcfs(b)
+    sel, cu, knot_w_in = inside_lcfs(b)
     cu == sys.cu || throw(ArgumentError("update_constrained_system!: the basis is not the one the system was built for"))
-    Pv, Sv, nz = nonzeros(Pin), nonzeros(S), nonzeros(sys.matrix)
+    knot_w_vals, Sv, nz = nonzeros(knot_w_in), nonzeros(S), nonzeros(sys.matrix)
     length(Sv) == length(sys.pos_S) || throw(ArgumentError("update_constrained_system!: S is not on the system's pattern"))
-    # the Galerkin weights P V B, each row normalized by its sum
+    # the Galerkin row coefficients W V B, each row normalized by its sum
     fill!(sys.qs, zero(FT))
     for g in eachindex(sys.q)
         c = sys.basis_row[g]
-        sys.q[g] = Pv[g] * b.V[sel[c]] * B[cu[c]]
+        sys.q[g] = knot_w_vals[g] * b.V[sel[c]] * B[cu[c]]
         sys.qs[sys.basis_col[g]] += abs(sys.q[g])
     end
     sys.q ./= view(sys.qs, sys.basis_col)
@@ -475,7 +477,7 @@ function update_constrained_system!(
     nz[sys.pos_I] .= one(FT)
     for g in eachindex(sys.q)
         k = cu[sys.basis_row[g]]
-        nz[sys.pos_T[g]] = -B[k] / (n[k] * sys.scale) * Pv[g]
+        nz[sys.pos_T[g]] = -B[k] / (n[k] * sys.scale) * knot_w_vals[g]
         shift === nothing || (nz[sys.pos_shift[g]] += sys.q[g] * shift[sys.basis_row[g]])
     end
     for i in eachindex(sys.gal_S)
@@ -509,8 +511,8 @@ end
 
 Solve the per-electron momentum step A u = r on the grid's nodes (`A` sparse, vectors over all
 nodes) with the surface-flux constraint on the nodes of Ω_c inside the LCFS: there
-u = (B/n) P Γ_over_B, Γ_over_B the knot values of n u∥/B, and their momentum rows are replaced by the Galerkin rows
-Q (A u − r) = `extra` (zero by default), Q = Pᵀ diag(V B). Nodes beyond the LCFS and outside Ω_c
+u = (B/n) W Γ_over_B, W = `knot_weights` and Γ_over_B the knot values of n u∥/B, and their momentum rows are
+replaced by the Galerkin rows Q (A u − r) = `extra` (zero by default), Q = Wᵀ diag(V B). Nodes beyond the LCFS and outside Ω_c
 keep their rows, so their current is not removed. The residual of the replaced rows then does
 no work on the constrained flow. `basis === nothing` is the plain solve, with an empty Γ_over_B.
 A run keeps the system between steps ([`constrained_system`](@ref)); this builds it afresh.

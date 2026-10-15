@@ -70,9 +70,11 @@ The constraint domain Ω_c and its surface functions at one ψ:
   every other corner H takes its value at the LCFS, so no flux appears where ψ elsewhere in the
   plane runs through the region's range.
 - `knots`: in ψN′ from the axis (0) to the LCFS (1); a single knot is one constant function.
-- `P`: the piecewise-linear basis functions of `knots` (one per knot) at the nodes, zero beyond
-  the LCFS, where n u∥/B ends. `P_held`: the same, held at their LCFS values beyond it, for
-  temperatures, which do not end there.
+- `knot_weights` (W, node × knot): w_ks, the weight of knot s at node k, is the piecewise-linear
+  basis function of knot s at the node's ψN′, so a node's value is the weighted mean of the two
+  knots around it (the weights sum to one). Zero beyond the LCFS, where n u∥/B ends.
+  `knot_weights_held`: the same, held at their LCFS values beyond it, for temperatures, which do
+  not end there.
 
 Build with [`closed_surface_basis`](@ref).
 """
@@ -85,8 +87,8 @@ struct ClosedSurfaceBasis{FT <: AbstractFloat}
     corner_ψN::Matrix{FT}
     corner_active::BitMatrix
     knots::Vector{FT}
-    P::SparseMatrixCSC{FT, Int}
-    P_held::SparseMatrixCSC{FT, Int}
+    knot_weights::SparseMatrixCSC{FT, Int}
+    knot_weights_held::SparseMatrixCSC{FT, Int}
     dims::Tuple{Int, Int}
 end
 
@@ -95,26 +97,26 @@ end
 
 A square sparse system S x = r whose first unknowns are u∥ on the grid's nodes, with the
 surface-flux constraint on the nodes `cu` inside the LCFS: with y = c (n u∥/B) at the knots,
-c = `scale`, their rows become u_k − (T y)_k = 0, T = diag(B/(n c)) P, and M Galerkin rows
-Q (S x − r) = extra, Q = Pᵀ diag(V B) normalized by `qs`, are appended; the unknowns are [x; y].
-The pattern, of S and of the basis functions at `cu`, is built once; [`update_constrained_system!`](@ref) writes values and refactorizes with the LU's
+c = `scale`, their rows become u_k − (T y)_k = 0, T = diag(B/(n c)) W, and M Galerkin rows
+Q (S x − r) = extra, Q = Wᵀ diag(V B) normalized by `qs`, are appended; the unknowns are [x; y].
+W = `knot_weights` at `cu`. The pattern, of S and of the knot weights at `cu`, is built once; [`update_constrained_system!`](@ref) writes values and refactorizes with the LU's
 symbolic analysis kept. [`constrained_system`](@ref) gives a new one when the pattern changes.
 """
 mutable struct ConstrainedSystem{FT <: AbstractFloat}
-    key::UInt                       # hash of S's pattern, cu and the basis functions' pattern at cu
+    key::UInt                       # hash of S's pattern, cu and the knot weights' pattern at cu
     L::Int                          # S's size
     cu::Vector{Int}
     matrix::SparseMatrixCSC{FT, Int}  # (L + M) × (L + M)
     pos_S::Vector{Int}              # each stored entry of S: its position, 0 on a constrained row
     pos_I::Vector{Int}              # (k, k) of each constrained row
-    basis_row::Vector{Int}          # each stored basis value at cu (P's CSC order): its row in cu
-    basis_col::Vector{Int}          # and its basis function
+    basis_row::Vector{Int}          # each stored knot weight at cu (W's CSC order): its row in cu
+    basis_col::Vector{Int}          # and its knot
     pos_T::Vector{Int}              # (cu[c], L + s) of each
     pos_shift::Vector{Int}          # (L + s, cu[c]) of each
     gal_S::Vector{Int}              # the Galerkin rows' products: a stored entry of S,
-    gal_basis::Vector{Int}          # a basis value in its row,
+    gal_basis::Vector{Int}          # a knot weight in its row,
     gal_pos::Vector{Int}            # and the position (L + s, column) they add to
-    q::Vector{FT}                   # the Galerkin weight of each basis value, P V B / qs
+    q::Vector{FT}                   # the Galerkin row coefficient of each knot weight, W V B / qs
     qs::Vector{FT}                  # each Galerkin row's norm
     scale::FT                       # the mean B/n: y = scale × (n u∥/B) is a velocity
     solver::SparseLUSolver{FT}

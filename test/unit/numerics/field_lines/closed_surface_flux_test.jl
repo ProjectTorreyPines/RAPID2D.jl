@@ -53,10 +53,10 @@ end
         # one basis function per knot from the axis (0) to the LCFS (1), a partition of unity inside it
         # and zero beyond it, where n u∥/B ends
         @test b.knots[1] == 0 && b.knots[end] == 1 && issorted(b.knots)
-        rows = vec(sum(b.P; dims = 2))
+        rows = vec(sum(b.knot_weights; dims = 2))
         @test all(r -> r ≈ 1, rows[b.ψN .<= 1]) && all(iszero, rows[b.ψN .> 1])
-        # P_held holds the basis functions at their LCFS values beyond it
-        @test all(≈(1), vec(sum(b.P_held; dims = 2)))
+        # the held weights keep the basis functions at their LCFS values beyond it
+        @test all(≈(1), vec(sum(b.knot_weights_held; dims = 2)))
     end
 end
 
@@ -150,7 +150,7 @@ end
     b = closed_surface_basis(G, ψc, A4)
     @test b !== nothing
     @test length(b.knots) == 1
-    @test all(isone, b.P[b.ψN .<= 1, 1]) && all(iszero, b.P[b.ψN .> 1, 1])
+    @test all(isone, b.knot_weights[b.ψN .<= 1, 1]) && all(iszero, b.knot_weights[b.ψN .> 1, 1])
 end
 
 @testitem "Closed-surface basis: basis functions merge deterministically under a large weight contrast" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
@@ -160,10 +160,10 @@ end
     ψ = ellipse(G)
     A = admissible_ellipse(G)
     w = @. exp(12 * (G.R2D - R0))                       # weight contrast ≈ e^6 across the region
-    b1 = closed_surface_basis(G, ψ, A; weights = w)
-    b2 = closed_surface_basis(G, ψ, A; weights = w)
+    b1 = closed_surface_basis(G, ψ, A; gram_weights = w)
+    b2 = closed_surface_basis(G, ψ, A; gram_weights = w)
     @test b1.knots == b2.knots
-    @test cond(Matrix(b1.P' * Diagonal(w[b1.nodes]) * b1.P)) < 1.0e8
+    @test cond(Matrix(b1.knot_weights' * Diagonal(w[b1.nodes]) * b1.knot_weights)) < 1.0e8
 end
 
 @testitem "Closed-surface pressure: zero for surface T, the continuous force otherwise" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
@@ -179,7 +179,7 @@ end
         # g = ln n single-valued and arbitrary; τ a surface function, or a constant: zero force
         g = randn(rng, G.NR, G.NZ)
         Bp = pressure_operator(b, g)
-        for τ in (b.P_held * randn(rng, size(b.P_held, 2)), fill(3.0, length(b.nodes)))
+        for τ in (b.knot_weights_held * randn(rng, size(b.knot_weights_held, 2)), fill(3.0, length(b.nodes)))
             F = Bp * τ
             @test maximum(abs, F) <= 1.0e-12 * maximum(abs, abs.(Bp) * abs.(τ))
         end
@@ -224,16 +224,16 @@ end
     # a velocity that is a surface flux (zero beyond the LCFS) gives back its n u∥/B, with no residual
     Γ_over_B = [1 + x - 2x^2 for x in b.knots]
     u = zeros(G.NR, G.NZ)
-    u[b.nodes] .= (B[b.nodes] ./ n[b.nodes]) .* (b.P * Γ_over_B)
+    u[b.nodes] .= (B[b.nodes] ./ n[b.nodes]) .* (b.knot_weights * Γ_over_B)
     @test galerkin_flux(b, n, u, B) ≈ Γ_over_B
     @test surface_residual(b, n, u, B) < 1.0e-12
     # any other velocity: its kinetic-metric projection, and a residual between 0 and 1
     u2 = copy(u)
     u2[b.nodes] .*= 1 .+ 0.3 .* (2 .* rand(rng, length(b.nodes)) .- 1)
     K2 = galerkin_flux(b, n, u2, B)
-    P, V = b.P, b.V
+    knot_w, V = b.knot_weights, b.V
     Bk, nk = B[b.nodes], n[b.nodes]
-    @test P' * (V .* Bk .* (Bk ./ nk .* (P * K2))) ≈ P' * (V .* Bk .* u2[b.nodes])
+    @test knot_w' * (V .* Bk .* (Bk ./ nk .* (knot_w * K2))) ≈ knot_w' * (V .* Bk .* u2[b.nodes])
     @test 0 < surface_residual(b, n, u2, B) < 1
 end
 
@@ -257,7 +257,7 @@ end
     @test length(st.n_min) == length(b.knots)
     @test all(st.drift .≈ 1.0e5 / sqrt(10.0 * ee / me))
     @test all(st.imbalance .≈ 0.02)
-    cov = [findall(>(0), b.P[:, s]) for s in eachindex(b.knots)]
+    cov = [findall(>(0), b.knot_weights[:, s]) for s in eachindex(b.knots)]
     @test st.n_min ≈ [minimum(ne[b.nodes[r]]) for r in cov]
     # current carried by closed nodes the constraint leaves out (outside Ω_c or beyond the LCFS)
     closed = findall(vec(admissible_ellipse(G)))
@@ -299,18 +299,18 @@ end
     inside = [b.nodes[k] for k in eachindex(b.nodes) if b.ψN[k] <= 1]
     rest = setdiff(1:N, inside)
     # the constraint, the ordinary rows, and the Galerkin rows
-    @test n[inside] .* u[inside] ./ B[inside] ≈ b.P[b.ψN .<= 1, :] * Γ_over_B
+    @test n[inside] .* u[inside] ./ B[inside] ≈ b.knot_weights[b.ψN .<= 1, :] * Γ_over_B
     @test A[rest, :] * u ≈ r[rest]
-    Pin = b.P[b.ψN .<= 1, :]
+    knot_w_in = b.knot_weights[b.ψN .<= 1, :]
     Vin = b.V[b.ψN .<= 1]
-    Q = Pin' * Diagonal(Vin .* B[inside])
+    Q = knot_w_in' * Diagonal(Vin .* B[inside])
     f = (A * u .- r)[inside]
     @test maximum(abs, Q * f) <= 1.0e-10 * maximum(abs, Q * abs.(r[inside]))
     # the constraint force does no work on the constrained flow
     @test abs(sum(Vin .* n[inside] .* u[inside] .* f)) <= 1.0e-10 * sum(abs.(Vin .* n[inside] .* u[inside] .* f))
-    # with friction only, the series formula: (Pᵀ V B a B/n P) Γ_over_B = Pᵀ V B r
+    # with friction only, the series formula: (Wᵀ V B a B/n W) Γ_over_B = Wᵀ V B r, W the knot weights
     a = 1 .+ dt .* ν[inside]
-    @test Γ_over_B ≈ (Pin' * Diagonal(Vin .* B[inside] .^ 2 .* a ./ n[inside]) * Pin) \ (Pin' * (Vin .* B[inside] .* r[inside]))
+    @test Γ_over_B ≈ (knot_w_in' * Diagonal(Vin .* B[inside] .^ 2 .* a ./ n[inside]) * knot_w_in) \ (knot_w_in' * (Vin .* B[inside] .* r[inside]))
     # nodes of Ω_c beyond the LCFS keep their ordinary rows: their current is not removed
     beyond = [b.nodes[k] for k in eachindex(b.nodes) if b.ψN[k] > 1]
     @test !isempty(beyond) && u[beyond] ≈ r[beyond] ./ (1 .+ dt .* ν[beyond])
@@ -395,9 +395,9 @@ end
                 X[s, h] += ΓZ[i, j] * (g[i, j + 1] - g[i, j]) / 2
             end
         end
-        P_held = Matrix(b.P_held)
-        WP_held = b.V .* P_held
-        return X .- ((X * P_held) / (P_held' * WP_held)) * WP_held'
+        knot_w_held = Matrix(b.knot_weights_held)
+        vol_knot_w = b.V .* knot_w_held
+        return X .- ((X * knot_w_held) / (knot_w_held' * vol_knot_w)) * vol_knot_w'
     end
     for N in (31, 61), nknots in (nothing, 3)
         G = grid(N)

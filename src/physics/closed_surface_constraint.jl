@@ -16,7 +16,7 @@ closed_surface_active(RP::RAPID) =
 
 Rebuild the constraint's basis from the last field-line analysis: the closed nodes inside the
 wall whose density is above the per-particle floor are admissible, the wall cells bound the LCFS,
-and the basis functions are merged on the weights B²/n. Without a basis (no single O-point, no closed
+and the basis functions are merged on the Gram weights B²/n. Without a basis (no single O-point, no closed
 level) the step runs free, and the surface flux of the previous solve is forgotten.
 `run_simulation!` calls it after every field-line analysis; a caller stepping by hand calls it
 after its own.
@@ -29,7 +29,7 @@ function update_closed_surface_basis!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         G.nodes.state[k] > 0.5 && pla.ne[k] > CLOSED_SURFACE_N_FLOOR && (A[k] = true)
     end
     s.basis = any(A) ? closed_surface_basis(
-            G, F.ψ, A; inside = G.cell_state .>= 0, weights = F.Btot .^ 2 ./ max.(pla.ne, CLOSED_SURFACE_N_FLOOR),
+            G, F.ψ, A; inside = G.cell_state .>= 0, gram_weights = F.Btot .^ 2 ./ max.(pla.ne, CLOSED_SURFACE_N_FLOOR),
         ) : nothing
     s.basis === nothing && empty!(s.solve.Γe_para_over_B)
     return RP
@@ -90,14 +90,14 @@ What the constrained u∥ rows take that the plain step does not, on the nodes `
 function surface_constraint_terms(RP::RAPID{FT}, θu::Real) where {FT <: AbstractFloat}
     pla, b, dt = RP.plasma, RP.closed_surface.basis, RP.dt
     @unpack me, ee = RP.config.constants
-    sel, cu, Pin = inside_lcfs(b)
+    sel, cu, knot_w_in = inside_lcfs(b)
     ν_iz = pla.ν_en_iz_tot[cu]
     Bp = pressure_operator(b, log.(max.(pla.ne, CLOSED_SURFACE_N_FLOOR)))
     extra = nothing
     if RP.flags.Include_ud_pressure_term
         a_p = calculate_electron_acceleration_by_pressure(RP)
         F_p = -(Bp * (ee .* pla.Te_eV[b.nodes])) ./ me
-        extra = dt .* (F_p .- Pin' * (b.V[sel] .* RP.fields.Btot[cu] .* a_p[cu]))
+        extra = dt .* (F_p .- knot_w_in' * (b.V[sel] .* RP.fields.Btot[cu] .* a_p[cu]))
     end
     return (; cu, shift = -θu * dt .* ν_iz, ionization = (1 - θu) * dt .* ν_iz .* pla.ue_para[cu], extra, Bp)
 end
@@ -115,9 +115,9 @@ function commit_surface_flux!(RP::RAPID{FT}, Γ_over_B::Vector{FT}, Bp::Abstract
     s, pla = RP.closed_surface, RP.plasma
     b, sol, led = s.basis, s.solve, s.ledger
     n, B, u = pla.ne, RP.fields.Btot, pla.ue_para
-    sel, cu, Pin = inside_lcfs(b)
+    sel, cu, knot_w_in = inside_lcfs(b)
     Γ_over_B0 = galerkin_flux(b, n, u, B)
-    removed = RP.config.constants.me / 2 * sum(b.V[sel] .* n[cu] .* (u[cu] .- (B[cu] ./ n[cu]) .* (Pin * Γ_over_B0)) .^ 2)
+    removed = RP.config.constants.me / 2 * sum(b.V[sel] .* n[cu] .* (u[cu] .- (B[cu] ./ n[cu]) .* (knot_w_in * Γ_over_B0)) .^ 2)
     signature = hash((b.nodes, b.knots))
     if isempty(sol.Γe_para_over_B)
         led.activation += removed
@@ -145,8 +145,8 @@ function remap_surface_flux!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     s, pla, F = RP.closed_surface, RP.plasma, RP.fields
     b = s.basis
     me = RP.config.constants.me
-    sel, cu, Pin = inside_lcfs(b)
-    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (Pin * s.solve.Γe_para_over_B)
+    sel, cu, knot_w_in = inside_lcfs(b)
+    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (knot_w_in * s.solve.Γe_para_over_B)
     s.ledger.remap += me / 2 * sum(b.V[sel] .* pla.ne[cu] .* (u_new .^ 2 .- pla.ue_para[cu] .^ 2))
     pla.ue_para[cu] .= u_new
     update_Jϕ!(RP)

@@ -45,7 +45,7 @@
         sel = findall(<=(1), b.ψN)
         k = b.nodes[sel]
         f = pla.ne[k] .* pla.ue_para[k] ./ F.Btot[k]
-        return maximum(abs, f .- b.P[sel, :] * RP.closed_surface.solve.Γe_para_over_B) / maximum(abs, f)
+        return maximum(abs, f .- b.knot_weights[sel, :] * RP.closed_surface.solve.Γe_para_over_B) / maximum(abs, f)
     end
 end
 
@@ -242,7 +242,7 @@ end
     # a drift that is already a surface flux, no field, ionization only
     Γ_over_B0 = [1.0e21 * (1 + x) for x in b.knots]
     fill!(pla.ue_para, 0.0)
-    pla.ue_para[k] .= (F.Btot[k] ./ pla.ne[k]) .* (b.P[sel, :] * Γ_over_B0)
+    pla.ue_para[k] .= (F.Btot[k] ./ pla.ne[k]) .* (b.knot_weights[sel, :] * Γ_over_B0)
     fill!(F.E_para_tot, 0.0)
     fill!(pla.ν_en_mom_tot, 0.0); fill!(pla.ν_ei_eff, 0.0); fill!(pla.ν_en_iz_tot, 1.0e6)
     nu0 = pla.ne[k] .* pla.ue_para[k]
