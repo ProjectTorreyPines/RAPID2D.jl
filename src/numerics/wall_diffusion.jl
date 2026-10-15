@@ -106,6 +106,8 @@ reproducible; it must not be used for production transport.
 `D∥/D⊥ = 10`) and `I − θΔt·A` picks up positive off-diagonals. That is a property
 of the standard 9-point cross-derivative stencil, not of the wall treatment, and
 it is why positivity is asserted by *solving* rather than by inspecting signs.
+Where the density is not resolved, [`limit_antidiffusive_pairs!`](@ref) scales those
+pairs down.
 """
 function build_wall_diffusion_matrix!(
         A::DiscretizedOperator{FT}, G::GridGeometry{FT},
@@ -194,6 +196,69 @@ function build_wall_diffusion_matrix(
     ) where {FT <: AbstractFloat}
     A = build_wall_diffusion_matrix!(build_wall_pattern(G), G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
     return dropzeros!(A.matrix)
+end
+
+# the stencil directions that visit every node pair once, each with the slot that points back
+const PAIR_SLOTS = ((SLOT_E, SLOT_W), (SLOT_N, SLOT_S), (SLOT_NE, SLOT_SW), (SLOT_NW, SLOT_SE))
+
+"""
+    limit_antidiffusive_pairs!(A, G, n; r0) -> A
+
+Limit the anti-diffusive node pairs of `A` where the density is not resolved.
+
+- **Problem.** A negative off-diagonal `A_kl` moves particles from the lower density to the
+  higher one. Across an unresolved cliff the low node loses `|A_kl| n_l`, more than it holds.
+- **Fix.** With `B = J·A` and `φ = min(1, r0·min(n_k, n_l)/max(n_k, n_l))`, add
+  `w = (1 − φ)·|min(B_kl, B_lk)|` to both `B_kl` and `B_lk`, and take it off both diagonals.
+  This is a symmetric pair diffusion, so row sums and the column sums of `J·A` (`Σ J n`) stay
+  as they were. A negative entry ends up at least `φ` times itself.
+- **Bounds.** The low node then loses at most `r0 |A_kl| n_k`. A negative entry of the
+  per-particle operator, `M_kl = A_kl n_l/n_k`, stays above `−r0 |A_kl|`. The weaker side of an
+  asymmetric pair may turn positive, which only adds diffusion.
+- **Where it acts.** Only pairs with a negative entry and a density ratio above `r0`. A
+  resolved density gives back `A` bit for bit. The Robin debit is not changed.
+
+`B` is not symmetric once `D_RZ ≠ 0`, so scaling `A_kl` and `A_lk` by `φ` would not conserve.
+`A` is an operator on the wall pattern of `G`. `n` is the node vector or the `(NR, NZ)` grid,
+must be finite, and is read with negative values as zero. `r0 ≥ 1` must be finite. Nothing is
+allocated.
+"""
+function limit_antidiffusive_pairs!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT}, n::AbstractVecOrMat{FT}; r0::FT,
+    ) where {FT <: AbstractFloat}
+    check_wall_pattern(A)
+    Ng = size(A.matrix, 1)
+    (A.dims_rz == (G.NR, G.NZ) && length(n) == Ng) ||
+        throw(DimensionMismatch("limit_antidiffusive_pairs!: A and n must be on the grid of G"))
+    all(isfinite, n) || throw(ArgumentError("limit_antidiffusive_pairs!: n must be finite"))
+    (isfinite(r0) && r0 >= one(FT)) ||
+        throw(ArgumentError("limit_antidiffusive_pairs!: r0 must be finite and ≥ 1, got $r0"))
+    NR, J = G.NR, G.Jacob
+    nz, k2c = nonzeros(A.matrix), A.k2csc
+    @inbounds for k in 1:Ng, (s, s_back) in PAIR_SLOTS
+        p = slot_position(k2c, k, s)
+        p == 0 && continue
+        di, dj = STENCIL_OFFSETS[s]
+        l = k + di + dj * NR
+        q = slot_position(k2c, l, s_back)      # the pattern is structurally symmetric
+        Bkl, Blk = J[k] * nz[p], J[l] * nz[q]
+        Bmin = min(Bkl, Blk)
+        Bmin < zero(FT) || continue
+        lo, hi = minmax(max(n[k], zero(FT)), max(n[l], zero(FT)))
+        hi <= r0 * lo && continue               # resolved (or both empty): untouched
+        φ = r0 * lo / hi                        # hi > r0·lo ≥ 0, so hi > 0
+        # B + w written as (B − Bmin) + φ·Bmin: the side at Bmin becomes φ·Bmin without cancellation
+        _set_pair_entry!(nz, p, slot_position(k2c, k, SLOT_C), ((Bkl - Bmin) + φ * Bmin) / J[k])
+        _set_pair_entry!(nz, q, slot_position(k2c, l, SLOT_C), ((Blk - Bmin) + φ * Bmin) / J[l])
+    end
+    return A
+end
+
+# set the off-diagonal at `p` to `new`, and keep the row sum through the diagonal at `d`
+@inline function _set_pair_entry!(nz, p, d, new)
+    @inbounds nz[d] -= new - nz[p]
+    @inbounds nz[p] = new
+    return nothing
 end
 
 function _check_wall_diffusion_args(cross_terms, faces, v_absorb)

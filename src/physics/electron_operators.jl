@@ -12,7 +12,8 @@
 Refresh the electron in-wall operators on `RP.operators` from the current `ueR`, `ueZ`,
 tensor and `flags.upwind`, values only (they were allocated on the wall pattern by
 `initialize!`): `A_conv_e` (face-flux divergence of the electron velocity, the scheme it was
-built with recorded in `A_conv_e_upwind`), `A_diffu_e` (reflective `∇·D∇`) and `div_ue`
+built with recorded in `A_conv_e_upwind`), `A_diffu_e` (reflective `∇·D∇`, its anti-diffusive
+pairs limited at the current `ne` by `flags.limit_antidiffusive_pairs`) and `div_ue`
 (`∇·u_e`). `update_transport_quantities!` calls this last — at the end of every step and at
 every `run_simulation!` entry; a caller that overwrites the velocities or the flag by hand and
 then steps by hand must call it again, or the step reads the operators of the state it
@@ -40,6 +41,10 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     op.A_conv_e_upwind = RP.flags.upwind
     build_wall_diffusion_matrix!(op.A_diffu_e, G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    # lagged: the density at the start of the step sets the limiter for the density solve and
+    # for the u∥ and Te operators built from it
+    lim = RP.flags.limit_antidiffusive_pairs
+    lim.state && limit_antidiffusive_pairs!(op.A_diffu_e, G, pla.ne; r0 = lim.factor)
     return RP
 end
 

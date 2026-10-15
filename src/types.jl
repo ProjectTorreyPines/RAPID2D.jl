@@ -1314,6 +1314,12 @@ Contains boolean flags that control various aspects of the simulation.
         state = true,                         # Enable flux limiting
         factor = FT(0.25),                    # ¼ of the Hertz-Knudsen one-way flux ¼·n·v̄
     )
+    # The 9-point cross terms' negative pairs in the electron diffusion, scaled down where
+    # neighbouring ne differ by more than `factor` (`limit_antidiffusive_pairs!`)
+    limit_antidiffusive_pairs::@NamedTuple{state::Bool, factor::FT} = (
+        state = true,                         # Enable the pair limiter
+        factor = FT(20),                      # r₀: the neighbour density ratio it starts at
+    )
 
     # Numerical settings
     Ampere_nstep::Int = 10                    # Not used: Ampère runs every step and Eϕ_self is the change over one step
