@@ -135,3 +135,126 @@ end
     @test maximum(abs, a.plasma.ue_para .- b.plasma.ue_para) <= 1.0e-12 * maximum(abs, Δu)
     @test maximum(abs, a.plasma.Rue_ei .- b.plasma.Rue_ei) <= 1.0e-12 * maximum(abs, b.plasma.Rue_ei)
 end
+
+# ── The near-vacuum relaxation ────────────────────────────────────────────────
+#
+# Where there is almost no plasma, u∥ and Te are relaxed implicitly (u∥ → 0, Te → the local
+# plasma's Te). It must sit in both u∥ paths, so the gate equivalence above still holds, and it
+# must leave a plasma that is everywhere denser than 100·n_vac exactly as it was.
+
+@testitem "near-vacuum relaxation: the weight is (n_vac/n)² below 10·n_vac and exactly zero from 100·n_vac" begin
+    using RAPID2D: vacuum_relaxation_weight
+    n_vac = 1.0e4
+    @test vacuum_relaxation_weight(1.0e2, n_vac) == 1.0e4
+    @test vacuum_relaxation_weight(n_vac, n_vac) == 1.0
+    @test vacuum_relaxation_weight(0.0, n_vac) == 1.0e12          # capped, also at n = 0
+    @test vacuum_relaxation_weight(1.0e-9, n_vac) == 1.0e12
+    @test all(vacuum_relaxation_weight(n, n_vac) == 0 for n in (1.0e6, 3.0e6, 1.0e17))
+    # continuous where the fade starts and ends, and decreasing in n
+    @test vacuum_relaxation_weight(10n_vac * (1 + 1.0e-9), n_vac) ≈ vacuum_relaxation_weight(10n_vac, n_vac) rtol = 1.0e-6
+    @test vacuum_relaxation_weight(100n_vac * (1 - 1.0e-6), n_vac) < 1.0e-14
+    ns = 10.0 .^ range(-3, 6; length = 400)
+    @test issorted(vacuum_relaxation_weight.(ns, n_vac); rev = true)
+end
+
+@testitem "near-vacuum relaxation: a plasma denser than 100·n_vac everywhere is untouched, bit for bit" setup = [DiffusiveColumn] begin
+    using RAPID2D: update_ue_para!, update_Te!
+    # The column's thinnest in-wall node is ~1e11 m⁻³, far above 100·n_vac
+    for implicit in (true, false)
+        on, off = (diffusive_column(; n0 = 1.0e17, implicit) for _ in 1:2)
+        off.flags.vacuum_relaxation = (state = false, factor = on.flags.vacuum_relaxation.factor)
+        @test minimum(on.plasma.ne[on.G.nodes.in_wall_nids]) > 100 * on.flags.vacuum_relaxation.factor
+        for RP in (on, off)
+            prepare_timestep!(RP)
+            update_ue_para!(RP)
+            update_Te!(RP)
+        end
+        @test on.plasma.ue_para == off.plasma.ue_para
+        @test on.plasma.Te_eV == off.plasma.Te_eV
+    end
+end
+
+@testitem "near-vacuum relaxation: u∥ → 0 on a near-empty patch, the same in update_ue_para! and in the coupled step" setup = [DiffusiveColumn] begin
+    using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!, update_ue_para!
+    # An almost empty patch (1e-2 m⁻³) inside the dense column, where the pressure force on the
+    # few particles is enormous. The gate equivalence must survive it, and u∥ there must vanish.
+    function with_hole(; implicit)
+        RP = diffusive_column(; n0 = 1.0e17, implicit)
+        G = RP.G
+        hole = [k for k in G.nodes.in_wall_nids if 0.25^2 < (G.R2D[k] - 1.5)^2 + G.Z2D[k]^2 < 0.35^2 && G.Z2D[k] > 0]
+        RP.plasma.ne[hole] .= 1.0e-2
+        RP.plasma.ni[hole] .= 1.0e-2
+        RAPID2D.update_transport_quantities!(RP)
+        return RP, hole
+    end
+    for implicit in (true, false)
+        (a, hole), (b, _) = with_hole(; implicit), with_hole(; implicit)
+        @test length(hole) > 5
+        prepare_timestep!(a)
+        prepare_timestep!(b)
+        u0 = copy(a.plasma.ue_para)
+        solve_combined_momentum_Ampere_equations_with_coils!(a)
+        @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_self
+        update_ue_para!(b)
+        Δu = a.plasma.ue_para .- u0
+        @test maximum(abs, a.plasma.ue_para .- b.plasma.ue_para) <= 1.0e-12 * maximum(abs, Δu)
+        @test maximum(abs, a.plasma.ue_para[hole]) <= 1.0e-6 * maximum(abs, u0)
+    end
+end
+
+@testitem "near-vacuum relaxation: Te on a near-empty patch goes to the Te of the plasma around it" setup = [DiffusiveColumn] begin
+    using RAPID2D: update_Te!
+    for implicit in (true, false)
+        RP = diffusive_column(; n0 = 1.0e17, implicit)
+        G = RP.G
+        # thinner than a cell, so every node of it has plasma next to it
+        hole = [k for k in G.nodes.in_wall_nids if 0.28^2 < (G.R2D[k] - 1.5)^2 + G.Z2D[k]^2 < 0.32^2 && G.Z2D[k] > 0]
+        @test length(hole) > 2
+        RP.plasma.ne[hole] .= 1.0e-2
+        RP.plasma.Te_eV[hole] .= 400.0          # the plasma around it is at 10 eV
+        RAPID2D.update_transport_quantities!(RP)
+        prepare_timestep!(RP)
+        update_Te!(RP)
+        @test all(abs.(RP.plasma.Te_eV[hole] .- 10.0) .< 1.0)
+    end
+end
+
+@testitem "near-vacuum relaxation: a run lowers an n_vac that would reach its initial plasma" setup = [DiffusiveColumn] begin
+    using RAPID2D: check_vacuum_relaxation_density!
+    # n̄ = Σ J n² / Σ J n over the in-wall nodes, the density an average electron sits in
+    function mean_density(RP)
+        IN = RP.G.nodes.in_wall_nids
+        n, J = RP.plasma.ne[IN], RP.G.Jacob[IN]
+        return sum(J .* n .^ 2) / sum(J .* n)
+    end
+
+    # the default n_vac against a dense column: untouched
+    RP = diffusive_column(; n0 = 1.0e17)
+    vr = RP.flags.vacuum_relaxation
+    @test_logs check_vacuum_relaxation_density!(RP)
+    @test RP.flags.vacuum_relaxation === vr
+
+    # 1e4 against a ~1e6 column: the relaxation would end inside it, so n_vac goes to n̄/1e4
+    RP = diffusive_column(; n0 = 1.0e6)
+    RP.flags.vacuum_relaxation = (state = true, factor = 1.0e4)
+    @test_logs (:warn, r"lowered to") check_vacuum_relaxation_density!(RP)
+    @test RP.flags.vacuum_relaxation.state
+    @test RP.flags.vacuum_relaxation.factor ≈ mean_density(RP) / 1.0e4
+
+    # off, or no plasma: nothing to check
+    RP.flags.vacuum_relaxation = (state = false, factor = 1.0e4)
+    @test_logs check_vacuum_relaxation_density!(RP)
+    @test RP.flags.vacuum_relaxation.factor == 1.0e4
+    RP.flags.vacuum_relaxation = (state = true, factor = 1.0e4)
+    fill!(RP.plasma.ne, 0.0)
+    @test_logs check_vacuum_relaxation_density!(RP)
+    @test RP.flags.vacuum_relaxation.factor == 1.0e4
+
+    # run_simulation! checks before its first step
+    RP = diffusive_column(; n0 = 1.0e6)
+    RP.flags.vacuum_relaxation = (state = true, factor = 1.0e4)
+    n̄ = mean_density(RP)
+    @test_logs (:warn, r"lowered to") match_mode = :any redirect_stdout(() -> run_simulation!(RP), devnull)
+    @test RP.step == 1
+    @test RP.flags.vacuum_relaxation.factor ≈ n̄ / 1.0e4
+end

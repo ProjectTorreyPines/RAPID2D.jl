@@ -67,6 +67,7 @@ include("physics/transport.jl")
 
 # Include the physics models
 include("physics/physics.jl")
+include("physics/near_vacuum.jl")          # numerical treatments where the plasma is not resolved: vacuum relaxation, negative-density floor
 
 # Include control system modules
 include("control/types.jl")

@@ -1320,6 +1320,12 @@ Contains boolean flags that control various aspects of the simulation.
         state = true,                         # Enable the pair limiter
         factor = FT(20),                      # r₀: the neighbour density ratio it starts at
     )
+    # u∥ and Te relaxed implicitly where there is almost no plasma (`vacuum_relaxation_weights`):
+    # u∥ → 0 and Te → the density-weighted local mean; nothing changes at ne ≥ 100·factor
+    vacuum_relaxation::@NamedTuple{state::Bool, factor::FT} = (
+        state = true,                         # Enable the relaxation
+        factor = FT(1.0e2),                   # n_vac [m⁻³]: the density it acts below
+    )
 
     # Numerical settings
     Ampere_nstep::Int = 10                    # Not used: Ampère runs every step and Eϕ_self is the change over one step

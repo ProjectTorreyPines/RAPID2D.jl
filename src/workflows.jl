@@ -294,6 +294,8 @@ function run_simulation!(
             # grid is cleared there once, here, and never touched again.
             RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= zero(FT)
             RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+            # the near-vacuum relaxation must end well below the plasma the run starts from
+            check_vacuum_relaxation_density!(RP)
             RP.flags.secondary_electron && RP.flags.update_ni_independently &&
                 @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
 
