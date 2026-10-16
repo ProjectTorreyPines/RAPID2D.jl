@@ -70,18 +70,19 @@ Contains volume-averaged quantities
     floor_nodes::Int = 0             # cumulative negative-density floorings
     floor_Ne::FT = zero(FT)          # cumulative electrons the floor created
 
-    # The current column's force balance (`column_force_balance`): a total-current circular
-    # screening estimate. NaN where a value does not exist, all of them below the current threshold.
+    # The current column's force balance (`column_force_balance`): a total-current screening
+    # estimate on the current's moment ellipse. NaN where a value does not exist, all of them below
+    # the current threshold.
     I_closed::FT = zero(FT)          # current on closed field lines [A]
     current_coherence::FT = zero(FT) # |∫Jϕ| / ∫|Jϕ|: 1 for a one-signed current
     R_cen_by_Jϕ::FT = zero(FT)        # current centroid, |Jϕ| over the area: the equivalent filament [m]
     Z_cen_by_Jϕ::FT = zero(FT)        #   (R_cen_by_Jϕ_Vol: signed Jϕ over the volume; R_cen_by_ne: by nₑ)
     a_eff_by_Jϕ::FT = zero(FT)        # effective minor radius √(2⟨r²⟩) of the current [m]
     Bpol_edge::FT = zero(FT)         # μ0 I/(2π a_eff_by_Jϕ), signed with I [T]
-    li::FT = zero(FT)                # internal inductance inside a_eff_by_Jϕ (plasma's own field)
-    beta_p::FT = zero(FT)            # poloidal beta inside a_eff_by_Jϕ
-    pressure_disc_share::FT = zero(FT) # part of ∫p dA inside a_eff_by_Jϕ
-    Bv_req::FT = zero(FT)            # vertical field a circular column there needs (Shafranov) [T]
+    li::FT = zero(FT)                # internal inductance in the column's moment ellipse (plasma's own field)
+    beta_p::FT = zero(FT)            # poloidal beta in the column's moment ellipse
+    pressure_column_share::FT = zero(FT) # part of ∫p dA in the column's moment ellipse
+    Bv_req::FT = zero(FT)            # vertical field the column there needs (Shafranov, ln(8R/ā)) [T]
     BZ_ext_at_cen_by_Jϕ::FT = zero(FT) # external B_Z at the current centroid [T]
     BR_ext_at_cen_by_Jϕ::FT = zero(FT) # external B_R at the current centroid [T]
     decay_index::FT = zero(FT)       # −(R/B_Z) ∂B_Z/∂R of the external field there
@@ -92,13 +93,26 @@ Contains volume-averaged quantities
     force_Z_coils::FT = zero(FT)
     force_R_self::FT = zero(FT)      # the same with the plasma's own field (hoop force) [N]
     force_Z_self::FT = zero(FT)
-    force_R_pressure::FT = zero(FT)  # tire-tube force 2π ∫ p dR dZ over the disc [N]
+    force_R_pressure::FT = zero(FT)  # tire-tube force 2π ∫ p dR dZ over the column [N]
     force_R_toroidal::FT = zero(FT)  # toroidal-field closure (μ0 I²/4)(β_p − 1) [N]
     Bv_to_add::FT = zero(FT)         # uniform B_Z that cancels the net radial force estimate [T]
     R_eq::FT = zero(FT)              # nearest radius where the Shafranov radial force vanishes [m]
     R_eq_stiffness::FT = zero(FT)    # dF_R/dR there, negative is restoring [N/m]
     R_axis::FT = zero(FT)            # magnetic axis: the O-point of the closed region [m]
     Z_axis::FT = zero(FT)
+    kappa_by_Jϕ::FT = zero(FT)       # elongation √(σ_ZZ/σ_RR) of the current
+    half_width_minor_by_Jϕ::FT = zero(FT) # the column's moment ellipse, half-widths 2√λ [m]
+    half_width_major_by_Jϕ::FT = zero(FT) #   (its principal axes; Shafranov's ln(8R/ā) uses their mean ā)
+    force_R_pressure_all::FT = zero(FT) # tire tube 2π ∫ p dR dZ of all the pressure on the grid [N]
+    Br_to_add::FT = zero(FT)         # uniform B_R that cancels the net vertical force [T]
+    force_R_on_closed::FT = zero(FT) # the same reduced radial force estimate on the closed-line current [N]
+    force_Z_on_closed::FT = zero(FT) # vertical force on it [N]
+    Bv_to_add_closed::FT = zero(FT)  # uniform B_Z that cancels the radial force on it [T]
+    column_mass::FT = zero(FT)       # ion mass in the column's moment ellipse [kg]
+    nu_in_column::FT = zero(FT)      # ion–neutral drag rate there, ion-weighted [1/s]
+    wall_gap_R::FT = zero(FT)        # centroid to wall along the net radial force, on its midplane [m]
+    t_wall_inertial::FT = zero(FT)   # √(2 M gap/|F_R|): time to the wall at constant force, inertial [s]
+    t_wall_drag::FT = zero(FT)       # gap M ν/|F_R|: the same, ion–neutral drag-limited [s]
 
     # Electron Heating Powers
     Pe_diffu::FT = zero(FT)       # Diffusion power

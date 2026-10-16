@@ -1,4 +1,4 @@
-# The current column's 0D force balance against a uniform circular current disc: its geometry,
+# The current column's 0D force balance against a uniform current disc (and ellipse): its geometry,
 # l_i = 1/2, the hoop and tire-tube forces, the Shafranov field it needs and where it then sits,
 # the decay index of a curved external field, a coil's field kept apart from the plasma's, and the
 # magnetic axis's response to a mismatched field.
@@ -8,11 +8,15 @@
     const μ0 = 4π * 1.0e-7
     const R0, Z0 = 1.6, 0.1             # on the nodes of the 81 × 121 grid (ΔR = ΔZ = 0.02 m)
 
-    "A uniform disc of current `I` (radius 0.205 m, no node on its edge) at (R0, Z0), with
-    nₑ = nᵢ = `n` and Tₑ = Tᵢ = `T` on it, in the uniform external B_Z = `B0`; the self field
-    solved from the disc. `coil_current`: one passive loop outside the grid at R = 3 m carrying it.
-    `ampere = false` leaves the run without the boundary Green function and the self field."
-    function current_disc(; I = -1.0e4, B0 = 0.0, n = 1.0e19, T = 10.0, coil_current = nothing, ampere = true)
+    "A uniform disc of current `I` (radius `a` = 0.205 m, no node on its edge; an ellipse of
+    elongation `κ`, its long axis `tilt` from Z) at (R0, Z0), with nₑ = nᵢ = `n` and Tₑ = Tᵢ = `T` on it and `n_out` in a ring
+    out to 1.6 a, in the uniform external B_Z = `B0`; the self field solved from the current.
+    `coil_current`: one passive loop outside the grid at R = 3 m carrying it. `ampere = false`
+    leaves the run without the boundary Green function and the self field."
+    function current_disc(;
+            I = -1.0e4, B0 = 0.0, n = 1.0e19, T = 10.0, a = 0.205, κ = 1.0, tilt = 0.0, n_out = 0.0,
+            coil_current = nothing, ampere = true,
+        )
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = B0),
             NR = 81, NZ = 121, R0B0 = 3.0, prefilled_gas_pressure = 0.0, dt = 1.0e-6,
@@ -33,11 +37,17 @@
             RAPID2D.set_all_currents!(RP.coil_system, [coil_current])
         end
         G, pla = RP.G, RP.plasma
-        disc = [k for k in G.nodes.in_wall_nids if (G.R2D[k] - R0)^2 + (G.Z2D[k] - Z0)^2 <= 0.205^2]
+        across(k) = (G.R2D[k] - R0) * cos(tilt) - (G.Z2D[k] - Z0) * sin(tilt)
+        along(k) = (G.R2D[k] - R0) * sin(tilt) + (G.Z2D[k] - Z0) * cos(tilt)
+        ρ²(k) = (across(k) / a)^2 + (along(k) / (κ * a))^2
+        disc = [k for k in G.nodes.in_wall_nids if ρ²(k) <= 1]
+        ring = [k for k in G.nodes.in_wall_nids if 1 < ρ²(k) <= 1.6^2]
         foreach(fill!, (pla.Jϕ, pla.ne, pla.ni), 0.0)
         pla.Jϕ[disc] .= I / (length(disc) * G.dR * G.dZ)
         pla.ne[disc] .= n
         pla.ni[disc] .= n
+        pla.ne[ring] .= n_out
+        pla.ni[ring] .= n_out
         fill!(pla.Te_eV, T)
         fill!(pla.Ti_eV, T)
         ampere && solve_Ampere_equation!(RP; update_Eϕ_self = false)
@@ -63,7 +73,7 @@ end
     @test fb.Bpol_edge ≈ μ0 * d.I / (2π * fb.a_eff_by_Jϕ)
     @test fb.li ≈ 0.5 rtol = 0.05                                  # uniform current (0.519 here, 0.498 at twice the resolution)
     @test fb.beta_p ≈ 4 * d.p0 * 2π * R0 * d.area / (μ0 * d.I^2 * R0) rtol = 0.05
-    @test fb.pressure_disc_share ≈ 1
+    @test fb.pressure_column_share ≈ 1
     # the plasma's own field gives the hoop force of a ring, (μ0 I²/2)(ln(8R/a) − 1 + l_i/2)
     hoop = μ0 * d.I^2 / 2 * (log(8R0 / d.a) - 1 + fb.li / 2)
     @test fb.force_R_self ≈ hoop rtol = 0.02
@@ -143,6 +153,60 @@ end
     shift = fb_off.R_axis - fb_on.R_axis
     @test shift < 0
     @test shift ≈ fb_on.a_eff_by_Jϕ * ΔB / fb_on.Bpol_edge rtol = 0.05     # 0.98 of it on this grid, either sign
+end
+
+@testitem "column force balance: elongation, the vertical field to add, and the pressure's support" setup = [CurrentDisc] begin
+    RP, _ = current_disc()
+    @test column_force_balance(RP).kappa_by_Jϕ ≈ 1 rtol = 0.02
+    # an ellipse of κ = 2 (half-widths a, b): its moment ellipse is itself, l_i is its internal
+    # inductance 2ab/(a + b)², and the formula on ā = (a + b)/2 follows the force estimate
+    a, b = 0.15, 0.30
+    RP_ell, _ = current_disc(; a, κ = b / a, n = 0.0)
+    fb_ell = column_force_balance(RP_ell)
+    @test fb_ell.kappa_by_Jϕ ≈ 2 rtol = 0.05
+    @test fb_ell.half_width_minor_by_Jϕ ≈ a rtol = 0.03
+    @test fb_ell.half_width_major_by_Jϕ ≈ b rtol = 0.03
+    @test fb_ell.li ≈ 2a * b / (a + b)^2 rtol = 0.03
+    @test fb_ell.Bv_req ≈ fb_ell.Bv_to_add rtol = 0.01
+    # tilted, the column's region still holds all of its pressure; at 45° σ_RR = σ_ZZ
+    for tilt in (π / 6, π / 4)
+        fb_tilt = column_force_balance(current_disc(; a, κ = b / a, tilt)[1])
+        @test fb_tilt.pressure_column_share ≈ 1 atol = 0.02
+        @test fb_tilt.half_width_major_by_Jϕ ≈ b rtol = 0.03
+        @test fb_tilt.li ≈ fb_ell.li rtol = 0.03
+    end
+    @test column_force_balance(current_disc(; a, κ = b / a, tilt = π / 4)[1]).kappa_by_Jϕ ≈ 1 rtol = 0.02
+    # a uniform B_R: the B_R to add is its opposite
+    RP.fields.BR_ext .= 1.0e-4
+    @test column_force_balance(RP).Br_to_add ≈ -1.0e-4 rtol = 0.01
+    # pressure on the disc alone: the grid's tire tube is the disc's; with pressure around it, more
+    @test column_force_balance(current_disc()[1]).force_R_pressure_all ≈ column_force_balance(current_disc()[1]).force_R_pressure
+    fb_out = column_force_balance(current_disc(; n_out = 5.0e18)[1])
+    @test fb_out.force_R_pressure_all > fb_out.force_R_pressure
+    @test fb_out.pressure_column_share < 1
+end
+
+@testitem "column force balance: the closed-line current, and the time to the wall if the column could move" setup = [CurrentDisc] begin
+    using RAPID2D: _wall_gap_R, bulk_ion_mass
+    RP0, _ = current_disc()
+    B0 = column_force_balance(RP0).Bv_req
+    RP, d = current_disc(; B0)
+    fb = column_force_balance(trace_closed_region!(RP))
+    # all the current is on closed lines: the closed-line estimate is the column's
+    @test fb.I_closed ≈ d.I
+    @test fb.Bv_to_add_closed ≈ fb.Bv_to_add rtol = 1.0e-10
+    @test fb.force_Z_on_closed ≈ fb.force_Z_ext + fb.force_Z_coils + fb.force_Z_self rtol = 1.0e-10
+    # the ion mass on the disc, and the times to close the gap at constant force
+    G = RP.G
+    F_R = fb.force_R_ext + fb.force_R_coils + fb.force_R_self + fb.force_R_pressure + fb.force_R_toroidal
+    @test fb.column_mass ≈ bulk_ion_mass(RP) * 1.0e19 * 2π * R0 * d.area rtol = 1.0e-10
+    @test fb.t_wall_inertial ≈ sqrt(2 * fb.column_mass * fb.wall_gap_R / abs(F_R))
+    @test fb.nu_in_column == 0 && fb.t_wall_drag == 0                 # no gas, no drag
+    # the gap runs to the wall the net force points at: outboard for F > 0, inboard for F < 0
+    j = round(Int, (Z0 - G.Z1D[1]) / G.dZ) + 1
+    row = [G.R1D[i] for i in 1:G.NR if G.nodes.state[i, j] > 0.5]
+    @test _wall_gap_R(G, 1.2, Z0, 1.0) ≈ maximum(row) - 1.2
+    @test _wall_gap_R(G, 1.2, Z0, -1.0) ≈ 1.2 - minimum(row)
 end
 
 @testitem "column force balance: NaN where nothing exists, the snapshot carries it, edges held" setup = [CurrentDisc] begin
