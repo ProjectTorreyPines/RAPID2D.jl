@@ -173,8 +173,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.R_cen_by_ne = sum(@. RP.G.R2D * Ne2D) / total_Ne
     snap0D.Z_cen_by_ne = sum(@. RP.G.Z2D * Ne2D) / total_Ne
 
-    snap0D.R_cen_by_J_Vol = sum(@. RP.G.R2D * pla.Jϕ * inVol2D) / sum(pla.Jϕ .* inVol2D)
-    snap0D.Z_cen_by_J_Vol = sum(@. RP.G.Z2D * pla.Jϕ * inVol2D) / sum(pla.Jϕ .* inVol2D)
+    snap0D.R_cen_by_Jϕ_Vol = sum(@. RP.G.R2D * pla.Jϕ * inVol2D) / sum(pla.Jϕ .* inVol2D)
+    snap0D.Z_cen_by_Jϕ_Vol = sum(@. RP.G.Z2D * pla.Jϕ * inVol2D) / sum(pla.Jϕ .* inVol2D)
 
     snap0D.ueR = sum(@. pla.ueR * Ne2D) / total_Ne
     snap0D.ueZ = sum(@. pla.ueZ * Ne2D) / total_Ne

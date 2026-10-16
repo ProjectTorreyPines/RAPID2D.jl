@@ -39,8 +39,8 @@
         I_tor = snaps0D.I_tor
         R_cen_by_ne = snaps0D.R_cen_by_ne
         Z_cen_by_ne = snaps0D.Z_cen_by_ne
-        R_cen_by_J_Vol = snaps0D.R_cen_by_J_Vol
-        Z_cen_by_J_Vol = snaps0D.Z_cen_by_J_Vol
+        R_cen_by_Jϕ_Vol = snaps0D.R_cen_by_Jϕ_Vol
+        Z_cen_by_Jϕ_Vol = snaps0D.Z_cen_by_Jϕ_Vol
 
         # JxB force and velocity data
         avg_ueR = snaps0D.ueR
