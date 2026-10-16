@@ -317,3 +317,34 @@ end
     @test all(B .> 0)
     @test any(B .!= 1)                                 # the fit is actually doing something
 end
+
+@testitem "ExpRB Tₑ: the near-vacuum relaxation is the same with and without the matrix" setup = [ExpRBTeFixtures] begin
+    using RAPID2D: ExpRB, FullLinearResponse, update_RRCs!
+    # Two in-wall nodes at n = n_vac, where the relaxation weight is c = 1, hotter than the
+    # plasma around them. With no transport the implicit matrix is the diagonal bern + c, and the
+    # explicit update must divide by the same, so the two agree. Δt = 3τ keeps bern far from 1.
+    K, b_erg = 2.0e-15, 5.0e-35
+    probe = with_constant_surfaces!(te_RAPID(; Te_eV = 5.0); K, b_erg)
+    probe.flags.scheme.atomic = ExpRB
+    probe.flags.exprb_eigenvalue = FullLinearResponse
+    update_RRCs!(probe)
+    inw = probe.G.nodes.in_wall_nids
+    dt = 3 / minimum(abs, linear_te_problem(probe).eig[inw])
+    hot = inw[1:2]
+    results = map(((true, true), (false, true), (true, false))) do (implicit, relax)
+        RP = with_constant_surfaces!(te_RAPID(; Te_eV = 5.0, implicit); K, b_erg)
+        RP.flags.scheme.atomic = ExpRB
+        RP.flags.exprb_eigenvalue = FullLinearResponse
+        RP.flags.vacuum_relaxation = (state = relax, factor = RP.flags.vacuum_relaxation.factor)
+        update_RRCs!(RP)
+        RP.plasma.ne[hot] .= RP.flags.vacuum_relaxation.factor
+        RP.plasma.Te_eV[hot] .= 20.0
+        RP.dt = dt
+        update_Te!(RP)
+        copy(RP.plasma.Te_eV)
+    end
+    a, b, off = results
+    @test maximum(abs, a[inw] .- b[inw]) <= 1.0e-12 * maximum(abs, a[inw])
+    # the relaxation pulls them toward the 5 eV plasma around them
+    @test all(abs.(a[hot] .- 5.0) .< abs.(off[hot] .- 5.0))
+end

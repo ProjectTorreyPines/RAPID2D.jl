@@ -1314,6 +1314,18 @@ Contains boolean flags that control various aspects of the simulation.
         state = true,                         # Enable flux limiting
         factor = FT(0.25),                    # ¼ of the Hertz-Knudsen one-way flux ¼·n·v̄
     )
+    # The 9-point cross terms' negative pairs in the electron diffusion, scaled down where
+    # neighbouring ne differ by more than `factor` (`limit_antidiffusive_pairs!`)
+    limit_antidiffusive_pairs::@NamedTuple{state::Bool, factor::FT} = (
+        state = true,                         # Enable the pair limiter
+        factor = FT(20),                      # max_ratio: the neighbour density ratio it starts above
+    )
+    # u∥ and Te relaxed implicitly where there is almost no plasma (`vacuum_relaxation_weights`):
+    # u∥ → 0 and Te → the density-weighted local mean; nothing changes at ne ≥ 100·factor
+    vacuum_relaxation::@NamedTuple{state::Bool, factor::FT} = (
+        state = true,                         # Enable the relaxation
+        factor = FT(1.0e2),                   # n_vac [m⁻³]: the density it acts below
+    )
 
     # Numerical settings
     Ampere_nstep::Int = 10                    # Not used: Ampère runs every step and Eϕ_self is the change over one step

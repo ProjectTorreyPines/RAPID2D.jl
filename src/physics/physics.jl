@@ -53,6 +53,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # friction; its u_i∥ half is added as a source below. The combined
         # momentum-Ampère solvers build the identical sum.
         ν_sum_mom_iz_ei = @. pla.ν_en_iz_tot + pla.ν_en_mom_tot + pla.ν_ei_eff
+        # u∥ → the local plasma's u∥ where there is almost no plasma: backward Euler, the
+        # weight on the diagonal and the local mean (from uⁿ) on the right-hand side
+        relax_weight = vacuum_relaxation_weights(RP, pla.ne)
+        ue_ref = vacuum_reference(RP, pla.ne, pla.ue_para, relax_weight)
 
         # Backward Euler by default (θ_imp.decay = 1): friction-dominated, so at large
         # Δt BE lands on u∞ = S/ν while CN rings about it. ExpRB replaces the constant
@@ -122,6 +126,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         else
             @. OP.RHS = pla.ue_para + dt * accel_para_tilde
         end
+        @. OP.RHS += ifelse(relax_weight > 0, relax_weight * ue_ref, zero(FT))
 
         if RP.flags.Implicit
             # The shared LHS buffer on the wall pattern: values only, so the cached solver
@@ -134,6 +139,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             else
                 add_diagonal!(A, vec(ν_sum_mom_iz_ei); scale = θu * dt)
             end
+            add_diagonal!(A, vec(relax_weight))
             RP.flags.Include_ud_diffu_term && add_scaled!(A, -θ_op * dt, pops.A_diffu)
 
             @timeit RAPID_TIMER "ue_para LinearSolve" begin
@@ -149,13 +155,13 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             # θ_op = 0: the matrix is the friction's diagonal, bern(z) under ExpRB
             if !closed_surface_active(RP)
                 if decay_is_exprb
-                    @. pla.ue_para = OP.RHS / bern_decay
+                    @. pla.ue_para = OP.RHS / (bern_decay + relax_weight)
                 else
-                    @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt)
+                    @. pla.ue_para = OP.RHS / (one_FT + θu * ν_sum_mom_iz_ei * dt + relax_weight)
                 end
             else
                 # SurfaceFluxConstraint: the same diagonal, solved with the constraint
-                surface_constrained_ue!(RP, spdiagm(0 => vec(@. one_FT + θu * ν_sum_mom_iz_ei * dt)), vec(OP.RHS), θu)
+                surface_constrained_ue!(RP, spdiagm(0 => vec(@. one_FT + θu * ν_sum_mom_iz_ei * dt + relax_weight)), vec(OP.RHS), θu)
             end
         end
 
@@ -163,6 +169,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
+
+        # the momentum the near-vacuum relaxation took out
+        RP.diagnostics.near_vacuum.relax_momentum +=
+            me * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.ue_para, ue_ref)
 
         return RP
     end # @timeit
@@ -302,6 +312,10 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         two_thirds_FT = FT(2.0) / FT(3.0)
 
+        # the near-vacuum relaxation, from the density and Te at this stage's entry
+        relax_weight = vacuum_relaxation_weights(RP, pla.ne)
+        Te_ref = vacuum_reference(RP, pla.ne, pla.Te_eV, relax_weight)
+
         # `bern(z)` with `z = exprb.eig_Te·Δt`. Branched rather than relying on bern(0) = 1, so
         # the off path does no arithmetic at all and "unchanged" holds structurally.
         atomic_is_exprb = RP.flags.scheme.atomic === ExpRB
@@ -355,18 +369,35 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 OP.RHS .= pla.Te_eV + two_thirds_FT * (dt * ePowers_tilde / ee)
             end
 
+            # Te → the local plasma's Te where there is almost no plasma (backward Euler)
+            add_diagonal!(A, vec(relax_weight))
+            @. OP.RHS += ifelse(relax_weight > 0, relax_weight * Te_ref, zero(FT))
+
             # Solve the linear system (cached factorization; pattern is step-stable)
             @timeit RAPID_TIMER "Te_eV LinearSolve" begin
                 factorize!(OP.Te_solver, A)
                 solve!(view(pla.Te_eV, :), OP.Te_solver, view(OP.RHS, :))
             end
         elseif atomic_is_exprb
-            # Forward Euler with bern as a divisor on the increment.
-            @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee / bern_atomic
+            # Forward Euler with bern as a divisor on the increment. With the near-vacuum
+            # relaxation the diagonal is bern + relax_weight, as in the implicit branch.
+            @. pla.Te_eV = ifelse(
+                relax_weight > 0,
+                (bern_atomic * pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee + relax_weight * Te_ref) / (bern_atomic + relax_weight),
+                pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee / bern_atomic,
+            )
         else
-            # Explicit method (forward Euler)
-            @. pla.Te_eV += two_thirds_FT * pla.ePowers.tot * dt / ee
+            # Explicit method (forward Euler); the near-vacuum relaxation stays backward Euler
+            @. pla.Te_eV = ifelse(
+                relax_weight > 0,
+                (pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee + relax_weight * Te_ref) / (one(FT) + relax_weight),
+                pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee,
+            )
         end
+
+        # the thermal energy the near-vacuum relaxation took out (before the limits below)
+        RP.diagnostics.near_vacuum.relax_energy +=
+            FT(1.5) * ee * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.Te_eV, Te_ref)
 
         # Apply temperature limits
         @. pla.Te_eV = max(pla.Te_eV, RP.config.min_Te)
@@ -1354,65 +1385,6 @@ function book_ionization_sources!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    correct_negative_densities!(RP::RAPID{FT}) where FT<:AbstractFloat
-
-After the step: floor negative densities and book what the floor ADDED as a negative loss,
-so `Δ(Σ V·n) = src − loss` keeps holding; then re-slave the ions to the electrons when they
-are not evolved independently.
-
-- Electrons (`negative_n_correction`): a negative cell is raised to
-  `min(0.1·|n|, 0.01·mean|n_neighbours|)`, and the particles that creates, `(n_new − n_old)·V`,
-  are taken OFF `Ne_loss`. (They used to be added to it, which double-counted them.)
-- Ions, when independent: a negative cell is set to zero and `n_old·V` (negative) is added
-  to `Ni_loss` — the same sign convention.
-
-Nothing outside the wall is touched. No transport operator has rows there, and the
-ionization rates are zero there, so the band keeps the value the initial condition gave it;
-`initialize_density!` sets it to zero. There is no zeroing pass any more, and nothing found
-on the band is ever booked — the per-face ledgers already hold everything that left.
-"""
-function correct_negative_densities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    @timeit RAPID_TIMER "correct_negative_densities!" begin
-        Ntracker = RP.diagnostics.Ntracker
-        G = RP.G
-        cell_volume(nid) = FT(2π) * G.Jacob[nid] * G.dR * G.dZ
-
-        if RP.flags.negative_n_correction
-            ne = RP.plasma.ne
-            neg_e = findall(<(zero(FT)), ne)
-            if !isempty(neg_e)
-                ori_ne = copy(ne)
-                @inbounds for nid in neg_e
-                    rid, zid = G.nodes.rid[nid], G.nodes.zid[nid]
-                    ngh_rids = max(1, rid - 1):min(G.NR, rid + 1)
-                    ngh_zids = max(1, zid - 1):min(G.NZ, zid + 1)
-                    ne[nid] = min(FT(0.1) * abs(ori_ne[nid]), FT(0.01) * mean(abs.(ori_ne[ngh_rids, ngh_zids])))
-                    added = (ne[nid] - ori_ne[nid]) * cell_volume(nid)    # > 0: what the floor created
-                    Ntracker.cum0D_Ne_loss -= added
-                    Ntracker.cum2D_Ne_loss[nid] -= added
-                end
-            end
-
-            if RP.flags.update_ni_independently
-                ni = RP.plasma.ni
-                @inbounds for nid in findall(<(zero(FT)), ni)
-                    removed = ni[nid] * cell_volume(nid)                  # < 0: a negative loss
-                    Ntracker.cum0D_Ni_loss += removed
-                    Ntracker.cum2D_Ni_loss[nid] += removed
-                    ni[nid] = zero(FT)
-                end
-            end
-        end
-
-        if !RP.flags.update_ni_independently
-            # Same definition the step uses; they disagreed before (ne/Zeff vs ne).
-            slave_ions_to_electrons!(RP)
-        end
-        return RP
-    end # @timeit
-end
-
-"""
     calculate_para_grad_of_scalar_F(RP::RAPID{FT}, F::Matrix{FT}; upwind::Bool=RP.flags.upwind) where {FT<:AbstractFloat}
 
 Calculate the parallel gradient [∇∥ ≡ b⋅∇] of a scalar field F in the direction of the magnetic field.
@@ -2054,6 +2026,11 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         A_u = OP.A_u
         set_identity!(A_u)
         add_diagonal!(A_u, vec(ν_sum_mom_iz_ei); scale = dt * θu)
+        # the near-vacuum relaxation update_ue_para! adds, inside the block so the current–ψ
+        # relation it solves holds for the relaxed u∥: the weight here, the local mean in RHS_u
+        relax_weight = vacuum_relaxation_weights(RP, pla.ne)
+        ue_ref = vacuum_reference(RP, pla.ne, pla.ue_para, relax_weight)
+        add_diagonal!(A_u, vec(relax_weight))
         flags.Include_ud_convec_term && add_scaled!(A_u, dt * θ_op, pops.A_adv)
         flags.Include_ud_diffu_term && add_scaled!(A_u, -dt * θ_op, pops.A_diffu)
 
@@ -2094,7 +2071,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         A_u_ψ = update_coupled_block!(OP.uψ_block, A_u, OP.ΔGS, uψ_coupling_terms(RP)...)
         solver, sys, ct = coupled_block_solver!(RP, A_u_ψ, θu)
         sol = Vector{FT}(undef, sys === nothing ? 2N : size(sys.matrix, 1))
-        RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde)       # the same for every iteration
+        RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde + ifelse(relax_weight > 0, relax_weight * ue_ref, zero(FT)))   # the same for every iteration
         sys === nothing || (RHS_u[ct.cu] .+= ct.ionization)
         RHS_ψ_ions = @. -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
         RHS_ψ = similar(RHS_ψ_ions)
@@ -2196,6 +2173,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             c_uψ, _ = uψ_coupling_terms(RP)
             surface_constrained_ue!(RP, A_u.matrix, RHS_u .- c_uψ .* vec(ψ_k), θu)
         end
+        RP.diagnostics.near_vacuum.relax_momentum +=
+            me * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.ue_para, ue_ref)
 
         # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
         F.Eϕ_self_prev .= F.Eϕ_self

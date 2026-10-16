@@ -348,3 +348,163 @@ end
     @test A.matrix == build_wall_diffusion_matrix(G, D_ZZ, zero(D_RZ), D_ZZ)
     @test_throws ArgumentError build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; faces)   # faces without v_absorb
 end
+
+# ── The anti-diffusive pair limiter ───────────────────────────────────────────
+#
+# Across an unresolved density cliff a negative pair of the 9-point stencil drains the empty
+# node by `|A_kl| n_l` and multiplies the per-particle operator by `n_l/n_k`. The limiter adds a
+# symmetric pair diffusion w on those pairs only (`limit_antidiffusive_pairs!`).
+
+@testsnippet PairLimiterFixtures begin
+    using RAPID2D: build_wall_pattern, build_wall_diffusion_matrix!, limit_antidiffusive_pairs!
+    using RAPID2D.SparseArrays
+    using RAPID2D.LinearAlgebra
+
+    "A walled box on a 41 × 47 grid, the field tilted by θ, D varying in space: cross terms everywhere."
+    function tilted_case(; θ = 0.6, Dpara = 100.0, Dperp = 0.1)
+        config = SimulationConfig{Float64}(
+            device_Name = "manual", NR = 41, NZ = 47,
+            R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+            wall_R = [1.2, 1.8, 1.8, 1.2], wall_Z = [-0.3, -0.3, 0.3, 0.3],
+            prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+            snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+        )
+        RP = RAPID{Float64}(config)
+        initialize!(RP)
+        G = RP.G
+        bR, bZ = cos(θ), sin(θ)
+        s = @. 1 + 0.2 * sin(3 * G.R2D) * cos(2 * G.Z2D)
+        D = (
+            @.(s * (Dperp + (Dpara - Dperp) * bR^2)),
+            @.(s * (Dpara - Dperp) * bR * bZ),
+            @.(s * (Dperp + (Dpara - Dperp) * bZ^2)),
+        )
+        across = @. -bZ * (G.R2D - 1.5) + bR * G.Z2D       # distance across the field
+        return (; G, D, across, faces = RP.transport.wall_faces)
+    end
+
+    diffusion(G, D; kw...) = build_wall_diffusion_matrix!(build_wall_pattern(G), G, D...; cross_terms = :drop, kw...)
+
+    "Across the field: 1e17, a one-cell 1e11 shelf, then 1e5. Zero outside the wall."
+    function cliff_density(G, across)
+        n = zeros(G.NR, G.NZ)
+        for k in G.nodes.in_wall_nids
+            n[k] = across[k] < 0 ? 1.0e17 : (across[k] < 0.03 ? 1.0e11 : 1.0e5)
+        end
+        return n
+    end
+
+    "Smooth: every neighbour ratio is far below 20."
+    smooth_density(G) = @. 1.0e16 * (1 + 0.5 * sin(3 * G.R2D) * cos(2 * G.Z2D))
+
+    "The off-diagonal entries (k, l, value) of a sparse matrix."
+    offdiag(matrix) = [(k, l, v) for (k, l, v) in zip(findnz(matrix)...) if k != l]
+end
+
+@testitem "pair limiter: a resolved density gives back the operator bit for bit" setup = [PairLimiterFixtures] begin
+    using RAPID2D.SparseArrays: nonzeros
+    c = tilted_case()
+    v_absorb = fill(40.0, length(c.faces))
+    for kw in ((;), (; faces = c.faces, v_absorb))
+        A0 = diffusion(c.G, c.D; kw...)
+        A = diffusion(c.G, c.D; kw...)
+        @test limit_antidiffusive_pairs!(A, c.G, smooth_density(c.G); max_ratio = 20.0) == 0
+        @test nonzeros(A.matrix) == nonzeros(A0.matrix)
+    end
+end
+
+@testitem "pair limiter: conserves Σ Jacob·n, keeps row sums, and only adds diffusion on cliff pairs" setup = [PairLimiterFixtures] begin
+    c = tilted_case()
+    G, Jacob = c.G, vec(c.G.Jacob)
+    n = cliff_density(G, c.across)
+    max_ratio = 20.0
+    v_absorb = fill(40.0, length(c.faces))
+    for kw in ((;), (; faces = c.faces, v_absorb))
+        A0 = diffusion(G, c.D; kw...)
+        A = diffusion(G, c.D; kw...)
+        n_limited = limit_antidiffusive_pairs!(A, G, n; max_ratio)
+        before, after = A0.matrix, A.matrix
+        scale = maximum(Jacob) * maximum(abs, before)
+
+        # Jacob·A is not symmetric here, so this does not follow from symmetry: it is the pair form
+        @test maximum(abs, Jacob' * before - Jacob' * after) < 1.0e-13 * scale
+        @test maximum(abs, sum(after; dims = 2) - sum(before; dims = 2)) < 1.0e-13 * maximum(abs, before)
+
+        # it acts, and only on pairs across a ratio above max_ratio with a negative side
+        changed = [(k, l) for (k, l, v) in offdiag(after) if v != before[k, l]]
+        @test length(changed) > 50
+        @test length(changed) == 2 * n_limited          # both entries of every limited pair
+        ratio(k, l) = max(n[k], n[l]) / max(min(n[k], n[l]), eps())
+        @test all(ratio(k, l) > max_ratio for (k, l) in changed)
+        @test all(min(Jacob[k] * before[k, l], Jacob[l] * before[l, k]) < 0 for (k, l) in changed)
+
+        # an added pair diffusion: no off-diagonal decreases, a negative one shrinks to at most `keep` of its size
+        tol = 1.0e-12 * maximum(abs, before)
+        @test all(v >= before[k, l] - tol for (k, l, v) in offdiag(after))
+        for (k, l) in changed
+            keep = max_ratio * min(n[k], n[l]) / max(n[k], n[l])
+            before[k, l] < 0 && @test after[k, l] >= keep * before[k, l] - tol
+        end
+    end
+end
+
+@testitem "pair limiter: a negative entry of the per-particle operator stays above −max_ratio |A| at the cliff" setup = [PairLimiterFixtures] begin
+    using RAPID2D: per_particle_operator!
+    using RAPID2D.SparseArrays: nonzeros
+    c = tilted_case()
+    G = c.G
+    n = cliff_density(G, c.across)
+    max_ratio = 20.0
+    A0 = diffusion(G, c.D)
+    A = diffusion(G, c.D)
+    limit_antidiffusive_pairs!(A, G, n; max_ratio)
+    per_particle_raw, per_particle_limited = build_wall_pattern(G), build_wall_pattern(G)
+    per_particle_operator!(per_particle_raw, A0, n; n_floor = 1.0)
+    per_particle_operator!(per_particle_limited, A, n; n_floor = 1.0)
+    # per-particle entries A_kl n_l/n_k: without the limiter the cliff multiplies a negative pair by up to 1e12
+    amax = maximum(abs, nonzeros(A0.matrix))
+    @test minimum(v for (k, l, v) in offdiag(per_particle_raw.matrix)) < -1.0e6 * amax
+    # with it, every off-diagonal is at least max_ratio times the negative part of the original entry
+    @test all(v >= max_ratio * min(A0.matrix[k, l], 0.0) * (1 + 1.0e-12) for (k, l, v) in offdiag(per_particle_limited.matrix))
+end
+
+@testitem "pair limiter: an implicit step across a cliff leaves orders of magnitude less negative mass" setup = [PairLimiterFixtures] begin
+    # Not a positivity guarantee. Inside (I − Δt A)⁻¹ a negative pair between two empty nodes
+    # (ratio ≤ max_ratio, so not limited) can still pass the full side's density on in two hops.
+    using RAPID2D.SparseArrays: nonzeros
+    using RAPID2D.LinearAlgebra: I, dot
+    c = tilted_case()
+    G, Jacob = c.G, vec(c.G.Jacob)
+    inw = G.nodes.in_wall_nids
+    n0 = vec(cliff_density(G, c.across))
+    A0 = diffusion(G, c.D)
+    A = diffusion(G, c.D)
+    limit_antidiffusive_pairs!(A, G, n0; max_ratio = 20.0)
+    Δt = 0.1 / maximum(abs, nonzeros(A0.matrix))
+    function negative_mass(matrix)
+        n1 = (I - Δt * matrix) \ n0
+        return -sum(Jacob[k] * min(n1[k], 0.0) for k in inw) / dot(Jacob, n0)
+    end
+    base, limited = negative_mass(A0.matrix), negative_mass(A.matrix)
+    @test base > 1.0e-4                       # the stencil's own defect at this cliff
+    @test limited < 1.0e-3 * base
+end
+
+@testitem "pair limiter: allocates nothing and refuses what it cannot limit" setup = [PairLimiterFixtures] begin
+    c = tilted_case()
+    G = c.G
+    n = cliff_density(G, c.across)
+    A = diffusion(G, c.D)
+    limit_antidiffusive_pairs!(A, G, n; max_ratio = 20.0)
+    alloc(A, G, n) = @allocated limit_antidiffusive_pairs!(A, G, n; max_ratio = 20.0)
+    alloc(A, G, n)
+    @test alloc(A, G, n) == 0
+    alloc(A, G, vec(n))
+    @test alloc(A, G, vec(n)) == 0
+    bad = copy(n)
+    bad[G.nodes.in_wall_nids[1]] = NaN
+    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, bad; max_ratio = 20.0)
+    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, n; max_ratio = 0.5)
+    @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, n; max_ratio = Inf)
+    @test_throws DimensionMismatch limit_antidiffusive_pairs!(A, G, vec(n)[1:(end - 1)]; max_ratio = 20.0)
+end

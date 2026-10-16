@@ -63,6 +63,16 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.cs_E_activation, snap0D.cs_E_basis_change = led.activation, led.basis_change
     snap0D.cs_E_projection, snap0D.cs_E_remap = led.projection, led.remap
 
+    # The near-vacuum treatments: where the relaxation acts now, and the run's ledger
+    relax_weight = vacuum_relaxation_weights(RP, pla.ne)
+    relaxed = relax_weight .> zero(FT)
+    snap0D.vac_relax_nodes = count(relaxed)
+    snap0D.vac_relax_Ne_share = total_Ne > zero(FT) ? sum(Ne2D[relaxed]) / total_Ne : zero(FT)
+    nv = RP.diagnostics.near_vacuum
+    snap0D.vac_relax_momentum, snap0D.vac_relax_energy = nv.relax_momentum, nv.relax_energy
+    snap0D.limited_pairs = nv.limited_pairs
+    snap0D.floor_nodes, snap0D.floor_Ne = nv.floor_nodes, nv.floor_Ne
+
     # Electric fields (density-weighted averages)
     snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
     snap0D.Epara_ext = sum(@. F.E_para_ext * Ne2D) / total_Ne

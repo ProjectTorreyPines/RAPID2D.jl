@@ -61,6 +61,15 @@ Contains volume-averaged quantities
     cs_E_projection::FT = zero(FT)   # ... on other steps [J]
     cs_E_remap::FT = zero(FT)        # cumulative kinetic-energy change of the remap [J]
 
+    # The near-vacuum treatments (`near_vacuum.jl`, `NearVacuumLedger`)
+    vac_relax_nodes::Int = 0         # in-wall nodes where the vacuum relaxation acts (ne < 100·n_vac)
+    vac_relax_Ne_share::FT = zero(FT) # share of the electrons on them
+    vac_relax_momentum::FT = zero(FT) # cumulative parallel momentum it took out [kg m/s]
+    vac_relax_energy::FT = zero(FT)  # cumulative thermal energy it took out [J]
+    limited_pairs::Int = 0           # node pairs the pair limiter scaled at the latest refresh
+    floor_nodes::Int = 0             # cumulative negative-density floorings
+    floor_Ne::FT = zero(FT)          # cumulative electrons the floor created
+
     # Electron Heating Powers
     Pe_diffu::FT = zero(FT)       # Diffusion power
     Pe_visc_heat::FT = zero(FT)    # Viscous heating of u∥, mₑ Γ_M(u∥)
@@ -291,6 +300,28 @@ evaluation, of the induced field [V/m] and of the coil currents [A].
 end
 
 """
+    NearVacuumLedger{FT}()
+
+What the near-vacuum treatments (`near_vacuum.jl`) did over a run, cumulative and signed:
+
+- `relax_momentum` [kg m/s], `relax_energy` [J]: the parallel momentum and the thermal energy the
+  vacuum relaxation took out of the electrons, `Σ V n w (f − f_ref)` with `f = mₑ u∥` and
+  `(3/2) e Tₑ`. Exact for the backward-Euler term the solves carry.
+- `floor_nodes`, `floor_Ne`: the negative-density floorings, and the electrons they created.
+- `limited_pairs`: the node pairs the anti-diffusive pair limiter scaled at the latest operator
+  refresh (not cumulative).
+
+A step solved again above the Ampère gate puts it back as it was.
+"""
+@kwdef mutable struct NearVacuumLedger{FT <: AbstractFloat}
+    relax_momentum::FT = zero(FT)
+    relax_energy::FT = zero(FT)
+    floor_nodes::Int = 0
+    floor_Ne::FT = zero(FT)
+    limited_pairs::Int = 0
+end
+
+"""
 Main Diagnostics container
 Pure struct-based approach using @kwdef for automatic initialization
 No legacy Dictionary compatibility layer
@@ -313,6 +344,9 @@ No legacy Dictionary compatibility layer
 
     # Picard iterations of the coupled momentum–Ampère solve
     ampere_picard::PicardStats = PicardStats()
+
+    # what the near-vacuum treatments did (`near_vacuum.jl`)
+    near_vacuum::NearVacuumLedger{FT} = NearVacuumLedger{FT}()
 end
 
 function Diagnostics{FT}(dim_R::Int, dim_Z::Int) where {FT <: AbstractFloat}

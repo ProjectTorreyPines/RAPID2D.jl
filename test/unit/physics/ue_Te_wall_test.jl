@@ -131,6 +131,34 @@ end
     end
 end
 
+@testitem "A_diffu_e carries the anti-diffusive pair limiter that flags.limit_antidiffusive_pairs sets" setup = [UeTeWallDriver] begin
+    using RAPID2D: build_wall_diffusion_matrix!, build_wall_pattern, limit_antidiffusive_pairs!, cache_electron_operators!
+    RP = ue_Te_one_step()
+    op, tp, G, pla = RP.operators, RP.transport, RP.G, RP.plasma
+    # a tilted tensor, and a density cliff across it
+    bR, bZ = cos(0.6), sin(0.6)
+    tp.DRR .= 0.1 + 99.9 * bR^2
+    tp.DRZ .= 99.9 * bR * bZ
+    tp.DZZ .= 0.1 + 99.9 * bZ^2
+    Rc, Zc = (G.R1D[1] + G.R1D[end]) / 2, (G.Z1D[1] + G.Z1D[end]) / 2
+    pla.ne .= 0
+    for k in G.nodes.in_wall_nids
+        pla.ne[k] = -bZ * (G.R2D[k] - Rc) + bR * (G.Z2D[k] - Zc) < 0 ? 1.0e17 : 1.0e5
+    end
+    raw() = build_wall_diffusion_matrix!(build_wall_pattern(G), G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
+    limited = raw()
+    n_limited = limit_antidiffusive_pairs!(limited, G, pla.ne; max_ratio = 20.0)
+    @test RP.flags.limit_antidiffusive_pairs == (state = true, factor = 20.0)     # the default
+    cache_electron_operators!(RP)
+    @test op.A_diffu_e.matrix == limited.matrix
+    @test op.A_diffu_e.matrix != raw().matrix
+    @test RP.diagnostics.near_vacuum.limited_pairs == n_limited > 0      # the count reaches the ledger
+    RP.flags.limit_antidiffusive_pairs = (state = false, factor = 20.0)
+    cache_electron_operators!(RP)
+    @test op.A_diffu_e.matrix == raw().matrix
+    @test RP.diagnostics.near_vacuum.limited_pairs == 0
+end
+
 @testitem "in-wall operators: one symbolic analysis per electron solver over a run with reversing flow" begin
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 25, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
