@@ -37,10 +37,10 @@
         snaps0D = RP.diagnostics.snaps0D
         times = snaps0D.time_s
         I_tor = snaps0D.I_tor
-        ne_cen_R = snaps0D.ne_cen_R
-        ne_cen_Z = snaps0D.ne_cen_Z
-        J_cen_R = snaps0D.J_cen_R
-        J_cen_Z = snaps0D.J_cen_Z
+        R_cen_by_ne = snaps0D.R_cen_by_ne
+        Z_cen_by_ne = snaps0D.Z_cen_by_ne
+        R_cen_by_J_Vol = snaps0D.R_cen_by_J_Vol
+        Z_cen_by_J_Vol = snaps0D.Z_cen_by_J_Vol
 
         # JxB force and velocity data
         avg_ueR = snaps0D.ueR
@@ -60,8 +60,8 @@
         dt = length(times) > 1 ? times[2] - times[1] : 1.0e-6
 
         # 1. Plasma centroid motion analysis
-        displacement_R = ne_cen_R .- initial_R
-        displacement_Z = ne_cen_Z .- initial_Z
+        displacement_R = R_cen_by_ne .- initial_R
+        displacement_Z = Z_cen_by_ne .- initial_Z
 
         # Calculate velocities from centroid positions using accurate numerical differentiation
         velocity_R_from_pos = Float64[]
@@ -73,8 +73,8 @@
                     # Forward difference for first point
                     if length(times) > 1
                         dt = times[2] - times[1]
-                        vel_R = (ne_cen_R[2] - ne_cen_R[1]) / dt
-                        vel_Z = (ne_cen_Z[2] - ne_cen_Z[1]) / dt
+                        vel_R = (R_cen_by_ne[2] - R_cen_by_ne[1]) / dt
+                        vel_Z = (Z_cen_by_ne[2] - Z_cen_by_ne[1]) / dt
                     else
                         vel_R = 0.0
                         vel_Z = 0.0
@@ -82,13 +82,13 @@
                 elseif i == length(times)
                     # Backward difference for last point
                     dt = times[end] - times[end - 1]
-                    vel_R = (ne_cen_R[end] - ne_cen_R[end - 1]) / dt
-                    vel_Z = (ne_cen_Z[end] - ne_cen_Z[end - 1]) / dt
+                    vel_R = (R_cen_by_ne[end] - R_cen_by_ne[end - 1]) / dt
+                    vel_Z = (Z_cen_by_ne[end] - Z_cen_by_ne[end - 1]) / dt
                 else
                     # Central difference for middle points (more accurate)
                     dt = times[i + 1] - times[i - 1]
-                    vel_R = (ne_cen_R[i + 1] - ne_cen_R[i - 1]) / dt
-                    vel_Z = (ne_cen_Z[i + 1] - ne_cen_Z[i - 1]) / dt
+                    vel_R = (R_cen_by_ne[i + 1] - R_cen_by_ne[i - 1]) / dt
+                    vel_Z = (Z_cen_by_ne[i + 1] - Z_cen_by_ne[i - 1]) / dt
                 end
 
                 push!(velocity_R_from_pos, vel_R)
@@ -133,8 +133,8 @@
         density_drop_idx = nothing
 
         # Detect when plasma hits the wall (centroid reaches wall radius)
-        for i in eachindex(ne_cen_R)
-            if ne_cen_R[i] >= (wall_R_outer - plasma_radius) || ne_cen_R[i] <= (wall_R_inner + plasma_radius)
+        for i in eachindex(R_cen_by_ne)
+            if R_cen_by_ne[i] >= (wall_R_outer - plasma_radius) || R_cen_by_ne[i] <= (wall_R_inner + plasma_radius)
                 wall_collision_time = times[i]
                 wall_collision_idx = i
                 break
@@ -209,7 +209,7 @@
         if verbose
             println("Plasma Motion Analysis:")
             println(@sprintf("  Initial position: R=%.2f m, Z=%.2f m", initial_R, initial_Z))
-            println(@sprintf("  Final centroid: R=%.3f m, Z=%.3f m", ne_cen_R[end], ne_cen_Z[end]))
+            println(@sprintf("  Final centroid: R=%.3f m, Z=%.3f m", R_cen_by_ne[end], Z_cen_by_ne[end]))
             println(@sprintf("  Max displacement: ΔR=%.3f m", maximum(abs.(displacement_R))))
 
             if length(avg_aR_by_JxB) > 5
@@ -233,12 +233,12 @@
 
         # Create plots focusing on force balance aspects
         if visualize
-            create_force_balance_plots(RP, times, ne_cen_R, ne_cen_Z, total_ne, avg_aR_by_JxB, wall_collision_time; outdir)
+            create_force_balance_plots(RP, times, R_cen_by_ne, Z_cen_by_ne, total_ne, avg_aR_by_JxB, wall_collision_time; outdir)
         end
 
         # Return analysis results
         return (;
-            times, ne_cen_R, ne_cen_Z, displacement_R, displacement_Z, total_ne,
+            times, R_cen_by_ne, Z_cen_by_ne, displacement_R, displacement_Z, total_ne,
             avg_ueR, avg_aR_by_JxB, velocity_consistency_error, acceleration_consistency_error,
             wall_collision_time, density_drop_time, expected_collision_time, initial_density,
             final_density_fraction = total_ne[end] / initial_density,
@@ -250,7 +250,7 @@
     # `outdir` MUST be unique per run: the filename timestamp is only second-resolution,
     # so two runs sharing a directory can overwrite each other.
     function create_force_balance_plots(
-            RP, times, ne_cen_R, ne_cen_Z, total_ne, avg_aR_by_JxB, wall_collision_time;
+            RP, times, R_cen_by_ne, Z_cen_by_ne, total_ne, avg_aR_by_JxB, wall_collision_time;
             outdir::AbstractString = mktempdir(; cleanup = false)
         )
         # Convert times to ms for plotting
@@ -259,7 +259,7 @@
 
         # 1. Plasma centroid trajectory
         p1 = plot(
-            times_ms, ne_cen_R,
+            times_ms, R_cen_by_ne,
             label = "Density centroid R",
             linewidth = 2,
             xlabel = "Time (ms)",
@@ -269,7 +269,7 @@
         )
 
         plot!(
-            p1, times_ms, ne_cen_Z,
+            p1, times_ms, Z_cen_by_ne,
             label = "Density centroid Z",
             linewidth = 2
         )
@@ -315,10 +315,10 @@
         )
 
         # 4. Phase space plot (position vs velocity if possible)
-        if length(ne_cen_R) > 1
-            velocity_R = diff(ne_cen_R) ./ diff(times)
+        if length(R_cen_by_ne) > 1
+            velocity_R = diff(R_cen_by_ne) ./ diff(times)
             p4 = plot(
-                ne_cen_R[1:(end - 1)], velocity_R,
+                R_cen_by_ne[1:(end - 1)], velocity_R,
                 label = "Trajectory",
                 linewidth = 2,
                 xlabel = "Radial Position (m)",
@@ -328,12 +328,12 @@
 
             # Mark initial and final points
             scatter!(
-                p4, [ne_cen_R[1]], [velocity_R[1]],
+                p4, [R_cen_by_ne[1]], [velocity_R[1]],
                 label = "Start", color = :green, markersize = 6
             )
             if length(velocity_R) > 1
                 scatter!(
-                    p4, [ne_cen_R[end - 1]], [velocity_R[end]],
+                    p4, [R_cen_by_ne[end - 1]], [velocity_R[end]],
                     label = "End", color = :red, markersize = 6
                 )
             end
@@ -461,7 +461,7 @@ end
     # Basic test assertions
     @test results !== nothing  # Should return valid results
     @test length(results.times) > 1  # Should have multiple time points
-    @test length(results.ne_cen_R) == length(results.times)  # Consistent data arrays
+    @test length(results.R_cen_by_ne) == length(results.times)  # Consistent data arrays
 
     # 1. Test plasma motion physics
     @testset "Plasma Motion Physics" begin
@@ -470,11 +470,11 @@ end
         @test max_displacement > 0.01  # Should move at least 1 cm
 
         # Final position should be farther from center than initial
-        @test abs(results.ne_cen_R[end] - results.initial_R) > abs(results.displacement_R[1])
+        @test abs(results.R_cen_by_ne[end] - results.initial_R) > abs(results.displacement_R[1])
 
         # Plasma motion should be primarily radial (outward) for this test case
-        radial_motion = abs(results.ne_cen_R[end] - results.ne_cen_R[1])
-        vertical_motion = abs(results.ne_cen_Z[end] - results.ne_cen_Z[1])
+        radial_motion = abs(results.R_cen_by_ne[end] - results.R_cen_by_ne[1])
+        vertical_motion = abs(results.Z_cen_by_ne[end] - results.Z_cen_by_ne[1])
         @test radial_motion > 0.5 * vertical_motion  # Predominantly radial motion
     end
 
@@ -531,17 +531,17 @@ end
     # 5. Test physical bounds and sanity checks
     @testset "Physical Bounds" begin
         # Centroid should stay within simulation domain
-        @test all(results.ne_cen_R .>= minimum(RP.G.R1D))
-        @test all(results.ne_cen_R .<= maximum(RP.G.R1D))
-        @test all(results.ne_cen_Z .>= minimum(RP.G.Z1D))
-        @test all(results.ne_cen_Z .<= maximum(RP.G.Z1D))
+        @test all(results.R_cen_by_ne .>= minimum(RP.G.R1D))
+        @test all(results.R_cen_by_ne .<= maximum(RP.G.R1D))
+        @test all(results.Z_cen_by_ne .>= minimum(RP.G.Z1D))
+        @test all(results.Z_cen_by_ne .<= maximum(RP.G.Z1D))
 
         # Density should remain positive
         @test all(results.total_ne .>= 0)
 
         # No NaN or Inf values in key quantities
-        @test all(isfinite.(results.ne_cen_R))
-        @test all(isfinite.(results.ne_cen_Z))
+        @test all(isfinite.(results.R_cen_by_ne))
+        @test all(isfinite.(results.Z_cen_by_ne))
         @test all(isfinite.(results.total_ne))
     end
 
@@ -553,10 +553,10 @@ end
         @test early_density_retention > 0.5  # Keep >50% density in early phase
 
         # Motion should be smooth (no large jumps in centroid position)
-        if length(results.ne_cen_R) > 2
-            position_jumps = abs.(diff(results.ne_cen_R))
+        if length(results.R_cen_by_ne) > 2
+            position_jumps = abs.(diff(results.R_cen_by_ne))
             max_jump = maximum(position_jumps)
-            average_motion = abs(results.ne_cen_R[end] - results.ne_cen_R[1]) / length(results.ne_cen_R)
+            average_motion = abs(results.R_cen_by_ne[end] - results.R_cen_by_ne[1]) / length(results.R_cen_by_ne)
             @test max_jump < 10 * average_motion  # No jumps >10x average step
         end
     end

@@ -57,8 +57,8 @@ end
     RP, d = current_disc()
     fb = column_force_balance(RP)
     @test fb.current_coherence ≈ 1
-    @test fb.R_centroid_by_J ≈ R0 atol = 1.0e-9
-    @test fb.Z_centroid_by_J ≈ Z0 atol = 1.0e-9
+    @test fb.R_cen_by_J ≈ R0 atol = 1.0e-9
+    @test fb.Z_cen_by_J ≈ Z0 atol = 1.0e-9
     @test fb.a_eff_by_J ≈ d.a rtol = 0.03
     @test fb.Bpol_edge ≈ μ0 * d.I / (2π * fb.a_eff_by_J)
     @test fb.li ≈ 0.5 rtol = 0.05                                  # uniform current (0.519 here, 0.498 at twice the resolution)
@@ -73,7 +73,7 @@ end
     @test fb.force_R_coils == 0 && fb.force_Z_coils == 0          # no coils
     # no external field: both estimates of the vertical field to add agree; no equilibrium radius,
     # no decay index, and no closed region traced yet
-    @test fb.force_R_ext == 0 && fb.BZ_ext_at_centroid_by_J == 0
+    @test fb.force_R_ext == 0 && fb.BZ_ext_at_cen_by_J == 0
     @test fb.Bv_to_add ≈ fb.Bv_req rtol = 0.02
     @test isnan(fb.decay_index) && isnan(fb.R_eq) && isnan(fb.R_eq_stiffness)
     @test isnan(fb.R_axis) && isnan(fb.Z_axis)
@@ -87,7 +87,7 @@ end
     Λ = -4π * R0 * B0 / (μ0 * d.I)
     @test sign(B0) == -sign(d.I)                                   # it pushes the column inward
     @test fb.Bv_req ≈ B0 rtol = 1.0e-12
-    @test fb.BZ_ext_at_centroid_by_J ≈ B0 rtol = 1.0e-12
+    @test fb.BZ_ext_at_cen_by_J ≈ B0 rtol = 1.0e-12
     @test fb.decay_index == 0                                      # a uniform field
     @test fb.decay_index_radial_limit ≈ 1 - 1 / Λ
     @test fb.force_R_ext ≈ 2π * B0 * d.I * R0 rtol = 1.0e-10
@@ -159,7 +159,7 @@ end
     fb_noamp = column_force_balance(RP_noamp)
     @test isnan(fb_noamp.li) && isnan(fb_noamp.force_R_self) && isnan(fb_noamp.Bv_to_add)
     @test isnan(fb_noamp.force_R_coils)
-    @test isfinite(fb_noamp.R_centroid_by_J) && fb_noamp.force_R_ext == 0
+    @test isfinite(fb_noamp.R_cen_by_J) && fb_noamp.force_R_ext == 0
     # below the current threshold, nothing
     fill!(RP.plasma.Jϕ, 0.0)
     @test all(isnan, column_force_balance(RP))

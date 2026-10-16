@@ -259,8 +259,8 @@ end
 #         @testset "Data Integrity" begin
 #             @test length(baseline.times) > 1
 #             @test length(coil_case.times) > 1
-#             @test length(baseline.ne_cen_R) == length(baseline.times)
-#             @test length(coil_case.ne_cen_R) == length(coil_case.times)
+#             @test length(baseline.R_cen_by_ne) == length(baseline.times)
+#             @test length(coil_case.R_cen_by_ne) == length(coil_case.times)
 #         end
 
 #         # Test that both cases show outward motion
@@ -299,12 +299,12 @@ end
 #         # Test physical bounds
 #         @testset "Physical Bounds" begin
 #             # Both cases should stay within simulation domain
-#             @test all(baseline.ne_cen_R .>= baseline.initial_R - 0.1)
-#             @test all(coil_case.ne_cen_R .>= coil_case.initial_R - 0.1)
+#             @test all(baseline.R_cen_by_ne .>= baseline.initial_R - 0.1)
+#             @test all(coil_case.R_cen_by_ne .>= coil_case.initial_R - 0.1)
 
 #             # No NaN or Inf values
-#             @test all(isfinite.(baseline.ne_cen_R))
-#             @test all(isfinite.(coil_case.ne_cen_R))
+#             @test all(isfinite.(baseline.R_cen_by_ne))
+#             @test all(isfinite.(coil_case.R_cen_by_ne))
 #             @test all(isfinite.(baseline.avg_ueR))
 #             @test all(isfinite.(coil_case.avg_ueR))
 #         end
