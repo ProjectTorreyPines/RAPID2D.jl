@@ -202,7 +202,7 @@ end
 const PAIR_SLOTS = ((SLOT_E, SLOT_W), (SLOT_N, SLOT_S), (SLOT_NE, SLOT_SW), (SLOT_NW, SLOT_SE))
 
 """
-    limit_antidiffusive_pairs!(A, G, n; max_ratio) -> A
+    limit_antidiffusive_pairs!(A, G, n; max_ratio) -> number of limited pairs
 
 Limit the anti-diffusive node pairs of `A` where the density is not resolved.
 
@@ -239,6 +239,7 @@ function limit_antidiffusive_pairs!(
         throw(ArgumentError("limit_antidiffusive_pairs!: max_ratio must be finite and ≥ 1, got $max_ratio"))
     NR, Jacob = G.NR, G.Jacob
     nz, k2c = nonzeros(A.matrix), A.k2csc
+    n_limited = 0
     @inbounds for k in 1:n_nodes, (slot, slot_back) in PAIR_SLOTS
         p_kl = slot_position(k2c, k, slot)
         p_kl == 0 && continue
@@ -257,8 +258,9 @@ function limit_antidiffusive_pairs!(
         new_lk = ((transfer_lk - transfer_min) + keep * transfer_min) / Jacob[l]
         _set_pair_entry!(nz, p_kl, slot_position(k2c, k, SLOT_C), new_kl)
         _set_pair_entry!(nz, p_lk, slot_position(k2c, l, SLOT_C), new_lk)
+        n_limited += 1
     end
-    return A
+    return n_limited
 end
 
 # set the off-diagonal at `p_offdiag` to `value`, and keep the row sum through the diagonal at `p_diag`

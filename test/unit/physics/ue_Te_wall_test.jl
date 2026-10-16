@@ -146,14 +146,17 @@ end
         pla.ne[k] = -bZ * (G.R2D[k] - Rc) + bR * (G.Z2D[k] - Zc) < 0 ? 1.0e17 : 1.0e5
     end
     raw() = build_wall_diffusion_matrix!(build_wall_pattern(G), G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
-    limited = limit_antidiffusive_pairs!(raw(), G, pla.ne; max_ratio = 20.0)
+    limited = raw()
+    n_limited = limit_antidiffusive_pairs!(limited, G, pla.ne; max_ratio = 20.0)
     @test RP.flags.limit_antidiffusive_pairs == (state = true, factor = 20.0)     # the default
     cache_electron_operators!(RP)
     @test op.A_diffu_e.matrix == limited.matrix
     @test op.A_diffu_e.matrix != raw().matrix
+    @test RP.diagnostics.near_vacuum.limited_pairs == n_limited > 0      # the count reaches the ledger
     RP.flags.limit_antidiffusive_pairs = (state = false, factor = 20.0)
     cache_electron_operators!(RP)
     @test op.A_diffu_e.matrix == raw().matrix
+    @test RP.diagnostics.near_vacuum.limited_pairs == 0
 end
 
 @testitem "in-wall operators: one symbolic analysis per electron solver over a run with reversing flow" begin

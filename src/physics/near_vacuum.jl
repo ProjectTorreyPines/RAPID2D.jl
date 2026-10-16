@@ -35,8 +35,9 @@ end
 - **Why.** Where there is almost no plasma, u∥ and Te have nothing to hold them. The pressure
   force `Te ∇∥ ln n` and the heating per particle grow without bound there.
 - **What.** The u∥ and Te solves add `−ν_vac (f − f_ref)`, implicit (backward Euler) whatever θ
-  or ExpRB the other terms use. `f_ref` is 0 for u∥ and `vacuum_reference_Te` for Te. It is a
-  numerical term, kept out of the collision sums, the e–i ledger and the friction heating.
+  or ExpRB the other terms use, with `f_ref` the local mean of `vacuum_reference`. It is a
+  numerical term, kept out of the collision sums, the e–i ledger and the friction heating; what
+  it exchanges is booked in `RP.diagnostics.near_vacuum` (`vacuum_relaxation_exchange`).
 - **Where.** Only where `n < 100·n_vac` (`flags.vacuum_relaxation.factor`). Above that the solves
   are unchanged bit for bit.
 """
@@ -54,30 +55,54 @@ function vacuum_relaxation_weights(RP::RAPID{FT}, n::AbstractMatrix{FT}) where {
 end
 
 """
-    vacuum_reference_Te(RP, n, Te) -> Matrix
+    vacuum_reference(RP, n, f, relax_weight) -> Matrix
 
-The density-weighted mean of `Te` over each in-wall node's in-wall 3×3 neighbourhood: the
-temperature the near-vacuum relaxation pulls an almost empty node to, so it takes the
-temperature of the plasma next to it. A neighbourhood with no density keeps its own `Te`.
+The value the near-vacuum relaxation pulls `f` (u∥ or Te) to: on each node where `relax_weight`
+is positive, the density-weighted mean of `f` over its in-wall 3×3 neighbourhood, so an almost
+empty node takes the value of the plasma next to it. A weighted mean, it stays within the
+neighbours' values. Elsewhere, and where the neighbourhood has no density, `f` itself.
 """
-function vacuum_reference_Te(RP::RAPID{FT}, n::AbstractMatrix{FT}, Te::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+function vacuum_reference(
+        RP::RAPID{FT}, n::AbstractMatrix{FT}, f::AbstractMatrix{FT}, relax_weight::AbstractMatrix{FT},
+    ) where {FT <: AbstractFloat}
     G = RP.G
-    Te_ref = copy(Te)
+    f_ref = copy(f)
     @inbounds for k in G.nodes.in_wall_nids
+        relax_weight[k] > zero(FT) || continue
         i, j = G.nodes.rid[k], G.nodes.zid[k]
-        sum_nTe, sum_n = zero(FT), zero(FT)
+        sum_nf, sum_n = zero(FT), zero(FT)
         for dj in -1:1, di in -1:1
             ii, jj = i + di, j + dj
             is_in_wall(G, ii, jj) || continue
             n_nb = max(n[ii, jj], zero(FT))
-            sum_nTe += n_nb * Te[ii, jj]
+            sum_nf += n_nb * f[ii, jj]
             sum_n += n_nb
         end
         if sum_n > zero(FT)
-            Te_ref[k] = sum_nTe / sum_n
+            f_ref[k] = sum_nf / sum_n
         end
     end
-    return Te_ref
+    return f_ref
+end
+
+"""
+    vacuum_relaxation_exchange(RP, n, relax_weight, f_new, f_ref) -> Real
+
+`Σ V n w (f_new − f_ref)` over the nodes where the relaxation acts: what its backward-Euler term
+took out of `n f` in one step, with `V` the in-wall control volume. Times `mₑ` for u∥ and
+`(3/2) e` for Te it is the momentum and energy booked in `RP.diagnostics.near_vacuum`.
+"""
+function vacuum_relaxation_exchange(
+        RP::RAPID{FT}, n::AbstractMatrix{FT}, relax_weight::AbstractMatrix{FT},
+        f_new::AbstractMatrix{FT}, f_ref::AbstractMatrix{FT},
+    ) where {FT <: AbstractFloat}
+    V = RP.G.inVol2D
+    exchange = zero(FT)
+    @inbounds for k in RP.G.nodes.in_wall_nids
+        relax_weight[k] > zero(FT) || continue
+        exchange += V[k] * n[k] * relax_weight[k] * (f_new[k] - f_ref[k])
+    end
+    return exchange
 end
 
 """
@@ -130,7 +155,8 @@ are not evolved independently.
 
 - Electrons (`negative_n_correction`): a negative cell is raised to
   `min(0.1·|n|, 0.01·mean|n_neighbours|)`, and the particles that creates, `(n_new − n_old)·V`,
-  are taken OFF `Ne_loss`. (They used to be added to it, which double-counted them.)
+  are taken OFF `Ne_loss`. (They used to be added to it, which double-counted them.) The
+  floorings and the particles they create are also counted in `RP.diagnostics.near_vacuum`.
 - Ions, when independent: a negative cell is set to zero and `n_old·V` (negative) is added
   to `Ni_loss` — the same sign convention.
 
@@ -142,6 +168,7 @@ on the band is ever booked — the per-face ledgers already hold everything that
 function correct_negative_densities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "correct_negative_densities!" begin
         Ntracker = RP.diagnostics.Ntracker
+        ledger = RP.diagnostics.near_vacuum
         G = RP.G
         cell_volume(nid) = FT(2π) * G.Jacob[nid] * G.dR * G.dZ
 
@@ -158,7 +185,9 @@ function correct_negative_densities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                     added = (ne[nid] - ori_ne[nid]) * cell_volume(nid)    # > 0: what the floor created
                     Ntracker.cum0D_Ne_loss -= added
                     Ntracker.cum2D_Ne_loss[nid] -= added
+                    ledger.floor_Ne += added
                 end
+                ledger.floor_nodes += length(neg_e)
             end
 
             if RP.flags.update_ni_independently

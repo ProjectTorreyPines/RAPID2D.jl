@@ -408,7 +408,7 @@ end
     for kw in ((;), (; faces = c.faces, v_absorb))
         A0 = diffusion(c.G, c.D; kw...)
         A = diffusion(c.G, c.D; kw...)
-        limit_antidiffusive_pairs!(A, c.G, smooth_density(c.G); max_ratio = 20.0)
+        @test limit_antidiffusive_pairs!(A, c.G, smooth_density(c.G); max_ratio = 20.0) == 0
         @test nonzeros(A.matrix) == nonzeros(A0.matrix)
     end
 end
@@ -422,7 +422,7 @@ end
     for kw in ((;), (; faces = c.faces, v_absorb))
         A0 = diffusion(G, c.D; kw...)
         A = diffusion(G, c.D; kw...)
-        limit_antidiffusive_pairs!(A, G, n; max_ratio)
+        n_limited = limit_antidiffusive_pairs!(A, G, n; max_ratio)
         before, after = A0.matrix, A.matrix
         scale = maximum(Jacob) * maximum(abs, before)
 
@@ -433,6 +433,7 @@ end
         # it acts, and only on pairs across a ratio above max_ratio with a negative side
         changed = [(k, l) for (k, l, v) in offdiag(after) if v != before[k, l]]
         @test length(changed) > 50
+        @test length(changed) == 2 * n_limited          # both entries of every limited pair
         ratio(k, l) = max(n[k], n[l]) / max(min(n[k], n[l]), eps())
         @test all(ratio(k, l) > max_ratio for (k, l) in changed)
         @test all(min(Jacob[k] * before[k, l], Jacob[l] * before[l, k]) < 0 for (k, l) in changed)

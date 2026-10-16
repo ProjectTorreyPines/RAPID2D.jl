@@ -53,8 +53,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # friction; its u_i∥ half is added as a source below. The combined
         # momentum-Ampère solvers build the identical sum.
         ν_sum_mom_iz_ei = @. pla.ν_en_iz_tot + pla.ν_en_mom_tot + pla.ν_ei_eff
-        # u∥ → 0 where there is almost no plasma: backward Euler, on the diagonal only
+        # u∥ → the local plasma's u∥ where there is almost no plasma: backward Euler, the
+        # weight on the diagonal and the local mean (from uⁿ) on the right-hand side
         relax_weight = vacuum_relaxation_weights(RP, pla.ne)
+        ue_ref = vacuum_reference(RP, pla.ne, pla.ue_para, relax_weight)
 
         # Backward Euler by default (θ_imp.decay = 1): friction-dominated, so at large
         # Δt BE lands on u∞ = S/ν while CN rings about it. ExpRB replaces the constant
@@ -124,6 +126,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         else
             @. OP.RHS = pla.ue_para + dt * accel_para_tilde
         end
+        @. OP.RHS += ifelse(relax_weight > 0, relax_weight * ue_ref, zero(FT))
 
         if RP.flags.Implicit
             # The shared LHS buffer on the wall pattern: values only, so the cached solver
@@ -166,6 +169,10 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
+
+        # the momentum the near-vacuum relaxation took out
+        RP.diagnostics.near_vacuum.relax_momentum +=
+            me * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.ue_para, ue_ref)
 
         return RP
     end # @timeit
@@ -307,7 +314,7 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # the near-vacuum relaxation, from the density and Te at this stage's entry
         relax_weight = vacuum_relaxation_weights(RP, pla.ne)
-        Te_ref = vacuum_reference_Te(RP, pla.ne, pla.Te_eV)
+        Te_ref = vacuum_reference(RP, pla.ne, pla.Te_eV, relax_weight)
 
         # `bern(z)` with `z = exprb.eig_Te·Δt`. Branched rather than relying on bern(0) = 1, so
         # the off path does no arithmetic at all and "unchanged" holds structurally.
@@ -373,7 +380,7 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
         elseif atomic_is_exprb
             # Forward Euler with bern as a divisor on the increment. With the near-vacuum
-            # relaxation the diagonal is bern + c, as in the implicit branch.
+            # relaxation the diagonal is bern + relax_weight, as in the implicit branch.
             @. pla.Te_eV = ifelse(
                 relax_weight > 0,
                 (bern_atomic * pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee + relax_weight * Te_ref) / (bern_atomic + relax_weight),
@@ -387,6 +394,10 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 pla.Te_eV + two_thirds_FT * pla.ePowers.tot * dt / ee,
             )
         end
+
+        # the thermal energy the near-vacuum relaxation took out (before the limits below)
+        RP.diagnostics.near_vacuum.relax_energy +=
+            FT(1.5) * ee * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.Te_eV, Te_ref)
 
         # Apply temperature limits
         @. pla.Te_eV = max(pla.Te_eV, RP.config.min_Te)
@@ -2016,8 +2027,10 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         set_identity!(A_u)
         add_diagonal!(A_u, vec(ν_sum_mom_iz_ei); scale = dt * θu)
         # the near-vacuum relaxation update_ue_para! adds, inside the block so the current–ψ
-        # relation it solves holds for the relaxed u∥
-        add_diagonal!(A_u, vec(vacuum_relaxation_weights(RP, pla.ne)))
+        # relation it solves holds for the relaxed u∥: the weight here, the local mean in RHS_u
+        relax_weight = vacuum_relaxation_weights(RP, pla.ne)
+        ue_ref = vacuum_reference(RP, pla.ne, pla.ue_para, relax_weight)
+        add_diagonal!(A_u, vec(relax_weight))
         flags.Include_ud_convec_term && add_scaled!(A_u, dt * θ_op, pops.A_adv)
         flags.Include_ud_diffu_term && add_scaled!(A_u, -dt * θ_op, pops.A_diffu)
 
@@ -2058,7 +2071,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         A_u_ψ = update_coupled_block!(OP.uψ_block, A_u, OP.ΔGS, uψ_coupling_terms(RP)...)
         solver, sys, ct = coupled_block_solver!(RP, A_u_ψ, θu)
         sol = Vector{FT}(undef, sys === nothing ? 2N : size(sys.matrix, 1))
-        RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde)       # the same for every iteration
+        RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde + ifelse(relax_weight > 0, relax_weight * ue_ref, zero(FT)))   # the same for every iteration
         sys === nothing || (RHS_u[ct.cu] .+= ct.ionization)
         RHS_ψ_ions = @. -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
         RHS_ψ = similar(RHS_ψ_ions)
@@ -2160,6 +2173,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             c_uψ, _ = uψ_coupling_terms(RP)
             surface_constrained_ue!(RP, A_u.matrix, RHS_u .- c_uψ .* vec(ψ_k), θu)
         end
+        RP.diagnostics.near_vacuum.relax_momentum +=
+            me * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.ue_para, ue_ref)
 
         # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
         F.Eϕ_self_prev .= F.Eϕ_self

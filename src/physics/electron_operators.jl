@@ -44,9 +44,8 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # lagged: the density at the start of the step sets the limiter for the density solve and
     # for the u∥ and Te operators built from it
     pair_limiter = RP.flags.limit_antidiffusive_pairs
-    if pair_limiter.state
-        limit_antidiffusive_pairs!(op.A_diffu_e, G, pla.ne; max_ratio = pair_limiter.factor)
-    end
+    RP.diagnostics.near_vacuum.limited_pairs = pair_limiter.state ?
+        limit_antidiffusive_pairs!(op.A_diffu_e, G, pla.ne; max_ratio = pair_limiter.factor) : 0
     return RP
 end
 
