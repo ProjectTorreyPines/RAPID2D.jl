@@ -43,6 +43,7 @@ include("numerics/field_lines/closed_surface_flux_types.jl")   # the closed-surf
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")
+include("diagnostics/column_force_balance.jl")   # the current column's 0D force balance, at the snapshots
 include("initialization.jl")
 include("numerics/numerics.jl")
 include("numerics/operators.jl")

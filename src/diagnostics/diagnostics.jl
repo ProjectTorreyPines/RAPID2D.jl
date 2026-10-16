@@ -73,6 +73,11 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.limited_pairs = nv.limited_pairs
     snap0D.floor_nodes, snap0D.floor_Ne = nv.floor_nodes, nv.floor_Ne
 
+    # The current column's force balance
+    for (name, value) in pairs(column_force_balance(RP))
+        setfield!(snap0D, name, value)
+    end
+
     # Electric fields (density-weighted averages)
     snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
     snap0D.Epara_ext = sum(@. F.E_para_ext * Ne2D) / total_Ne

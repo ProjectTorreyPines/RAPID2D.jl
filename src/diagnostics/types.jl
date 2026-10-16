@@ -70,6 +70,29 @@ Contains volume-averaged quantities
     floor_nodes::Int = 0             # cumulative negative-density floorings
     floor_Ne::FT = zero(FT)          # cumulative electrons the floor created
 
+    # The current column's force balance (`column_force_balance`): a total-current circular
+    # screening estimate. Zero below `flags.Ampere_Itor_threshold` of current.
+    I_closed::FT = zero(FT)          # current on closed field lines [A]
+    R_centroid::FT = zero(FT)        # |Jϕ|-weighted centroid [m]
+    Z_centroid::FT = zero(FT)
+    a_eff::FT = zero(FT)             # effective minor radius √(2⟨r²⟩) [m]
+    li::FT = zero(FT)                # internal inductance inside a_eff
+    beta_p::FT = zero(FT)            # poloidal beta inside a_eff
+    Bv_req::FT = zero(FT)            # vertical field a circular column there needs (Shafranov) [T]
+    BZ_ext_centroid::FT = zero(FT)   # external B_Z at the centroid [T]
+    BR_ext_centroid::FT = zero(FT)   # external B_R at the centroid [T]
+    decay_index::FT = zero(FT)       # −(R/B_Z) ∂B_Z/∂R of the external field there
+    decay_index_radial_limit::FT = zero(FT) # 1 − 1/Λ: radial stability at fixed current below it
+    force_R_ext::FT = zero(FT)       # ∫ Jϕ B_Z,ext dV [N]
+    force_Z_ext::FT = zero(FT)       # −∫ Jϕ B_R,ext dV [N]
+    force_R_self::FT = zero(FT)      # the same with the self field (hoop force) [N]
+    force_Z_self::FT = zero(FT)
+    force_R_pressure::FT = zero(FT)  # tire-tube force 2π ∫ p dR dZ [N]
+    force_R_toroidal::FT = zero(FT)  # toroidal-field force of a column in equilibrium (μ0 I²/4)(β_p − 1) [N]
+    Bv_to_add::FT = zero(FT)         # uniform B_Z that zeroes the net radial force [T]
+    R_eq::FT = zero(FT)              # nearest radius where the Shafranov radial force vanishes (0: none) [m]
+    R_eq_stiffness::FT = zero(FT)    # dF_R/dR there, negative is restoring [N/m]
+
     # Electron Heating Powers
     Pe_diffu::FT = zero(FT)       # Diffusion power
     Pe_visc_heat::FT = zero(FT)    # Viscous heating of u∥, mₑ Γ_M(u∥)
