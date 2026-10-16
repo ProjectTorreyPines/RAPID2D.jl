@@ -160,7 +160,7 @@ end
     @test column_force_balance(RP).kappa_by_Jϕ ≈ 1 rtol = 0.02
     # an ellipse of κ = 2 (half-widths a, b): its moment ellipse is itself, l_i is its internal
     # inductance 2ab/(a + b)², and the formula on ā = (a + b)/2 follows the force estimate
-    a, b = 0.15, 0.30
+    a, b = 0.15, 0.3
     RP_ell, _ = current_disc(; a, κ = b / a, n = 0.0)
     fb_ell = column_force_balance(RP_ell)
     @test fb_ell.kappa_by_Jϕ ≈ 2 rtol = 0.05
