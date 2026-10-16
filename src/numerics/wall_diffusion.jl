@@ -208,11 +208,11 @@ Limit the anti-diffusive node pairs of `A` where the density is not resolved.
 
 - **Problem.** A negative off-diagonal `A_kl` moves particles from the lower density to the
   higher one. Across an unresolved cliff the low node loses `|A_kl| n_l`, more than it holds.
-- **Transfers.** `R_k A_kl`, with `R_k = G.Jacob[k]` the volume factor of node `k`, is the rate
-  at which node `l` passes particles to node `k` per unit `n_l`. Conservation is
-  `Σ_k R_k A_kl = 0` for every `l`.
-- **Fix.** Where the smaller transfer of a pair, `min(R_k A_kl, R_l A_lk)`, is negative and
-  `n_high > max_ratio·n_low`, add `(1 − keep)·|min(R_k A_kl, R_l A_lk)|` to both transfers and
+- **Transfers.** The product `R_k·A_kl` is the rate at which node `l` passes particles to node
+  `k` per unit `n_l`, with `R_k = G.Jacob[k]` the major radius of node `k`, its volume factor.
+  Conservation is `Σ_k R_k·A_kl = 0` for every `l`.
+- **Fix.** Where the smaller transfer of a pair, `min(R_k·A_kl, R_l·A_lk)`, is negative and
+  `n_high > max_ratio·n_low`, add `(1 − keep)·|min(R_k·A_kl, R_l·A_lk)|` to both transfers and
   take it off both diagonals, with `keep = max_ratio·n_low/n_high`. This is a symmetric pair
   diffusion, so the row sums and the conservation sums stay as they were. A negative entry ends
   up at least `keep` times itself.
@@ -222,7 +222,7 @@ Limit the anti-diffusive node pairs of `A` where the density is not resolved.
 - **Where it acts.** Only pairs with a negative entry and a density ratio above `max_ratio`. A
   resolved density gives back `A` bit for bit. The Robin debit is not changed.
 
-With cross terms `R_k A_kl ≠ R_l A_lk`, so scaling `A_kl` and `A_lk` by `keep` would not conserve.
+With cross terms `R_k·A_kl ≠ R_l·A_lk`, so scaling `A_kl` and `A_lk` by `keep` would not conserve.
 `A` is an operator on the wall pattern of `G`. `n` is the node vector or the `(NR, NZ)` grid,
 must be finite, and is read with negative values as zero. `max_ratio ≥ 1` must be finite.
 Nothing is allocated.
