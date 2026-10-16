@@ -71,27 +71,34 @@ Contains volume-averaged quantities
     floor_Ne::FT = zero(FT)          # cumulative electrons the floor created
 
     # The current column's force balance (`column_force_balance`): a total-current circular
-    # screening estimate. Zero below `flags.Ampere_Itor_threshold` of current.
+    # screening estimate. NaN where a value does not exist, all of them below the current threshold.
     I_closed::FT = zero(FT)          # current on closed field lines [A]
-    R_centroid::FT = zero(FT)        # |Jϕ|-weighted centroid [m]
+    current_coherence::FT = zero(FT) # |∫Jϕ| / ∫|Jϕ|: 1 for a one-signed current
+    R_centroid::FT = zero(FT)        # |Jϕ| area-weighted centroid: the equivalent filament [m]
     Z_centroid::FT = zero(FT)
     a_eff::FT = zero(FT)             # effective minor radius √(2⟨r²⟩) [m]
-    li::FT = zero(FT)                # internal inductance inside a_eff
+    Bpol_edge::FT = zero(FT)         # μ0 I/(2π a_eff), signed with I [T]
+    li::FT = zero(FT)                # internal inductance inside a_eff (plasma's own field)
     beta_p::FT = zero(FT)            # poloidal beta inside a_eff
+    pressure_disc_share::FT = zero(FT) # part of ∫p dA inside a_eff
     Bv_req::FT = zero(FT)            # vertical field a circular column there needs (Shafranov) [T]
     BZ_ext_centroid::FT = zero(FT)   # external B_Z at the centroid [T]
     BR_ext_centroid::FT = zero(FT)   # external B_R at the centroid [T]
     decay_index::FT = zero(FT)       # −(R/B_Z) ∂B_Z/∂R of the external field there
-    decay_index_radial_limit::FT = zero(FT) # 1 − 1/Λ: radial stability at fixed current below it
+    decay_index_radial_limit::FT = zero(FT) # 1 − 1/Λ: fixed-current window 0 < n < this
     force_R_ext::FT = zero(FT)       # ∫ Jϕ B_Z,ext dV [N]
     force_Z_ext::FT = zero(FT)       # −∫ Jϕ B_R,ext dV [N]
-    force_R_self::FT = zero(FT)      # the same with the self field (hoop force) [N]
+    force_R_coils::FT = zero(FT)     # the same with the field of the coils the grid solves [N]
+    force_Z_coils::FT = zero(FT)
+    force_R_self::FT = zero(FT)      # the same with the plasma's own field (hoop force) [N]
     force_Z_self::FT = zero(FT)
-    force_R_pressure::FT = zero(FT)  # tire-tube force 2π ∫ p dR dZ [N]
-    force_R_toroidal::FT = zero(FT)  # toroidal-field force of a column in equilibrium (μ0 I²/4)(β_p − 1) [N]
-    Bv_to_add::FT = zero(FT)         # uniform B_Z that zeroes the net radial force [T]
-    R_eq::FT = zero(FT)              # nearest radius where the Shafranov radial force vanishes (0: none) [m]
+    force_R_pressure::FT = zero(FT)  # tire-tube force 2π ∫ p dR dZ over the disc [N]
+    force_R_toroidal::FT = zero(FT)  # toroidal-field closure (μ0 I²/4)(β_p − 1) [N]
+    Bv_to_add::FT = zero(FT)         # uniform B_Z that cancels the net radial force estimate [T]
+    R_eq::FT = zero(FT)              # nearest radius where the Shafranov radial force vanishes [m]
     R_eq_stiffness::FT = zero(FT)    # dF_R/dR there, negative is restoring [N/m]
+    R_axis::FT = zero(FT)            # magnetic axis: the O-point of the closed region [m]
+    Z_axis::FT = zero(FT)
 
     # Electron Heating Powers
     Pe_diffu::FT = zero(FT)       # Diffusion power

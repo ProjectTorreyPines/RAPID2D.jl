@@ -3,10 +3,12 @@
 
 # the names `column_force_balance` returns, in the order the snapshot lists them
 const COLUMN_FORCE_BALANCE_FIELDS = (
-    :I_closed, :R_centroid, :Z_centroid, :a_eff, :li, :beta_p,
+    :I_closed, :current_coherence, :R_centroid, :Z_centroid, :a_eff, :Bpol_edge,
+    :li, :beta_p, :pressure_disc_share,
     :Bv_req, :BZ_ext_centroid, :BR_ext_centroid, :decay_index, :decay_index_radial_limit,
-    :force_R_ext, :force_Z_ext, :force_R_self, :force_Z_self, :force_R_pressure, :force_R_toroidal,
-    :Bv_to_add, :R_eq, :R_eq_stiffness,
+    :force_R_ext, :force_Z_ext, :force_R_coils, :force_Z_coils, :force_R_self, :force_Z_self,
+    :force_R_pressure, :force_R_toroidal, :Bv_to_add,
+    :R_eq, :R_eq_stiffness, :R_axis, :Z_axis,
 )
 
 """
@@ -15,32 +17,42 @@ const COLUMN_FORCE_BALANCE_FIELDS = (
 The toroidal current column's zeroth-order force balance, a **total-current circular screening
 estimate**: the whole current is taken as one circular column at its centroid.
 
-- **Column.** `I_closed`: the current on closed field lines. `R_centroid`, `Z_centroid`: the
-  |Jϕ|-weighted centroid. `a_eff = √(2⟨r²⟩)` about it, which gives back the radius of a uniform
-  disc. `li` and `beta_p` inside that disc, from `p = e (nₑ Tₑ + nᵢ Tᵢ)` and the self field less
-  its mean over the disc (the column's own vertical field, which an equilibrium cancels).
+- **Column.**
+  - `I_closed`: the current on closed field lines.
+  - `current_coherence = |∫Jϕ dA| / ∫|Jϕ| dA`: 1 for a one-signed current. Well below 1 the
+    centroid and `Bv_to_add` lose their meaning.
+  - `R_centroid`, `Z_centroid`: the |Jϕ|-weighted centroid over the area, the radius of a filament
+    with the same force in a uniform field. (`J_cen_R` of the snapshot weights by volume, and
+    `ne_cen_R` is the density centroid.)
+  - `a_eff = √(2⟨r²⟩)` about it, which gives back the radius of a uniform disc, and
+    `Bpol_edge = μ0 I / (2π a_eff)`, the column's poloidal field at that radius (signed with I).
+  - `li` and `beta_p` inside that disc, from `p = e (nₑ Tₑ + nᵢ Tᵢ)` and the plasma's own field
+    less its mean over the disc (the column's own vertical field, which an equilibrium cancels).
+    `pressure_disc_share`: the part of ∫p dA inside the disc.
 - **Shafranov.** `Bv_req = −μ0 I Λ / (4π R)`, `Λ = ln(8R/a) + β_p + l_i/2 − 3/2`: the vertical
-  field a circular column at the centroid needs. `BZ_ext_centroid` and `BR_ext_centroid`: what
-  the external field gives there. `decay_index = −(R/B_Z) ∂B_Z/∂R` of the external field there.
-  Vertical stability needs it above 0, radial stability at fixed current below
-  `decay_index_radial_limit = 1 − 1/Λ` (at fixed flux, below about 3/2).
-- **Forces [N]** from the model's own fields, with `dV = 2πR dR dZ`:
-  - `force_R_ext = ∫ Jϕ B_Z,ext dV` and `force_Z_ext = −∫ Jϕ B_R,ext dV`;
-  - `force_R_self`, `force_Z_self`: the same with the self field, the plasma's and that of the
-    coils the grid solves. Its radial part is the hoop force;
-  - `force_R_pressure = 2π ∫ p dR dZ`, the tire-tube force;
+  field a circular column at the centroid needs. `BZ_ext_centroid`, `BR_ext_centroid`: what the
+  external field gives there. `decay_index = −(R/B_Z) ∂B_Z/∂R` of the external field there.
+  At fixed current a circular column is stable for `0 < decay_index < 1 − 1/Λ`
+  (`decay_index_radial_limit`); the conventional screen is `0 < n < 3/2`.
+- **Forces [N]**, with `dV = 2πR dR dZ`:
+  - `force_R_ext = ∫ Jϕ B_Z,ext dV`, `force_Z_ext = −∫ Jϕ B_R,ext dV`;
+  - `force_R_coils`, `force_Z_coils`: the same with the field of the coils the grid solves;
+  - `force_R_self`, `force_Z_self`: the same with the plasma's own field (the hoop force);
+  - `force_R_pressure = 2π ∫ p dR dZ` over the disc, the tire-tube force;
   - `force_R_toroidal = (μ0 I²/4)(β_p − 1)`, the toroidal-field force of a column in minor-radius
-    equilibrium. The model does not carry it (it has no δB_ϕ); the Shafranov Λ does.
-- **Missing vertical field.** `Bv_to_add = −F_R / ∫ Jϕ dV`, with `F_R` the sum of the four radial
-  forces: the uniform B_Z that, added, zeroes the net radial force. It is what an ideal
-  vertical-field controller would apply. `Bv_req − BZ_ext_centroid` estimates the same from the
-  formula.
-- **Equilibrium radius.** `R_eq`: on the centroid's midplane, the radius nearest the centroid
-  where `F_R(R) = (μ0 I²/2) Λ(R) + 2πR I B_Z,ext(R)` vanishes, with `a`, `β_p`, `l_i` held.
-  `R_eq_stiffness = dF_R/dR` there: negative is restoring.
+    equilibrium: a closure, since the model has no δB_ϕ.
+- **Missing vertical field.** `Bv_to_add = −F_R / ∫ Jϕ dV`, with `F_R` the sum of the five radial
+  forces: the uniform B_Z that, added, cancels this reduced radial force estimate. It includes
+  the toroidal closure. `Bv_req − BZ_ext_centroid` estimates the same from the formula.
+- **Positions.** `R_eq`: on the centroid's midplane, the radius nearest the centroid where
+  `F_R(R) = (μ0 I²/2) Λ(R) + 2πR I B_Z,ext(R)` vanishes, with `a`, `β_p`, `l_i` held, and
+  `R_eq_stiffness = dF_R/dR` there (negative is restoring). `R_axis`, `Z_axis`: the magnetic
+  axis, the O-point of the closed region.
 
-All are zero below `flags.Ampere_Itor_threshold` of current, and `R_eq`, `R_eq_stiffness` also
-where `F_R(R)` has no root.
+Values that do not exist are `NaN`: all of them below `flags.Ampere_Itor_threshold` of current;
+`decay_index` where B_Z,ext vanishes; `R_eq` and its stiffness where `F_R(R)` has no root; the
+axis without a single converged O-point in the closed region; and everything built on the
+plasma's or the coils' field when the run solves no self field (Ampère off).
 """
 function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     G, F, pla = RP.G, RP.fields, RP.plasma
@@ -49,7 +61,7 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     dA = G.dR * G.dZ
     I = sum(J) * dA
     if iszero(I) || abs(I) < RP.flags.Ampere_Itor_threshold
-        return NamedTuple{COLUMN_FORCE_BALANCE_FIELDS}(ntuple(_ -> zero(FT), length(COLUMN_FORCE_BALANCE_FIELDS)))
+        return NamedTuple{COLUMN_FORCE_BALANCE_FIELDS}(ntuple(_ -> FT(NaN), length(COLUMN_FORCE_BALANCE_FIELDS)))
     end
     V = G.inVol2D
 
@@ -57,20 +69,29 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     closed = [k for k in RP.flf.closed_surface_nids if G.nodes.state[k] > 0.5]
     I_closed = sum(J[k] for k in closed; init = zero(FT)) * dA
     weight = abs.(J)
+    current_coherence = abs(sum(J)) / sum(weight)
     R_centroid = sum(weight .* G.R2D) / sum(weight)
     Z_centroid = sum(weight .* G.Z2D) / sum(weight)
     r² = @. (G.R2D - R_centroid)^2 + (G.Z2D - Z_centroid)^2
     a_eff = max(sqrt(2 * sum(weight .* r²) / sum(weight)), sqrt(dA / π))   # at least one cell's disc
+    Bpol_edge = μ0 * I / (2π * a_eff)
     inside = r² .<= a_eff^2
-    # l_i from the self field less its mean over the disc: that uniform part is the column's own
-    # vertical field (its hoop force), which the vertical field of an equilibrium cancels
     V_in = V[inside]
-    BR_in, BZ_in = F.BR_self[inside], F.BZ_self[inside]
+
+    # the plasma's own field and the coils', each from its own currents
+    BR_pla, BZ_pla = _plasma_poloidal_field(RP)
+    BR_coils, BZ_coils = _coil_poloidal_field(RP)
+
+    # l_i from the plasma's field less its mean over the disc: that uniform part is the column's
+    # own vertical field (its hoop force), which the vertical field of an equilibrium cancels
+    BR_in, BZ_in = BR_pla[inside], BZ_pla[inside]
     BR_in .-= sum(BR_in .* V_in) / sum(V_in)
     BZ_in .-= sum(BZ_in .* V_in) / sum(V_in)
     li = 2 * sum(@. (BR_in^2 + BZ_in^2) * V_in) / (μ0^2 * I^2 * R_centroid)
     p = @. ee * (pla.ne * pla.Te_eV + pla.ni * pla.Ti_eV)
     beta_p = 4 * sum(p[inside] .* V_in) / (μ0 * I^2 * R_centroid)
+    p_area = p .* V ./ G.R2D                                  # 2π p dA
+    pressure_disc_share = sum(p_area) > 0 ? sum(p_area[inside]) / sum(p_area) : FT(NaN)
 
     # Shafranov: the vertical field the column needs, and the external field it has
     Λ(R) = log(8R / a_eff) + beta_p + li / 2 - FT(1.5)
@@ -79,49 +100,107 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     BR_ext_centroid = _bilinear(G, F.BR_ext, R_centroid, Z_centroid)
     h = G.dR / 2
     dBZ_dR = (_bilinear(G, F.BZ_ext, R_centroid + h, Z_centroid) - _bilinear(G, F.BZ_ext, R_centroid - h, Z_centroid)) / (2h)
-    decay_index = iszero(BZ_ext_centroid) ? zero(FT) : -R_centroid / BZ_ext_centroid * dBZ_dR
+    decay_index = iszero(BZ_ext_centroid) ? FT(NaN) : -R_centroid / BZ_ext_centroid * dBZ_dR
     decay_index_radial_limit = one(FT) - one(FT) / Λ(R_centroid)
 
-    # the forces of the model's own fields, and the toroidal-field force it does not carry
+    # the forces: of the fields, the tire tube over the disc, and the toroidal closure
     force_R_ext = sum(J .* F.BZ_ext .* V)
     force_Z_ext = -sum(J .* F.BR_ext .* V)
-    force_R_self = sum(J .* F.BZ_self .* V)
-    force_Z_self = -sum(J .* F.BR_self .* V)
-    force_R_pressure = sum(p .* V ./ G.R2D)                  # 2π ∫ p dR dZ
+    force_R_coils = sum(J .* BZ_coils .* V)
+    force_Z_coils = -sum(J .* BR_coils .* V)
+    force_R_self = sum(J .* BZ_pla .* V)
+    force_Z_self = -sum(J .* BR_pla .* V)
+    force_R_pressure = sum(p_area[inside])
     force_R_toroidal = μ0 * I^2 / 4 * (beta_p - 1)
-    force_R_net = force_R_ext + force_R_self + force_R_pressure + force_R_toroidal
+    force_R_net = force_R_ext + force_R_coils + force_R_self + force_R_pressure + force_R_toroidal
     Bv_to_add = -force_R_net / sum(J .* V)
 
     # the equilibrium radius of the formula on the centroid's midplane, nearest the centroid
     force_R_formula(R) = μ0 * I^2 / 2 * Λ(R) + 2π * R * I * _bilinear(G, F.BZ_ext, R, Z_centroid)
     R_scan = range(G.R1D[2], G.R1D[end - 1]; length = 4 * G.NR)
     F_scan = force_R_formula.(R_scan)
-    R_eq, R_eq_stiffness = zero(FT), zero(FT)
+    R_eq, R_eq_stiffness = FT(NaN), FT(NaN)
     for k in 1:(length(R_scan) - 1)
-        sign(F_scan[k]) == sign(F_scan[k + 1]) && continue
-        root = R_scan[k] - F_scan[k] * (R_scan[k + 1] - R_scan[k]) / (F_scan[k + 1] - F_scan[k])
-        if iszero(R_eq) || abs(root - R_centroid) < abs(R_eq - R_centroid)
-            R_eq = FT(root)
+        F_scan[k] * F_scan[k + 1] < 0 || continue               # a sign change (NaN never is)
+        root = FT(R_scan[k] - F_scan[k] * (R_scan[k + 1] - R_scan[k]) / (F_scan[k + 1] - F_scan[k]))
+        if isnan(R_eq) || abs(root - R_centroid) < abs(R_eq - R_centroid)
+            R_eq = root
         end
     end
-    if !iszero(R_eq)
+    if !isnan(R_eq)
         R_eq_stiffness = (force_R_formula(R_eq + h) - force_R_formula(R_eq - h)) / (2h)
     end
 
+    R_axis, Z_axis = _magnetic_axis(RP, closed)
+
     return (;
-        I_closed, R_centroid, Z_centroid, a_eff, li, beta_p,
+        I_closed, current_coherence, R_centroid, Z_centroid, a_eff, Bpol_edge,
+        li, beta_p, pressure_disc_share,
         Bv_req, BZ_ext_centroid, BR_ext_centroid, decay_index, decay_index_radial_limit,
-        force_R_ext, force_Z_ext, force_R_self, force_Z_self, force_R_pressure, force_R_toroidal,
-        Bv_to_add, R_eq, R_eq_stiffness,
+        force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_self, force_Z_self,
+        force_R_pressure, force_R_toroidal, Bv_to_add,
+        R_eq, R_eq_stiffness, R_axis, Z_axis,
     )
 end
 
-# the bilinear value of a grid field at (R, Z), clamped to the grid
+# whether the run solves a self field: the boundary Green function and the Grad–Shafranov operator
+# are built only with Ampère on
+_solves_self_field(RP::RAPID) = !isempty(RP.G.Green_inWall2bdy)
+
+# The plasma's own poloidal field: the Grad–Shafranov solve with its Jϕ alone as the source and its
+# Green function on the boundary (the cached factorization, one back-substitution). NaN fields
+# when the run solves no self field.
+function _plasma_poloidal_field(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    G, OP, J = RP.G, RP.operators, RP.plasma.Jϕ
+    BR, BZ = zeros(FT, G.NR, G.NZ), zeros(FT, G.NR, G.NZ)
+    if !_solves_self_field(RP)
+        fill!(BR, FT(NaN))
+        fill!(BZ, FT(NaN))
+        return BR, BZ
+    end
+    rhs = @. -RP.config.constants.μ0 * G.R2D * J
+    rhs[G.BDY_idx] .= (G.Green_inWall2bdy * J[G.nodes.in_wall_nids]) .* (G.dR * G.dZ)
+    OP.ΔGS_solver.F === nothing && factorize!(OP.ΔGS_solver, OP.ΔGS)
+    ψ = similar(rhs)
+    solve!(vec(ψ), OP.ΔGS_solver, vec(rhs))
+    calculate_B_from_ψ!(G, ψ, BR, BZ)
+    return BR, BZ
+end
+
+# the poloidal field of the coils the grid solves, at their present currents: zero without coils,
+# NaN when the run solves no self field
+function _coil_poloidal_field(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    G, csys = RP.G, RP.coil_system
+    BR, BZ = zeros(FT, G.NR, G.NZ), zeros(FT, G.NR, G.NZ)
+    csys.n_total > 0 || return BR, BZ
+    if !_solves_self_field(RP)
+        fill!(BR, FT(NaN))
+        fill!(BZ, FT(NaN))
+        return BR, BZ
+    end
+    calculate_B_from_ψ!(G, coil_flux_on_grid(RP, get_all_currents(csys)), BR, BZ)
+    return BR, BZ
+end
+
+# The magnetic axis: the constraint basis's when there is one, else the O-point of the closed
+# region (`closed`, in-wall linear ids) on the total ψ. NaN without a single converged O-point.
+function _magnetic_axis(RP::RAPID{FT}, closed::AbstractVector{<:Integer}) where {FT <: AbstractFloat}
+    basis = RP.closed_surface.basis
+    basis === nothing || return FT(basis.axis.R), FT(basis.axis.Z)
+    isempty(closed) && return FT(NaN), FT(NaN)
+    ψ = RP.fields.ψ
+    itp = psi_interpolant(RP.G, ψ)
+    o = find_o_point(RP.G, ψ, closed; itp)
+    (o === nothing || !o.converged || count_o_points(RP.G, ψ, closed, itp) > 1) && return FT(NaN), FT(NaN)
+    return FT(o.R), FT(o.Z)
+end
+
+# the bilinear value of a grid field at (R, Z), held at the edge value outside the grid
 function _bilinear(G::GridGeometry{FT}, field::AbstractMatrix{FT}, R::Real, Z::Real) where {FT <: AbstractFloat}
     x = (R - G.R1D[1]) / G.dR + 1
     y = (Z - G.Z1D[1]) / G.dZ + 1
     i = clamp(floor(Int, x), 1, G.NR - 1)
     j = clamp(floor(Int, y), 1, G.NZ - 1)
-    s, t = x - i, y - j
+    s, t = clamp(x - i, 0, 1), clamp(y - j, 0, 1)
     return FT((1 - s) * (1 - t) * field[i, j] + s * (1 - t) * field[i + 1, j] + (1 - s) * t * field[i, j + 1] + s * t * field[i + 1, j + 1])
 end
