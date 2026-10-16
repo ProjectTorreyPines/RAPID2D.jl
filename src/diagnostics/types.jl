@@ -74,16 +74,16 @@ Contains volume-averaged quantities
     # screening estimate. NaN where a value does not exist, all of them below the current threshold.
     I_closed::FT = zero(FT)          # current on closed field lines [A]
     current_coherence::FT = zero(FT) # |∫Jϕ| / ∫|Jϕ|: 1 for a one-signed current
-    R_centroid::FT = zero(FT)        # |Jϕ| area-weighted centroid: the equivalent filament [m]
-    Z_centroid::FT = zero(FT)
-    a_eff::FT = zero(FT)             # effective minor radius √(2⟨r²⟩) [m]
-    Bpol_edge::FT = zero(FT)         # μ0 I/(2π a_eff), signed with I [T]
-    li::FT = zero(FT)                # internal inductance inside a_eff (plasma's own field)
-    beta_p::FT = zero(FT)            # poloidal beta inside a_eff
-    pressure_disc_share::FT = zero(FT) # part of ∫p dA inside a_eff
+    R_centroid_by_J::FT = zero(FT)   # current centroid, |Jϕ| over the area: the equivalent filament [m]
+    Z_centroid_by_J::FT = zero(FT)   #   (J_cen_R weights the signed Jϕ by volume; ne_cen_R is by density)
+    a_eff_by_J::FT = zero(FT)        # effective minor radius √(2⟨r²⟩) of the current [m]
+    Bpol_edge::FT = zero(FT)         # μ0 I/(2π a_eff_by_J), signed with I [T]
+    li::FT = zero(FT)                # internal inductance inside a_eff_by_J (plasma's own field)
+    beta_p::FT = zero(FT)            # poloidal beta inside a_eff_by_J
+    pressure_disc_share::FT = zero(FT) # part of ∫p dA inside a_eff_by_J
     Bv_req::FT = zero(FT)            # vertical field a circular column there needs (Shafranov) [T]
-    BZ_ext_centroid::FT = zero(FT)   # external B_Z at the centroid [T]
-    BR_ext_centroid::FT = zero(FT)   # external B_R at the centroid [T]
+    BZ_ext_at_centroid_by_J::FT = zero(FT) # external B_Z at the current centroid [T]
+    BR_ext_at_centroid_by_J::FT = zero(FT) # external B_R at the current centroid [T]
     decay_index::FT = zero(FT)       # −(R/B_Z) ∂B_Z/∂R of the external field there
     decay_index_radial_limit::FT = zero(FT) # 1 − 1/Λ: fixed-current window 0 < n < this
     force_R_ext::FT = zero(FT)       # ∫ Jϕ B_Z,ext dV [N]
@@ -127,9 +127,9 @@ Contains volume-averaged quantities
     Ni_loss_rate::FT = zero(FT)     # Ion loss rate
 
     # Plasma center tracking
-    ne_cen_R::FT = zero(FT)         # Electron density center R
+    ne_cen_R::FT = zero(FT)         # Electron density center R (weighted by nₑ over the volume)
     ne_cen_Z::FT = zero(FT)         # Electron density center Z
-    J_cen_R::FT = zero(FT)          # Current center R
+    J_cen_R::FT = zero(FT)          # Current center R (signed Jϕ over the volume; R_centroid_by_J is over the area)
     J_cen_Z::FT = zero(FT)          # Current center Z
 
     ueR::FT = zero(FT)            # Average electron velocity R component

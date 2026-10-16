@@ -3,9 +3,9 @@
 
 # the names `column_force_balance` returns, in the order the snapshot lists them
 const COLUMN_FORCE_BALANCE_FIELDS = (
-    :I_closed, :current_coherence, :R_centroid, :Z_centroid, :a_eff, :Bpol_edge,
+    :I_closed, :current_coherence, :R_centroid_by_J, :Z_centroid_by_J, :a_eff_by_J, :Bpol_edge,
     :li, :beta_p, :pressure_disc_share,
-    :Bv_req, :BZ_ext_centroid, :BR_ext_centroid, :decay_index, :decay_index_radial_limit,
+    :Bv_req, :BZ_ext_at_centroid_by_J, :BR_ext_at_centroid_by_J, :decay_index, :decay_index_radial_limit,
     :force_R_ext, :force_Z_ext, :force_R_coils, :force_Z_coils, :force_R_self, :force_Z_self,
     :force_R_pressure, :force_R_toroidal, :Bv_to_add,
     :R_eq, :R_eq_stiffness, :R_axis, :Z_axis,
@@ -15,23 +15,24 @@ const COLUMN_FORCE_BALANCE_FIELDS = (
     column_force_balance(RP) -> NamedTuple
 
 The toroidal current column's zeroth-order force balance, a **total-current circular screening
-estimate**: the whole current is taken as one circular column at its centroid.
+estimate**: the whole current is taken as one circular column at its current centroid.
 
 - **Column.**
   - `I_closed`: the current on closed field lines.
   - `current_coherence = |∫Jϕ dA| / ∫|Jϕ| dA`: 1 for a one-signed current. Well below 1 the
     centroid and `Bv_to_add` lose their meaning.
-  - `R_centroid`, `Z_centroid`: the |Jϕ|-weighted centroid over the area, the radius of a filament
-    with the same force in a uniform field. (`J_cen_R` of the snapshot weights by volume, and
-    `ne_cen_R` is the density centroid.)
-  - `a_eff = √(2⟨r²⟩)` about it, which gives back the radius of a uniform disc, and
-    `Bpol_edge = μ0 I / (2π a_eff)`, the column's poloidal field at that radius (signed with I).
+  - `R_centroid_by_J`, `Z_centroid_by_J`: the current centroid, |Jϕ|-weighted over the area: the
+    radius of a filament with the same force in a uniform field. The snapshot's older `J_cen_R`
+    weights the signed Jϕ by volume, and `ne_cen_R` is the electron-density centroid.
+  - `a_eff_by_J = √(2⟨r²⟩)`, the second moment of the current about that centroid, which gives back
+    the radius of a uniform disc; `Bpol_edge = μ0 I / (2π a_eff_by_J)`, the column's poloidal field
+    at that radius (signed with I).
   - `li` and `beta_p` inside that disc, from `p = e (nₑ Tₑ + nᵢ Tᵢ)` and the plasma's own field
     less its mean over the disc (the column's own vertical field, which an equilibrium cancels).
     `pressure_disc_share`: the part of ∫p dA inside the disc.
 - **Shafranov.** `Bv_req = −μ0 I Λ / (4π R)`, `Λ = ln(8R/a) + β_p + l_i/2 − 3/2`: the vertical
-  field a circular column at the centroid needs. `BZ_ext_centroid`, `BR_ext_centroid`: what the
-  external field gives there. `decay_index = −(R/B_Z) ∂B_Z/∂R` of the external field there.
+  field a circular column at the current centroid needs. `BZ_ext_at_centroid_by_J` and
+  `BR_ext_at_centroid_by_J`: what the external field gives there. `decay_index = −(R/B_Z) ∂B_Z/∂R` of the external field there.
   At fixed current a circular column is stable for `0 < decay_index < 1 − 1/Λ`
   (`decay_index_radial_limit`); the conventional screen is `0 < n < 3/2`.
 - **Forces [N]**, with `dV = 2πR dR dZ`:
@@ -43,7 +44,7 @@ estimate**: the whole current is taken as one circular column at its centroid.
     equilibrium: a closure, since the model has no δB_ϕ.
 - **Missing vertical field.** `Bv_to_add = −F_R / ∫ Jϕ dV`, with `F_R` the sum of the five radial
   forces: the uniform B_Z that, added, cancels this reduced radial force estimate. It includes
-  the toroidal closure. `Bv_req − BZ_ext_centroid` estimates the same from the formula.
+  the toroidal closure. `Bv_req − BZ_ext_at_centroid_by_J` estimates the same from the formula.
 - **Positions.** `R_eq`: on the centroid's midplane, the radius nearest the centroid where
   `F_R(R) = (μ0 I²/2) Λ(R) + 2πR I B_Z,ext(R)` vanishes, with `a`, `β_p`, `l_i` held, and
   `R_eq_stiffness = dF_R/dR` there (negative is restoring). `R_axis`, `Z_axis`: the magnetic
@@ -70,12 +71,12 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     I_closed = sum(J[k] for k in closed; init = zero(FT)) * dA
     weight = abs.(J)
     current_coherence = abs(sum(J)) / sum(weight)
-    R_centroid = sum(weight .* G.R2D) / sum(weight)
-    Z_centroid = sum(weight .* G.Z2D) / sum(weight)
-    r² = @. (G.R2D - R_centroid)^2 + (G.Z2D - Z_centroid)^2
-    a_eff = max(sqrt(2 * sum(weight .* r²) / sum(weight)), sqrt(dA / π))   # at least one cell's disc
-    Bpol_edge = μ0 * I / (2π * a_eff)
-    inside = r² .<= a_eff^2
+    R_centroid_by_J = sum(weight .* G.R2D) / sum(weight)
+    Z_centroid_by_J = sum(weight .* G.Z2D) / sum(weight)
+    r² = @. (G.R2D - R_centroid_by_J)^2 + (G.Z2D - Z_centroid_by_J)^2
+    a_eff_by_J = max(sqrt(2 * sum(weight .* r²) / sum(weight)), sqrt(dA / π))   # at least one cell's disc
+    Bpol_edge = μ0 * I / (2π * a_eff_by_J)
+    inside = r² .<= a_eff_by_J^2
     V_in = V[inside]
 
     # the plasma's own field and the coils', each from its own currents
@@ -87,21 +88,21 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     BR_in, BZ_in = BR_pla[inside], BZ_pla[inside]
     BR_in .-= sum(BR_in .* V_in) / sum(V_in)
     BZ_in .-= sum(BZ_in .* V_in) / sum(V_in)
-    li = 2 * sum(@. (BR_in^2 + BZ_in^2) * V_in) / (μ0^2 * I^2 * R_centroid)
+    li = 2 * sum(@. (BR_in^2 + BZ_in^2) * V_in) / (μ0^2 * I^2 * R_centroid_by_J)
     p = @. ee * (pla.ne * pla.Te_eV + pla.ni * pla.Ti_eV)
-    beta_p = 4 * sum(p[inside] .* V_in) / (μ0 * I^2 * R_centroid)
+    beta_p = 4 * sum(p[inside] .* V_in) / (μ0 * I^2 * R_centroid_by_J)
     p_area = p .* V ./ G.R2D                                  # 2π p dA
     pressure_disc_share = sum(p_area) > 0 ? sum(p_area[inside]) / sum(p_area) : FT(NaN)
 
     # Shafranov: the vertical field the column needs, and the external field it has
-    Λ(R) = log(8R / a_eff) + beta_p + li / 2 - FT(1.5)
-    Bv_req = -μ0 * I * Λ(R_centroid) / (4π * R_centroid)
-    BZ_ext_centroid = _bilinear(G, F.BZ_ext, R_centroid, Z_centroid)
-    BR_ext_centroid = _bilinear(G, F.BR_ext, R_centroid, Z_centroid)
+    Λ(R) = log(8R / a_eff_by_J) + beta_p + li / 2 - FT(1.5)
+    Bv_req = -μ0 * I * Λ(R_centroid_by_J) / (4π * R_centroid_by_J)
+    BZ_ext_at_centroid_by_J = _bilinear(G, F.BZ_ext, R_centroid_by_J, Z_centroid_by_J)
+    BR_ext_at_centroid_by_J = _bilinear(G, F.BR_ext, R_centroid_by_J, Z_centroid_by_J)
     h = G.dR / 2
-    dBZ_dR = (_bilinear(G, F.BZ_ext, R_centroid + h, Z_centroid) - _bilinear(G, F.BZ_ext, R_centroid - h, Z_centroid)) / (2h)
-    decay_index = iszero(BZ_ext_centroid) ? FT(NaN) : -R_centroid / BZ_ext_centroid * dBZ_dR
-    decay_index_radial_limit = one(FT) - one(FT) / Λ(R_centroid)
+    dBZ_dR = (_bilinear(G, F.BZ_ext, R_centroid_by_J + h, Z_centroid_by_J) - _bilinear(G, F.BZ_ext, R_centroid_by_J - h, Z_centroid_by_J)) / (2h)
+    decay_index = iszero(BZ_ext_at_centroid_by_J) ? FT(NaN) : -R_centroid_by_J / BZ_ext_at_centroid_by_J * dBZ_dR
+    decay_index_radial_limit = one(FT) - one(FT) / Λ(R_centroid_by_J)
 
     # the forces: of the fields, the tire tube over the disc, and the toroidal closure
     force_R_ext = sum(J .* F.BZ_ext .* V)
@@ -116,14 +117,14 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     Bv_to_add = -force_R_net / sum(J .* V)
 
     # the equilibrium radius of the formula on the centroid's midplane, nearest the centroid
-    force_R_formula(R) = μ0 * I^2 / 2 * Λ(R) + 2π * R * I * _bilinear(G, F.BZ_ext, R, Z_centroid)
+    force_R_formula(R) = μ0 * I^2 / 2 * Λ(R) + 2π * R * I * _bilinear(G, F.BZ_ext, R, Z_centroid_by_J)
     R_scan = range(G.R1D[2], G.R1D[end - 1]; length = 4 * G.NR)
     F_scan = force_R_formula.(R_scan)
     R_eq, R_eq_stiffness = FT(NaN), FT(NaN)
     for k in 1:(length(R_scan) - 1)
         F_scan[k] * F_scan[k + 1] < 0 || continue               # a sign change (NaN never is)
         root = FT(R_scan[k] - F_scan[k] * (R_scan[k + 1] - R_scan[k]) / (F_scan[k + 1] - F_scan[k]))
-        if isnan(R_eq) || abs(root - R_centroid) < abs(R_eq - R_centroid)
+        if isnan(R_eq) || abs(root - R_centroid_by_J) < abs(R_eq - R_centroid_by_J)
             R_eq = root
         end
     end
@@ -134,9 +135,9 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     R_axis, Z_axis = _magnetic_axis(RP, closed)
 
     return (;
-        I_closed, current_coherence, R_centroid, Z_centroid, a_eff, Bpol_edge,
+        I_closed, current_coherence, R_centroid_by_J, Z_centroid_by_J, a_eff_by_J, Bpol_edge,
         li, beta_p, pressure_disc_share,
-        Bv_req, BZ_ext_centroid, BR_ext_centroid, decay_index, decay_index_radial_limit,
+        Bv_req, BZ_ext_at_centroid_by_J, BR_ext_at_centroid_by_J, decay_index, decay_index_radial_limit,
         force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_self, force_Z_self,
         force_R_pressure, force_R_toroidal, Bv_to_add,
         R_eq, R_eq_stiffness, R_axis, Z_axis,
