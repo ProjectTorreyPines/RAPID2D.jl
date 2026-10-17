@@ -293,15 +293,15 @@ function analyze_induced_current_results(RP::RAPID, case_name::String)
 
     snaps0D = RP.diagnostics.snaps0D
     times = snaps0D.time_s
-    ne_cen_R = snaps0D.ne_cen_R
-    ne_cen_Z = snaps0D.ne_cen_Z
+    R_cen_by_ne = snaps0D.R_cen_by_ne
+    Z_cen_by_ne = snaps0D.Z_cen_by_ne
     avg_ueR = snaps0D.ueR
     avg_aR_by_JxB = snaps0D.aR_by_JxB
     total_ne = snaps0D.ne * RP.G.device_inVolume
 
     # Calculate motion characteristics
-    initial_R = ne_cen_R[1]
-    final_R = ne_cen_R[end]
+    initial_R = R_cen_by_ne[1]
+    final_R = R_cen_by_ne[end]
     displacement_R = final_R - initial_R
 
     # Calculate average outward velocity and acceleration
@@ -311,15 +311,15 @@ function analyze_induced_current_results(RP::RAPID, case_name::String)
     # Time to reach 10% of maximum displacement
     target_displacement = 0.1 * displacement_R
     time_to_10pct = nothing
-    for i in eachindex(ne_cen_R)
-        if abs(ne_cen_R[i] - initial_R) >= abs(target_displacement)
+    for i in eachindex(R_cen_by_ne)
+        if abs(R_cen_by_ne[i] - initial_R) >= abs(target_displacement)
             time_to_10pct = times[i]
             break
         end
     end
 
     return (;
-        case_name, times, ne_cen_R, ne_cen_Z, avg_ueR, avg_aR_by_JxB,
+        case_name, times, R_cen_by_ne, Z_cen_by_ne, avg_ueR, avg_aR_by_JxB,
         total_ne, displacement_R, avg_velocity, avg_acceleration,
         time_to_10pct, initial_R, final_R,
     )
@@ -390,13 +390,13 @@ function create_comparison_plots(baseline, coil_case)
 
     # 1. Centroid position comparison
     p1 = plot(
-        times_ms_base, baseline.ne_cen_R,
+        times_ms_base, baseline.R_cen_by_ne,
         label = "Baseline (no coils)", linewidth = 2, color = :blue,
         xlabel = "Time (ms)", ylabel = "Radial Position (m)",
         title = "Plasma Centroid Motion"
     )
     plot!(
-        p1, times_ms_coil, coil_case.ne_cen_R,
+        p1, times_ms_coil, coil_case.R_cen_by_ne,
         label = "With external coils", linewidth = 2, color = :red
     )
 
@@ -425,15 +425,15 @@ function create_comparison_plots(baseline, coil_case)
     )
 
     # 4. Phase space comparison
-    if length(baseline.ne_cen_R) > 1 && length(coil_case.ne_cen_R) > 1
+    if length(baseline.R_cen_by_ne) > 1 && length(coil_case.R_cen_by_ne) > 1
         p4 = plot(
-            baseline.ne_cen_R, baseline.avg_ueR,
+            baseline.R_cen_by_ne, baseline.avg_ueR,
             label = "Baseline", linewidth = 2, color = :blue,
             xlabel = "Radial Position (m)", ylabel = "Radial Velocity (m/s)",
             title = "Phase Space (R vs vR)"
         )
         plot!(
-            p4, coil_case.ne_cen_R, coil_case.avg_ueR,
+            p4, coil_case.R_cen_by_ne, coil_case.avg_ueR,
             label = "With coils", linewidth = 2, color = :red
         )
     else
@@ -468,8 +468,8 @@ end
         @testset "Data Integrity" begin
             @test length(baseline.times) > 1
             @test length(coil_case.times) > 1
-            @test length(baseline.ne_cen_R) == length(baseline.times)
-            @test length(coil_case.ne_cen_R) == length(coil_case.times)
+            @test length(baseline.R_cen_by_ne) == length(baseline.times)
+            @test length(coil_case.R_cen_by_ne) == length(coil_case.times)
         end
 
         # Test that both cases show outward motion
@@ -508,12 +508,12 @@ end
         # Test physical bounds
         @testset "Physical Bounds" begin
             # Both cases should stay within simulation domain
-            @test all(baseline.ne_cen_R .>= baseline.initial_R - 0.1)
-            @test all(coil_case.ne_cen_R .>= coil_case.initial_R - 0.1)
+            @test all(baseline.R_cen_by_ne .>= baseline.initial_R - 0.1)
+            @test all(coil_case.R_cen_by_ne .>= coil_case.initial_R - 0.1)
 
             # No NaN or Inf values
-            @test all(isfinite.(baseline.ne_cen_R))
-            @test all(isfinite.(coil_case.ne_cen_R))
+            @test all(isfinite.(baseline.R_cen_by_ne))
+            @test all(isfinite.(coil_case.R_cen_by_ne))
             @test all(isfinite.(baseline.avg_ueR))
             @test all(isfinite.(coil_case.avg_ueR))
         end

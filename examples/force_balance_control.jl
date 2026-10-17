@@ -84,23 +84,23 @@ wall_R = extrema(RP_free.wall.R)
 # current-centroid trajectory vs target and wall
 s_free, s_ctrl = RP_free.diagnostics.snaps0D, RP_ctrl.diagnostics.snaps0D
 p1 = plot(xlabel = "t (ms)", ylabel = "J-centroid R (m)", legend = :bottomright, ylims = wall_R .+ (-0.05, 0.05))
-plot!(p1, s_free.time_s .* 1.0e3, s_free.J_cen_R; lw = 2, label = "no ctrl")
-plot!(p1, s_ctrl.time_s .* 1.0e3, s_ctrl.J_cen_R; lw = 2, label = "with ctrl")
+plot!(p1, s_free.time_s .* 1.0e3, s_free.R_cen_by_Jϕ_Vol; lw = 2, label = "no ctrl")
+plot!(p1, s_ctrl.time_s .* 1.0e3, s_ctrl.R_cen_by_Jϕ_Vol; lw = 2, label = "with ctrl")
 hline!(p1, [ctrl.target]; ls = :dash, c = :black, label = "target")
 hline!(p1, collect(wall_R); lw = 4, c = :gray, alpha = 0.5, label = "wall")
 
 # controller vertical field vs the analytic B_v of a uniform-current loop (li = 1)
 μ0 = RP_ctrl.config.constants.μ0
-Bv = @. -(μ0 * s_ctrl.I_tor / (4π * s_ctrl.J_cen_R)) * (log(8 * s_ctrl.J_cen_R / A_BLOB) - 1)
+Bv = @. -(μ0 * s_ctrl.I_tor / (4π * s_ctrl.R_cen_by_Jϕ_Vol)) * (log(8 * s_ctrl.R_cen_by_Jϕ_Vol / A_BLOB) - 1)
 p2 = plot(xlabel = "t (ms)", ylabel = "B_Z (G)", legend = :topright)
 plot!(p2, ctrl.t .* 1.0e3, ctrl.Bz_ctrl .* 1.0e4; lw = 2, label = "Bz_ctrl")
 plot!(p2, s_ctrl.time_s .* 1.0e3, Bv .* 1.0e4; lw = 2, ls = :dash, c = :black, label = "analytic B_v (li = 1)")
 # What the controller is for: hold the current centroid at the target once it has settled.
 late = s_ctrl.time_s .>= 1.0e-3
-stray = maximum(abs.(s_ctrl.J_cen_R[late] .- ctrl.target))
+stray = maximum(abs.(s_ctrl.R_cen_by_Jϕ_Vol[late] .- ctrl.target))
 save_with_verdict(
     plot(p1, p2; layout = (2, 1), size = (700, 840), top_margin = 6Plots.mm), out, "position_control", stray < 0.05,
-    @sprintf("with control the current centroid should stay within 5 cm of R = %.1f m from 1 ms on; it strays %.2f m and ends at R = %.2f m", ctrl.target, stray, s_ctrl.J_cen_R[end]),
+    @sprintf("with control the current centroid should stay within 5 cm of R = %.1f m from 1 ms on; it strays %.2f m and ends at R = %.2f m", ctrl.target, stray, s_ctrl.R_cen_by_Jϕ_Vol[end]),
 )
 
 animate2D(["no ctrl" => RP_free, "with ctrl" => RP_ctrl], [:ne, :Jϕ]; file = joinpath(out, "snaps2D.mp4"))
