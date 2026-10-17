@@ -26,7 +26,8 @@ Contains volume-averaged quantities
     Ti_eV::FT = zero(FT)           # Average ion temperature
     Ki_eV::FT = zero(FT)           # Average ion kinetic energy
 
-    I_tor::FT = zero(FT)           # Toroidal current
+    I_tor::FT = zero(FT)           # Toroidal current (the stored Jϕ: from the momentum solve, before continuity)
+    I_tor_endpoint::FT = zero(FT)  # the same from the step's end state, e(Z nᵢ uᵢ∥ − nₑ uₑ∥) bϕ
 
     # Electric fields
     Epara_tot::FT = zero(FT)       # Total parallel E-field
@@ -113,6 +114,25 @@ Contains volume-averaged quantities
     wall_gap_R::FT = zero(FT)        # centroid travel to the wall along the net radial force, on its row [m]
     t_wall_inertial::FT = zero(FT)   # √(2 M gap/|F_R|): time to the wall at constant force, inertial [s]
     t_wall_drag::FT = zero(FT)       # gap M ν/|F_R|: the same, ion–neutral drag-limited [s]
+
+    # The ideal vertical-field control (`IdealVerticalFieldControl`); zero without it
+    ctrl_status::Int = 0             # 0 off, 1 waiting, 2 ramping, 3 on, 4 saturated, 5 turning off
+    ctrl_a1::FT = zero(FT)           # applied a₁: the uniform B_Z [T]
+    ctrl_a2::FT = zero(FT)           # applied a₂: −B_R at R_ref of the R²Z basis [T]
+    ctrl_a1_target::FT = zero(FT)    # the target of the last update [T]
+    ctrl_a2_target::FT = zero(FT)
+    ctrl_BZ_at_cen::FT = zero(FT)    # the control B_Z, B_R at the current centroid [T]
+    ctrl_BR_at_cen::FT = zero(FT)
+    ctrl_force_R_predictor::FT = zero(FT) # F₀ + A a when the coefficients were set [N]
+    ctrl_force_Z_predictor::FT = zero(FT)
+    ctrl_force_R_residual::FT = zero(FT)  # the same on the present state [N]
+    ctrl_force_Z_residual::FT = zero(FT)
+    ctrl_force_scale::FT = zero(FT)  # μ0 I²/4: a force scale that does not vanish [N]
+    ctrl_loop_voltage::FT = zero(FT) # current-weighted loop voltage of the control [V]
+    ctrl_power::FT = zero(FT)        # ∫Jϕ E_ϕ,ctrl dV over the last accepted step [W]
+    ctrl_energy::FT = zero(FT)       # its time integral: energy from the actuator's store [J]
+    ctrl_BZ_total_at_cen::FT = zero(FT)   # prescribed + control B_Z at the current centroid [T]
+    ctrl_decay_index_total::FT = zero(FT) # −(R/B_Z) ∂B_Z/∂R of that whole external field
 
     # Electron Heating Powers
     Pe_diffu::FT = zero(FT)       # Diffusion power
@@ -236,6 +256,15 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     ψ::Matrix{FT} = zeros(FT, dims_RZ)            # Total poloidal flux
     ψ_ext::Matrix{FT} = zeros(FT, dims_RZ)        # External poloidal flux
     ψ_self::Matrix{FT} = zeros(FT, dims_RZ)       # Self-consistent poloidal flux
+    ψ_ctrl::Matrix{FT} = zeros(FT, dims_RZ)       # The vertical-field control's flux (ψ = ψ_ext + ψ_self + ψ_ctrl)
+
+    # The closed region: field-line following's closed in-wall nodes (1, else 0), and its magnetic
+    # axis and LCFS (`closed_region_lcfs`; measured as NaN without one)
+    closed_lines::Matrix{FT} = zeros(FT, dims_RZ)
+    ψ_axis::FT = zero(FT)
+    ψ_lcfs::FT = zero(FT)
+    R_axis::FT = zero(FT)
+    Z_axis::FT = zero(FT)
 
     # Ion properties
     ni::Matrix{FT} = zeros(FT, dims_RZ)             # Ion density

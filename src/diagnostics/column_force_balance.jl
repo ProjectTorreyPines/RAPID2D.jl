@@ -19,7 +19,9 @@ const COLUMN_FORCE_BALANCE_FIELDS = (
 
 The toroidal current column's zeroth-order force balance, a **total-current screening estimate**:
 the whole current is taken as one column at its current centroid, with the circular formulas on its
-moment ellipse.
+moment ellipse. With `IdealVerticalFieldControl` the forces leave the control field out: they are
+the estimate the control cancels, measured on the controlled state, and the control's own values
+are the snapshot's `ctrl_*` fields.
 
 - **Column.**
   - `I_closed`: the current on closed field lines.
@@ -96,7 +98,7 @@ built on the plasma's or the coils' field when the run solves no self field (Amp
 """
 function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     G, F, pla = RP.G, RP.fields, RP.plasma
-    μ0, ee = RP.config.constants.μ0, RP.config.constants.ee
+    μ0 = RP.config.constants.μ0
     J = pla.Jϕ
     dA = G.dR * G.dZ
     I = sum(J) * dA
@@ -105,26 +107,22 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     V = G.inVol2D
 
-    # the column: centroid, second moments, and l_i, β_p inside its ellipse
     closed = [k for k in RP.flf.closed_surface_nids if G.nodes.state[k] > 0.5]
     I_closed = sum(J[k] for k in closed; init = zero(FT)) * dA
-    weight = abs.(J)
-    current_coherence = abs(sum(J)) / sum(weight)
-    R_cen_by_Jϕ = sum(weight .* G.R2D) / sum(weight)
-    Z_cen_by_Jϕ = sum(weight .* G.Z2D) / sum(weight)
-    x, z = G.R2D .- R_cen_by_Jϕ, G.Z2D .- Z_cen_by_Jϕ
-    # a uniform ellipse of half-widths a, b along R, Z has σ_RR = a²/4, σ_ZZ = b²/4
-    σ_RR, σ_RZ, σ_ZZ = (sum(weight .* q) / sum(weight) for q in (x .^ 2, x .* z, z .^ 2))
-    one_cell = sqrt(dA / π)                                   # the radius of one cell's disc
-    a_eff_by_Jϕ = max(sqrt(2 * (σ_RR + σ_ZZ)), one_cell)
-    Bpol_edge = μ0 * I / (2π * a_eff_by_Jϕ)
-    kappa_by_Jϕ = σ_RR > 0 ? sqrt(σ_ZZ / σ_RR) : FT(NaN)
-    inside, half_width_minor_by_Jϕ, half_width_major_by_Jϕ = _moment_ellipse(x, z, σ_RR, σ_RZ, σ_ZZ, one_cell)
-    V_in = V[inside]
 
     # the plasma's own field and the coils', each from its own currents
     BR_pla, BZ_pla = _plasma_poloidal_field(RP)
     BR_coils, BZ_coils = _coil_poloidal_field(RP)
+
+    # the column (centroid, moments, ellipse, β_p) and the forces on it, shared with the
+    # vertical-field control so that both cancel and report the same estimate
+    col = _column_forces(RP, BR_pla, BZ_pla, BR_coils, BZ_coils)
+    (; current_coherence, R_cen_by_Jϕ, Z_cen_by_Jϕ, a_eff_by_Jϕ, kappa_by_Jϕ, inside) = col
+    (; half_width_minor_by_Jϕ, half_width_major_by_Jϕ, p, p_area, beta_p) = col
+    (; force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_self, force_Z_self) = col
+    (; force_R_pressure, force_R_toroidal, force_R_net, force_Z_net, ∫J, net_current) = col
+    Bpol_edge = μ0 * I / (2π * a_eff_by_Jϕ)
+    V_in = V[inside]
 
     # l_i from the plasma's field less its mean over the column: that uniform part is the column's
     # own vertical field (its hoop force), which the vertical field of an equilibrium cancels
@@ -132,9 +130,6 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     BR_in .-= sum(BR_in .* V_in) / sum(V_in)
     BZ_in .-= sum(BZ_in .* V_in) / sum(V_in)
     li = 2 * sum(@. (BR_in^2 + BZ_in^2) * V_in) / (μ0^2 * I^2 * R_cen_by_Jϕ)
-    p = @. ee * (pla.ne * pla.Te_eV + pla.ni * pla.Ti_eV)
-    beta_p = 4 * sum(p[inside] .* V_in) / (μ0 * I^2 * R_cen_by_Jϕ)
-    p_area = p .* V ./ G.R2D                                  # 2π p dA
     pressure_column_share = sum(p_area) > 0 ? sum(p_area[inside]) / sum(p_area) : FT(NaN)
 
     # Shafranov: the vertical field the column needs, and the external field it has
@@ -147,21 +142,9 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     decay_index = iszero(BZ_ext_at_cen_by_Jϕ) ? FT(NaN) : -R_cen_by_Jϕ / BZ_ext_at_cen_by_Jϕ * dBZ_dR
     decay_index_radial_limit = one(FT) - one(FT) / Λ(R_cen_by_Jϕ)
 
-    # the forces: of the fields, the tire tube over the column, and the toroidal closure
-    force_R_ext = sum(J .* F.BZ_ext .* V)
-    force_Z_ext = -sum(J .* F.BR_ext .* V)
-    force_R_coils = sum(J .* BZ_coils .* V)
-    force_Z_coils = -sum(J .* BR_coils .* V)
-    force_R_self = sum(J .* BZ_pla .* V)
-    force_Z_self = -sum(J .* BR_pla .* V)
-    force_R_pressure = _pressure_force_R(G, p, V, inside)
-    force_R_toroidal = μ0 * I^2 / 4 * (beta_p - 1)
-    force_R_net = force_R_ext + force_R_coils + force_R_self + force_R_pressure + force_R_toroidal
-    ∫J = sum(J .* V)
-    net_current = _uncancelled(∫J, sum(abs.(J) .* V))         # a uniform field acts on the net current
+    # the uniform fields that cancel the net radial and vertical forces (F_Z = −∫Jϕ B_R dV)
     Bv_to_add = net_current ? -force_R_net / ∫J : FT(NaN)
-    force_Z_net = force_Z_ext + force_Z_coils + force_Z_self
-    Br_to_add = net_current ? force_Z_net / ∫J : FT(NaN)    # the uniform B_R that cancels F_Z = −∫Jϕ B_R dV
+    Br_to_add = net_current ? force_Z_net / ∫J : FT(NaN)
 
     # the tire tube of all the pressure on the grid, against the column's: how much the support matters
     force_R_pressure_all = sum(p_area)
@@ -212,6 +195,54 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
         kappa_by_Jϕ, half_width_minor_by_Jϕ, half_width_major_by_Jϕ, force_R_pressure_all, Br_to_add,
         force_R_on_closed, force_Z_on_closed, Bv_to_add_closed,
         column_mass, nu_in_column, wall_gap_R, t_wall_inertial, t_wall_drag,
+    )
+end
+
+# The column and the reduced forces on it, from the fields of the present currents (`BR_pla`,
+# `BZ_pla`, `BR_coils`, `BZ_coils`) and the external field; the control field is left out. The
+# centroid, second moments and moment ellipse of |Jϕ|, the pressure and β_p in the ellipse, the
+# forces of each field on Jϕ, the pressure force on the ellipse and the toroidal closure, and
+# their radial and vertical sums. Call it above the current threshold (I ≠ 0)
+function _column_forces(RP::RAPID{FT}, BR_pla, BZ_pla, BR_coils, BZ_coils) where {FT <: AbstractFloat}
+    G, F, pla = RP.G, RP.fields, RP.plasma
+    μ0, ee = RP.config.constants.μ0, RP.config.constants.ee
+    J, V = pla.Jϕ, G.inVol2D
+    dA = G.dR * G.dZ
+    I = sum(J) * dA
+
+    weight = abs.(J)
+    current_coherence = abs(sum(J)) / sum(weight)
+    R_cen_by_Jϕ = sum(weight .* G.R2D) / sum(weight)
+    Z_cen_by_Jϕ = sum(weight .* G.Z2D) / sum(weight)
+    x, z = G.R2D .- R_cen_by_Jϕ, G.Z2D .- Z_cen_by_Jϕ
+    # a uniform ellipse of half-widths a, b along R, Z has σ_RR = a²/4, σ_ZZ = b²/4
+    σ_RR, σ_RZ, σ_ZZ = (sum(weight .* q) / sum(weight) for q in (x .^ 2, x .* z, z .^ 2))
+    one_cell = sqrt(dA / π)                                   # the radius of one cell's disc
+    a_eff_by_Jϕ = max(sqrt(2 * (σ_RR + σ_ZZ)), one_cell)
+    kappa_by_Jϕ = σ_RR > 0 ? sqrt(σ_ZZ / σ_RR) : FT(NaN)
+    inside, half_width_minor_by_Jϕ, half_width_major_by_Jϕ = _moment_ellipse(x, z, σ_RR, σ_RZ, σ_ZZ, one_cell)
+
+    p = @. ee * (pla.ne * pla.Te_eV + pla.ni * pla.Ti_eV)
+    beta_p = 4 * sum(p[inside] .* V[inside]) / (μ0 * I^2 * R_cen_by_Jϕ)
+    p_area = p .* V ./ G.R2D                                  # 2π p dA
+
+    force_R_ext = sum(J .* F.BZ_ext .* V)
+    force_Z_ext = -sum(J .* F.BR_ext .* V)
+    force_R_coils = sum(J .* BZ_coils .* V)
+    force_Z_coils = -sum(J .* BR_coils .* V)
+    force_R_self = sum(J .* BZ_pla .* V)
+    force_Z_self = -sum(J .* BR_pla .* V)
+    force_R_pressure = _pressure_force_R(G, p, V, inside)
+    force_R_toroidal = μ0 * I^2 / 4 * (beta_p - 1)
+    force_R_net = force_R_ext + force_R_coils + force_R_self + force_R_pressure + force_R_toroidal
+    force_Z_net = force_Z_ext + force_Z_coils + force_Z_self
+    ∫J = sum(J .* V)
+    net_current = _uncancelled(∫J, sum(abs.(J) .* V))         # a uniform field acts on the net current
+    return (;
+        I, current_coherence, R_cen_by_Jϕ, Z_cen_by_Jϕ, a_eff_by_Jϕ, kappa_by_Jϕ, inside,
+        half_width_minor_by_Jϕ, half_width_major_by_Jϕ, p, p_area, beta_p,
+        force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_self, force_Z_self,
+        force_R_pressure, force_R_toroidal, force_R_net, force_Z_net, ∫J, net_current,
     )
 end
 

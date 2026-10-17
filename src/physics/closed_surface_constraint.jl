@@ -24,15 +24,41 @@ after its own.
 function update_closed_surface_basis!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.flags.closed_surface_flow isa SurfaceFluxConstraint || return RP
     G, pla, F, s = RP.G, RP.plasma, RP.fields, RP.closed_surface
-    A = fill(false, G.NR, G.NZ)
-    for k in RP.flf.closed_surface_nids
-        G.nodes.state[k] > 0.5 && pla.ne[k] > CLOSED_SURFACE_N_FLOOR && (A[k] = true)
-    end
+    A = closed_surface_admissible(RP)
     s.basis = any(A) ? closed_surface_basis(
             G, F.ψ, A; inside = G.cell_state .>= 0, gram_weights = F.Btot .^ 2 ./ max.(pla.ne, CLOSED_SURFACE_N_FLOOR),
         ) : nothing
     s.basis === nothing && empty!(s.solve.Γe_para_over_B)
     return RP
+end
+
+# The nodes a closed-surface basis may use: closed field lines inside the wall, not empty
+function closed_surface_admissible(RP::RAPID)
+    G, pla = RP.G, RP.plasma
+    A = fill(false, G.NR, G.NZ)
+    for k in RP.flf.closed_surface_nids
+        G.nodes.state[k] > 0.5 && pla.ne[k] > CLOSED_SURFACE_N_FLOOR && (A[k] = true)
+    end
+    return A
+end
+
+"""
+    closed_region_lcfs(RP) -> NamedTuple or nothing
+
+The magnetic axis and LCFS of the closed region, `(; ψ_axis, ψ_lcfs, R, Z)`: the constraint
+basis's when there is one, else the same construction (`closed_surface_basis`: the O-point and
+the outermost level the bicubic tracer closes around it inside the wall) from the closed in-wall
+nodes. `nothing` without a single closed region. The 2D snapshots carry it.
+"""
+function closed_region_lcfs(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    b = RP.closed_surface.basis
+    if b === nothing
+        A = closed_surface_admissible(RP)
+        any(A) || return nothing
+        b = closed_surface_basis(RP.G, RP.fields.ψ, A; inside = RP.G.cell_state .>= 0)
+        b === nothing && return nothing
+    end
+    return (; ψ_axis = FT(b.axis.ψ), ψ_lcfs = FT(b.ψ_lcfs), R = FT(b.axis.R), Z = FT(b.axis.Z))
 end
 
 """

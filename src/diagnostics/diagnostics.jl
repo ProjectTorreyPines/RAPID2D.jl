@@ -46,8 +46,12 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.Ti_eV = sum(@. pla.Ti_eV * Ni2D) / total_Ni
     snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para^2) / ee) * Ni2D) / total_Ni
 
-    # Toroidal current
+    # Toroidal current: the stored Jϕ, and the one of the step's end state (free runs do not
+    # refresh Jϕ after the density and the ions move)
     snap0D.I_tor = sum(pla.Jϕ * RP.G.dR * RP.G.dZ)
+    Z_i = FT(bulk_ion_charge(RP))
+    snap0D.I_tor_endpoint = sum(@. (pla.ne * RP.config.constants.qe * pla.ue_para +
+        pla.ni * RP.config.constants.ee * Z_i * pla.ui_para) * F.bϕ) * RP.G.dR * RP.G.dZ
 
     # Electron kinetic energy, and the closed-surface flux constraint's domain and ledger
     snap0D.Ke_tot = electron_kinetic_energy(RP.G, pla.ne, pla.ue_para, RP.G.nodes.in_wall_nids; me)
@@ -73,10 +77,11 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.limited_pairs = nv.limited_pairs
     snap0D.floor_nodes, snap0D.floor_Ne = nv.floor_nodes, nv.floor_Ne
 
-    # The current column's force balance
+    # The current column's force balance, and the vertical-field control that cancels it
     for (name, value) in pairs(column_force_balance(RP))
         setfield!(snap0D, name, value)
     end
+    measure_vertical_field_control!(snap0D, RP)
 
     # Electric fields (density-weighted averages)
     snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
@@ -320,7 +325,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     # Loop voltages
     snap2D.LV_ext .= F.LV_ext
-    @. snap2D.LV_tot = F.LV_ext + 2π * RP.G.R2D * F.Eϕ_self
+    @. snap2D.LV_tot = F.LV_ext + 2π * RP.G.R2D * (F.Eϕ_self + F.Eϕ_ctrl)
 
     # Calculate ExB drift magnitude
     @. snap2D.mean_ExB_pol = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
@@ -343,6 +348,16 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.ψ .= F.ψ
     snap2D.ψ_ext .= F.ψ_ext
     snap2D.ψ_self .= F.ψ_self
+    snap2D.ψ_ctrl .= F.ψ_ctrl
+
+    # the closed region, its axis and LCFS
+    fill!(snap2D.closed_lines, zero(FT))
+    for k in RP.flf.closed_surface_nids
+        RP.G.nodes.state[k] > 0.5 && (snap2D.closed_lines[k] = one(FT))
+    end
+    lcfs = closed_region_lcfs(RP)
+    snap2D.ψ_axis, snap2D.ψ_lcfs, snap2D.R_axis, snap2D.Z_axis = lcfs === nothing ? (FT(NaN), FT(NaN), FT(NaN), FT(NaN)) :
+        (lcfs.ψ_axis, lcfs.ψ_lcfs, lcfs.R, lcfs.Z)
 
     # Electron velocity components
     snap2D.ueR .= pla.ueR
