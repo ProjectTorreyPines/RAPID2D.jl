@@ -152,14 +152,22 @@ end
     # B_Z in excess of what the column needs, with I < 0: the axis moves inward
     shift = fb_off.R_axis - fb_on.R_axis
     @test shift < 0
-    @test shift ≈ fb_on.a_eff_by_Jϕ * ΔB / fb_on.Bpol_edge rtol = 0.05     # 0.98 of it on this grid, either sign
+    @test shift ≈ fb_on.a_eff_by_Jϕ * ΔB / fb_on.Bpol_edge rtol = 0.05     # 0.98 of it on this grid
+    # the other sign of the mismatch, and of the current
+    for (I, δB) in ((-1.0e4, -ΔB), (1.0e4, ΔB), (1.0e4, -ΔB))
+        B_need = column_force_balance(current_disc(; I)[1]).Bv_req
+        fb_need = column_force_balance(trace_closed_region!(current_disc(; I, B0 = B_need)[1]))
+        fb_miss = column_force_balance(trace_closed_region!(current_disc(; I, B0 = B_need + δB)[1]))
+        @test fb_miss.R_axis - fb_need.R_axis ≈ fb_need.a_eff_by_Jϕ * δB / fb_need.Bpol_edge rtol = 0.05
+    end
 end
 
 @testitem "column force balance: elongation, the vertical field to add, and the pressure's support" setup = [CurrentDisc] begin
     RP, _ = current_disc()
     @test column_force_balance(RP).kappa_by_Jϕ ≈ 1 rtol = 0.02
     # an ellipse of κ = 2 (half-widths a, b): its moment ellipse is itself, l_i is its internal
-    # inductance 2ab/(a + b)², and the formula on ā = (a + b)/2 follows the force estimate
+    # inductance 2ab/(a + b)², and the formula on ā = (a + b)/2 follows the force estimate once Λ
+    # carries the uniform ellipse's exterior term (a − b)²/(4(a + b)²): its edge is not a flux surface
     a, b = 0.15, 0.3
     RP_ell, _ = current_disc(; a, κ = b / a, n = 0.0)
     fb_ell = column_force_balance(RP_ell)
@@ -167,7 +175,8 @@ end
     @test fb_ell.half_width_minor_by_Jϕ ≈ a rtol = 0.03
     @test fb_ell.half_width_major_by_Jϕ ≈ b rtol = 0.03
     @test fb_ell.li ≈ 2a * b / (a + b)^2 rtol = 0.03
-    @test fb_ell.Bv_req ≈ fb_ell.Bv_to_add rtol = 0.01
+    Λ = -fb_ell.Bv_req * 4π * fb_ell.R_cen_by_Jϕ / (μ0 * -1.0e4)
+    @test fb_ell.Bv_req * (Λ + (a - b)^2 / (4 * (a + b)^2)) / Λ ≈ fb_ell.Bv_to_add rtol = 0.005
     # tilted, the column's region still holds all of its pressure; at 45° σ_RR = σ_ZZ
     for tilt in (π / 6, π / 4)
         fb_tilt = column_force_balance(current_disc(; a, κ = b / a, tilt)[1])
@@ -184,6 +193,9 @@ end
     fb_out = column_force_balance(current_disc(; n_out = 5.0e18)[1])
     @test fb_out.force_R_pressure_all > fb_out.force_R_pressure
     @test fb_out.pressure_column_share < 1
+    # pressure uniform across the column's edge pushes it neither way
+    fb_flat = column_force_balance(current_disc(; n_out = 1.0e19)[1])
+    @test abs(fb_flat.force_R_pressure) < 1.0e-10 * fb_flat.force_R_pressure_all
 end
 
 @testitem "column force balance: the closed-line current, and the time to the wall if the column could move" setup = [CurrentDisc] begin
@@ -207,6 +219,41 @@ end
     row = [G.R1D[i] for i in 1:G.NR if G.nodes.state[i, j] > 0.5]
     @test _wall_gap_R(G, 1.2, Z0, 1.0) ≈ maximum(row) - 1.2
     @test _wall_gap_R(G, 1.2, Z0, -1.0) ≈ 1.2 - minimum(row)
+    # a centroid outside the wall on its row has no gap, and no time
+    @test isnan(_wall_gap_R(G, G.R1D[1], Z0, -1.0))
+end
+
+@testitem "column force balance: sampled roots, degenerate currents, a cancelling net current" setup = [CurrentDisc] begin
+    using RAPID2D: _root_nearest
+    # a root on a sample counts; bisection refines the others; a tangent root has no sign change
+    @test _root_nearest(x -> x - 1.0, 0.5, 1.5, 11, 0.9) == 1.0
+    @test _root_nearest(x -> (x - 0.83) * (x - 1.27), 0.5, 1.5, 11, 1.2) ≈ 1.27 atol = 1.0e-9
+    @test isnan(_root_nearest(x -> (x - 1.03)^2, 0.5, 1.5, 11, 1.0))
+    RP, d = current_disc()
+    G, J = RP.G, RP.plasma.Jϕ
+    dA = G.dR * G.dZ
+    node(R, Z) = CartesianIndex(round(Int, (R - G.R1D[1]) / G.dR) + 1, round(Int, (Z - G.Z1D[1]) / G.dZ) + 1)
+    # the current on one node: the region is that node's cell disc, and nothing is undefined
+    fill!(J, 0.0)
+    J[node(R0, Z0)] = d.I / dA
+    fb = column_force_balance(RP)
+    @test fb.half_width_minor_by_Jϕ == fb.half_width_major_by_Jϕ == sqrt(dA / π)
+    @test fb.pressure_column_share > 0 && isfinite(fb.beta_p) && isfinite(fb.Bv_to_add)
+    # the current on one row: the minor half-width is the cell's, the major the row's moment
+    fill!(J, 0.0)
+    row = [node(R, Z0) for R in (R0 - 0.1):G.dR:(R0 + 0.1)]
+    J[row] .= d.I / (length(row) * dA)
+    fb = column_force_balance(RP)
+    @test fb.half_width_minor_by_Jϕ == sqrt(dA / π)
+    @test fb.half_width_major_by_Jϕ ≥ 0.1 && fb.kappa_by_Jϕ < 1.0e-6
+    @test isfinite(fb.li) && isfinite(fb.Bv_to_add)
+    # opposite currents whose ∫Jϕ dV cancels: no uniform field acts on them
+    fill!(J, 0.0)
+    J[node(1.0, Z0)] = 2.0e3 / dA
+    J[node(2.0, Z0)] = -1.0e3 / dA
+    fb = column_force_balance(RP)
+    @test isfinite(fb.R_cen_by_Jϕ) && fb.current_coherence ≈ 1 / 3
+    @test isnan(fb.Bv_to_add) && isnan(fb.Br_to_add)
 end
 
 @testitem "column force balance: NaN where nothing exists, the snapshot carries it, edges held" setup = [CurrentDisc] begin

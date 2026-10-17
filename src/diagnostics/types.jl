@@ -93,7 +93,7 @@ Contains volume-averaged quantities
     force_Z_coils::FT = zero(FT)
     force_R_self::FT = zero(FT)      # the same with the plasma's own field (hoop force) [N]
     force_Z_self::FT = zero(FT)
-    force_R_pressure::FT = zero(FT)  # tire-tube force 2π ∫ p dR dZ over the column [N]
+    force_R_pressure::FT = zero(FT)  # −∫ ∂p/∂R dV over the column: tire tube less edge pressure [N]
     force_R_toroidal::FT = zero(FT)  # toroidal-field closure (μ0 I²/4)(β_p − 1) [N]
     Bv_to_add::FT = zero(FT)         # uniform B_Z that cancels the net radial force estimate [T]
     R_eq::FT = zero(FT)              # nearest radius where the Shafranov radial force vanishes [m]
@@ -110,7 +110,7 @@ Contains volume-averaged quantities
     Bv_to_add_closed::FT = zero(FT)  # uniform B_Z that cancels the radial force on it [T]
     column_mass::FT = zero(FT)       # ion mass in the column's moment ellipse [kg]
     nu_in_column::FT = zero(FT)      # ion–neutral drag rate there, ion-weighted [1/s]
-    wall_gap_R::FT = zero(FT)        # centroid to wall along the net radial force, on its midplane [m]
+    wall_gap_R::FT = zero(FT)        # centroid travel to the wall along the net radial force, on its row [m]
     t_wall_inertial::FT = zero(FT)   # √(2 M gap/|F_R|): time to the wall at constant force, inertial [s]
     t_wall_drag::FT = zero(FT)       # gap M ν/|F_R|: the same, ion–neutral drag-limited [s]
 
