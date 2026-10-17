@@ -204,10 +204,12 @@ end
     B0 = column_force_balance(RP0).Bv_req
     RP, d = current_disc(; B0)
     fb = column_force_balance(trace_closed_region!(RP))
-    # all the current is on closed lines: the closed-line estimate is the column's
+    # all the current is on closed lines: the closed-line estimate is the column's. Both values
+    # are near-cancelled sums, so they agree to roundoff of the scale they cancel from, not of
+    # themselves (the two sums run in different orders)
     @test fb.I_closed ≈ d.I
-    @test fb.Bv_to_add_closed ≈ fb.Bv_to_add rtol = 1.0e-10
-    @test fb.force_Z_on_closed ≈ fb.force_Z_ext + fb.force_Z_coils + fb.force_Z_self rtol = 1.0e-10
+    @test fb.Bv_to_add_closed ≈ fb.Bv_to_add atol = 1.0e-10 * abs(B0)
+    @test fb.force_Z_on_closed ≈ fb.force_Z_ext + fb.force_Z_coils + fb.force_Z_self atol = 1.0e-10 * μ0 * d.I^2 / 4
     # the ion mass on the disc, and the times to close the gap at constant force
     G = RP.G
     F_R = fb.force_R_ext + fb.force_R_coils + fb.force_R_self + fb.force_R_pressure + fb.force_R_toroidal
