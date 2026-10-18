@@ -59,24 +59,24 @@ end
 """
     initialize_coupled_fields!(RP)
 
-Make the coils' memory and `ψ_self` consistent with the initial state, both from the same `Jϕ`:
+Make the coils' memory and `ψ_coils_pla` consistent with the initial state, both from the same `Jϕ`:
 - every coil without a memory (`ψ_pla` unset) takes the plasma flux of `Jϕ`;
-- if the run starts with currents, Ampère is on and `ψ_self` is zero, `ψ_self` becomes the
+- if the run starts with currents, Ampère is on and `ψ_coils_pla` is zero, `ψ_coils_pla` becomes the
   Grad–Shafranov solution of those currents, with no induced field.
 
 `run_simulation!` calls it before the first step; a loop over `advance_timestep!` calls it
-once before the first. A coil added later with a current enters `ψ_self` at the next solve;
-call `solve_Ampere_equation!(RP; update_Eϕ_self = false)` after adding it.
+once before the first. A coil added later with a current enters `ψ_coils_pla` at the next solve;
+call `solve_Ampere_equation!(RP; update_Eϕ_coils_pla = false)` after adding it.
 """
 function initialize_coupled_fields!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     update_Jϕ!(RP)
     csys = RP.coil_system
     csys.n_total > 0 && init_unset_coil_plasma_flux!(csys, RP.G, RP.plasma.Jϕ)
     has_current = any(!iszero, RP.plasma.Jϕ) || (csys.n_total > 0 && any(!iszero, csys.coils.current))
-    if RP.flags.Ampere && has_current && all(iszero, RP.fields.ψ_self)
-        solve_Ampere_equation!(RP; update_Eϕ_self = false)
-        fill!(RP.fields.Eϕ_self, zero(FT))
-        fill!(RP.fields.Eϕ_self_prev, zero(FT))
+    if RP.flags.Ampere && has_current && all(iszero, RP.fields.ψ_coils_pla)
+        solve_Ampere_equation!(RP; update_Eϕ_coils_pla = false)
+        fill!(RP.fields.Eϕ_coils_pla, zero(FT))
+        fill!(RP.fields.Eϕ_coils_pla_prev, zero(FT))
         combine_external_and_self_fields!(RP)
         update_Jϕ!(RP)   # bϕ has moved with the self field
     end
@@ -126,7 +126,7 @@ function below_gate_entry_state(RP::RAPID)
     F, pla, csys = RP.fields, RP.plasma, RP.coil_system
     return (;
         ue_para = copy(pla.ue_para), Jϕ = copy(pla.Jϕ),
-        Eϕ_self = copy(F.Eϕ_self), Eϕ_self_prev = copy(F.Eϕ_self_prev),
+        Eϕ_coils_pla = copy(F.Eϕ_coils_pla), Eϕ_coils_pla_prev = copy(F.Eϕ_coils_pla_prev),
         E_para_self_EM = copy(F.E_para_self_EM), E_para_tot = copy(F.E_para_tot),
         coil_current = csys.n_total > 0 ? copy(get_all_currents(csys)) : nothing,
         coil_ψ_pla = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : nothing, coil_time = csys.time_s,
@@ -139,8 +139,8 @@ function restore_below_gate_entry_state!(RP::RAPID, entry)
     F, pla, csys = RP.fields, RP.plasma, RP.coil_system
     pla.ue_para .= entry.ue_para
     pla.Jϕ .= entry.Jϕ
-    F.Eϕ_self .= entry.Eϕ_self
-    F.Eϕ_self_prev .= entry.Eϕ_self_prev
+    F.Eϕ_coils_pla .= entry.Eϕ_coils_pla
+    F.Eϕ_coils_pla_prev .= entry.Eϕ_coils_pla_prev
     F.E_para_self_EM .= entry.E_para_self_EM
     F.E_para_tot .= entry.E_para_tot
     if csys.n_total > 0
@@ -159,7 +159,7 @@ end
 
 Advance the state from tⁿ to tⁿ⁺¹ on the inputs `prepare_timestep!` set: the momentum
 equation and the coil circuits (coupled with Ampère above the current threshold; below it, and
-with Ampère off, the coils advance as vacuum circuits and Ampère only keeps `ψ_self`), the
+with Ampère off, the coils advance as vacuum circuits and Ampère only keeps `ψ_coils_pla`), the
 densities, the ion velocity and the temperatures, the global J×B force and the neutral gas.
 A step below the threshold whose u∥ update carries the current across it is solved again by
 the coupled solve, from the state it started at, when that solve can run (Ampère, the
@@ -168,10 +168,11 @@ inductive E∥ and u∥ evolution on).
 function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "solve_timestep!" begin
         I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
+        I_coils_entry = get_all_currents(RP.coil_system)
 
         above_gate = RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
         if above_gate && RP.flags.E_para_self_EM && RP.flags.ud_evolve
-            # u∥, ψ_self and the coil currents together
+            # u∥, ψ_coils_pla and the coil currents together
             solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
         elseif above_gate
             # The coils advance on their own circuits, the plasma entering through the flux
@@ -185,14 +186,14 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
         else
             # Below the gate the plasma current is not a source of induction: the coils
             # advance as in vacuum and the induced field is theirs alone (see
-            # set_Eϕ_self_from_coils!). ψ_self stays the field of the present currents, so the
+            # set_Eϕ_coils_pla_from_coils!). ψ_coils_pla stays the field of the present currents, so the
             # coupled solve starts from it when the gate opens. A step whose u∥ update carries
             # the current across the gate would have accelerated it without its
             # self-inductance; it is solved again by the coupled solve, from where it started.
             coupled = RP.flags.Ampere && RP.flags.E_para_self_EM && RP.flags.ud_evolve
             entry = coupled ? below_gate_entry_state(RP) : nothing
             ΔI_coils = advance_coils!(RP; plasma = false)
-            RP.flags.Ampere && RP.flags.E_para_self_EM && set_Eϕ_self_from_coils!(RP, ΔI_coils)
+            RP.flags.Ampere && RP.flags.E_para_self_EM && set_Eϕ_coils_pla_from_coils!(RP, ΔI_coils)
             if RP.flags.ud_evolve
                 update_ue_para!(RP)
             end
@@ -202,10 +203,12 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
                     restore_below_gate_entry_state!(RP, entry)
                     solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
                 else
-                    @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP; update_Eϕ_self = false)
+                    @timeit RAPID_TIMER "solve_Ampere_equation!" solve_Ampere_equation!(RP; update_Eϕ_coils_pla = false)
                 end
             end
         end
+        # the coil currents' change over the step accepted above (a retried step restored them)
+        RP.coil_system.ΔI_step = get_all_currents(RP.coil_system) .- I_coils_entry
 
         combine_external_and_self_fields!(RP)
 

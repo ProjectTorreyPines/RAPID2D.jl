@@ -1657,12 +1657,12 @@ end
 
 
 """
-    solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_self::Bool=true) where {FT<:AbstractFloat}
+    solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_coils_pla::Bool=true) where {FT<:AbstractFloat}
 
 Solve Ampère's equation (Grad-Shafranov equation) to update self-consistent magnetic fields.
 
 Solves: ΔGS * ψ = - μ₀R²Jϕ with boundary conditions from Green's function.
-Updates ψ_self, and optionally Eϕ_self.
+Updates ψ_coils_pla, and optionally Eϕ_coils_pla.
 
 # Arguments
 - `RP::RAPID{FT}`: RAPID simulation object containing plasma, grid, and operators
@@ -1672,7 +1672,7 @@ Updates ψ_self, and optionally Eϕ_self.
 - `plasma::Bool=true`: Include plasma current density (Jϕ) in the source term
 - `coils::Bool=true`: Include external coil current contributions to the source term
 """
-function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT} = RP.fields; plasma::Bool = true, coils::Bool = true, update_Eϕ_self::Bool = true) where {FT <: AbstractFloat}
+function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT} = RP.fields; plasma::Bool = true, coils::Bool = true, update_Eϕ_coils_pla::Bool = true) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "solve_Ampere_equation" begin
         # Alias for readability
         pla = RP.plasma
@@ -1702,24 +1702,42 @@ function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT} = RP.fields; plasma
             OP.RHS[RP.G.BDY_idx] .+= csys.Green_coils2bdy * csys.coils.current
         end
 
-        old_ψ_self = copy(F.ψ_self)
+        old_ψ_coils_pla = copy(F.ψ_coils_pla)
 
         # solve Ampere's equation. ΔGS is built once by `initialize_operators!` and never
         # changes, so it is factorized on the first solve and only back-substituted after.
         OP.ΔGS_solver.F === nothing && factorize!(OP.ΔGS_solver, OP.ΔGS)
         ψ = similar(OP.RHS)
         solve!(vec(ψ), OP.ΔGS_solver, vec(OP.RHS))
-        F.ψ_self = ψ
+        F.ψ_coils_pla = ψ
 
         # % calculate the magnetic field from the self-consistent ψ
-        calculate_B_from_ψ!(RP.G, F.ψ_self, F.BR_self, F.BZ_self)
+        calculate_B_from_ψ!(RP.G, F.ψ_coils_pla, F.BR_coils_pla, F.BZ_coils_pla)
 
-        if update_Eϕ_self && RP.flags.E_para_self_EM
-            @. F.Eϕ_self = - (F.ψ_self - old_ψ_self) / (RP.G.R2D * RP.dt)
+        if update_Eϕ_coils_pla && RP.flags.E_para_self_EM
+            @. F.Eϕ_coils_pla = - (F.ψ_coils_pla - old_ψ_coils_pla) / (RP.G.R2D * RP.dt)
         end
 
         return RP
     end # @timeit
+end
+
+"""
+    plasma_flux_on_grid(RP, Jϕ)
+
+The flux ψ [Wb/rad] that the toroidal current density `Jϕ` alone makes on the grid: the
+Grad–Shafranov solution with `Jϕ` as the source and its Green function on the boundary. With
+[`coil_flux_on_grid`](@ref) it splits `ψ_coils_pla` by source, up to what the coupled solve's outer
+iteration and the steps after it leave between the solved sum and the present currents.
+"""
+function plasma_flux_on_grid(RP::RAPID{FT}, Jϕ::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    G, OP = RP.G, RP.operators
+    RHS = @. -RP.config.constants.μ0 * G.R2D * Jϕ
+    RHS[G.BDY_idx] .= (G.Green_inWall2bdy * Jϕ[G.nodes.in_wall_nids]) .* (G.dR * G.dZ)
+    OP.ΔGS_solver.F === nothing && factorize!(OP.ΔGS_solver, OP.ΔGS)
+    ψ = similar(RHS)
+    solve!(vec(ψ), OP.ΔGS_solver, vec(RHS))
+    return ψ
 end
 
 """
@@ -1739,26 +1757,26 @@ function coil_flux_on_grid(RP::RAPID{FT}, I::AbstractVector{FT}) where {FT <: Ab
 end
 
 """
-    set_Eϕ_self_from_coils!(RP, ΔI)
+    set_Eϕ_coils_pla_from_coils!(RP, ΔI)
 
-Below the Ampère gate, set the induced field to the coils' alone, Eϕ_self = −ψ_coils(ΔI)/(R Δt)
+Below the Ampère gate, set the induced field to the coils' alone, Eϕ_coils_pla = −ψ_coils(ΔI)/(R Δt)
 with ΔI their change over the step, and E∥ from it; the external part of E∥ stays as the last
 step projected it. There the plasma is not a source of induction: its own inductance is left
 out (unstable taken explicitly), and so is its flux in the coils (their reaction, fed back
 without L_p, is unstable); see `internal/docs/src/notes/design/coupled-step-coil-flux.md`
 §5.3 and §10.1.
 """
-function set_Eϕ_self_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
+function set_Eϕ_coils_pla_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
     F = RP.fields
-    F.Eϕ_self_prev .= F.Eϕ_self
+    F.Eϕ_coils_pla_prev .= F.Eϕ_coils_pla
     if isempty(ΔI) || all(iszero, ΔI)
-        fill!(F.Eϕ_self, zero(FT))
+        fill!(F.Eϕ_coils_pla, zero(FT))
     else
         ψ = coil_flux_on_grid(RP, ΔI)
-        @. F.Eϕ_self = -ψ / (RP.G.R2D * RP.dt)
+        @. F.Eϕ_coils_pla = -ψ / (RP.G.R2D * RP.dt)
     end
     if RP.flags.E_para_self_EM
-        @. F.E_para_self_EM = F.Eϕ_self * F.bϕ
+        @. F.E_para_self_EM = F.Eϕ_coils_pla * F.bϕ
     end
     @. F.E_para_tot = F.E_para_ext + F.E_para_self_ES + F.E_para_self_EM
     return RP
@@ -1770,7 +1788,7 @@ end
 Advance the coil currents one step outside the coupled solve and return their change, empty
 without coils. Their circuits take the plasma's flux change since each coil's last update,
 the plasma current taken at the start of the step; below the gate (`plasma = false`) they
-advance as in vacuum (see `set_Eϕ_self_from_coils!`).
+advance as in vacuum (see `set_Eϕ_coils_pla_from_coils!`).
 """
 function advance_coils!(RP::RAPID{FT}; plasma::Bool = true) where {FT <: AbstractFloat}
     csys = RP.coil_system
@@ -1914,7 +1932,7 @@ end
     solve_combined_momentum_Ampere_equations_with_coils!(RP; method = AndersonOuterSolve(),
         tolerance = 1e-3, max_iter = 20, E_floor = 1e-6, I_floor = 1e-6)
 
-Advance u∥, ψ_self and the coil currents together over one step, the coefficients (n, ν, b)
+Advance u∥, ψ_coils_pla and the coil currents together over one step, the coefficients (n, ν, b)
 held at the step's start. u∥'s equation is [`update_ue_para!`](@ref)'s, term by term and with
 its θ-weights (`θ_imp.decay`; advection and diffusion explicit when `Implicit = false`). The
 induced field is the step's mean, −(ψⁿ⁺¹ − ψⁿ)/(RΔt), which carries no θ. The circuits take
@@ -2017,7 +2035,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         ν_sum_mom_iz_ei = pla.ν_en_mom_tot + pla.ν_en_iz_tot + pla.ν_ei_eff
 
         @. accel_para_tilde += (
-            facEM / dt * F.ψ_self
+            facEM / dt * F.ψ_coils_pla
                 - (one(FT) - θu) * ν_sum_mom_iz_ei * pla.ue_para
                 + pla.ν_ei_eff * pla.ui_para
         )
@@ -2039,9 +2057,9 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # Predicted ψ: the step's mean induced field extrapolated linearly, 2 E(n) − E(n−1). Its
         # boundary values start the outer iteration.
-        Eϕ_self_np1_pred = @. FT(2.0) * F.Eϕ_self - FT(1.0) * F.Eϕ_self_prev
-        ψ_pred = @. F.ψ_self - dt * G.R2D * Eϕ_self_np1_pred
-        old_ψ_self = copy(F.ψ_self)
+        Eϕ_coils_pla_np1_pred = @. FT(2.0) * F.Eϕ_coils_pla - FT(1.0) * F.Eϕ_coils_pla_prev
+        ψ_pred = @. F.ψ_coils_pla - dt * G.R2D * Eϕ_coils_pla_np1_pred
+        old_ψ_coils_pla = copy(F.ψ_coils_pla)
 
         N, Nb, Nc = G.NR * G.NZ, length(G.BDY_idx), csys.n_total
         coils_I_n = Nc > 0 ? get_all_currents(csys) : FT[]
@@ -2092,7 +2110,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # one evaluation of the map, with its E and I residuals (and surface flux), and the best
         # one so far
-        ue_k, ψ_k, Jϕ_k = similar(pla.ue_para), similar(F.ψ_self), similar(pla.ue_para)
+        ue_k, ψ_k, Jϕ_k = similar(pla.ue_para), similar(F.ψ_coils_pla), similar(pla.ue_para)
         I_k, Φ_k, res_k = similar(coils_I_n), similar(ψ_pla_coils_n), zeros(FT, 2)
         Γ_over_B_k = zeros(FT, length(sol) - 2N)
         best = (ue = similar(ue_k), ψ = similar(ψ_k), I = similar(I_k), Φ = similar(Φ_k), Γ_over_B = similar(Γ_over_B_k), res = zeros(FT, 2))
@@ -2123,7 +2141,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
             f = vcat(ψ_bdy_new .- ψ_bdy, I_k .- I_in)
             converged, res_k[1], res_k[2], finite = coupled_residual_converged(
-                view(f, 1:Nb), view(f, (Nb + 1):(Nb + Nc)), R_bdy, coil_field, ψ_k, old_ψ_self, G.R2D,
+                view(f, 1:Nb), view(f, (Nb + 1):(Nb + Nc)), R_bdy, coil_field, ψ_k, old_ψ_coils_pla, G.R2D,
                 I_k, coils_I_n, dt; tol = tolerance, E_floor, I_floor,
             )
             # the evaluation is accepted whole: its induced field, u∥ and ψ must be finite too
@@ -2160,7 +2178,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θu) * pla.ue_para)
         end
-        F.ψ_self .= ψ_k
+        F.ψ_coils_pla .= ψ_k
         if !closed_surface_active(RP)
             pla.ue_para .= ue_k
         elseif sys !== nothing
@@ -2177,8 +2195,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             me * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.ue_para, ue_ref)
 
         # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
-        F.Eϕ_self_prev .= F.Eϕ_self
-        @. F.Eϕ_self = -(F.ψ_self - old_ψ_self) / (G.R2D * dt)
+        F.Eϕ_coils_pla_prev .= F.Eϕ_coils_pla
+        @. F.Eϕ_coils_pla = -(F.ψ_coils_pla - old_ψ_coils_pla) / (G.R2D * dt)
 
         # Complete the Rue_ei calculation with second part (n+1 step contribution)
         if RP.flags.Coulomb_Collision
@@ -2194,8 +2212,8 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             csys.coils.ψ_pla = Φ_k
         end
 
-        # Update magnetic fields from ψ_self
-        calculate_B_from_ψ!(G, F.ψ_self, F.BR_self, F.BZ_self)
+        # Update magnetic fields from ψ_coils_pla
+        calculate_B_from_ψ!(G, F.ψ_coils_pla, F.BR_coils_pla, F.BZ_coils_pla)
 
         return RP
     end # @timeit

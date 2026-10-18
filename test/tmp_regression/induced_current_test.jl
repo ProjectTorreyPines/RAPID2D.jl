@@ -157,9 +157,9 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     fill!(RP.fields.BZ, 0.0)
     fill!(RP.fields.BR_ext, 0.0)
     fill!(RP.fields.BZ_ext, 0.0)
-    # and their flux: field-line following traces ψ = ψ_ext + ψ_self
+    # and their flux: field-line following traces ψ = ψ_ext + ψ_coils_pla
     fill!(RP.fields.ψ_ext, 0.0)
-    @. RP.fields.ψ = RP.fields.ψ_self
+    @. RP.fields.ψ = RP.fields.ψ_coils_pla
 
     # Set Jacobian for toroidal geometry
     @. RP.G.Jacob = RP.G.R2D

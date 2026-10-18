@@ -26,7 +26,7 @@
         # the axis off the nodes: a B_pol null on a node makes the transport operators NaN today
         @. F.ψ_ext = 2.0e-3 * ((G.R2D - 1.5113)^2 + ((G.Z2D - 0.0071) / 1.3)^2)
         calculate_B_from_ψ!(G, F.ψ_ext, F.BR_ext, F.BZ_ext)
-        fill!(F.ψ_self, 0.0); fill!(F.BR_self, 0.0); fill!(F.BZ_self, 0.0)
+        fill!(F.ψ_coils_pla, 0.0); fill!(F.BR_coils_pla, 0.0); fill!(F.BZ_coils_pla, 0.0)
         combine_external_and_self_fields!(RP)
         inwall = G.nodes.state .> 0.5
         @. pla.ne = ifelse(inwall, 1.0e17 * (1 + 0.4 * (G.R2D - 1.5)), 0.0)
@@ -74,10 +74,10 @@ end
     prepare_timestep!(RP)
     # the drift's current is above the gate, so solve_timestep! takes the coupled route
     @test abs(sum(RP.plasma.Jϕ) * RP.G.dR * RP.G.dZ) >= RP.flags.Ampere_Itor_threshold
-    ψ0 = copy(RP.fields.ψ_self)
+    ψ0 = copy(RP.fields.ψ_coils_pla)
     solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
     s = RP.closed_surface
-    @test RP.fields.ψ_self != ψ0                      # the coupled solve's ψ is kept
+    @test RP.fields.ψ_coils_pla != ψ0                      # the coupled solve's ψ is kept
     @test length(s.solve.Γe_para_over_B) == length(s.basis.knots) && all(isfinite, s.solve.Γe_para_over_B)
     @test surface_flux_error(RP) < 1.0e-10
     @test s.ledger.activation > 0
@@ -86,7 +86,7 @@ end
     RP = closed_RP(; Ampere = true)
     RP.config.t_end_s = RP.t_end_s = RP.time_s + 5 * RP.dt
     run_simulation!(RP)
-    @test !isempty(RP.closed_surface.solve.Γe_para_over_B) && all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_self)
+    @test !isempty(RP.closed_surface.solve.Γe_para_over_B) && all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_coils_pla)
     snap = RP.diagnostics.snaps0D[end]
     @test isfinite(snap.cs_E_projection) && snap.cs_E_projection >= 0
 end
@@ -102,7 +102,7 @@ end
         Zi = bulk_ion_charge(RP)
         _, c_ψu = uψ_coupling_terms(RP)
         ions = vec(@. -μ0 * G.R2D * pla.ni * ee * Zi * pla.ui_para * F.bϕ)
-        res = RP.operators.ΔGS.matrix * vec(F.ψ_self) .+ c_ψu .* vec(pla.ue_para) .- ions
+        res = RP.operators.ΔGS.matrix * vec(F.ψ_coils_pla) .+ c_ψu .* vec(pla.ue_para) .- ions
         res[G.BDY_idx] .= 0
         return maximum(abs, res) / maximum(abs, c_ψu .* vec(pla.ue_para))
     end
@@ -124,7 +124,7 @@ end
     using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
         update_ue_para!
     # The coupled block and the below-gate u∥ system hold the same constrained equation; given the
-    # step's induced field bϕ Eϕ_self, the two give the same u∥, surface flux and friction ledger.
+    # step's induced field bϕ Eϕ_coils_pla, the two give the same u∥, surface flux and friction ledger.
     a, b = (closed_RP(; Ampere = true, E_para_self_ES = false) for _ in 1:2)
     for RP in (a, b)
         initialize_coupled_fields!(RP)
@@ -132,7 +132,7 @@ end
     end
     u0 = copy(a.plasma.ue_para)
     solve_combined_momentum_Ampere_equations_with_coils!(a; NamedTuple(a.flags.ampere_picard)...)
-    @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_self
+    @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_coils_pla
     update_ue_para!(b)
     Δu = a.plasma.ue_para .- u0
     @test maximum(abs, Δu) > 1.0e-3 * maximum(abs, u0)
@@ -156,7 +156,7 @@ end
     agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
     @test a.diagnostics.ampere_picard.nunconverged == 0 && b.diagnostics.ampere_picard.nunconverged == 0
     @test agree(b.plasma.ue_para, a.plasma.ue_para)
-    @test agree(b.fields.ψ_self, a.fields.ψ_self)
+    @test agree(b.fields.ψ_coils_pla, a.fields.ψ_coils_pla)
     @test agree(b.closed_surface.solve.Γe_para_over_B, a.closed_surface.solve.Γe_para_over_B)
     # a second step on the same basis refactorizes the block by value; the plain block is not used
     prepare_timestep!(a)
@@ -187,7 +187,7 @@ end
     cut = first_step(; relaxation_w = 4.0, max_iter = 3)
     @test cut.diagnostics.ampere_picard.last_niter == 3 && cut.diagnostics.ampere_picard.nunconverged == 1
     @test cut.closed_surface.solve.Γe_para_over_B == ref.closed_surface.solve.Γe_para_over_B
-    @test cut.plasma.ue_para == ref.plasma.ue_para && cut.fields.ψ_self == ref.fields.ψ_self
+    @test cut.plasma.ue_para == ref.plasma.ue_para && cut.fields.ψ_coils_pla == ref.fields.ψ_coils_pla
     @test surface_flux_error(cut) < 1.0e-10
 end
 

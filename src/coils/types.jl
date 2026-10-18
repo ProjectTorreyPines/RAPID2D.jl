@@ -239,6 +239,8 @@ Note: Individual coil currents and voltages are stored in each Coil object.
 
 ## Spatial information
 - `inside_domain_indices::Vector{Int}`: Indices of coils inside the plasma domain
+- `ΔI_step::Vector{FT}`: The change of the coil currents over the last accepted step [A]
+  (`solve_timestep!` sets it; the 2D snapshots' induced field of the coils uses it)
 
 ## Physical constants
 - `μ0::FT`: Vacuum permeability [H/m]
@@ -270,6 +272,9 @@ mutable struct CoilSystem{FT <: AbstractFloat}
 
     # Spatial information
     inside_domain_indices::Vector{Int}
+
+    # The change of the coil currents over the last accepted step
+    ΔI_step::Vector{FT}
 
     # Physical constants
     μ0::FT
@@ -315,13 +320,14 @@ mutable struct CoilSystem{FT <: AbstractFloat}
         dGreen_dZg_grid2coils = Matrix{FT}(undef, 0, 0)
 
         inside_domain_indices = Int[]
+        ΔI_step = zeros(FT, n_total)
 
         return new{FT}(
             coils, n_total, n_powered, n_controllable, powered_indices, controllable_indices, passive_indices,
             mutual_inductance, time_s, Δt, θimp, A_LR_circuit, inv_A_LR_circuit,
             Green_coils2bdy, Green_grid2coils,
             dGreen_dRg_grid2coils, dGreen_dZg_grid2coils,
-            inside_domain_indices, μ0, cu_resistivity
+            inside_domain_indices, ΔI_step, μ0, cu_resistivity
         )
     end
 end

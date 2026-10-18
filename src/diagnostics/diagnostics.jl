@@ -201,13 +201,13 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.tot_W_mag = zero(FT)
     if RP.flags.Ampere
         F_plasma = solve_Ampere_equation(RP; plasma = true, coils = false)
-        W_mag_by_plasma_without_coil = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_self / RP.G.R2D * RP.G.inVol2D)
+        W_mag_by_plasma_without_coil = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_coils_pla / RP.G.R2D * RP.G.inVol2D)
         snap0D.self_inductance_plasma = 2.0 * W_mag_by_plasma_without_coil / (snap0D.I_tor^2 + eps(FT))
 
         # plasma's contribution to magnetic energy [J]
-        # NOTE: must use total ψ_self by both plasma and coils
+        # NOTE: must use total ψ_coils_pla by both plasma and coils
         # tot_W_mag =(1/2)*∫Jϕ⋅Aϕ dV
-        snap0D.tot_W_mag += 0.5 * sum(@. RP.plasma.Jϕ * RP.fields.ψ_self / RP.G.R2D * RP.G.inVol2D)
+        snap0D.tot_W_mag += 0.5 * sum(@. RP.plasma.Jϕ * RP.fields.ψ_coils_pla / RP.G.R2D * RP.G.inVol2D)
 
         # Ohmic dissipation [W]. ν_en_iz_tot, not ν_en_iz alone: this mirrors the SAME
         # momentum-randomizing sum update_ue_para! and the momentum-Ampere solvers use
@@ -275,6 +275,60 @@ function measure_snap0D(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 
+# a flux below which the closure is measured against this floor, not the fields [Wb/rad]
+const PSI_CLOSURE_FLOOR = 1.0e-12
+
+"""
+    measure_field_sources!(RP, snap2D)
+
+The coils' (walls included) and the plasma's fields by source, for a 2D snapshot:
+- ψ, B_R, B_Z of the plasma from its stored `Jϕ` ([`plasma_flux_on_grid`](@ref)) and of the coils
+  from their currents ([`coil_flux_on_grid`](@ref)), each computed here;
+- the closure ‖ψ_coils_pla − ψ_pla − ψ_coils‖∞ against the solved sum, absolute and over
+  max(`PSI_CLOSURE_FLOOR`, ‖ψ_coils_pla‖∞, ‖ψ_pla‖∞ + ‖ψ_coils‖∞): what the coupled solve's outer
+  iteration and the updates after it (PostProjection, continuity, ions) leave, not a solver error;
+- the induced field of the last step split as the coils' part −ψ_coils(ΔI)/(R Δt) (ΔI the step's
+  change, `ΔI_step`) and the rest, `Eϕ_coils_pla − Eϕ_coils`: the field the model applied less the
+  coils' part, not the change of the plasma's own flux (below the Ampère gate it is zero).
+NaN where the run does not solve the field (Ampère off), and the split NaN without induction
+(`E_para_self_EM` off).
+"""
+function measure_field_sources!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: AbstractFloat}
+    G, F, csys = RP.G, RP.fields, RP.coil_system
+    sources = (snap2D.ψ_pla, snap2D.BR_pla, snap2D.BZ_pla, snap2D.ψ_coils, snap2D.BR_coils, snap2D.BZ_coils)
+    if !_solves_coils_pla_field(RP)
+        foreach(a -> fill!(a, FT(NaN)), (sources..., snap2D.Eϕ_coils, snap2D.Eϕ_pla))
+        snap2D.ψ_closure_abs = snap2D.ψ_closure_rel = FT(NaN)
+        return snap2D
+    end
+    snap2D.ψ_pla .= plasma_flux_on_grid(RP, RP.plasma.Jϕ)
+    calculate_B_from_ψ!(G, snap2D.ψ_pla, snap2D.BR_pla, snap2D.BZ_pla)
+    if csys.n_total > 0
+        snap2D.ψ_coils .= coil_flux_on_grid(RP, get_all_currents(csys))
+        calculate_B_from_ψ!(G, snap2D.ψ_coils, snap2D.BR_coils, snap2D.BZ_coils)
+    else
+        foreach(a -> fill!(a, zero(FT)), (snap2D.ψ_coils, snap2D.BR_coils, snap2D.BZ_coils))
+    end
+    snap2D.ψ_closure_abs = maximum(abs, F.ψ_coils_pla .- snap2D.ψ_pla .- snap2D.ψ_coils)
+    scale = max(FT(PSI_CLOSURE_FLOOR), maximum(abs, F.ψ_coils_pla), maximum(abs, snap2D.ψ_pla) + maximum(abs, snap2D.ψ_coils))
+    snap2D.ψ_closure_rel = snap2D.ψ_closure_abs / scale
+
+    if !RP.flags.E_para_self_EM
+        fill!(snap2D.Eϕ_coils, FT(NaN))
+        fill!(snap2D.Eϕ_pla, FT(NaN))
+        return snap2D
+    end
+    ΔI = csys.ΔI_step
+    if csys.n_total > 0 && length(ΔI) == csys.n_total && any(!iszero, ΔI)
+        ψ_ΔI = coil_flux_on_grid(RP, ΔI)
+        @. snap2D.Eϕ_coils = -ψ_ΔI / (G.R2D * RP.dt)    # as set_Eϕ_coils_pla_from_coils! sets it
+    else
+        fill!(snap2D.Eϕ_coils, zero(FT))
+    end
+    @. snap2D.Eϕ_pla = F.Eϕ_coils_pla - snap2D.Eϕ_coils
+    return snap2D
+end
+
 """
     measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT<:AbstractFloat}
 
@@ -318,18 +372,18 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.BR .= F.BR
     snap2D.BZ .= F.BZ
     snap2D.B_pol .= F.Bpol
-    snap2D.BR_self .= F.BR_self
-    snap2D.BZ_self .= F.BZ_self
+    snap2D.BR_coils_pla .= F.BR_coils_pla
+    snap2D.BZ_coils_pla .= F.BZ_coils_pla
 
     # Electric fields
     snap2D.E_para_tot .= F.E_para_tot
     snap2D.E_para_ext .= F.E_para_ext
     snap2D.Epol_self .= F.Epol_self
-    snap2D.Eϕ_self .= F.Eϕ_self
+    snap2D.Eϕ_coils_pla .= F.Eϕ_coils_pla
 
     # Loop voltages
     snap2D.LV_ext .= F.LV_ext
-    @. snap2D.LV_tot = F.LV_ext + 2π * RP.G.R2D * (F.Eϕ_self + F.Eϕ_ctrl)
+    @. snap2D.LV_tot = F.LV_ext + 2π * RP.G.R2D * (F.Eϕ_coils_pla + F.Eϕ_ctrl)
 
     # Calculate ExB drift magnitude
     @. snap2D.mean_ExB_pol = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
@@ -351,8 +405,9 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     # Poloidal flux
     snap2D.ψ .= F.ψ
     snap2D.ψ_ext .= F.ψ_ext
-    snap2D.ψ_self .= F.ψ_self
+    snap2D.ψ_coils_pla .= F.ψ_coils_pla
     snap2D.ψ_ctrl .= F.ψ_ctrl
+    measure_field_sources!(RP, snap2D)
 
     # the closed region, its axis and LCFS
     fill!(snap2D.closed_lines, zero(FT))

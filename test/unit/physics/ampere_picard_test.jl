@@ -90,7 +90,7 @@ end
     end
     solve_combined_momentum_Ampere_equations_with_coils!(a)
     solve_combined_momentum_Ampere_equations_with_coils!(b; tolerance = 1.0e-12, max_iter = 200, E_floor = 0.0, I_floor = 0.0)
-    E_a, E_b = a.fields.Eϕ_self, b.fields.Eϕ_self
+    E_a, E_b = a.fields.Eϕ_coils_pla, b.fields.Eϕ_coils_pla
 
     @test b.diagnostics.ampere_picard.nunconverged == 0
     @test maximum(abs, E_a .- E_b) <= 1.0e-3 * maximum(abs, E_b)
@@ -179,7 +179,7 @@ end
         rec = (I = Float64[], E = Matrix{Float64}[], Ic = Vector{Float64}[])
         function record(rp)
             push!(rec.I, sum(rp.plasma.Jϕ) * rp.G.dR * rp.G.dZ)
-            push!(rec.E, copy(rp.fields.Eϕ_self))
+            push!(rec.E, copy(rp.fields.Eϕ_coils_pla))
             push!(rec.Ic, copy(get_all_currents(rp.coil_system)))
             return nothing
         end
@@ -198,7 +198,7 @@ end
     end
 
     # The default run against the direct one, step by step: the plasma current, the induced
-    # field over the grid, each coil current, and u∥ and ψ_self at the end.
+    # field over the grid, each coil current, and u∥ and ψ_coils_pla at the end.
     function compare_with_converged(make)
         a, b = make(), make()
         b.flags.ampere_picard = PicardSettings{Float64}(; REFERENCE_PICARD...)
@@ -209,7 +209,7 @@ end
             I = maximum(abs(ra.I[k] - rb.I[k]) / abs(rb.I[k]) for k in eachindex(rb.I)),
             E = maximum(rel(ra.E[k], rb.E[k]) for k in eachindex(rb.E)),
             Ic = coil_error(ra, rb),
-            u = rel(a.plasma.ue_para, b.plasma.ue_para), ψ = rel(a.fields.ψ_self, b.fields.ψ_self),
+            u = rel(a.plasma.ue_para, b.plasma.ue_para), ψ = rel(a.fields.ψ_coils_pla, b.fields.ψ_coils_pla),
         )
     end
 end
@@ -285,7 +285,7 @@ end
     agree(x, y) = maximum(abs, x .- y) <= 1.0e-10 * maximum(abs, y)
     for other in (b, c)
         @test agree(a.plasma.ue_para, other.plasma.ue_para)
-        @test agree(a.fields.ψ_self, other.fields.ψ_self)
+        @test agree(a.fields.ψ_coils_pla, other.fields.ψ_coils_pla)
         @test agree(a.coil_system.coils.current, other.coil_system.coils.current)
         @test agree(a.coil_system.coils.ψ_pla, other.coil_system.coils.ψ_pla)
     end
@@ -381,7 +381,7 @@ end
     function same_as_first(RP, ref)
         a, b = RP.diagnostics.ampere_picard, ref.diagnostics.ampere_picard
         return a.nunconverged == 1 && RP.plasma.ue_para == ref.plasma.ue_para &&
-            RP.fields.ψ_self == ref.fields.ψ_self && RP.fields.Eϕ_self == ref.fields.Eϕ_self &&
+            RP.fields.ψ_coils_pla == ref.fields.ψ_coils_pla && RP.fields.Eϕ_coils_pla == ref.fields.Eϕ_coils_pla &&
             RP.coil_system.coils.current == ref.coil_system.coils.current &&
             RP.coil_system.coils.ψ_pla == ref.coil_system.coils.ψ_pla &&
             (a.last_E_residual, a.last_I_residual) == (b.last_E_residual, b.last_I_residual)
@@ -417,7 +417,7 @@ end
     initialize!(RP)
     fill!(RP.plasma.Te_eV, 1.0)
     RAPID2D.update_transport_quantities!(RP)
-    RP.fields.ψ_self[setdiff(eachindex(RP.fields.ψ_self), RP.G.BDY_idx)] .= 1.0e305
+    RP.fields.ψ_coils_pla[setdiff(eachindex(RP.fields.ψ_coils_pla), RP.G.BDY_idx)] .= 1.0e305
     prepare_timestep!(RP)
     @test all(iszero, RP.fields.bϕ)
     @test_throws ErrorException solve_combined_momentum_Ampere_equations_with_coils!(RP; max_iter = 1)
@@ -441,9 +441,9 @@ end
     prepare_timestep!(RP)
     RP.fields.E_para_ext[argmax(RP.plasma.ne)] = NaN
     F, pla, csys = RP.fields, RP.plasma, RP.coil_system
-    state() = (F.ψ_self, F.Eϕ_self, F.Eϕ_self_prev, pla.ue_para, pla.Rue_ei, csys.coils.current, csys.coils.ψ_pla, csys.time_s)
+    state() = (F.ψ_coils_pla, F.Eϕ_coils_pla, F.Eϕ_coils_pla_prev, pla.ue_para, pla.Rue_ei, csys.coils.current, csys.coils.ψ_pla, csys.time_s)
     before = deepcopy(state())
-    @test !isequal(F.Eϕ_self, F.Eϕ_self_prev) && isnan(csys.coils.ψ_pla[1])
+    @test !isequal(F.Eϕ_coils_pla, F.Eϕ_coils_pla_prev) && isnan(csys.coils.ψ_pla[1])
     @test_throws ErrorException solve_combined_momentum_Ampere_equations_with_coils!(RP)
     @test all(isequal.(state(), before))
 end

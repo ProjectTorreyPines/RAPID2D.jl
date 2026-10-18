@@ -6,7 +6,7 @@ const COLUMN_FORCE_BALANCE_FIELDS = (
     :I_closed, :current_coherence, :R_cen_by_Jϕ, :Z_cen_by_Jϕ, :a_eff_by_Jϕ, :Bpol_edge,
     :li, :beta_p, :pressure_column_share,
     :Bv_req, :BZ_ext_at_cen_by_Jϕ, :BR_ext_at_cen_by_Jϕ, :decay_index, :decay_index_radial_limit,
-    :force_R_ext, :force_Z_ext, :force_R_coils, :force_Z_coils, :force_R_self, :force_Z_self,
+    :force_R_ext, :force_Z_ext, :force_R_coils, :force_Z_coils, :force_R_pla, :force_Z_pla,
     :force_R_pressure, :force_R_toroidal, :Bv_to_add,
     :R_eq, :R_eq_stiffness, :R_axis, :Z_axis,
     :kappa_by_Jϕ, :half_width_minor_by_Jϕ, :half_width_major_by_Jϕ, :force_R_pressure_all, :Br_to_add,
@@ -58,7 +58,7 @@ are the snapshot's `ctrl_*` fields.
 - **Forces [N]**, with `dV = 2πR dR dZ`:
   - `force_R_ext = ∫ Jϕ B_Z,ext dV`, `force_Z_ext = −∫ Jϕ B_R,ext dV`;
   - `force_R_coils`, `force_Z_coils`: the same with the field of the coils the grid solves;
-  - `force_R_self`, `force_Z_self`: the same with the plasma's own field (the hoop force);
+  - `force_R_pla`, `force_Z_pla`: the same with the plasma's own field (the hoop force);
   - `force_R_pressure = −∫ ∂p/∂R dV` over the column's region: the tire tube 2π ∫ p dR dZ less
     the pressure outside on its edge, 2π ∮ p R n_R dZ (zero when the pressure is uniform across the
     edge, the tire tube when it ends inside);
@@ -119,7 +119,7 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     col = _column_forces(RP, BR_pla, BZ_pla, BR_coils, BZ_coils)
     (; current_coherence, R_cen_by_Jϕ, Z_cen_by_Jϕ, a_eff_by_Jϕ, kappa_by_Jϕ, inside) = col
     (; half_width_minor_by_Jϕ, half_width_major_by_Jϕ, p, p_area, beta_p) = col
-    (; force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_self, force_Z_self) = col
+    (; force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_pla, force_Z_pla) = col
     (; force_R_pressure, force_R_toroidal, force_R_net, force_Z_net, ∫J, net_current) = col
     Bpol_edge = μ0 * I / (2π * a_eff_by_Jϕ)
     V_in = V[inside]
@@ -189,7 +189,7 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
         I_closed, current_coherence, R_cen_by_Jϕ, Z_cen_by_Jϕ, a_eff_by_Jϕ, Bpol_edge,
         li, beta_p, pressure_column_share,
         Bv_req, BZ_ext_at_cen_by_Jϕ, BR_ext_at_cen_by_Jϕ, decay_index, decay_index_radial_limit,
-        force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_self, force_Z_self,
+        force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_pla, force_Z_pla,
         force_R_pressure, force_R_toroidal, Bv_to_add,
         R_eq, R_eq_stiffness, R_axis, Z_axis,
         kappa_by_Jϕ, half_width_minor_by_Jϕ, half_width_major_by_Jϕ, force_R_pressure_all, Br_to_add,
@@ -230,18 +230,18 @@ function _column_forces(RP::RAPID{FT}, BR_pla, BZ_pla, BR_coils, BZ_coils) where
     force_Z_ext = -sum(J .* F.BR_ext .* V)
     force_R_coils = sum(J .* BZ_coils .* V)
     force_Z_coils = -sum(J .* BR_coils .* V)
-    force_R_self = sum(J .* BZ_pla .* V)
-    force_Z_self = -sum(J .* BR_pla .* V)
+    force_R_pla = sum(J .* BZ_pla .* V)
+    force_Z_pla = -sum(J .* BR_pla .* V)
     force_R_pressure = _pressure_force_R(G, p, V, inside)
     force_R_toroidal = μ0 * I^2 / 4 * (beta_p - 1)
-    force_R_net = force_R_ext + force_R_coils + force_R_self + force_R_pressure + force_R_toroidal
-    force_Z_net = force_Z_ext + force_Z_coils + force_Z_self
+    force_R_net = force_R_ext + force_R_coils + force_R_pla + force_R_pressure + force_R_toroidal
+    force_Z_net = force_Z_ext + force_Z_coils + force_Z_pla
     ∫J = sum(J .* V)
     net_current = _uncancelled(∫J, sum(abs.(J) .* V))         # a uniform field acts on the net current
     return (;
         I, current_coherence, R_cen_by_Jϕ, Z_cen_by_Jϕ, a_eff_by_Jϕ, kappa_by_Jϕ, inside,
         half_width_minor_by_Jϕ, half_width_major_by_Jϕ, p, p_area, beta_p,
-        force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_self, force_Z_self,
+        force_R_ext, force_Z_ext, force_R_coils, force_Z_coils, force_R_pla, force_Z_pla,
         force_R_pressure, force_R_toroidal, force_R_net, force_Z_net, ∫J, net_current,
     )
 end
@@ -331,37 +331,31 @@ function _root_nearest(f, lo::FT, hi::FT, n::Integer, x0::FT) where {FT <: Abstr
     return best
 end
 
-# whether the run solves a self field: the boundary Green function and the Grad–Shafranov operator
-# are built only with Ampère on
-_solves_self_field(RP::RAPID) = !isempty(RP.G.Green_inWall2bdy)
+# whether the run solves the coils' and the plasma's field: the boundary Green function and the
+# Grad–Shafranov operator are built only with Ampère on
+_solves_coils_pla_field(RP::RAPID) = !isempty(RP.G.Green_inWall2bdy)
 
-# The plasma's own poloidal field: the Grad–Shafranov solve with its Jϕ alone as the source and its
-# Green function on the boundary (the cached factorization, one back-substitution). NaN fields
-# when the run solves no self field.
+# The plasma's own poloidal field, from its stored Jϕ (`plasma_flux_on_grid`, one back-substitution).
+# NaN fields when the run does not solve it.
 function _plasma_poloidal_field(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    G, OP, J = RP.G, RP.operators, RP.plasma.Jϕ
+    G = RP.G
     BR, BZ = zeros(FT, G.NR, G.NZ), zeros(FT, G.NR, G.NZ)
-    if !_solves_self_field(RP)
+    if !_solves_coils_pla_field(RP)
         fill!(BR, FT(NaN))
         fill!(BZ, FT(NaN))
         return BR, BZ
     end
-    rhs = @. -RP.config.constants.μ0 * G.R2D * J
-    rhs[G.BDY_idx] .= (G.Green_inWall2bdy * J[G.nodes.in_wall_nids]) .* (G.dR * G.dZ)
-    OP.ΔGS_solver.F === nothing && factorize!(OP.ΔGS_solver, OP.ΔGS)
-    ψ = similar(rhs)
-    solve!(vec(ψ), OP.ΔGS_solver, vec(rhs))
-    calculate_B_from_ψ!(G, ψ, BR, BZ)
+    calculate_B_from_ψ!(G, plasma_flux_on_grid(RP, RP.plasma.Jϕ), BR, BZ)
     return BR, BZ
 end
 
 # the poloidal field of the coils the grid solves, at their present currents: zero without coils,
-# NaN when the run solves no self field
+# NaN when the run does not solve it
 function _coil_poloidal_field(RP::RAPID{FT}) where {FT <: AbstractFloat}
     G, csys = RP.G, RP.coil_system
     BR, BZ = zeros(FT, G.NR, G.NZ), zeros(FT, G.NR, G.NZ)
     csys.n_total > 0 || return BR, BZ
-    if !_solves_self_field(RP)
+    if !_solves_coils_pla_field(RP)
         fill!(BR, FT(NaN))
         fill!(BZ, FT(NaN))
         return BR, BZ

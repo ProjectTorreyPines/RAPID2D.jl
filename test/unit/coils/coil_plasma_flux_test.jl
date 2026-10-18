@@ -125,7 +125,7 @@ end
     @test split.step == whole.step
     @test split.coil_system.coils.current == whole.coil_system.coils.current
     @test split.coil_system.coils.ψ_pla == whole.coil_system.coils.ψ_pla
-    @test split.fields.ψ_self == whole.fields.ψ_self
+    @test split.fields.ψ_coils_pla == whole.fields.ψ_coils_pla
     @test split.plasma.ue_para == whole.plasma.ue_para
 end
 
@@ -194,7 +194,7 @@ end
     @test all(isfinite, RP.coil_system.coils.ψ_pla)
 end
 
-@testitem "Coupled step: with E_para_self_EM off the coils induce no Eϕ_self" setup = [CoilFluxColumn] begin
+@testitem "Coupled step: with E_para_self_EM off the coils induce no Eϕ_coils_pla" setup = [CoilFluxColumn] begin
     # Below the gate, a 10 V coil changes; with the electromagnetic self-field off nothing is
     # induced on the plasma, as before the coils advanced there.
     RP = column_with_loops([(0.6, 0.0, 1.0e-4, 10.0, "OH")]; t_end = 25.0e-6)
@@ -202,14 +202,14 @@ end
     RP.flags.Ampere_Itor_threshold = 1.0e6
     quiet(() -> run_simulation!(RP))
     @test abs(RP.coil_system.coils.current[1]) > 0
-    @test all(iszero, RP.fields.Eϕ_self)
+    @test all(iszero, RP.fields.Eϕ_coils_pla)
 end
 
-@testitem "Coupled step: the coils' memory starts from the current ψ_self is solved from" setup = [CoilFluxColumn] begin
+@testitem "Coupled step: the coils' memory starts from the current ψ_coils_pla is solved from" setup = [CoilFluxColumn] begin
     using RAPID2D: plasma_flux_at_coils
-    # A column carrying ~10 kA at the start. The initial Grad–Shafranov solve sources ψ_self
+    # A column carrying ~10 kA at the start. The initial Grad–Shafranov solve sources ψ_coils_pla
     # with J₀; adding that self field tilts b, so J moves after it. The coils must start
-    # from J₀ as ψ_self does, or the first step reads the difference as induced on one side
+    # from J₀ as ψ_coils_pla does, or the first step reads the difference as induced on one side
     # only.
     RP = column_with_loops([(1.2, 0.8, 1.0e-3, 0.0, "loop")])
     in_column = RP.plasma.ne .> 0
@@ -372,8 +372,8 @@ end
 
     @test a.diagnostics.ampere_picard.nunconverged == 0 && b.diagnostics.ampere_picard.nunconverged == 0
     @test agree(b.plasma.ue_para, a.plasma.ue_para)
-    @test agree(b.fields.ψ_self, a.fields.ψ_self)
-    @test agree(b.fields.Eϕ_self, a.fields.Eϕ_self)
+    @test agree(b.fields.ψ_coils_pla, a.fields.ψ_coils_pla)
+    @test agree(b.fields.Eϕ_coils_pla, a.fields.Eϕ_coils_pla)
     @test agree(b.coil_system.coils.current, a.coil_system.coils.current)
     @test agree(b.coil_system.coils.ψ_pla, a.coil_system.coils.ψ_pla)
 end
