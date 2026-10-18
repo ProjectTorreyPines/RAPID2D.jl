@@ -87,7 +87,7 @@ end
 The control's step, from the state at tⁿ (`prepare_timestep!` calls it after `update_Jϕ!`):
 1. the target ([`vertical_field_control_target`](@ref)) and the status: qualify with hysteresis,
    ramp the target up after each turn-on, clip at `coefficient_max`, aim at zero when off;
-2. move the coefficients toward it (`response`), and the flux offset (`induction`);
+2. move the coefficients toward it (`response`);
 3. write the control field and its induced E_ϕ, and combine the fields, so that the whole step
    (electron momentum, then ions and temperatures) sees the same control field.
 
@@ -114,12 +114,7 @@ function update_vertical_field_control!(RP::RAPID{FT}) where {FT <: AbstractFloa
     else
         abs(target.I) >= policy.I_on && target.coherence >= policy.coherence_on
     end
-    if qualifies && !st.qualifies
-        st.t_turned_on = t
-        if isnan(st.R_comp)                                     # the flux reference is fixed once
-            st.R_comp, st.Z_comp = target.R_cen, target.Z_cen
-        end
-    end
+    qualifies && !st.qualifies && (st.t_turned_on = t)
     st.qualifies = qualifies
     if qualifies
         ramp = clamp((t + dt - st.t_turned_on) / policy.ramp_s, zero(FT), one(FT))
@@ -132,15 +127,13 @@ function update_vertical_field_control!(RP::RAPID{FT}) where {FT <: AbstractFloa
     end
     st.a_target .= target.a
 
-    # 2. respond, and the flux offset
+    # 2. respond
     st.a_prev .= st.a
-    st.c_prev = st.c
     _respond!(policy.response, st.a, aim, dt)
     if !qualifies && maximum(abs, st.a) < 1.0e-6 * policy.coefficient_max
         fill!(st.a, zero(FT))
         st.status = t < policy.t_on_s ? 0 : 1
     end
-    st.c = _flux_offset(policy.induction, st)
     if target.solvable
         residual = target.F .+ target.A * st.a
         st.force_R_predictor, st.force_Z_predictor = residual
@@ -163,15 +156,6 @@ function _respond!(r::FirstOrderResponse, a, aim, dt)
 end
 _respond!(::InstantaneousResponse, a, aim, dt) = (a .= aim)
 
-# the spatially constant flux added to the vacuum bases: none, or the one that holds the control
-# loop voltage at zero at the compensation point
-_flux_offset(::FaradayInduction, st) = zero(st.c)
-function _flux_offset(::CSCompensatedInduction, st)
-    isnan(st.R_comp) && return zero(st.c)
-    ψ₁, ψ₂ = _control_basis_ψ(st.R_comp, st.Z_comp, st.R_ref)
-    return -(st.a[1] * ψ₁ + st.a[2] * ψ₂)
-end
-
 """
     book_vertical_field_control_work!(RP)
 
@@ -191,22 +175,22 @@ end
 """
     write_vertical_control_field!(RP)
 
-The control arrays from the state's coefficients: ψ_ctrl = a₁ R²/2 + a₂ R²Z/R_ref + c, its B, and
+The control arrays from the state's coefficients: ψ_ctrl = a₁ R²/2 + a₂ R²Z/R_ref, its B, and
 E_ϕ,ctrl = −(ψ_ctrl − ψ_ctrl,prev)/(R Δt) from the change since the step before, over the step
 `dt_applied` (zero before any step).
 """
 function write_vertical_control_field!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     st, G, F = RP.vertical_field_control, RP.G, RP.fields
     a₁, a₂, R_ref = st.a[1], st.a[2], st.R_ref
-    Δa₁, Δa₂, Δc = a₁ - st.a_prev[1], a₂ - st.a_prev[2], st.c - st.c_prev
+    Δa₁, Δa₂ = a₁ - st.a_prev[1], a₂ - st.a_prev[2]
     R, Z, dt = G.R2D, G.Z2D, st.dt_applied
-    @. F.ψ_ctrl = a₁ * R^2 / 2 + a₂ * R^2 * Z / R_ref + st.c
+    @. F.ψ_ctrl = a₁ * R^2 / 2 + a₂ * R^2 * Z / R_ref
     @. F.BZ_ctrl = a₁ + a₂ * 2 * Z / R_ref
     @. F.BR_ctrl = -a₂ * R / R_ref
     if iszero(dt)                                               # no step interval yet: nothing induced
         fill!(F.Eϕ_ctrl, zero(FT))
     else
-        @. F.Eϕ_ctrl = -(Δa₁ * R^2 / 2 + Δa₂ * R^2 * Z / R_ref + Δc) / (R * dt)
+        @. F.Eϕ_ctrl = -(Δa₁ * R^2 / 2 + Δa₂ * R^2 * Z / R_ref) / (R * dt)
     end
     return RP
 end

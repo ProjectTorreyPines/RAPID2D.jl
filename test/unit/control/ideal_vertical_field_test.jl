@@ -1,7 +1,8 @@
 # The ideal vertical-field control on the uniform current disc of `CurrentDisc`
 # (diagnostics/column_force_balance_test.jl): its vacuum bases, the target it shares with the
-# force estimate, signs with a negative current, the update's timing and states, the induced
-# field, the compensated flux, the default path, the refusals, and a few steps of a run.
+# force estimate, signs with a negative current, the update's timing and states, the first-order
+# response (lag and turning off), the induced field, the default path, the refusals, and a few
+# steps of a run.
 
 @testitem "ideal vertical field: the bases are vacuum fields whose B and flux agree" setup = [CurrentDisc] begin
     using RAPID2D: IdealVerticalFieldControl, calculate_B_from_ψ, write_vertical_control_field!
@@ -28,17 +29,18 @@ end
 
 @testitem "ideal vertical field: the target is the force estimate's field to add" setup = [CurrentDisc] begin
     using RAPID2D: IdealVerticalFieldControl, vertical_field_control_target, write_vertical_control_field!,
-        ReducedForceTarget, VerticalAndRadialField
-    # the reduced-force target with the uniform field: a₁ is column_force_balance's Bv_to_add
-    RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(t_on_s = 0.0, target = ReducedForceTarget()))
+        ReducedForceTarget, MagneticForceTarget, VerticalAndRadialField
+    # the reduced-force target (the default) with the uniform field: a₁ is column_force_balance's Bv_to_add
+    RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(t_on_s = 0.0))
+    @test RP.flags.vertical_field_control.target isa ReducedForceTarget
     target = vertical_field_control_target(RP)
     fb = column_force_balance(RP)
     @test target.solvable
     @test target.a[1] ≈ fb.Bv_to_add rtol = 1.0e-12
     @test target.a[2] == 0
-    # the magnetic target (the default): for a one-signed current, minus the |Jϕ|dV-weighted mean
-    # B_Z of the field without control
-    RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(t_on_s = 0.0))
+    # the magnetic target: for a one-signed current, minus the |Jϕ|dV-weighted mean B_Z of the
+    # field without control
+    RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(t_on_s = 0.0, target = MagneticForceTarget()))
     w = abs.(RP.plasma.Jϕ) .* RP.G.inVol2D
     BZ_mean = sum(w .* (RP.fields.BZ_ext .+ RP.fields.BZ_self)) / sum(w)
     @test vertical_field_control_target(RP).a[1] ≈ -BZ_mean rtol = 1.0e-8
@@ -141,6 +143,68 @@ end
     @test RP.vertical_field_control.a == RP.vertical_field_control.a_target
 end
 
+@testitem "ideal vertical field: the first-order lag behind a rising target converges in Δt" setup = [CurrentDisc] begin
+    using RAPID2D: IdealVerticalFieldControl, update_vertical_field_control!, FirstOrderResponse
+    # a fixed target ramped over ramp_s: once the transient is gone the coefficient trails the aim
+    # k t by a lag h/(e^{h/τ} − 1) = τ − h/2 + O(h²) (the aim of a step is held over it), not τ
+    τ, ramp_s = 1.0e-5, 3.0e-4
+    lag(h) = begin
+        RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(; t_on_s = 0.0, ramp_s, response = FirstOrderResponse(τ)))
+        RP.dt = h
+        n = round(Int, 1.5e-4 / h)
+        for _ in 1:n
+            update_vertical_field_control!(RP)
+            RP.time_s += h
+        end
+        st = RP.vertical_field_control
+        @test st.status == 2
+        n * h - st.a[1] / (st.a_target[1] / ramp_s)
+    end
+    for h in (1.0e-6, 5.0e-7)
+        @test lag(h) ≈ h / expm1(h / τ) rtol = 1.0e-5
+        @test τ - h / 2 - h^2 / τ < lag(h) < τ - h / 2 + h^2 / τ
+    end
+end
+
+@testitem "ideal vertical field: turning off, the induced field is bounded by τ and its volt-seconds are the flux" setup = [CurrentDisc] begin
+    using RAPID2D: IdealVerticalFieldControl, FirstOrderResponse, InstantaneousResponse, update_vertical_field_control!
+    τ = 1.0e-5
+    # on at 30 kA until the coefficient settles, then 1 kA (below I_off): it falls to zero. At the
+    # centroid node, the coefficient a₀ before turning off, Σ Eϕ,ctrl Δt and max |Eϕ,ctrl|.
+    turn_off(response, h) = begin
+        RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(; t_on_s = 0.0, ramp_s = 1.0e-12, response, I_on = 2.0e4, I_off = 5.0e3))
+        RP.dt = h
+        G, F, st, J0 = RP.G, RP.fields, RP.vertical_field_control, copy(RP.plasma.Jϕ)
+        i, j = round(Int, (R0 - G.R1D[1]) / G.dR) + 1, round(Int, (Z0 - G.Z1D[1]) / G.dZ) + 1
+        step!() = (update_vertical_field_control!(RP); RP.time_s += h)
+        RP.plasma.Jϕ .= 3 .* J0
+        for _ in 1:round(Int, 15τ / h)
+            step!()
+        end
+        a₀ = st.a[1]
+        RP.plasma.Jϕ .= 0.1 .* J0
+        volt_seconds, peak = 0.0, 0.0
+        for _ in 1:(10^5)
+            step!()
+            volt_seconds += F.Eϕ_ctrl[i, j] * h
+            peak = max(peak, abs(F.Eϕ_ctrl[i, j]))
+            all(iszero, st.a) && break
+        end
+        @test all(iszero, st.a) && st.status == 1
+        a₀, volt_seconds, peak, G.R2D[i, j]
+    end
+    for h in (1.0e-6, 5.0e-7)
+        # the flux change, whatever the response: −Δψ/R = a₀ R/2
+        a₀, vs, peak, R = turn_off(InstantaneousResponse(), h)
+        @test vs ≈ a₀ * R / 2 rtol = 1.0e-10
+        @test peak ≈ abs(a₀) * R / (2h) rtol = 1.0e-10           # all in one step: grows as 1/Δt
+        a₀, vs, peak, R = turn_off(FirstOrderResponse(τ), h)
+        @test vs ≈ a₀ * R / 2 rtol = 1.0e-10
+        @test peak ≈ abs(a₀) * R * (-expm1(-h / τ)) / (2h) rtol = 1.0e-10
+        @test peak < abs(a₀) * R / (2τ)                           # bounded by τ, whatever the step
+    end
+end
+
 @testitem "ideal vertical field: hysteresis, turning off, and the ramp again on turning on" setup = [CurrentDisc] begin
     using RAPID2D: IdealVerticalFieldControl, update_vertical_field_control!
     # |I| = 10 kA sits between I_off and I_on
@@ -200,29 +264,6 @@ end
     nonzero = F.E_para_self_ES .!= 0
     @test any(nonzero)
     @test sign.(F.E_para_self_ES[nonzero]) == sign.(-applied[nonzero] .* F.Bϕ[nonzero])
-end
-
-@testitem "ideal vertical field: a compensated flux holds the loop voltage at zero at the centroid" setup = [CurrentDisc] begin
-    using RAPID2D: IdealVerticalFieldControl, update_vertical_field_control!
-    run_control(compensate) = begin
-        induction = compensate ? RAPID2D.CSCompensatedInduction() : RAPID2D.FaradayInduction()
-        RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(; t_on_s = 0.0, ramp_s = 2.0e-5, response = RAPID2D.FirstOrderResponse(1.0e-5), induction))
-        RP.dt = 1.0e-6
-        for _ in 1:10
-            update_vertical_field_control!(RP)
-            RP.time_s += RP.dt
-        end
-        RP
-    end
-    plain, compensated = run_control(false), run_control(true)
-    st, G, F = compensated.vertical_field_control, compensated.G, compensated.fields
-    i = round(Int, (st.R_comp - G.R1D[1]) / G.dR) + 1
-    j = round(Int, (st.Z_comp - G.Z1D[1]) / G.dZ) + 1
-    @test st.R_comp ≈ R0 atol = 1.0e-12                          # the centroid, on a node
-    @test st.Z_comp ≈ Z0 atol = 1.0e-12
-    @test abs(F.Eϕ_ctrl[i, j]) < 1.0e-9 * maximum(abs, plain.fields.Eϕ_ctrl)
-    @test abs(plain.fields.Eϕ_ctrl[i, j]) > 0
-    @test F.BZ_ctrl == plain.fields.BZ_ctrl && F.BR_ctrl == plain.fields.BR_ctrl
 end
 
 @testitem "ideal vertical field: the default leaves the code path of a run without control" setup = [CurrentDisc] begin
