@@ -50,8 +50,12 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     # refresh Jϕ after the density and the ions move)
     snap0D.I_tor = sum(pla.Jϕ * RP.G.dR * RP.G.dZ)
     Z_i = FT(bulk_ion_charge(RP))
-    snap0D.I_tor_endpoint = sum(@. (pla.ne * RP.config.constants.qe * pla.ue_para +
-        pla.ni * RP.config.constants.ee * Z_i * pla.ui_para) * F.bϕ) * RP.G.dR * RP.G.dZ
+    snap0D.I_tor_endpoint = sum(
+        @. (
+            pla.ne * RP.config.constants.qe * pla.ue_para +
+                pla.ni * RP.config.constants.ee * Z_i * pla.ui_para
+        ) * F.bϕ
+    ) * RP.G.dR * RP.G.dZ
 
     # Electron kinetic energy, and the closed-surface flux constraint's domain and ledger
     snap0D.Ke_tot = electron_kinetic_energy(RP.G, pla.ne, pla.ue_para, RP.G.nodes.in_wall_nids; me)

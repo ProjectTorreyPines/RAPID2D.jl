@@ -261,6 +261,10 @@ function build_and_run(shadow, patterns, nworkers)
         ti_filter, setupfile, selected...;
         nworkers = nworkers,
         nworker_threads = 1,
+        # Replace a worker before the next testitem once 90 % of the memory is in use (the
+        # default is 99 %): workers keep what they allocated, and the three-worker ubuntu runner
+        # reached 98 % and was terminated. RETESTITEMS_MEMORY_THRESHOLD overrides it.
+        memory_threshold = parse(Float64, get(ENV, "RETESTITEMS_MEMORY_THRESHOLD", "0.9")),
         # Each worker runs in its own scratch directory. SimulationConfig.Output_path
         # defaults to the RELATIVE "./output", so testitems that keep the default would
         # otherwise share one test/output/snap2D.bp across workers — and one worker's
