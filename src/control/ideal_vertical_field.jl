@@ -28,9 +28,12 @@ function refuse_unsupported_vertical_field_control(RP::RAPID)
     return RP
 end
 
-# the radial force the target cancels, control left out (vertical: the magnetic forces either way)
+# the forces the target cancels, control left out, from the parts that `_column_forces` and the 0D
+# snapshot both carry: radial by the target, vertical the magnetic forces either way
+_target_force_R(::ReducedForceTarget, col) =
+    col.force_R_ext + col.force_R_coils + col.force_R_self + col.force_R_pressure + col.force_R_toroidal
 _target_force_R(::MagneticForceTarget, col) = col.force_R_ext + col.force_R_coils + col.force_R_self
-_target_force_R(::ReducedForceTarget, col) = col.force_R_net
+_target_force_Z(col) = col.force_Z_ext + col.force_Z_coils + col.force_Z_self
 
 # the coefficients from A a = −F₀: the uniform field alone, or both bases jointly
 function _target_coefficients(::UniformVerticalField, F₀, A, policy)
@@ -66,7 +69,7 @@ function vertical_field_control_target(RP::RAPID{FT}) where {FT <: AbstractFloat
     BR_pla, BZ_pla = _plasma_poloidal_field(RP)
     BR_coils, BZ_coils = _coil_poloidal_field(RP)
     col = _column_forces(RP, BR_pla, BZ_pla, BR_coils, BZ_coils)
-    F₀ = [_target_force_R(policy.target, col), col.force_Z_net]
+    F₀ = [_target_force_R(policy.target, col), _target_force_Z(col)]
 
     V = G.inVol2D
     A = zeros(FT, 2, 2)
@@ -89,7 +92,9 @@ The control's step, from the state at tⁿ (`prepare_timestep!` calls it after `
    ramp the target up after each turn-on, clip at `coefficient_max`, aim at zero when off;
 2. move the coefficients toward it (`response`);
 3. write the control field and its induced E_ϕ, and combine the fields, so that the whole step
-   (electron momentum, then ions and temperatures) sees the same control field.
+   (electron momentum, then ions and temperatures) sees the same control field. The combine also
+   brings in the prescribed field at tⁿ, which the path without control takes in only inside the
+   step: compare a controlled run with `t_on_s = Inf`, not with `NoVerticalFieldControl`.
 
 The coefficients set at tⁿ hold over [tⁿ, tⁿ⁺¹], so the ramp is taken at tⁿ⁺¹ and the first-order
 response to a fixed target is the same at the same time for any Δt. Turned off, coefficients below
@@ -228,11 +233,8 @@ function measure_vertical_field_control!(snap0D, RP::RAPID{FT}) where {FT <: Abs
     BR₁, BR₂ = _control_basis_BR(R_cen, Z_cen, st.R_ref)
     snap0D.ctrl_BZ_at_cen = st.a[1] * BZ₁ + st.a[2] * BZ₂
     snap0D.ctrl_BR_at_cen = st.a[1] * BR₁ + st.a[2] * BR₂
-    force_R = snap0D.force_R_ext + snap0D.force_R_coils + snap0D.force_R_self
-    policy.target isa ReducedForceTarget && (force_R += snap0D.force_R_pressure + snap0D.force_R_toroidal)
-    force_Z = snap0D.force_Z_ext + snap0D.force_Z_coils + snap0D.force_Z_self
-    snap0D.ctrl_force_R_residual = force_R + sum(@. J * F.BZ_ctrl * V)
-    snap0D.ctrl_force_Z_residual = force_Z - sum(@. J * F.BR_ctrl * V)
+    snap0D.ctrl_force_R_residual = _target_force_R(policy.target, snap0D) + sum(@. J * F.BZ_ctrl * V)
+    snap0D.ctrl_force_Z_residual = _target_force_Z(snap0D) - sum(@. J * F.BR_ctrl * V)
     # the decay index of the whole external field (prescribed + control; the control adds no
     # ∂B_Z/∂R), from the derivative, with the total B_Z in the denominator
     h = G.dR / 2
