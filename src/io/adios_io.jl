@@ -354,6 +354,12 @@ function is_dict_internal_key(key::String)
     return false
 end
 
+# Snapshot fields renamed since older files were written: old name => new name
+const RENAMED_SNAPSHOT_FIELDS = Dict(
+    "ψ_self" => "ψ_coils_pla", "BR_self" => "BR_coils_pla", "BZ_self" => "BZ_coils_pla",
+    "Eϕ_self" => "Eϕ_coils_pla", "force_R_self" => "force_R_pla", "force_Z_self" => "force_Z_pla",
+)
+
 """
     create_symbol_path_mapping(obj_type, Adict::Dict)
 
@@ -389,11 +395,14 @@ function create_symbol_path_mapping(obj_type, Adict::Dict)
             continue
         end
 
-        # Convert path string to symbol array
-        if contains(key, "/")
-            symbols = Symbol.(split(key, '/'))
+        # Convert path string to symbol array; a field renamed since the file was written is read
+        # into its new name, unless the file also has the new one
+        name = get(RENAMED_SNAPSHOT_FIELDS, key, key)
+        name != key && haskey(Adict, name) && continue
+        if contains(name, "/")
+            symbols = Symbol.(split(name, '/'))
         else
-            symbols = [Symbol(key)]
+            symbols = [Symbol(name)]
         end
 
         # Validate path exists in the type

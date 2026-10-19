@@ -42,7 +42,7 @@ end
     # field without control
     RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(t_on_s = 0.0, target = MagneticForceTarget()))
     w = abs.(RP.plasma.Jϕ) .* RP.G.inVol2D
-    BZ_mean = sum(w .* (RP.fields.BZ_ext .+ RP.fields.BZ_self)) / sum(w)
+    BZ_mean = sum(w .* (RP.fields.BZ_ext .+ RP.fields.BZ_coils_pla)) / sum(w)
     @test vertical_field_control_target(RP).a[1] ≈ -BZ_mean rtol = 1.0e-8
     # both bases (the column sits at Z0 = 0.1, off the midplane): A a = −F₀, and with the control
     # field added to the external one, nothing is left to cancel
@@ -257,10 +257,10 @@ end
     combine_external_and_self_fields!(RP)
     applied = F.Eϕ_ext .+ F.Eϕ_ctrl
     @test all(<(0), applied) && all(>(0), F.Eϕ_ext)
-    @test F.Eϕ ≈ applied .+ F.Eϕ_self
+    @test F.Eϕ ≈ applied .+ F.Eϕ_coils_pla
     @test F.E_para_ext ≈ applied .* F.bϕ
-    @test F.ψ ≈ F.ψ_ext .+ F.ψ_self .+ F.ψ_ctrl
-    @test F.BZ ≈ F.BZ_ext .+ F.BZ_self .+ F.BZ_ctrl
+    @test F.ψ ≈ F.ψ_ext .+ F.ψ_coils_pla .+ F.ψ_ctrl
+    @test F.BZ ≈ F.BZ_ext .+ F.BZ_coils_pla .+ F.BZ_ctrl
     nonzero = F.E_para_self_ES .!= 0
     @test any(nonzero)
     @test sign.(F.E_para_self_ES[nonzero]) == sign.(-applied[nonzero] .* F.Bϕ[nonzero])
@@ -277,7 +277,7 @@ end
     F.BZ_ctrl .= 1.0
     F.Eϕ_ctrl .= 1.0
     combine_external_and_self_fields!(RP)
-    @test F.BZ == F.BZ_ext .+ F.BZ_self
+    @test F.BZ == F.BZ_ext .+ F.BZ_coils_pla
     @test F.E_para_ext == F.Eϕ_ext .* F.bϕ
 end
 

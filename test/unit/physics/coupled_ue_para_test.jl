@@ -52,7 +52,7 @@ end
     using RAPID2D: solve_combined_momentum_Ampere_equations_with_coils!, update_ue_para!
     # A dense column (n = 1e17 m⁻³), whose induced field is some 20 times the applied one. The
     # coupled solve's u∥ satisfies its own row of the block exactly for the ψ it accepts;
-    # update_ue_para! with that step's induced field, bϕ Eϕ_self, must give the same u∥, and the
+    # update_ue_para! with that step's induced field, bϕ Eϕ_coils_pla, must give the same u∥, and the
     # same friction ledger Rue_ei, to rounding if the two hold the same terms with the same θ,
     # with Implicit on or off. Diffusion off is the control: both paths then drop the term. The
     # circuits stay backward Euler, as below the gate.
@@ -62,7 +62,7 @@ end
         prepare_timestep!(b)
         u0 = copy(a.plasma.ue_para)
         solve_combined_momentum_Ampere_equations_with_coils!(a)
-        @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_self
+        @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_coils_pla
         update_ue_para!(b)
 
         Δu = a.plasma.ue_para .- u0
@@ -198,7 +198,7 @@ end
         u0, u_ref = copy(a.plasma.ue_para), reference(a)
         @test minimum(abs, u_ref[hole]) > 1.0e-3 * maximum(abs, u0)       # a reference other than 0
         solve_combined_momentum_Ampere_equations_with_coils!(a)
-        @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_self
+        @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_coils_pla
         update_ue_para!(b)
         Δu = a.plasma.ue_para .- u0
         @test maximum(abs, a.plasma.ue_para .- b.plasma.ue_para) <= 1.0e-12 * maximum(abs, Δu)

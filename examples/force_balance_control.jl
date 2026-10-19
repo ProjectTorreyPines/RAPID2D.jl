@@ -29,7 +29,7 @@ function (c::CurvedBzControl)(RP::RAPID)
     G, F, pla = RP.G, RP.fields, RP.plasma
     w = abs.(pla.Jϕ) .* G.inVol2D
     sw = sum(w)
-    ctrl_mag = sw > 0 ? max(sum(w .* F.BZ_self) / sw, sum(w .* F.BR_self) / sw) : 1.0e-8
+    ctrl_mag = sw > 0 ? max(sum(w .* F.BZ_coils_pla) / sw, sum(w .* F.BR_coils_pla) / sw) : 1.0e-8
     # Jϕ-weighted centroid in R; with no current there is no centroid, and nothing to correct
     I_sum = sum(pla.Jϕ)
     R_cen = iszero(I_sum) ? NaN : sum(pla.Jϕ .* G.R2D) / I_sum

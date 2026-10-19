@@ -92,8 +92,8 @@ Contains volume-averaged quantities
     force_Z_ext::FT = zero(FT)       # −∫ Jϕ B_R,ext dV [N]
     force_R_coils::FT = zero(FT)     # the same with the field of the coils the grid solves [N]
     force_Z_coils::FT = zero(FT)
-    force_R_self::FT = zero(FT)      # the same with the plasma's own field (hoop force) [N]
-    force_Z_self::FT = zero(FT)
+    force_R_pla::FT = zero(FT)      # the same with the plasma's own field (hoop force) [N]
+    force_Z_pla::FT = zero(FT)
     force_R_pressure::FT = zero(FT)  # −∫ ∂p/∂R dV over the column: tire tube less edge pressure [N]
     force_R_toroidal::FT = zero(FT)  # toroidal-field closure (μ0 I²/4)(β_p − 1) [N]
     Bv_to_add::FT = zero(FT)         # uniform B_Z that cancels the net radial force estimate [T]
@@ -238,15 +238,21 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     BR::Matrix{FT} = zeros(FT, dims_RZ)             # Radial magnetic field
     BZ::Matrix{FT} = zeros(FT, dims_RZ)             # Vertical magnetic field
     B_pol::Matrix{FT} = zeros(FT, dims_RZ)          # Poloidal magnetic field magnitude
-    BR_self::Matrix{FT} = zeros(FT, dims_RZ)        # Self-consistent BR
-    BZ_self::Matrix{FT} = zeros(FT, dims_RZ)        # Self-consistent BZ
+    BR_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)   # of the coils (walls included) and the plasma together
+    BZ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)
+    BR_pla::Matrix{FT} = zeros(FT, dims_RZ)         # of the plasma alone, from the stored Jϕ
+    BZ_pla::Matrix{FT} = zeros(FT, dims_RZ)
+    BR_coils::Matrix{FT} = zeros(FT, dims_RZ)       # of the coils alone, from their currents
+    BZ_coils::Matrix{FT} = zeros(FT, dims_RZ)
 
     # Electric field
     E_para_tot::Matrix{FT} = zeros(FT, dims_RZ)     # Total parallel electric field
     E_para_ext::Matrix{FT} = zeros(FT, dims_RZ)     # External parallel electric field
     mean_ExB_pol::Matrix{FT} = zeros(FT, dims_RZ)   # ExB drift magnitude
     Epol_self::Matrix{FT} = zeros(FT, dims_RZ)      # Self-consistent poloidal E-field
-    Eϕ_self::Matrix{FT} = zeros(FT, dims_RZ)        # Self-consistent toroidal E-field
+    Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)   # induced by the coils and the plasma over the last step
+    Eϕ_coils::Matrix{FT} = zeros(FT, dims_RZ)       # the coils' part, −ψ_coils(ΔI)/(R Δt); NaN without induction
+    Eϕ_pla::Matrix{FT} = zeros(FT, dims_RZ)         # the rest, Eϕ_coils_pla − Eϕ_coils (not −Δψ_pla/(R Δt)); NaN without induction
 
     # Current density
     Jϕ::Matrix{FT} = zeros(FT, dims_RZ)             # Toroidal current density
@@ -255,8 +261,12 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     # Magnetic flux
     ψ::Matrix{FT} = zeros(FT, dims_RZ)            # Total poloidal flux
     ψ_ext::Matrix{FT} = zeros(FT, dims_RZ)        # External poloidal flux
-    ψ_self::Matrix{FT} = zeros(FT, dims_RZ)       # Self-consistent poloidal flux
-    ψ_ctrl::Matrix{FT} = zeros(FT, dims_RZ)       # The vertical-field control's flux (ψ = ψ_ext + ψ_self + ψ_ctrl)
+    ψ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)  # of the coils and the plasma together, as solved
+    ψ_ctrl::Matrix{FT} = zeros(FT, dims_RZ)       # The vertical-field control's flux (ψ = ψ_ext + ψ_coils_pla + ψ_ctrl)
+    ψ_pla::Matrix{FT} = zeros(FT, dims_RZ)        # of the plasma alone, from the stored Jϕ
+    ψ_coils::Matrix{FT} = zeros(FT, dims_RZ)      # of the coils alone, from their currents
+    ψ_closure_abs::FT = zero(FT)                  # ‖ψ_coils_pla − ψ_pla − ψ_coils‖∞ [Wb/rad]
+    ψ_closure_rel::FT = zero(FT)                  # the same over max(ψ_floor, ‖ψ_coils_pla‖∞, ‖ψ_pla‖∞ + ‖ψ_coils‖∞)
 
     # The closed region: field-line following's closed in-wall nodes (1, else 0), and its magnetic
     # axis and LCFS (`closed_region_lcfs`; measured as NaN without one)

@@ -31,9 +31,9 @@ end
 # the forces the target cancels, control left out, from the parts that `_column_forces` and the 0D
 # snapshot both carry: radial by the target, vertical the magnetic forces either way
 _target_force_R(::ReducedForceTarget, col) =
-    col.force_R_ext + col.force_R_coils + col.force_R_self + col.force_R_pressure + col.force_R_toroidal
-_target_force_R(::MagneticForceTarget, col) = col.force_R_ext + col.force_R_coils + col.force_R_self
-_target_force_Z(col) = col.force_Z_ext + col.force_Z_coils + col.force_Z_self
+    col.force_R_ext + col.force_R_coils + col.force_R_pla + col.force_R_pressure + col.force_R_toroidal
+_target_force_R(::MagneticForceTarget, col) = col.force_R_ext + col.force_R_coils + col.force_R_pla
+_target_force_Z(col) = col.force_Z_ext + col.force_Z_coils + col.force_Z_pla
 
 # the coefficients from A a = −F₀: the uniform field alone, or both bases jointly
 function _target_coefficients(::UniformVerticalField, F₀, A, policy)

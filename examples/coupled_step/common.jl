@@ -181,7 +181,7 @@ function default_vs_direct(make; nsteps)
         isnothing(picard) || (RP.flags.ampere_picard = PicardSettings{Float64}(; picard...))
         RP.t_end_s = nsteps * RP.dt
         I, E = Float64[], Matrix{Float64}[]
-        record(rp) = (push!(I, plasma_current(rp, current_density(rp))); push!(E, copy(rp.fields.Eϕ_self)))
+        record(rp) = (push!(I, plasma_current(rp, current_density(rp))); push!(E, copy(rp.fields.Eϕ_coils_pla)))
         quiet(() -> run_simulation!(RP; callback_after_step = record))
         (; RP, I, E, stats = deepcopy(RP.diagnostics.ampere_picard))
     end
@@ -202,17 +202,17 @@ function picard_error_by_iteration(make; Lmax = 30)
     RAPID2D.update_transport_quantities!(RP)
     prepare_timestep!(RP)
     saved = (
-        u = copy(pla.ue_para), ψ = copy(F.ψ_self), E = copy(F.Eϕ_self), Ep = copy(F.Eϕ_self_prev),
+        u = copy(pla.ue_para), ψ = copy(F.ψ_coils_pla), E = copy(F.Eϕ_coils_pla), Ep = copy(F.Eϕ_coils_pla_prev),
         I = csys.n_total > 0 ? copy(get_all_currents(csys)) : Float64[],
         Φ = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : Float64[], t = csys.time_s,
     )
     function trial(; kw...)
-        pla.ue_para .= saved.u; F.ψ_self .= saved.ψ; F.Eϕ_self .= saved.E; F.Eϕ_self_prev .= saved.Ep
+        pla.ue_para .= saved.u; F.ψ_coils_pla .= saved.ψ; F.Eϕ_coils_pla .= saved.E; F.Eϕ_coils_pla_prev .= saved.Ep
         if csys.n_total > 0
             set_all_currents!(csys, copy(saved.I)); csys.coils.ψ_pla = copy(saved.Φ); csys.time_s = saved.t
         end
         quiet(() -> RAPID2D.solve_combined_momentum_Ampere_equations_with_coils!(RP; kw...))
-        return copy(F.Eϕ_self)
+        return copy(F.Eϕ_coils_pla)
     end
     E_star = trial(; DIRECT_PICARD...)
     err(method, L) = maximum(abs, trial(; method, tolerance = 0.0, max_iter = L, E_floor = 0.0, I_floor = 0.0) .- E_star)

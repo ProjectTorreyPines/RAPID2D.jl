@@ -1824,10 +1824,10 @@ end
     end
     s = RP.operators.ΔGS_solver
     @test s.nfactor == 1 && s.nsymbolic == 1         # the matrix never changes: one LU for the run
-    @test vec(RP.fields.ψ_self) ≈ RP.operators.ΔGS.matrix \ vec(RP.operators.RHS) rtol = 1.0e-12
+    @test vec(RP.fields.ψ_coils_pla) ≈ RP.operators.ΔGS.matrix \ vec(RP.operators.RHS) rtol = 1.0e-12
 end
 
-@testitem "Ampère: without the coupled solve, Eϕ_self is the change of ψ over one step" begin
+@testitem "Ampère: without the coupled solve, Eϕ_coils_pla is the change of ψ over one step" begin
     using RAPID2D: solve_Ampere_equation!
     # Ampère runs every step, so the induced field is −Δψ/(R Δt). It used to be divided by
     # Ampere_nstep Δt, ten times too small, a leftover of solving Ampère every nstep steps.
@@ -1843,12 +1843,12 @@ end
     RP.plasma.Jϕ .= 0.0
     RP.plasma.Jϕ[G.nodes.in_wall_nids] .= 1.0e4 .* exp.(-(vec(G.Z2D)[G.nodes.in_wall_nids] ./ 0.3) .^ 2)
     solve_Ampere_equation!(RP)
-    ψ_before = copy(RP.fields.ψ_self)
+    ψ_before = copy(RP.fields.ψ_coils_pla)
     RP.plasma.Jϕ .*= 1.1
     solve_Ampere_equation!(RP)
 
     @test RP.flags.Ampere_nstep != 1                 # so the old divisor would show
-    @test RP.fields.Eϕ_self ≈ -(RP.fields.ψ_self .- ψ_before) ./ (G.R2D .* RP.dt) rtol = 1.0e-12
+    @test RP.fields.Eϕ_coils_pla ≈ -(RP.fields.ψ_coils_pla .- ψ_before) ./ (G.R2D .* RP.dt) rtol = 1.0e-12
 end
 
 @testitem "Ampère: the combined momentum–Ampère system is factorized once per step, not per Picard iteration" begin
@@ -1878,5 +1878,5 @@ end
         solve_combined_momentum_Ampere_equations_with_coils!(RP; tolerance = 1.0e-300, max_iter = 4)
     end
     @test RP.operators.uψ_solver.nfactor == nsteps  # 4 iterations per step, one factorization each step
-    @test all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_self)
+    @test all(isfinite, RP.plasma.ue_para) && all(isfinite, RP.fields.ψ_coils_pla)
 end

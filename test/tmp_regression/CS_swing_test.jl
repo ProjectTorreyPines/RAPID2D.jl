@@ -31,7 +31,7 @@ function run_CS_swing(verbose::Bool = false)
     setup_plasma!(RP; verbose)
     setup_external_coils!(RP; verbose)
 
-    RAPID2D.solve_Ampere_equation!(RP; update_Eϕ_self = false)
+    RAPID2D.solve_Ampere_equation!(RP; update_Eϕ_coils_pla = false)
 
     combine_external_and_self_fields!(RP)
     update_transport_quantities!(RP)
@@ -121,9 +121,9 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     fill!(RP.fields.BZ, 0.0)
     fill!(RP.fields.BR_ext, 0.0)
     fill!(RP.fields.BZ_ext, 0.0)
-    # and their flux: field-line following traces ψ = ψ_ext + ψ_self
+    # and their flux: field-line following traces ψ = ψ_ext + ψ_coils_pla
     fill!(RP.fields.ψ_ext, 0.0)
-    @. RP.fields.ψ = RP.fields.ψ_self
+    @. RP.fields.ψ = RP.fields.ψ_coils_pla
 
     # Set Jacobian for toroidal geometry
     @. RP.G.Jacob = RP.G.R2D

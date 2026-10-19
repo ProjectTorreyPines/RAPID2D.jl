@@ -497,17 +497,19 @@ Fields include components of the magnetic and electric fields.
     ψ_ctrl::Matrix{FT} = zeros(FT, dims)        # [Wb/rad]
     Eϕ_ctrl::Matrix{FT} = zeros(FT, dims)       # induced by ψ_ctrl's change over the step [V/m]
 
-    # Self-generated fields
-    BR_self::Matrix{FT} = zeros(FT, dims)       # Self-generated radial magnetic field [T]
-    BZ_self::Matrix{FT} = zeros(FT, dims)       # Self-generated vertical magnetic field [T]
-    ψ_self::Matrix{FT} = zeros(FT, dims)      # Flux of the currents RAPID2D solves for: plasma and coils [Wb/rad]
-    Eϕ_self::Matrix{FT} = zeros(FT, dims)       # Field induced by ψ_self's change; below the Ampère gate, the coils' alone [V/m]
-    Eϕ_self_prev::Matrix{FT} = zeros(FT, dims)   # Previous self-generated toroidal electric field [V/m]
+    # The fields of the currents RAPID2D solves for, coils (walls included) and plasma together: the
+    # state the coupled solve carries. Each source alone is computed on demand (plasma_flux_on_grid,
+    # coil_flux_on_grid) and written to the 2D snapshots.
+    BR_coils_pla::Matrix{FT} = zeros(FT, dims)       # [T]
+    BZ_coils_pla::Matrix{FT} = zeros(FT, dims)       # [T]
+    ψ_coils_pla::Matrix{FT} = zeros(FT, dims)        # [Wb/rad]
+    Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims)       # induced by ψ_coils_pla's change over the step; below the Ampère gate, the coils' alone [V/m]
+    Eϕ_coils_pla_prev::Matrix{FT} = zeros(FT, dims)  # the same, one step before [V/m]
     Epol_self::Matrix{FT} = zeros(FT, dims)       # Self-generated poloidal electric field [V/m]
     E_para_self_ES::Matrix{FT} = zeros(FT, dims) # Electrostatic self-generated parallel electric field [V/m]
     E_para_self_EM::Matrix{FT} = zeros(FT, dims) # Electromagnetic self-generated parallel electric field [V/m]
 
-    # Total fields - external + self-generated
+    # Total fields: prescribed + coils and plasma (+ vertical-field control)
     BR::Matrix{FT} = zeros(FT, dims)            # Total radial magnetic field [T]
     BZ::Matrix{FT} = zeros(FT, dims)            # Total vertical magnetic field [T]
     Bϕ::Matrix{FT} = zeros(FT, dims)            # Toroidal magnetic field [T]
@@ -1335,7 +1337,7 @@ Contains boolean flags that control various aspects of the simulation.
     )
 
     # Numerical settings
-    Ampere_nstep::Int = 10                    # Not used: Ampère runs every step and Eϕ_self is the change over one step
+    Ampere_nstep::Int = 10                    # Not used: Ampère runs every step and Eϕ_coils_pla is the change over one step
     FLF_nstep::Int = 10                       # Steps between field line following updates
     field_line_tracer::FieldLineTracer = MarchingSquaresTracer()   # how field-line following traces: `numerics/field_lines/field_line_tracer_policies.jl`
     closed_surface_flow::ClosedSurfaceFlow = FreeParallelFlow()   # how electrons flow on closed surfaces: `numerics/field_lines/closed_surface_flux_types.jl`

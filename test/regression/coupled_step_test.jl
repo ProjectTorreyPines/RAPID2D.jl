@@ -155,7 +155,7 @@ end
 
 @testitem "Coupled step: a pre-charged loop induces nothing" tags = [:regression] setup = [CoupledStepSetup] begin
     # A column at rest, no loop voltage, beside a superconducting loop that already carries
-    # 1 kA. Nothing changes, so nothing is induced. The loop's flux must be in ψ_self from the
+    # 1 kA. Nothing changes, so nothing is induced. The loop's flux must be in ψ_coils_pla from the
     # start; otherwise the first step reads its appearance as a sudden flux change and the
     # column screens it.
     RP = column(; E0 = 0.0, t_end = 0.1e-3)
@@ -451,8 +451,8 @@ end
             RP; after = rp -> begin
                 push!(rec.I, plasma_current(rp, current_density(rp)))
                 push!(rec.u, copy(rp.plasma.ue_para))
-                push!(rec.ψ, copy(rp.fields.ψ_self))
-                push!(rec.E, copy(rp.fields.Eϕ_self))
+                push!(rec.ψ, copy(rp.fields.ψ_coils_pla))
+                push!(rec.E, copy(rp.fields.Eϕ_coils_pla))
             end
         )
         return rec, RP
@@ -497,7 +497,7 @@ end
     @test gated.Ic == open.Ic
     @test gated.ψc == open.ψc
     @test gated.tc == open.tc
-    @test RPg.fields.ψ_self == RPo.fields.ψ_self
+    @test RPg.fields.ψ_coils_pla == RPo.fields.ψ_coils_pla
 end
 
 @testitem "Coupled step: a crossing taken outside run_simulation! keeps the coils' memory unset until the coupled solve" tags = [:regression] setup = [CoupledStepSetup] begin
@@ -596,6 +596,6 @@ end
     @test abs(plasma_current(whole, current_density(whole))) > 1.0   # it crossed the gate
     @test split.step == whole.step
     @test split.plasma.ue_para == whole.plasma.ue_para
-    @test split.fields.ψ_self == whole.fields.ψ_self
-    @test split.fields.Eϕ_self == whole.fields.Eϕ_self
+    @test split.fields.ψ_coils_pla == whole.fields.ψ_coils_pla
+    @test split.fields.Eϕ_coils_pla == whole.fields.Eϕ_coils_pla
 end

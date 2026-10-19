@@ -52,7 +52,7 @@
         pla.ni[ring] .= n_out
         fill!(pla.Te_eV, T)
         fill!(pla.Ti_eV, T)
-        ampere && solve_Ampere_equation!(RP; update_Eϕ_self = false)
+        ampere && solve_Ampere_equation!(RP; update_Eϕ_coils_pla = false)
         area = length(disc) * G.dR * G.dZ
         return RP, (; I, area, a = sqrt(area / π), p0 = RP.config.constants.ee * n * 2T)
     end
@@ -78,8 +78,8 @@ end
     @test fb.pressure_column_share ≈ 1
     # the plasma's own field gives the hoop force of a ring, (μ0 I²/2)(ln(8R/a) − 1 + l_i/2)
     hoop = μ0 * d.I^2 / 2 * (log(8R0 / d.a) - 1 + fb.li / 2)
-    @test fb.force_R_self ≈ hoop rtol = 0.02
-    @test abs(fb.force_Z_self) < 1.0e-2 * abs(fb.force_R_self)     # an isolated ring: no vertical self-force
+    @test fb.force_R_pla ≈ hoop rtol = 0.02
+    @test abs(fb.force_Z_pla) < 1.0e-2 * abs(fb.force_R_pla)     # an isolated ring: no vertical self-force
     @test fb.force_R_pressure ≈ 2π * d.p0 * d.area rtol = 1.0e-10
     @test fb.force_R_toroidal ≈ μ0 * d.I^2 / 4 * (fb.beta_p - 1)
     @test fb.force_R_coils == 0 && fb.force_Z_coils == 0          # no coils
@@ -129,7 +129,7 @@ end
     RP, _ = current_disc(; coil_current = 5.0e3)
     without, with = column_force_balance(RP0), column_force_balance(RP)
     @test with.li == without.li
-    @test with.force_R_self == without.force_R_self
+    @test with.force_R_pla == without.force_R_pla
     # a loop 1.4 m away is nearly uniform over the disc: 2πR I B_Z,coil at the centroid
     G = RP.G
     BR, BZ = zeros(G.NR, G.NZ), zeros(G.NR, G.NZ)
@@ -211,10 +211,10 @@ end
     # themselves (the two sums run in different orders)
     @test fb.I_closed ≈ d.I
     @test fb.Bv_to_add_closed ≈ fb.Bv_to_add atol = 1.0e-10 * abs(B0)
-    @test fb.force_Z_on_closed ≈ fb.force_Z_ext + fb.force_Z_coils + fb.force_Z_self atol = 1.0e-10 * μ0 * d.I^2 / 4
+    @test fb.force_Z_on_closed ≈ fb.force_Z_ext + fb.force_Z_coils + fb.force_Z_pla atol = 1.0e-10 * μ0 * d.I^2 / 4
     # the ion mass on the disc, and the times to close the gap at constant force
     G = RP.G
-    F_R = fb.force_R_ext + fb.force_R_coils + fb.force_R_self + fb.force_R_pressure + fb.force_R_toroidal
+    F_R = fb.force_R_ext + fb.force_R_coils + fb.force_R_pla + fb.force_R_pressure + fb.force_R_toroidal
     @test fb.column_mass ≈ bulk_ion_mass(RP) * 1.0e19 * 2π * R0 * d.area rtol = 1.0e-10
     @test fb.t_wall_inertial ≈ sqrt(2 * fb.column_mass * fb.wall_gap_R / abs(F_R))
     @test fb.nu_in_column == 0 && fb.t_wall_drag == 0                 # no gas, no drag
@@ -272,7 +272,7 @@ end
     # coils' field is NaN (and nothing tries to solve for it)
     RP_noamp, _ = current_disc(; ampere = false, coil_current = 5.0e3)
     fb_noamp = column_force_balance(RP_noamp)
-    @test isnan(fb_noamp.li) && isnan(fb_noamp.force_R_self) && isnan(fb_noamp.Bv_to_add)
+    @test isnan(fb_noamp.li) && isnan(fb_noamp.force_R_pla) && isnan(fb_noamp.Bv_to_add)
     @test isnan(fb_noamp.force_R_coils)
     @test isfinite(fb_noamp.R_cen_by_Jϕ) && fb_noamp.force_R_ext == 0
     # below the current threshold, nothing

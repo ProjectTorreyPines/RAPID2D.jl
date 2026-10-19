@@ -38,7 +38,7 @@
         G, F, pla = RP.G, RP.fields, RP.plasma
         @. F.ψ_ext = C_PSI * ((G.R2D - R0)^2 + ((G.Z2D - Z0) / κ)^2)
         RAPID2D.calculate_B_from_ψ!(G, F.ψ_ext, F.BR_ext, F.BZ_ext)
-        fill!(F.ψ_self, 0.0); fill!(F.BR_self, 0.0); fill!(F.BZ_self, 0.0)
+        fill!(F.ψ_coils_pla, 0.0); fill!(F.BR_coils_pla, 0.0); fill!(F.BZ_coils_pla, 0.0)
         RAPID2D.combine_external_and_self_fields!(RP)
         pla.ne .= density.(G.R2D, G.Z2D, α) .* (G.nodes.state .> 0.5)
         pla.ni .= pla.ne

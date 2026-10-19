@@ -24,6 +24,7 @@ Add a new coil to the system and update internal indices.
 function add_coil!(csys::CoilSystem{FT}, coil::Coil{FT}) where {FT <: AbstractFloat}
     push!(csys.coils, coil)
     csys.n_total += 1
+    push!(csys.ΔI_step, zero(FT))     # no change over a step it was not in
 
     if coil.is_powered
         csys.n_powered += 1

@@ -47,8 +47,9 @@ end
 
 The magnetic axis and LCFS of the closed region, `(; ψ_axis, ψ_lcfs, R, Z)`: the constraint
 basis's when there is one, else the same construction (`closed_surface_basis`: the O-point and
-the outermost level the bicubic tracer closes around it inside the wall) from the closed in-wall
-nodes. `nothing` without a single closed region. The 2D snapshots carry it.
+the outermost level the bicubic tracer closes around it inside the wall) from the admissible
+closed nodes (`closed_surface_admissible`: in the wall, density above `CLOSED_SURFACE_N_FLOOR`).
+`nothing` without a single closed region. The 2D snapshots carry it.
 """
 function closed_region_lcfs(RP::RAPID{FT}) where {FT <: AbstractFloat}
     b = RP.closed_surface.basis
