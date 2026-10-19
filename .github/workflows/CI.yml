@@ -46,14 +46,21 @@ jobs:
           # runner at 93 % memory and was not faster. precompile_tasks lower on macOS
           # (7 GB runner swap-storms). Coverage on ubuntu only: concurrent codecov uploads
           # race the merge and undercount.
+          # memory_threshold: ReTestItems replaces a worker before the next testitem above it.
+          # The three-worker ubuntu runner peaks at 95-98 % (workers keep what they allocated)
+          # and was once terminated there; 0.9 recycles a worker first. macOS reports ~99 % in
+          # use from the start (memory it holds, not what the tests use), so a threshold there
+          # restarts a worker before every testitem: it keeps ReTestItems' default.
           - os: ubuntu-latest
             nworkers: 3
             precompile_tasks: 4
             coverage: true
+            memory_threshold: '0.9'
           - os: macos-latest
             nworkers: 2
             precompile_tasks: 2
             coverage: false
+            memory_threshold: '0.99'
 
     steps:
       - uses: actions/checkout@v4
@@ -85,6 +92,7 @@ jobs:
           GKSwstype: 100  # disable graphics output during tests
           RAPID_RUN_REGRESSION: 'true'  # also run the :regression testitems
           RETESTITEMS_RETRIES: '0'  # fail fast; don't let a retry mask a flaky item
+          RETESTITEMS_MEMORY_THRESHOLD: ${{ matrix.memory_threshold }}
           JULIA_NUM_PRECOMPILE_TASKS: ${{ matrix.precompile_tasks }}
 
       - uses: julia-actions/julia-processcoverage@v1
