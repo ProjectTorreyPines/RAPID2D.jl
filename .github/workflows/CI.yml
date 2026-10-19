@@ -46,10 +46,19 @@ jobs:
           # runner at 93 % memory and was not faster. precompile_tasks lower on macOS
           # (7 GB runner swap-storms). Coverage on ubuntu only: concurrent codecov uploads
           # race the merge and undercount.
+          # Two workers on ubuntu too: three peaked at 95-98 % of the runner's memory (each
+          # worker keeps up to ~40 %) and were once terminated. A memory threshold is no way out:
+          # ReTestItems replaces a worker with SIGTERM, which loses that worker's coverage, and
+          # macOS reports ~99 % in use from the start. macOS stays the longer job.
+          # heap_size_hint (JULIA_HEAP_SIZE_HINT, which Pkg.test and every worker inherit): without
+          # it each process's GC grows its heap as if it had the runner to itself, and two workers
+          # reached 56 % and 37 % (97.7 % in use) before the runner was shut down. A quarter of the
+          # runner per process makes the GC collect first; no worker is killed. Unset on macOS.
           - os: ubuntu-latest
-            nworkers: 3
+            nworkers: 2
             precompile_tasks: 4
             coverage: true
+            heap_size_hint: '25%'
           - os: macos-latest
             nworkers: 2
             precompile_tasks: 2
@@ -86,6 +95,7 @@ jobs:
           RAPID_RUN_REGRESSION: 'true'  # also run the :regression testitems
           RETESTITEMS_RETRIES: '0'  # fail fast; don't let a retry mask a flaky item
           JULIA_NUM_PRECOMPILE_TASKS: ${{ matrix.precompile_tasks }}
+          JULIA_HEAP_SIZE_HINT: ${{ matrix.heap_size_hint }}  # empty = Julia's default
 
       - uses: julia-actions/julia-processcoverage@v1
         if: ${{ matrix.coverage }}

@@ -488,7 +488,14 @@ Fields include components of the magnetic and electric fields.
     LV_ext::Matrix{FT} = zeros(FT, dims)        # External Loop Voltage [V]
     ψ_ext::Matrix{FT} = zeros(FT, dims)         # Prescribed flux: field files or the manual setup, not solved [Wb/rad]
     Eϕ_ext::Matrix{FT} = zeros(FT, dims)        # External toroidal electric field [V/m]
-    E_para_ext::Matrix{FT} = zeros(FT, dims)    # External parallel electric field [V/m]
+    E_para_ext::Matrix{FT} = zeros(FT, dims)    # External parallel electric field [V/m]; with vertical-field control, (Eϕ_ext + Eϕ_ctrl) bϕ
+
+    # The vertical-field control's vacuum field (`IdealVerticalFieldControl`), added to the total
+    # only when the run has one
+    BR_ctrl::Matrix{FT} = zeros(FT, dims)       # [T]
+    BZ_ctrl::Matrix{FT} = zeros(FT, dims)       # [T]
+    ψ_ctrl::Matrix{FT} = zeros(FT, dims)        # [Wb/rad]
+    Eϕ_ctrl::Matrix{FT} = zeros(FT, dims)       # induced by ψ_ctrl's change over the step [V/m]
 
     # Self-generated fields
     BR_self::Matrix{FT} = zeros(FT, dims)       # Self-generated radial magnetic field [T]
@@ -1332,6 +1339,7 @@ Contains boolean flags that control various aspects of the simulation.
     FLF_nstep::Int = 10                       # Steps between field line following updates
     field_line_tracer::FieldLineTracer = MarchingSquaresTracer()   # how field-line following traces: `numerics/field_lines/field_line_tracer_policies.jl`
     closed_surface_flow::ClosedSurfaceFlow = FreeParallelFlow()   # how electrons flow on closed surfaces: `numerics/field_lines/closed_surface_flux_types.jl`
+    vertical_field_control::VerticalFieldControl = NoVerticalFieldControl()   # an ideal external vertical field holding the column: `control/ideal_vertical_field_types.jl`
     Implicit::Bool = true                     # Use implicit methods
     # θ of the θ-scheme, one per family of terms, split by the sign and stiffness
     # of the operator — see `ImplicitWeights`. Replaces the single `Implicit_weight`
@@ -1642,6 +1650,8 @@ mutable struct RAPID{FT <: AbstractFloat}
 
     coil_system::CoilSystem{FT} # Placeholder for coil data, to be defined later
 
+    vertical_field_control::VerticalFieldControlState{FT}  # the vertical-field control's coefficients and ledger
+
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT <: AbstractFloat}
         # Get grid dimensions
@@ -1693,7 +1703,8 @@ mutable struct RAPID{FT <: AbstractFloat}
             prev_n, reactions, tElap, diagnostics,
             flf, closed_surface,
             snap0D_path, snap2D_path,
-            coil_system
+            coil_system,
+            VerticalFieldControlState{FT}(),
         )
     end
 end

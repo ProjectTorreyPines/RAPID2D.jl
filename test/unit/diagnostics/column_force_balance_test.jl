@@ -12,10 +12,11 @@
     elongation `κ`, its long axis `tilt` from Z) at (R0, Z0), with nₑ = nᵢ = `n` and Tₑ = Tᵢ = `T` on it and `n_out` in a ring
     out to 1.6 a, in the uniform external B_Z = `B0`; the self field solved from the current.
     `coil_current`: one passive loop outside the grid at R = 3 m carrying it. `ampere = false`
-    leaves the run without the boundary Green function and the self field."
+    leaves the run without the boundary Green function and the self field. `control`: the
+    vertical-field control policy the run is set up with."
     function current_disc(;
             I = -1.0e4, B0 = 0.0, n = 1.0e19, T = 10.0, a = 0.205, κ = 1.0, tilt = 0.0, n_out = 0.0,
-            coil_current = nothing, ampere = true,
+            coil_current = nothing, ampere = true, control = RAPID2D.NoVerticalFieldControl(),
         )
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = B0),
@@ -24,6 +25,7 @@
         )
         RP = RAPID{Float64}(config)
         RP.flags.Ampere = ampere                # builds the boundary Green function the self field needs
+        RP.flags.vertical_field_control = control
         initialize!(RP)
         if coil_current !== nothing
             add_coil!(

@@ -172,6 +172,7 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     initialize_snapshots_IO!(RP)
 
     initialize_coil_system!(RP)
+    refuse_unsupported_vertical_field_control(RP)
 
     # Set initial time
     RP.time_s = RP.t_start_s
@@ -180,6 +181,7 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     output_prefix = joinpath(RP.config.Output_path, RP.config.Output_prefix)
     write_to_adiosBP!(output_prefix * "config.bp", RP.config)
     write_to_adiosBP!(output_prefix * "grid.bp", RP.G)
+    write_to_adiosBP!(output_prefix * "wall.bp", RP.wall)       # the wall polygon, for plots
 
     return RP
 end

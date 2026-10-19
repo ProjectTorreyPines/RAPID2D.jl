@@ -88,7 +88,8 @@ end
 
 Set the inputs of the next step from the current state and time tⁿ, leaving the state itself
 unchanged: reset the per-step reaction counts, evaluate the external fields at `RP.time_s`,
-and compute `Jϕ` from the densities and velocities.
+compute `Jϕ` from the densities and velocities, and, with `IdealVerticalFieldControl`, update
+the control field and combine the fields (`update_vertical_field_control!`).
 """
 function prepare_timestep!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "prepare_timestep!" begin
@@ -104,6 +105,13 @@ function prepare_timestep!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # Current calculations
         @timeit RAPID_TIMER "current_calculation" update_Jϕ!(RP)
+
+        # the ideal vertical-field control from the state at tⁿ, combined before the step solves;
+        # Jϕ again on the field it moved
+        if RP.flags.vertical_field_control isa IdealVerticalFieldControl
+            @timeit RAPID_TIMER "vertical_field_control" update_vertical_field_control!(RP)
+            update_Jϕ!(RP)
+        end
     end
     return RP
 end
@@ -237,6 +245,8 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
             update_neutral_H2_gas_density!(RP)
         end
 
+        # the vertical-field control's work over the accepted step, before the snapshots see it
+        book_vertical_field_control_work!(RP)
     end
     return RP
 end

@@ -73,12 +73,21 @@ Calculate the parallel electric field based on external and self-generated field
 """
 function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     F = RP.fields
-    # external parallel electric field
-    @. F.E_para_ext = F.Eϕ_ext * F.bϕ
+    # external parallel electric field: the prescribed one, and the vertical-field control's
+    control = RP.flags.vertical_field_control isa IdealVerticalFieldControl
+    if control
+        @. F.E_para_ext = (F.Eϕ_ext + F.Eϕ_ctrl) * F.bϕ
+    else
+        @. F.E_para_ext = F.Eϕ_ext * F.bϕ
+    end
 
-    # self parallel electric field
+    # self parallel electric field, against the applied loop voltage
     if RP.flags.E_para_self_ES
-        @. F.E_para_self_ES = sign(-F.Eϕ_ext * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+        if control
+            @. F.E_para_self_ES = sign(-(F.Eϕ_ext + F.Eϕ_ctrl) * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+        else
+            @. F.E_para_self_ES = sign(-F.Eϕ_ext * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+        end
     end
     if RP.flags.E_para_self_EM
         @. F.E_para_self_EM = F.Eϕ_self * F.bϕ
@@ -153,6 +162,13 @@ function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT = RP.time_s
         @. F.BZ = F.BZ_ext + F.BZ_self
         @. F.Eϕ = F.Eϕ_ext + F.Eϕ_self
         @. F.ψ = F.ψ_ext + F.ψ_self
+        # the vertical-field control's vacuum field, only in a run that has one
+        if RP.flags.vertical_field_control isa IdealVerticalFieldControl
+            F.BR .+= F.BR_ctrl
+            F.BZ .+= F.BZ_ctrl
+            F.Eϕ .+= F.Eϕ_ctrl
+            F.ψ .+= F.ψ_ctrl
+        end
 
         # Update derived magnetic field quantities (Bpol, Btot, unit b vector)
         calculate_derived_magnetic_field_quantities!(RP)
