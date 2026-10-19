@@ -58,9 +58,9 @@ end
         @. RP.plasma.ne = 1.0e6 * exp(-((G.R2D - 0.3)^2 / 5.0e-4 + G.Z2D^2 / 2.0e-3))
         RP.plasma.ne[G.nodes.on_out_wall_nids] .= 0.0
         RP.plasma.ue_para .= 1.0e6          # nonzero OUTSIDE the wall too
-        RP.fields.BR_ext .= 10.0e-4
-        RP.fields.BZ_ext .= 20.0e-4
-        RAPID2D.combine_external_and_self_fields!(RP)
+        RP.fields.BR_presc .= 10.0e-4
+        RP.fields.BZ_presc .= 20.0e-4
+        RAPID2D.combine_field_sources!(RP)
         return RP
     end
 end

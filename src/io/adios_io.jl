@@ -358,6 +358,10 @@ end
 const RENAMED_SNAPSHOT_FIELDS = Dict(
     "ψ_self" => "ψ_coils_pla", "BR_self" => "BR_coils_pla", "BZ_self" => "BZ_coils_pla",
     "Eϕ_self" => "Eϕ_coils_pla", "force_R_self" => "force_R_pla", "force_Z_self" => "force_Z_pla",
+    "ψ_ext" => "ψ_presc", "LV_ext" => "LV_presc", "E_para_ext" => "E_para_presc",
+    "Epara_ext" => "Epara_presc", "force_R_ext" => "force_R_presc", "force_Z_ext" => "force_Z_presc",
+    "BZ_ext_at_cen_by_Jϕ" => "BZ_presc_at_cen_by_Jϕ", "BR_ext_at_cen_by_Jϕ" => "BR_presc_at_cen_by_Jϕ",
+    "coils_V_ext" => "coils_V_applied",
 )
 
 """

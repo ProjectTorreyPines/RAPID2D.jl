@@ -1670,7 +1670,7 @@ Updates ψ_coils_pla, and optionally Eϕ_coils_pla.
 
 # Keyword Arguments
 - `plasma::Bool=true`: Include plasma current density (Jϕ) in the source term
-- `coils::Bool=true`: Include external coil current contributions to the source term
+- `coils::Bool=true`: Include the coils' currents in the source term
 """
 function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT} = RP.fields; plasma::Bool = true, coils::Bool = true, update_Eϕ_coils_pla::Bool = true) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "solve_Ampere_equation" begin
@@ -1773,7 +1773,7 @@ end
     set_Eϕ_coils_pla_from_coils!(RP, ΔI)
 
 Below the Ampère gate, set the induced field to the coils' alone, Eϕ_coils_pla = −ψ_coils(ΔI)/(R Δt)
-with ΔI their change over the step, and E∥ from it; the external part of E∥ stays as the last
+with ΔI their change over the step, and E∥ from it; the prescribed and control parts of E∥ stay as the last
 step projected it. There the plasma is not a source of induction: its own inductance is left
 out (unstable taken explicitly), and so is its flux in the coils (their reaction, fed back
 without L_p, is unstable); see `internal/docs/src/notes/design/coupled-step-coil-flux.md`
@@ -1786,7 +1786,7 @@ function set_Eϕ_coils_pla_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) w
     if RP.flags.E_para_self_EM
         @. F.E_para_self_EM = F.Eϕ_coils_pla * F.bϕ
     end
-    @. F.E_para_tot = F.E_para_ext + F.E_para_self_ES + F.E_para_self_EM
+    combine_E_para!(RP)
     return RP
 end
 
@@ -2032,11 +2032,14 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             accel_para_tilde .+= (one(FT) - θ_op) * (pops.A_diffu * pla.ue_para)
         end
 
-        # Electric field contributions: [(qe/me)* (E∥_ext + E∥_self_ES)]
+        # Electric field contributions: [(qe/me)* (E∥_presc (+ E∥_ctrl) + E∥_self_ES)]
         if flags.E_para_self_ES
-            @. accel_para_tilde += qe / me * (F.E_para_ext + F.E_para_self_ES)
+            @. accel_para_tilde += qe / me * (F.E_para_presc + F.E_para_self_ES)
         else
-            @. accel_para_tilde += qe / me * (F.E_para_ext)
+            @. accel_para_tilde += qe / me * (F.E_para_presc)
+        end
+        if _vertical_field_control_on(RP)
+            @. accel_para_tilde += qe / me * F.E_para_ctrl
         end
 
         # Effective electron collision frequency

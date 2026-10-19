@@ -29,10 +29,10 @@ function xpoint_field!(RP; R0, Z0, Bprime)
     G, F = RP.G, RP.fields
     x = G.R2D .- R0
     y = G.Z2D .- Z0
-    F.BR_ext .= Bprime .* y ./ G.R2D
-    F.BZ_ext .= Bprime .* x ./ G.R2D
-    F.ψ_ext .= Bprime / 2 .* (x .^ 2 .- y .^ 2)
-    RAPID2D.combine_external_and_self_fields!(RP)
+    F.BR_presc .= Bprime .* y ./ G.R2D
+    F.BZ_presc .= Bprime .* x ./ G.R2D
+    F.ψ_presc .= Bprime / 2 .* (x .^ 2 .- y .^ 2)
+    RAPID2D.combine_field_sources!(RP)
     RAPID2D.flf_analysis_field_lines_rz_plane!(RP)
     return RP
 end

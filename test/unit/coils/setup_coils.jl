@@ -6,7 +6,7 @@
 # `@testsetup module` but NOT `@testsnippet`, and dies.
 #
 # Everything here is a FACTORY FUNCTION, never a `const` instance: call sites mutate
-# `.current` / `.voltage_ext` on the coils they receive, so a shared mutable constant
+# `.current` / `.voltage_applied` on the coils they receive, so a shared mutable constant
 # would leak state across testitems.
 
 @testsnippet CoilFactories begin
@@ -15,19 +15,19 @@
     pf_coil(
         name; r = 2.5, z = 0.5, is_controllable = true,
         max_voltage = 1000.0, max_current = 50000.0,
-        current = 0.0, voltage_ext = 0.0
+        current = 0.0, voltage_applied = 0.0
     ) =
         Coil(
         (r = r, z = z), 0.01, 0.001, 1.0e-6, true, is_controllable, name,
-        max_voltage, max_current, current, voltage_ext
+        max_voltage, max_current, current, voltage_applied
     )
 
     # Canonical passive wall segment: area 0.005 m², R 10 mΩ, L 0.1 μH.
     # Never powered and never controllable, hence no current/voltage limits.
-    wall_coil(name; r = 2.01, z = 0.0, current = 0.0, voltage_ext = 0.0) =
+    wall_coil(name; r = 2.01, z = 0.0, current = 0.0, voltage_applied = 0.0) =
         Coil(
         (r = r, z = z), 0.005, 0.01, 1.0e-7, false, false, name,
-        nothing, nothing, current, voltage_ext
+        nothing, nothing, current, voltage_applied
     )
 end
 

@@ -3,21 +3,21 @@
 
     @testset "Voltage Function Evaluation" begin
         # Test constant voltage evaluation
-        @test evaluate_voltage_ext(500.0, 1.0) == 500.0
-        @test evaluate_voltage_ext(0.0, 5.0) == 0.0
+        @test evaluate_voltage_applied(500.0, 1.0) == 500.0
+        @test evaluate_voltage_applied(0.0, 5.0) == 0.0
 
         # Test function voltage evaluation
         linear_func = t -> 100.0 * t + 50.0
-        @test evaluate_voltage_ext(linear_func, 0.0) == 50.0
-        @test evaluate_voltage_ext(linear_func, 2.0) == 250.0
+        @test evaluate_voltage_applied(linear_func, 0.0) == 50.0
+        @test evaluate_voltage_applied(linear_func, 2.0) == 250.0
 
         sine_func = t -> 1000.0 * sin(2π * t)
-        @test evaluate_voltage_ext(sine_func, 0.0) ≈ 0.0 atol = 1.0e-10
-        @test evaluate_voltage_ext(sine_func, 0.25) ≈ 1000.0 atol = 1.0e-10
+        @test evaluate_voltage_applied(sine_func, 0.0) ≈ 0.0 atol = 1.0e-10
+        @test evaluate_voltage_applied(sine_func, 0.25) ≈ 1000.0 atol = 1.0e-10
     end
 
     @testset "Individual Coil Time-dependent Voltage" begin
-        coil_constant = pf_coil("constant"; r = 2.0, z = 0.0, voltage_ext = 750.0)
+        coil_constant = pf_coil("constant"; r = 2.0, z = 0.0, voltage_applied = 750.0)
 
         # Test constant voltage at different times
         @test get_coil_voltage_at_time(coil_constant, 0.0) == 750.0
@@ -26,7 +26,7 @@
 
         # Test function voltage
         ramp_func = t -> 200.0 * t + 100.0
-        coil_function = pf_coil("function"; r = 2.0, z = 0.0, voltage_ext = ramp_func)
+        coil_function = pf_coil("function"; r = 2.0, z = 0.0, voltage_applied = ramp_func)
 
         @test get_coil_voltage_at_time(coil_function, 0.0) == 100.0
         @test get_coil_voltage_at_time(coil_function, 1.0) == 300.0
@@ -42,10 +42,10 @@
         system = CoilSystem{FT}()
 
         # Add coils with different voltage types
-        coil1 = pf_coil("constant_coil"; voltage_ext = 400.0)
+        coil1 = pf_coil("constant_coil"; voltage_applied = 400.0)
 
         ramp_func = t -> 100.0 * t
-        coil2 = pf_coil("ramp_coil"; z = -0.5, is_controllable = false, voltage_ext = ramp_func)
+        coil2 = pf_coil("ramp_coil"; z = -0.5, is_controllable = false, voltage_applied = ramp_func)
 
         passive_coil = wall_coil("wall")
 
@@ -82,7 +82,7 @@
     @testset "Setting Voltage Functions" begin
         system = CoilSystem{FT}()
 
-        coil = pf_coil("test_coil"; z = 0.0, voltage_ext = 200.0)
+        coil = pf_coil("test_coil"; z = 0.0, voltage_applied = 200.0)
         passive_coil = wall_coil("wall")
 
         add_coil!(system, coil)
@@ -138,7 +138,7 @@
         system = CoilSystem{FT}()
 
         func_voltage = t -> 100.0 * t
-        coil = pf_coil("func_coil"; z = 0.0, voltage_ext = func_voltage)
+        coil = pf_coil("func_coil"; z = 0.0, voltage_applied = func_voltage)
 
         add_coil!(system, coil)
 

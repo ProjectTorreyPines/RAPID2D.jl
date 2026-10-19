@@ -25,7 +25,7 @@
         @test coil_powered.max_voltage == 1000.0
         @test coil_powered.max_current == 50000.0
         @test coil_powered.current == 100.0
-        @test coil_powered.voltage_ext == 500.0
+        @test coil_powered.voltage_applied == 500.0
 
         # Test passive coil
         coil_passive = Coil(
@@ -38,7 +38,7 @@
         @test coil_passive.max_voltage === nothing
         @test coil_passive.max_current === nothing
         @test coil_passive.current == -50.0
-        @test coil_passive.voltage_ext == 0.0
+        @test coil_passive.voltage_applied == 0.0
 
         # Test powered but not controllable coil
         coil_powered_nc = Coil(
@@ -165,17 +165,17 @@
     @testset "Vector Property Access" begin
         # Test getproperty and setproperty! for Vector{Coil}
         coils = [
-            pf_coil("PF1"; current = 100.0, voltage_ext = 200.0),
+            pf_coil("PF1"; current = 100.0, voltage_applied = 200.0),
             pf_coil(
                 "PF2"; z = -0.5, is_controllable = false, max_voltage = 800.0,
-                max_current = 40000.0, current = 150.0, voltage_ext = 300.0
+                max_current = 40000.0, current = 150.0, voltage_applied = 300.0
             ),
             wall_coil("wall"; current = -50.0),
         ]
 
         # Test getproperty
         @test coils.current == [100.0, 150.0, -50.0]
-        @test coils.voltage_ext == [200.0, 300.0, 0.0]
+        @test coils.voltage_applied == [200.0, 300.0, 0.0]
         @test length(coils.name) == 3
         @test coils.name == ["PF1", "PF2", "wall"]
 
@@ -184,8 +184,8 @@
         @test coils.current == [1000.0, 2000.0, -100.0]
 
         # Test setproperty! with scalar
-        coils.voltage_ext = 500.0
-        @test all(v == 500.0 for v in coils.voltage_ext)
+        coils.voltage_applied = 500.0
+        @test all(v == 500.0 for v in coils.voltage_applied)
 
         # Test error handling
         @test_throws DimensionMismatch coils.current = [1.0, 2.0]  # Wrong size

@@ -89,7 +89,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
 
     # Electric fields (density-weighted averages)
     snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
-    snap0D.Epara_ext = sum(@. F.E_para_ext * Ne2D) / total_Ne
+    snap0D.Epara_presc = sum(@. F.E_para_presc * Ne2D) / total_Ne
+    snap0D.Epara_ctrl = sum(@. F.E_para_ctrl * Ne2D) / total_Ne
     snap0D.Epara_self_ES = sum(@. F.E_para_self_ES * Ne2D) / total_Ne
     snap0D.Epara_self_EM = sum(@. F.E_para_self_EM * Ne2D) / total_Ne
 
@@ -236,7 +237,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
         coils = csys.coils
 
         snap0D.coils_I = coils.current
-        snap0D.coils_V_ext = get_all_voltages_at_time(csys)
+        snap0D.coils_V_applied = get_all_voltages_at_time(csys)
 
         # magnetic energy by coils [J]
         Φ_coils = (
@@ -377,13 +378,13 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     # Electric fields
     snap2D.E_para_tot .= F.E_para_tot
-    snap2D.E_para_ext .= F.E_para_ext
+    snap2D.E_para_presc .= F.E_para_presc
     snap2D.Epol_self .= F.Epol_self
     snap2D.Eϕ_coils_pla .= F.Eϕ_coils_pla
 
     # Loop voltages
-    snap2D.LV_ext .= F.LV_ext
-    @. snap2D.LV_tot = F.LV_ext + 2π * RP.G.R2D * (F.Eϕ_coils_pla + F.Eϕ_ctrl)
+    snap2D.LV_presc .= F.LV_presc
+    @. snap2D.LV_tot = F.LV_presc + 2π * RP.G.R2D * (F.Eϕ_coils_pla + F.Eϕ_ctrl)
 
     # Calculate ExB drift magnitude
     @. snap2D.mean_ExB_pol = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
@@ -404,7 +405,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     # Poloidal flux
     snap2D.ψ .= F.ψ
-    snap2D.ψ_ext .= F.ψ_ext
+    snap2D.ψ_presc .= F.ψ_presc
     snap2D.ψ_coils_pla .= F.ψ_coils_pla
     snap2D.ψ_ctrl .= F.ψ_ctrl
     measure_field_sources!(RP, snap2D)

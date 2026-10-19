@@ -111,8 +111,8 @@ end
         off_by = Float64[]
         run_simulation!(
             RP;
-            callback_before_step = rp -> fill!(rp.fields.BZ_ext, 0.123),
-            callback_after_step = rp -> push!(off_by, maximum(abs, rp.fields.BZ_ext .- 0.123)),
+            callback_before_step = rp -> fill!(rp.fields.BZ_presc, 0.123),
+            callback_after_step = rp -> push!(off_by, maximum(abs, rp.fields.BZ_presc .- 0.123)),
         )
         @test off_by == zeros(3)
     end

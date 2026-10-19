@@ -92,7 +92,7 @@
         # Test setting voltage for powered coil
         set_coil_voltage!(system, "PF1", 750.0)
         @test get_coil_voltage(system, "PF1") == 750.0
-        @test system.coils[1].voltage_ext == 750.0
+        @test system.coils[1].voltage_applied == 750.0
 
         # Test getting voltage for passive coil (should be 0)
         @test get_coil_voltage(system, "wall") == 0.0

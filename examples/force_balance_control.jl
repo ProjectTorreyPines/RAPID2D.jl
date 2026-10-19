@@ -10,7 +10,7 @@ include("common.jl")
 const R_BLOB, A_BLOB, N_BLOB = 1.3, 0.2, 1.0e16   # centre [m], radius [m], peak density [m⁻³]
 
 # BZ_ctrl = −ctrl_mag, BR_ctrl = ctrl_mag·sin(atan(Z/2, R − 0.01)); ctrl_mag = |Jϕ|-weighted
-# self-field at the column, times (1 − PID(R_cen)). Applied via BR_ext/BZ_ext, which the
+# self-field at the column, times (1 − PID(R_cen)). Applied via BR_presc/BZ_presc, which the
 # manual device leaves untouched, so the next step sees it in the total field.
 Base.@kwdef mutable struct CurvedBzControl
     target::Float64
@@ -40,8 +40,8 @@ function (c::CurvedBzControl)(RP::RAPID)
         c.prev_err = err
         ctrl_mag *= (1 - pid)
     end
-    @. F.BZ_ext = -ctrl_mag
-    @. F.BR_ext = ctrl_mag * sin(atan(G.Z2D / 2, G.R2D - 0.01))
+    @. F.BZ_presc = -ctrl_mag
+    @. F.BR_presc = ctrl_mag * sin(atan(G.Z2D / 2, G.R2D - 0.01))
     push!(c.t, RP.time_s)
     push!(c.Bz_ctrl, -ctrl_mag)
     push!(c.R_cen, R_cen)

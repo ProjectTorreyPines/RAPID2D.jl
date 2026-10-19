@@ -54,8 +54,8 @@ end
     @test all(RP.fields.BZ .> 0.0)
 
     # With no self-field yet, the total parallel E equals the external one
-    @test all(RP.fields.E_para_tot .== RP.fields.E_para_ext)
-    @test all(RP.fields.E_para_ext .== RP.fields.Eϕ_ext .* RP.fields.bϕ)
+    @test all(RP.fields.E_para_tot .== RP.fields.E_para_presc)
+    @test all(RP.fields.E_para_presc .== RP.fields.Eϕ_presc .* RP.fields.bϕ)
 
     # No initial flow
     @test all(RP.plasma.ue_para .== 0.0)
@@ -258,15 +258,15 @@ end
     ini_ne[RP.G.nodes.on_out_wall_nids] .= 0.0
 
     ini_ue_para = 1.0e6        # m/s, held constant
-    ini_BR_ext = 10.0e-4       # T — tilts B so the blob moves in both R and Z
-    ini_BZ_ext = 20.0e-4
+    ini_BR_presc = 10.0e-4       # T — tilts B so the blob moves in both R and Z
+    ini_BZ_presc = 20.0e-4
 
     function reset_to_initial_conditions!(RP)
         RP.plasma.ne = copy(ini_ne)
         RP.plasma.ue_para .= ini_ue_para
-        RP.fields.BR_ext .= ini_BR_ext
-        RP.fields.BZ_ext .= ini_BZ_ext
-        RAPID2D.combine_external_and_self_fields!(RP)
+        RP.fields.BR_presc .= ini_BR_presc
+        RP.fields.BZ_presc .= ini_BZ_presc
+        RAPID2D.combine_field_sources!(RP)
     end
 
     # The face-flux convection operator, every (implicit × upwind) combination.
@@ -430,11 +430,11 @@ end
     ini_ne = gaussian_density(RP.G; R0, Z0, σR = 0.1, σZ = 0.1, peak = 1.0e6)
     ini_ne[RP.G.nodes.on_out_wall_nids] .= 0.0
 
-    function reset_to_initial_conditions!(RP, BR_ext, BZ_ext)
+    function reset_to_initial_conditions!(RP, BR_presc, BZ_presc)
         RP.plasma.ne = copy(ini_ne)
-        RP.fields.BR_ext .= BR_ext
-        RP.fields.BZ_ext .= BZ_ext
-        RAPID2D.combine_external_and_self_fields!(RP)
+        RP.fields.BR_presc .= BR_presc
+        RP.fields.BZ_presc .= BZ_presc
+        RAPID2D.combine_field_sources!(RP)
     end
 
     measure_σ(ne) = (
@@ -529,9 +529,9 @@ end
     function reset_to_initial_conditions!(RP)
         RP.plasma.ne = copy(ini_n)
         RP.plasma.ni = copy(ini_n)
-        RP.fields.BR_ext .= 1.0e-4
-        RP.fields.BZ_ext .= 1.0e-4
-        RAPID2D.combine_external_and_self_fields!(RP)
+        RP.fields.BR_presc .= 1.0e-4
+        RP.fields.BZ_presc .= 1.0e-4
+        RAPID2D.combine_field_sources!(RP)
     end
 
     for implicit in (false, true)
@@ -547,10 +547,10 @@ end
             cnst = RP.config.constants
             ee, me, mi = cnst.ee, cnst.me, cnst.mi
 
-            elec_accel_2D = @. -ee * RP.fields.E_para_ext / me
+            elec_accel_2D = @. -ee * RP.fields.E_para_presc / me
             expected_avg_ue_para = sum(@. ini_n * elec_accel_2D) / sum(ini_n) * RP.config.t_end_s
 
-            ion_accel_2D = @. ee * RP.fields.E_para_ext / mi
+            ion_accel_2D = @. ee * RP.fields.E_para_presc / mi
             expected_avg_ui_para = sum(@. ini_n * ion_accel_2D) / sum(ini_n) * RP.config.t_end_s
 
             actual_avg_ue_para = sum(RP.plasma.ne .* RP.plasma.ue_para) / sum(RP.plasma.ne)
@@ -610,9 +610,9 @@ end
         initialize!(RP)
         RP.plasma.ne = copy(ini_n)
         RP.plasma.ni = copy(ini_n)
-        RP.fields.BR_ext .= 1.0e-4
-        RP.fields.BZ_ext .= 1.0e-4
-        RAPID2D.combine_external_and_self_fields!(RP)
+        RP.fields.BR_presc .= 1.0e-4
+        RP.fields.BZ_presc .= 1.0e-4
+        RAPID2D.combine_field_sources!(RP)
         RP.plasma.Te_eV .= Te_eV
         RAPID2D.run_simulation!(RP)
         return RP.plasma
@@ -686,9 +686,9 @@ end
 
     RP.plasma.ne = copy(ini_n)
     RP.plasma.ni = copy(ini_n)
-    RP.fields.BR_ext .= 1.0e-4
-    RP.fields.BZ_ext .= 1.0e-4
-    RAPID2D.combine_external_and_self_fields!(RP)
+    RP.fields.BR_presc .= 1.0e-4
+    RP.fields.BZ_presc .= 1.0e-4
+    RAPID2D.combine_field_sources!(RP)
     Te0 = 10.0
     RP.plasma.Te_eV .= Te0
     ini_sum = sum(RP.plasma.ne)
@@ -774,9 +774,9 @@ end
         ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
         RP.plasma.ne = copy(ini_n)
         RP.plasma.ni = copy(ini_n)
-        RP.fields.BR_ext .= 1.0e-4
-        RP.fields.BZ_ext .= 1.0e-4
-        RAPID2D.combine_external_and_self_fields!(RP)
+        RP.fields.BR_presc .= 1.0e-4
+        RP.fields.BZ_presc .= 1.0e-4
+        RAPID2D.combine_field_sources!(RP)
         RP.plasma.Te_eV .= Te0
         return RP, config, sum(ini_n)
     end

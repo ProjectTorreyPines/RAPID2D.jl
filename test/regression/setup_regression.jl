@@ -30,11 +30,11 @@
         # Zero poloidal field components (pure toroidal field)
         fill!(RP.fields.BR, 0.0)
         fill!(RP.fields.BZ, 0.0)
-        fill!(RP.fields.BR_ext, 0.0)
-        fill!(RP.fields.BZ_ext, 0.0)
-        # and their flux: field-line following traces ψ = ψ_ext + ψ_coils_pla, and the manual
-        # setup's ψ_ext holds its vertical field
-        fill!(RP.fields.ψ_ext, 0.0)
+        fill!(RP.fields.BR_presc, 0.0)
+        fill!(RP.fields.BZ_presc, 0.0)
+        # and their flux: field-line following traces ψ = ψ_presc + ψ_coils_pla, and the manual
+        # setup's ψ_presc holds its vertical field
+        fill!(RP.fields.ψ_presc, 0.0)
         @. RP.fields.ψ = RP.fields.ψ_coils_pla
 
         # Set Jacobian for toroidal geometry
@@ -54,8 +54,8 @@
 
         # Applied toroidal electric field
         @. RP.fields.Eϕ = E0 * $mean(RP.G.R1D) / RP.G.Jacob
-        @. RP.fields.Eϕ_ext = RP.fields.Eϕ
-        @. RP.fields.E_para_ext = RP.fields.Eϕ * RP.fields.bϕ
+        @. RP.fields.Eϕ_presc = RP.fields.Eϕ
+        @. RP.fields.E_para_presc = RP.fields.Eϕ * RP.fields.bϕ
 
         if verbose
             println("  ✓ Toroidal field set: R₀B₀ = $(RP.config.R0B0) T⋅m, E0 = $E0 V/m")

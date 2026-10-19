@@ -18,7 +18,7 @@
                 is_powered = true,
                 name = "rl_coil",
                 current = 0.0,      # Initial current
-                voltage_ext = V     # Constant voltage
+                voltage_applied = V     # Constant voltage
             ),
         ]
 
@@ -72,7 +72,7 @@
                 is_powered = true,
                 name = "coil1",
                 current = 0.0,
-                voltage_ext = 10.0  # Only coil 1 has voltage
+                voltage_applied = 10.0  # Only coil 1 has voltage
             ),
             Coil{FT}(
                 location = (r = 1.5, z = 0.0),
@@ -82,7 +82,7 @@
                 is_powered = true,
                 name = "coil2",
                 current = 0.0,
-                voltage_ext = 0.0   # Coil 2 has no external voltage
+                voltage_applied = 0.0   # Coil 2 has no external voltage
             ),
         ]
 
@@ -129,7 +129,7 @@
                 is_powered = true,
                 name = "test_coil",
                 current = 2.0,
-                voltage_ext = 0.0
+                voltage_applied = 0.0
             ),
         ]
 
@@ -172,7 +172,7 @@
                 is_powered = true,
                 name = "coil1",
                 current = 0.0,
-                voltage_ext = V1
+                voltage_applied = V1
             ),
             Coil{FT}(
                 location = (r = 1.5, z = 0.0),
@@ -182,7 +182,7 @@
                 is_powered = true,
                 name = "coil2",
                 current = 0.0,
-                voltage_ext = V2
+                voltage_applied = V2
             ),
         ]
 
@@ -235,7 +235,7 @@
                 is_powered = true,
                 name = "coil1",
                 current = 0.0,
-                voltage_ext = V1
+                voltage_applied = V1
             ),
             Coil{FT}(
                 location = (r = 1.5, z = 0.0),
@@ -245,7 +245,7 @@
                 is_powered = true,
                 name = "coil2",
                 current = 0.0,
-                voltage_ext = V2
+                voltage_applied = V2
             ),
         ]
 
@@ -355,7 +355,7 @@ end
             is_powered = true,
             name = "coil1",
             current = 0.0,
-            voltage_ext = 10.0
+            voltage_applied = 10.0
         ),
         Coil{FT}(
             location = coil_location2,
@@ -365,7 +365,7 @@ end
             is_powered = true,
             name = "coil2",
             current = 0.0,
-            voltage_ext = 0.0
+            voltage_applied = 0.0
         ),
     ]
 
@@ -397,7 +397,7 @@ end
             t, coils[1].self_inductance, coils[2].self_inductance,
             RP.coil_system.mutual_inductance[1, 2],
             coils[1].resistance, coils[2].resistance,
-            coils[1].voltage_ext, coils[2].voltage_ext
+            coils[1].voltage_applied, coils[2].voltage_applied
         )
     end
 

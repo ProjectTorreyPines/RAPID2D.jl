@@ -31,7 +31,8 @@ Contains volume-averaged quantities
 
     # Electric fields
     Epara_tot::FT = zero(FT)       # Total parallel E-field
-    Epara_ext::FT = zero(FT)       # External parallel E-field
+    Epara_presc::FT = zero(FT)     # Prescribed parallel E-field
+    Epara_ctrl::FT = zero(FT)      # the vertical-field control's parallel E-field
     Epara_self_ES::FT = zero(FT)   # Self-consistent electrostatic E-field
     Epara_self_EM::FT = zero(FT)   # Self-consistent electromagnetic E-field
 
@@ -84,12 +85,12 @@ Contains volume-averaged quantities
     beta_p::FT = zero(FT)            # poloidal beta in the column's moment ellipse
     pressure_column_share::FT = zero(FT) # part of ∫p dA in the column's moment ellipse
     Bv_req::FT = zero(FT)            # vertical field the column there needs (Shafranov, ln(8R/ā)) [T]
-    BZ_ext_at_cen_by_Jϕ::FT = zero(FT) # external B_Z at the current centroid [T]
-    BR_ext_at_cen_by_Jϕ::FT = zero(FT) # external B_R at the current centroid [T]
-    decay_index::FT = zero(FT)       # −(R/B_Z) ∂B_Z/∂R of the external field there
+    BZ_presc_at_cen_by_Jϕ::FT = zero(FT) # prescribed B_Z at the current centroid [T]
+    BR_presc_at_cen_by_Jϕ::FT = zero(FT) # prescribed B_R at the current centroid [T]
+    decay_index::FT = zero(FT)       # −(R/B_Z) ∂B_Z/∂R of the prescribed field there
     decay_index_radial_limit::FT = zero(FT) # 1 − 1/Λ: fixed-current window 0 < n < this
-    force_R_ext::FT = zero(FT)       # ∫ Jϕ B_Z,ext dV [N]
-    force_Z_ext::FT = zero(FT)       # −∫ Jϕ B_R,ext dV [N]
+    force_R_presc::FT = zero(FT)     # ∫ Jϕ B_Z,presc dV [N]
+    force_Z_presc::FT = zero(FT)     # −∫ Jϕ B_R,presc dV [N]
     force_R_coils::FT = zero(FT)     # the same with the field of the coils the grid solves [N]
     force_Z_coils::FT = zero(FT)
     force_R_pla::FT = zero(FT)      # the same with the plasma's own field (hoop force) [N]
@@ -176,7 +177,7 @@ Contains volume-averaged quantities
 
     # Control system (optional)
     coils_I::Union{Nothing, Vector{FT}} = nothing    # Coil currents (N_coils)
-    coils_V_ext::Union{Nothing, Vector{FT}} = nothing    # Coil external voltages (N_coils)
+    coils_V_applied::Union{Nothing, Vector{FT}} = nothing    # Coil applied voltages (N_coils)
 
     # Growth rates (alternative calculation)
     growth_rate2::FT = zero(FT)     # Alternative growth rate
@@ -231,7 +232,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Ne_loss_rate::Matrix{FT} = zeros(FT, dims_RZ)   # Electron loss rate
 
     # Loop voltage
-    LV_ext::Matrix{FT} = zeros(FT, dims_RZ)          # External loop voltage (NR, NZ)
+    LV_presc::Matrix{FT} = zeros(FT, dims_RZ)         # Prescribed loop voltage (NR, NZ)
     LV_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total loop voltage (NR, NZ)
 
     # Magnetic field
@@ -247,7 +248,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Electric field
     E_para_tot::Matrix{FT} = zeros(FT, dims_RZ)     # Total parallel electric field
-    E_para_ext::Matrix{FT} = zeros(FT, dims_RZ)     # External parallel electric field
+    E_para_presc::Matrix{FT} = zeros(FT, dims_RZ)   # Prescribed parallel electric field
     mean_ExB_pol::Matrix{FT} = zeros(FT, dims_RZ)   # ExB drift magnitude
     Epol_self::Matrix{FT} = zeros(FT, dims_RZ)      # Self-consistent poloidal E-field
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)   # induced by the coils and the plasma over the last step
@@ -260,9 +261,9 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Magnetic flux
     ψ::Matrix{FT} = zeros(FT, dims_RZ)            # Total poloidal flux
-    ψ_ext::Matrix{FT} = zeros(FT, dims_RZ)        # External poloidal flux
+    ψ_presc::Matrix{FT} = zeros(FT, dims_RZ)      # Prescribed poloidal flux
     ψ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)  # of the coils and the plasma together, as solved
-    ψ_ctrl::Matrix{FT} = zeros(FT, dims_RZ)       # The vertical-field control's flux (ψ = ψ_ext + ψ_coils_pla + ψ_ctrl)
+    ψ_ctrl::Matrix{FT} = zeros(FT, dims_RZ)       # The vertical-field control's flux (ψ = ψ_presc + ψ_coils_pla + ψ_ctrl)
     ψ_pla::Matrix{FT} = zeros(FT, dims_RZ)        # of the plasma alone, from the stored Jϕ
     ψ_coils::Matrix{FT} = zeros(FT, dims_RZ)      # of the coils alone, from their currents
     ψ_closure_abs::FT = zero(FT)                  # ‖ψ_coils_pla − ψ_pla − ψ_coils‖∞ [Wb/rad]
@@ -703,7 +704,7 @@ function Base.getproperty(sv::Vector{<:Snapshot0D{<:AbstractFloat}}, sym::Symbol
     end
 
     # Check if it's a valid Snapshot0D field
-    if sym === :coils_I || sym === :coils_V_ext
+    if sym === :coils_I || sym === :coils_V_applied
         return reduce(hcat, [getfield(s, sym) for s in sv])  # Extract in a matrix form
     elseif hasfield(typeof(sv[1]), sym)
         return [getfield(s, sym) for s in sv]

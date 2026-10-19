@@ -46,7 +46,7 @@ function add_loop!(RP, r, z; a = 0.05, R = 1.0e-12, V = 0.0, I0 = 0.0, name = "l
     L = RP.config.constants.μ0 * r * (log(8r / a) - 7 / 4)
     coil = Coil{Float64}(;
         location = (r = r, z = z), area = π * a^2, resistance = R, self_inductance = L,
-        is_powered = V != 0, is_controllable = false, name, current = I0, voltage_ext = V,
+        is_powered = V != 0, is_controllable = false, name, current = I0, voltage_applied = V,
     )
     add_coil!(RP.coil_system, coil)
     return L

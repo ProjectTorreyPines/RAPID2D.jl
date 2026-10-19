@@ -31,9 +31,9 @@ end
 # the forces the target cancels, control left out, from the parts that `_column_forces` and the 0D
 # snapshot both carry: radial by the target, vertical the magnetic forces either way
 _target_force_R(::ReducedForceTarget, col) =
-    col.force_R_ext + col.force_R_coils + col.force_R_pla + col.force_R_pressure + col.force_R_toroidal
-_target_force_R(::MagneticForceTarget, col) = col.force_R_ext + col.force_R_coils + col.force_R_pla
-_target_force_Z(col) = col.force_Z_ext + col.force_Z_coils + col.force_Z_pla
+    col.force_R_presc + col.force_R_coils + col.force_R_pla + col.force_R_pressure + col.force_R_toroidal
+_target_force_R(::MagneticForceTarget, col) = col.force_R_presc + col.force_R_coils + col.force_R_pla
+_target_force_Z(col) = col.force_Z_presc + col.force_Z_coils + col.force_Z_pla
 
 # the coefficients from A a = −F₀: the uniform field alone, or both bases jointly
 function _target_coefficients(::UniformVerticalField, F₀, A, policy)
@@ -149,7 +149,7 @@ function update_vertical_field_control!(RP::RAPID{FT}) where {FT <: AbstractFloa
     # 3. the field, its induced E_ϕ over this step, and the combined total
     st.dt_applied = dt
     write_vertical_control_field!(RP)
-    combine_external_and_self_fields!(RP)
+    combine_field_sources!(RP)
     return RP
 end
 
@@ -238,8 +238,8 @@ function measure_vertical_field_control!(snap0D, RP::RAPID{FT}) where {FT <: Abs
     # the decay index of the whole external field (prescribed + control; the control adds no
     # ∂B_Z/∂R), from the derivative, with the total B_Z in the denominator
     h = G.dR / 2
-    dBZ_dR = (_bilinear(G, F.BZ_ext, R_cen + h, Z_cen) - _bilinear(G, F.BZ_ext, R_cen - h, Z_cen)) / (2h)
-    BZ_total = _bilinear(G, F.BZ_ext, R_cen, Z_cen) + snap0D.ctrl_BZ_at_cen
+    dBZ_dR = (_bilinear(G, F.BZ_presc, R_cen + h, Z_cen) - _bilinear(G, F.BZ_presc, R_cen - h, Z_cen)) / (2h)
+    BZ_total = _bilinear(G, F.BZ_presc, R_cen, Z_cen) + snap0D.ctrl_BZ_at_cen
     snap0D.ctrl_BZ_total_at_cen = BZ_total
     snap0D.ctrl_decay_index_total = iszero(BZ_total) ? FT(NaN) : -R_cen * dBZ_dR / BZ_total
     return snap0D

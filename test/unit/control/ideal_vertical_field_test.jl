@@ -42,12 +42,12 @@ end
     # field without control
     RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(t_on_s = 0.0, target = MagneticForceTarget()))
     w = abs.(RP.plasma.Jϕ) .* RP.G.inVol2D
-    BZ_mean = sum(w .* (RP.fields.BZ_ext .+ RP.fields.BZ_coils_pla)) / sum(w)
+    BZ_mean = sum(w .* (RP.fields.BZ_presc .+ RP.fields.BZ_coils_pla)) / sum(w)
     @test vertical_field_control_target(RP).a[1] ≈ -BZ_mean rtol = 1.0e-8
     # both bases (the column sits at Z0 = 0.1, off the midplane): A a = −F₀, and with the control
     # field added to the external one, nothing is left to cancel
     RP, _ = current_disc(; B0 = 2.0e-3, control = IdealVerticalFieldControl(t_on_s = 0.0, target = ReducedForceTarget(), field = VerticalAndRadialField()))
-    RP.fields.BR_ext .= 3.0e-4
+    RP.fields.BR_presc .= 3.0e-4
     target = vertical_field_control_target(RP)
     @test target.A[1, 2] != 0
     @test target.A * target.a ≈ -target.F rtol = 1.0e-12
@@ -56,8 +56,8 @@ end
     st.a .= target.a
     st.a_prev .= target.a
     write_vertical_control_field!(RP)
-    RP.fields.BR_ext .+= RP.fields.BR_ctrl
-    RP.fields.BZ_ext .+= RP.fields.BZ_ctrl
+    RP.fields.BR_presc .+= RP.fields.BR_ctrl
+    RP.fields.BZ_presc .+= RP.fields.BZ_ctrl
     fb = column_force_balance(RP)
     @test abs(fb.Bv_to_add) < 1.0e-12 * abs(target.a[1])
     @test abs(fb.Br_to_add) < 1.0e-12 * abs(target.a[1])
@@ -245,29 +245,30 @@ end
 end
 
 @testitem "ideal vertical field: the induced field in E∥, Eϕ and the sign of the electrostatic estimate" setup = [CurrentDisc] begin
-    using RAPID2D: IdealVerticalFieldControl, write_vertical_control_field!, combine_external_and_self_fields!
+    using RAPID2D: IdealVerticalFieldControl, write_vertical_control_field!, combine_field_sources!
     RP, _ = current_disc(; control = IdealVerticalFieldControl(t_on_s = 0.0))
     st, F = RP.vertical_field_control, RP.fields
     RP.flags.E_para_self_ES = true
     RP.fields.Epol_self .= 1.0                                  # a poloidal self field to project
     st.R_ref = 1.6
     st.dt_applied = 1.0e-6
-    st.a .= [1.0e-3, 0.0]                                       # a fast rise: Eϕ,ctrl ≈ −500 R V/m reverses Eϕ,ext
+    st.a .= [1.0e-3, 0.0]                                       # a fast rise: Eϕ,ctrl ≈ −500 R V/m reverses Eϕ,presc
     write_vertical_control_field!(RP)
-    combine_external_and_self_fields!(RP)
-    applied = F.Eϕ_ext .+ F.Eϕ_ctrl
-    @test all(<(0), applied) && all(>(0), F.Eϕ_ext)
-    @test F.Eϕ ≈ applied .+ F.Eϕ_coils_pla
-    @test F.E_para_ext ≈ applied .* F.bϕ
-    @test F.ψ ≈ F.ψ_ext .+ F.ψ_coils_pla .+ F.ψ_ctrl
-    @test F.BZ ≈ F.BZ_ext .+ F.BZ_coils_pla .+ F.BZ_ctrl
+    combine_field_sources!(RP)
+    Eϕ_vacuum = F.Eϕ_presc .+ F.Eϕ_ctrl
+    @test all(<(0), Eϕ_vacuum) && all(>(0), F.Eϕ_presc)
+    @test F.Eϕ ≈ Eϕ_vacuum .+ F.Eϕ_coils_pla
+    @test F.E_para_presc ≈ F.Eϕ_presc .* F.bϕ && F.E_para_ctrl ≈ F.Eϕ_ctrl .* F.bϕ
+    @test F.E_para_tot ≈ F.E_para_presc .+ F.E_para_ctrl .+ F.E_para_self_ES .+ F.E_para_self_EM
+    @test F.ψ ≈ F.ψ_presc .+ F.ψ_coils_pla .+ F.ψ_ctrl
+    @test F.BZ ≈ F.BZ_presc .+ F.BZ_coils_pla .+ F.BZ_ctrl
     nonzero = F.E_para_self_ES .!= 0
     @test any(nonzero)
-    @test sign.(F.E_para_self_ES[nonzero]) == sign.(-applied[nonzero] .* F.Bϕ[nonzero])
+    @test sign.(F.E_para_self_ES[nonzero]) == sign.(-Eϕ_vacuum[nonzero] .* F.Bϕ[nonzero])
 end
 
 @testitem "ideal vertical field: the default leaves the code path of a run without control" setup = [CurrentDisc] begin
-    using RAPID2D: IdealVerticalFieldControl, update_vertical_field_control!, combine_external_and_self_fields!
+    using RAPID2D: IdealVerticalFieldControl, update_vertical_field_control!, combine_field_sources!
     RP, _ = current_disc()
     F = RP.fields
     @test RP.flags.vertical_field_control isa RAPID2D.NoVerticalFieldControl
@@ -276,9 +277,11 @@ end
     # control arrays left with values are not added
     F.BZ_ctrl .= 1.0
     F.Eϕ_ctrl .= 1.0
-    combine_external_and_self_fields!(RP)
-    @test F.BZ == F.BZ_ext .+ F.BZ_coils_pla
-    @test F.E_para_ext == F.Eϕ_ext .* F.bϕ
+    F.E_para_ctrl .= 1.0
+    combine_field_sources!(RP)
+    @test F.BZ == F.BZ_presc .+ F.BZ_coils_pla
+    @test F.E_para_presc == F.Eϕ_presc .* F.bϕ
+    @test F.E_para_tot == F.E_para_presc .+ F.E_para_self_ES .+ F.E_para_self_EM
 end
 
 @testitem "ideal vertical field: refused with the global J×B kick, without Ampère, and with coils" setup = [CurrentDisc] begin
@@ -344,21 +347,21 @@ end
 
 @testitem "ideal vertical field: the whole external field's decay index, and the closed region in the 2D snapshot" setup = [CurrentDisc] begin
     using RAPID2D: IdealVerticalFieldControl, update_vertical_field_control!, measure_snap0D!, measure_snap2D!
-    # a curved prescribed field and a uniform control: n = −R ∂_R B_Z,ext / (B_Z,ext + a₁)
+    # a curved prescribed field and a uniform control: n = −R ∂_R B_Z,presc / (B_Z,presc + a₁)
     RP0, _ = current_disc()
     B0 = column_force_balance(RP0).Bv_req
     RP, _ = current_disc(; B0, control = IdealVerticalFieldControl(t_on_s = 0.0, ramp_s = 1.0e-12, response = RAPID2D.InstantaneousResponse()))
     G, F = RP.G, RP.fields
     n_decay = 0.5
-    @. F.BZ_ext = B0 * (R0 / G.R2D)^n_decay
-    @. F.BR_ext = -n_decay * B0 * (R0 / G.R2D)^n_decay * G.Z2D / G.R2D
+    @. F.BZ_presc = B0 * (R0 / G.R2D)^n_decay
+    @. F.BR_presc = -n_decay * B0 * (R0 / G.R2D)^n_decay * G.Z2D / G.R2D
     RP.dt = 1.0e-6
     update_vertical_field_control!(RP)
     snap = Snapshot0D{Float64}()
     measure_snap0D!(RP, snap)
     a₁ = RP.vertical_field_control.a[1]
-    @test snap.ctrl_BZ_total_at_cen ≈ snap.BZ_ext_at_cen_by_Jϕ + a₁ rtol = 1.0e-12
-    @test snap.ctrl_decay_index_total ≈ snap.decay_index * snap.BZ_ext_at_cen_by_Jϕ / snap.ctrl_BZ_total_at_cen rtol = 1.0e-10
+    @test snap.ctrl_BZ_total_at_cen ≈ snap.BZ_presc_at_cen_by_Jϕ + a₁ rtol = 1.0e-12
+    @test snap.ctrl_decay_index_total ≈ snap.decay_index * snap.BZ_presc_at_cen_by_Jϕ / snap.ctrl_BZ_total_at_cen rtol = 1.0e-10
     # the closed region of the disc in its field: the field-line closed nodes, its axis and LCFS
     RP, _ = current_disc(; B0)
     trace_closed_region!(RP)

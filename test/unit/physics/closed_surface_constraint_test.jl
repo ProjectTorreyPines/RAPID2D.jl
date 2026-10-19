@@ -4,11 +4,11 @@
 
 @testsnippet ClosedSurfaceRun begin
     using RAPID2D: SimulationConfig, SimulationFlags, RAPID, initialize!, flf_analysis_field_lines_rz_plane!,
-        combine_external_and_self_fields!, calculate_B_from_ψ!, update_transport_quantities!,
+        combine_field_sources!, calculate_B_from_ψ!, update_transport_quantities!,
         SurfaceFluxConstraint, FreeParallelFlow, update_closed_surface_basis!
 
     """
-    A box wall with prescribed closed surfaces: an elliptic ψ_ext about (1.5113, 0.0071), the external
+    A box wall with prescribed closed surfaces: an elliptic ψ_presc about (1.5113, 0.0071), the external
     B taken from that ψ (both, so the tracer and the field agree), Ampère off; a smooth density,
     10 eV and a drift that varies along the surfaces.
     """
@@ -24,10 +24,10 @@
         initialize!(RP)
         G, F, pla = RP.G, RP.fields, RP.plasma
         # the axis off the nodes: a B_pol null on a node makes the transport operators NaN today
-        @. F.ψ_ext = 2.0e-3 * ((G.R2D - 1.5113)^2 + ((G.Z2D - 0.0071) / 1.3)^2)
-        calculate_B_from_ψ!(G, F.ψ_ext, F.BR_ext, F.BZ_ext)
+        @. F.ψ_presc = 2.0e-3 * ((G.R2D - 1.5113)^2 + ((G.Z2D - 0.0071) / 1.3)^2)
+        calculate_B_from_ψ!(G, F.ψ_presc, F.BR_presc, F.BZ_presc)
         fill!(F.ψ_coils_pla, 0.0); fill!(F.BR_coils_pla, 0.0); fill!(F.BZ_coils_pla, 0.0)
-        combine_external_and_self_fields!(RP)
+        combine_field_sources!(RP)
         inwall = G.nodes.state .> 0.5
         @. pla.ne = ifelse(inwall, 1.0e17 * (1 + 0.4 * (G.R2D - 1.5)), 0.0)
         pla.ni .= pla.ne
@@ -132,7 +132,7 @@ end
     end
     u0 = copy(a.plasma.ue_para)
     solve_combined_momentum_Ampere_equations_with_coils!(a; NamedTuple(a.flags.ampere_picard)...)
-    @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_coils_pla
+    @. b.fields.E_para_tot = b.fields.E_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
     update_ue_para!(b)
     Δu = a.plasma.ue_para .- u0
     @test maximum(abs, Δu) > 1.0e-3 * maximum(abs, u0)

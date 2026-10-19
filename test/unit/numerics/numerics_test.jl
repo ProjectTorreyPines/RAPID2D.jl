@@ -11,9 +11,9 @@
     initialize!(RP)
 
     # Set up a specific siutation for testing
-    RP.fields.BR_ext .= 20.0e-4
-    RP.fields.BZ_ext .= 10.0e-4
-    RAPID2D.combine_external_and_self_fields!(RP)
+    RP.fields.BR_presc .= 20.0e-4
+    RP.fields.BZ_presc .= 10.0e-4
+    RAPID2D.combine_field_sources!(RP)
 
     R0 = (config.R_min + config.R_max) / 2
     Z0 = (config.Z_min + config.Z_max) / 2

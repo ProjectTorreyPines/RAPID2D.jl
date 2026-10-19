@@ -40,12 +40,12 @@
 
         RAPID2D.@unpack ee, me = RP.config.constants
         # Resistance by Coulomb collision
-        ue_sat_by_Evac = @. -ee * RP.fields.Eϕ_ext / (me * RP.plasma.ν_ei_eff)
+        ue_sat_by_Evac = @. -ee * RP.fields.Eϕ_presc / (me * RP.plasma.ν_ei_eff)
         ue_sat_by_Evac[.!isfinite.(ue_sat_by_Evac)] .= 0.0  # Avoid NaN
 
         # Estimate circuit parameters
         in_wall_nids = RP.G.nodes.in_wall_nids
-        LV_estimate = mean(RP.fields.LV_ext[in_wall_nids])
+        LV_estimate = mean(RP.fields.LV_presc[in_wall_nids])
         R_estimate = LV_estimate ./ sum(-ee * RP.plasma.ne[in_wall_nids] .* ue_sat_by_Evac[in_wall_nids] * RP.G.dR * RP.G.dZ)
 
         # Inductance of a circular loop of major radius `major_R`, minor radius `minor_r`

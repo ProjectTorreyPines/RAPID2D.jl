@@ -21,11 +21,11 @@
 include("common.jl")
 using LinearAlgebra
 using RAPID2D: SurfaceFluxConstraint, FreeParallelFlow, BlockConstraint, PostProjection, ManualSetup,
-    flf_analysis_field_lines_rz_plane!, update_closed_surface_basis!, combine_external_and_self_fields!,
+    flf_analysis_field_lines_rz_plane!, update_closed_surface_basis!, combine_field_sources!,
     calculate_B_from_ψ!, update_transport_quantities!, calculate_ψ_by_green_function
 
 const R0, Z0, κ = 1.5113, 0.0071, 1.3      # axis of the elliptic surfaces (off the nodes), elongation
-const C_PSI = 3.0e-2                        # ψ_ext = C ((R − R0)² + ((Z − Z0)/κ)²) [Wb/rad/m²]
+const C_PSI = 3.0e-2                        # ψ_presc = C ((R − R0)² + ((Z − Z0)/κ)²) [Wb/rad/m²]
 const RHO_N = 0.4                           # the column's edge, as the ellipse's minor radius [m]
 const N0, NU0, E0, TE = 1.0e17, 1.0e6, 0.3, 10.0
 const R0B0, RBAR = 3.0, 1.5                 # Bϕ = R0B0/R; Eϕ = E0 R̄/R
@@ -60,10 +60,10 @@ function column(policy; α, ampere, t_end)
         FLF_nstep = 100, closed_surface_flow = policy,
     )
     G, F, pla = RP.G, RP.fields, RP.plasma
-    @. F.ψ_ext = C_PSI * ((G.R2D - R0)^2 + ((G.Z2D - Z0) / κ)^2)
-    calculate_B_from_ψ!(G, F.ψ_ext, F.BR_ext, F.BZ_ext)
+    @. F.ψ_presc = C_PSI * ((G.R2D - R0)^2 + ((G.Z2D - Z0) / κ)^2)
+    calculate_B_from_ψ!(G, F.ψ_presc, F.BR_presc, F.BZ_presc)
     fill!(F.ψ_coils_pla, 0.0); fill!(F.BR_coils_pla, 0.0); fill!(F.BZ_coils_pla, 0.0)
-    combine_external_and_self_fields!(RP)
+    combine_field_sources!(RP)
     pla.ne .= density.(G.R2D, G.Z2D, α) .* (G.nodes.state .> 0.5)
     pla.ni .= pla.ne
     fill!(pla.Te_eV, TE)

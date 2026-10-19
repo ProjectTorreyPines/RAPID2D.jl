@@ -26,9 +26,9 @@
         RP.plasma.ne[inw] .= 1.0e14
         # no drive: nothing should change u∥ or Te. The derived fields were built at
         # initialize!, so zero them too, not just the loop voltage they came from.
-        RP.fields.LV_ext .= 0.0
-        RP.fields.Eϕ_ext .= 0.0
-        RP.fields.E_para_ext .= 0.0
+        RP.fields.LV_presc .= 0.0
+        RP.fields.Eϕ_presc .= 0.0
+        RP.fields.E_para_presc .= 0.0
         RP.fields.E_para_tot .= 0.0
         RP.plasma.ue_para .= -1.0e6
         RP.plasma.Te_eV .= 12.0

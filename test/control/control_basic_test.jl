@@ -126,7 +126,7 @@ end
     @testset "Control Signal Application" begin
         # Set initial voltages
         for coil in test_coils
-            coil.voltage_ext = 0.0
+            coil.voltage_applied = 0.0
         end
 
         controller = create_current_controller(1.0e6, test_coils; dt = 1.0e-6)
@@ -136,12 +136,12 @@ end
 
         # Check that all controlled coils have the signal applied
         for coil in controller.coils
-            @test coil.voltage_ext == signal
+            @test coil.voltage_applied == signal
         end
 
         # Check that original coils are also updated (should be references)
         for coil in test_coils
-            @test coil.voltage_ext == signal
+            @test coil.voltage_applied == signal
         end
     end
 end
@@ -261,7 +261,7 @@ end
 
     # Initialize all coil voltages to zero
     for coil in coils
-        coil.voltage_ext = 0.0
+        coil.voltage_applied = 0.0
     end
 
     # Create controller using first two coils
@@ -272,19 +272,19 @@ end
     apply_control_signal!(controller, test_signal)
 
     # Check that controlled coils are updated
-    @test coils[1].voltage_ext == test_signal
-    @test coils[2].voltage_ext == test_signal
+    @test coils[1].voltage_applied == test_signal
+    @test coils[2].voltage_applied == test_signal
 
     # Check that uncontrolled coil is not updated
-    @test coils[3].voltage_ext == 0.0
+    @test coils[3].voltage_applied == 0.0
 
     # Test with different signal
     test_signal2 = -25.0
     apply_control_signal!(controller, test_signal2)
 
-    @test coils[1].voltage_ext == test_signal2
-    @test coils[2].voltage_ext == test_signal2
-    @test coils[3].voltage_ext == 0.0  # Still unchanged
+    @test coils[1].voltage_applied == test_signal2
+    @test coils[2].voltage_applied == test_signal2
+    @test coils[3].voltage_applied == 0.0  # Still unchanged
 end
 
 @testitem "Control Controller Limits" begin

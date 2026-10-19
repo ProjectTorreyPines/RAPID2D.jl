@@ -90,7 +90,7 @@ end
     # issues/failures-that-do-not-announce-themselves.md §2
     #
     # `advance_timestep!` rebuilds `E_para_tot` from the external loop voltage every
-    # step (`combine_external_and_self_fields!` → `calculate_parallel_electric_field!`),
+    # step (`combine_field_sources!` → `calculate_parallel_electric_field!`),
     # so a caller imposing a parallel drive this way is silently overridden — sign
     # included. The idiom appears in scenario setups across the repo.
     RP = atomic_only(; dt = 1.0e-6)
