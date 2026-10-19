@@ -108,7 +108,7 @@ function prepare_timestep!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # the ideal vertical-field control from the state at tⁿ, combined before the step solves;
         # Jϕ again on the field it moved
-        if RP.flags.vertical_field_control isa IdealVerticalFieldControl
+        if _vertical_field_control_on(RP)
             @timeit RAPID_TIMER "vertical_field_control" update_vertical_field_control!(RP)
             update_Jϕ!(RP)
         end
@@ -314,7 +314,7 @@ function run_simulation!(
             RP.flags.secondary_electron && RP.flags.update_ni_independently &&
                 @warn "secondary_electron is inert until secondaries are emitted through the wall faces from the ion ledger" maxlog = 1
 
-            # The coils' memory and the self field start from the initial currents. A resumed
+            # The coils' memory and ψ_coils_pla start from the initial currents. A resumed
             # run keeps both: they are state.
             initialize_coupled_fields!(RP)
         end

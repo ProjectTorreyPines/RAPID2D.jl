@@ -74,7 +74,7 @@ Calculate the parallel electric field based on external and self-generated field
 function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     F = RP.fields
     # external parallel electric field: the prescribed one, and the vertical-field control's
-    control = RP.flags.vertical_field_control isa IdealVerticalFieldControl
+    control = _vertical_field_control_on(RP)
     if control
         @. F.E_para_ext = (F.Eϕ_ext + F.Eϕ_ctrl) * F.bϕ
     else
@@ -163,7 +163,7 @@ function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT = RP.time_s
         @. F.Eϕ = F.Eϕ_ext + F.Eϕ_coils_pla
         @. F.ψ = F.ψ_ext + F.ψ_coils_pla
         # the vertical-field control's vacuum field, only in a run that has one
-        if RP.flags.vertical_field_control isa IdealVerticalFieldControl
+        if _vertical_field_control_on(RP)
             F.BR .+= F.BR_ctrl
             F.BZ .+= F.BZ_ctrl
             F.Eϕ .+= F.Eϕ_ctrl

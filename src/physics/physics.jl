@@ -1659,7 +1659,7 @@ end
 """
     solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_coils_pla::Bool=true) where {FT<:AbstractFloat}
 
-Solve Ampère's equation (Grad-Shafranov equation) to update self-consistent magnetic fields.
+Solve Ampère's equation (Grad-Shafranov equation) for the field of the coils and the plasma (`ψ_coils_pla`, `BR/BZ_coils_pla`).
 
 Solves: ΔGS * ψ = - μ₀R²Jϕ with boundary conditions from Green's function.
 Updates ψ_coils_pla, and optionally Eϕ_coils_pla.
@@ -1711,7 +1711,7 @@ function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT} = RP.fields; plasma
         solve!(vec(ψ), OP.ΔGS_solver, vec(OP.RHS))
         F.ψ_coils_pla = ψ
 
-        # % calculate the magnetic field from the self-consistent ψ
+        # the magnetic field of ψ_coils_pla
         calculate_B_from_ψ!(RP.G, F.ψ_coils_pla, F.BR_coils_pla, F.BZ_coils_pla)
 
         if update_Eϕ_coils_pla && RP.flags.E_para_self_EM
@@ -1757,6 +1757,19 @@ function coil_flux_on_grid(RP::RAPID{FT}, I::AbstractVector{FT}) where {FT <: Ab
 end
 
 """
+    coil_induced_Eϕ(RP, ΔI) -> Matrix
+
+The toroidal field a change `ΔI` of the coil currents over one step induces on the grid,
+−ψ_coils(ΔI)/(R Δt) with ψ_coils from [`coil_flux_on_grid`](@ref); zero for no change. Below the
+Ampère gate it is the whole induced field; the 2D snapshots split the induced field with it.
+"""
+function coil_induced_Eϕ(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
+    (isempty(ΔI) || all(iszero, ΔI)) && return zeros(FT, RP.G.NR, RP.G.NZ)
+    ψ = coil_flux_on_grid(RP, ΔI)
+    return @. -ψ / (RP.G.R2D * RP.dt)
+end
+
+"""
     set_Eϕ_coils_pla_from_coils!(RP, ΔI)
 
 Below the Ampère gate, set the induced field to the coils' alone, Eϕ_coils_pla = −ψ_coils(ΔI)/(R Δt)
@@ -1769,12 +1782,7 @@ without L_p, is unstable); see `internal/docs/src/notes/design/coupled-step-coil
 function set_Eϕ_coils_pla_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
     F = RP.fields
     F.Eϕ_coils_pla_prev .= F.Eϕ_coils_pla
-    if isempty(ΔI) || all(iszero, ΔI)
-        fill!(F.Eϕ_coils_pla, zero(FT))
-    else
-        ψ = coil_flux_on_grid(RP, ΔI)
-        @. F.Eϕ_coils_pla = -ψ / (RP.G.R2D * RP.dt)
-    end
+    F.Eϕ_coils_pla .= coil_induced_Eϕ(RP, ΔI)
     if RP.flags.E_para_self_EM
         @. F.E_para_self_EM = F.Eϕ_coils_pla * F.bϕ
     end

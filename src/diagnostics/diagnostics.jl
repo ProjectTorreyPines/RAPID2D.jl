@@ -200,13 +200,14 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     # measure magnetic energies by toroidal currents
     snap0D.tot_W_mag = zero(FT)
     if RP.flags.Ampere
+        # the plasma's own flux, for its self-inductance (solved with coils = false, so the array
+        # named for the coils' and the plasma's field holds the plasma's alone)
         F_plasma = solve_Ampere_equation(RP; plasma = true, coils = false)
         W_mag_by_plasma_without_coil = 0.5 * sum(@. RP.plasma.Jϕ * F_plasma.ψ_coils_pla / RP.G.R2D * RP.G.inVol2D)
         snap0D.self_inductance_plasma = 2.0 * W_mag_by_plasma_without_coil / (snap0D.I_tor^2 + eps(FT))
 
-        # plasma's contribution to magnetic energy [J]
-        # NOTE: must use total ψ_coils_pla by both plasma and coils
-        # tot_W_mag =(1/2)*∫Jϕ⋅Aϕ dV
+        # the plasma current's magnetic energy in the field of the coils and the plasma [J]:
+        # (1/2)∫Jϕ Aϕ dV with Aϕ = ψ_coils_pla/R
         snap0D.tot_W_mag += 0.5 * sum(@. RP.plasma.Jϕ * RP.fields.ψ_coils_pla / RP.G.R2D * RP.G.inVol2D)
 
         # Ohmic dissipation [W]. ν_en_iz_tot, not ν_en_iz alone: this mirrors the SAME
@@ -287,8 +288,8 @@ The coils' (walls included) and the plasma's fields by source, for a 2D snapshot
 - the closure ‖ψ_coils_pla − ψ_pla − ψ_coils‖∞ against the solved sum, absolute and over
   max(`PSI_CLOSURE_FLOOR`, ‖ψ_coils_pla‖∞, ‖ψ_pla‖∞ + ‖ψ_coils‖∞): what the coupled solve's outer
   iteration and the updates after it (PostProjection, continuity, ions) leave, not a solver error;
-- the induced field of the last step split as the coils' part −ψ_coils(ΔI)/(R Δt) (ΔI the step's
-  change, `ΔI_step`) and the rest, `Eϕ_coils_pla − Eϕ_coils`: the field the model applied less the
+- the induced field of the last step split as the coils' part [`coil_induced_Eϕ`](@ref) of the
+  step's change `ΔI_step` and the rest, `Eϕ_coils_pla − Eϕ_coils`: the field the model applied less the
   coils' part, not the change of the plasma's own flux (below the Ampère gate it is zero).
 NaN where the run does not solve the field (Ampère off), and the split NaN without induction
 (`E_para_self_EM` off).
@@ -318,13 +319,12 @@ function measure_field_sources!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT
         fill!(snap2D.Eϕ_pla, FT(NaN))
         return snap2D
     end
-    ΔI = csys.ΔI_step
-    if csys.n_total > 0 && length(ΔI) == csys.n_total && any(!iszero, ΔI)
-        ψ_ΔI = coil_flux_on_grid(RP, ΔI)
-        @. snap2D.Eϕ_coils = -ψ_ΔI / (G.R2D * RP.dt)    # as set_Eϕ_coils_pla_from_coils! sets it
-    else
-        fill!(snap2D.Eϕ_coils, zero(FT))
+    if length(csys.ΔI_step) != csys.n_total       # the coil set changed outside add_coil!: unknown
+        fill!(snap2D.Eϕ_coils, FT(NaN))
+        fill!(snap2D.Eϕ_pla, FT(NaN))
+        return snap2D
     end
+    snap2D.Eϕ_coils .= coil_induced_Eϕ(RP, csys.ΔI_step)
     @. snap2D.Eϕ_pla = F.Eϕ_coils_pla - snap2D.Eϕ_coils
     return snap2D
 end

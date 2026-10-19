@@ -354,6 +354,12 @@ function is_dict_internal_key(key::String)
     return false
 end
 
+# Snapshot fields renamed since older files were written: old name => new name
+const RENAMED_SNAPSHOT_FIELDS = Dict(
+    "ψ_self" => "ψ_coils_pla", "BR_self" => "BR_coils_pla", "BZ_self" => "BZ_coils_pla",
+    "Eϕ_self" => "Eϕ_coils_pla", "force_R_self" => "force_R_pla", "force_Z_self" => "force_Z_pla",
+)
+
 """
     create_symbol_path_mapping(obj_type, Adict::Dict)
 
@@ -373,12 +379,6 @@ symbol_paths = create_symbol_path_mapping(Snapshot0D{Float64}, Adict)
 # Returns: {"ePowers/drag" => [:ePowers, :drag], "time_s" => [:time_s], ...}
 ```
 """
-# Snapshot fields renamed since older files were written: old name => new name
-const RENAMED_SNAPSHOT_FIELDS = Dict(
-    "ψ_self" => "ψ_coils_pla", "BR_self" => "BR_coils_pla", "BZ_self" => "BZ_coils_pla",
-    "Eϕ_self" => "Eϕ_coils_pla", "force_R_self" => "force_R_pla", "force_Z_self" => "force_Z_pla",
-)
-
 function create_symbol_path_mapping(obj_type, Adict::Dict)
     symbol_paths = Dict{String, Vector{Symbol}}()
 

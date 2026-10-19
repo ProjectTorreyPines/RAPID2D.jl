@@ -94,7 +94,7 @@ Values that do not exist are `NaN`: all of them below `flags.Ampere_Itor_thresho
 the fields to add where ∫ Jϕ dV cancels; `decay_index` where B_Z,ext vanishes; `R_eq` and its
 stiffness without a detected root; the axis without a single converged O-point in the closed
 region; the wall gap and times when the centroid is not inside the wall on its row; and everything
-built on the plasma's or the coils' field when the run solves no self field (Ampère off).
+built on the plasma's or the coils' field when the run does not solve them (Ampère off).
 """
 function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     G, F, pla = RP.G, RP.fields, RP.plasma

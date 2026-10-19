@@ -18,6 +18,9 @@
     @test maximum(abs, snap.BZ_pla .+ snap.BZ_coils .- F.BZ_coils_pla) < 1.0e-10 * scale
     @test maximum(abs, snap.BR_pla .+ snap.BR_coils .- F.BR_coils_pla) < 1.0e-10 * scale
     @test snap.ψ_pla == plasma_flux_on_grid(RP, RP.plasma.Jϕ)
+    # before any step: the coil added after initialize! has no change, nothing is split off
+    @test RP.coil_system.ΔI_step == [0.0]
+    @test all(iszero, snap.Eϕ_coils) && snap.Eϕ_pla == F.Eϕ_coils_pla
     # no coils: their fields are zero, the plasma's is the whole
     RP0, _ = current_disc()
     measure_field_sources!(RP0, snap)
@@ -51,7 +54,7 @@ end
 end
 
 @testitem "field sources: above the gate, the step's coil-current change, a split run, the closure" setup = [CoilFluxColumn] begin
-    using RAPID2D: measure_field_sources!, get_all_currents
+    using RAPID2D: measure_field_sources!, get_all_currents, coil_flux_on_grid, add_coil!
     # a column carrying current beside a loop inside the grid, coupled from the first step
     RP = column_with_loops([(1.2, 0.8, 1.0e-3, 0.0, "loop")]; t_end = 20.0e-6)
     in_column = RP.plasma.ne .> 0
@@ -67,16 +70,31 @@ end
     @test any(!iszero, RP.coil_system.ΔI_step)
     snap = Snapshot2D{Float64}(; dims_RZ = (RP.G.NR, RP.G.NZ))
     measure_field_sources!(RP, snap)
-    # the parts of the induced field add up to the one the model applied, the plasma's not zero
-    scale = max(maximum(abs, RP.fields.Eϕ_coils_pla), maximum(abs, snap.Eϕ_coils))
-    @test maximum(abs, snap.Eϕ_pla .+ snap.Eϕ_coils .- RP.fields.Eϕ_coils_pla) <= 1.0e-12 * scale
-    @test maximum(abs, snap.Eϕ_pla) > 0 && maximum(abs, snap.Eϕ_coils) > 0
+    # the coils' part is the field of the step's current change, computed here on its own; the
+    # plasma's is the rest of the field the model applied, and not zero above the gate
+    E_coils = -coil_flux_on_grid(RP, RP.coil_system.ΔI_step) ./ (RP.G.R2D .* RP.dt)
+    @test snap.Eϕ_coils == E_coils
+    @test snap.Eϕ_pla == RP.fields.Eϕ_coils_pla .- E_coils
+    @test maximum(abs, snap.Eϕ_pla) > 0 && maximum(abs, E_coils) > 0
     # the solved sum and the present currents differ by what the outer iteration and the
     # updates after it leave: small, not zero
     @test isfinite(snap.ψ_closure_rel) && snap.ψ_closure_rel < 1.0e-2
     # the 2D snapshots of the run carry them
     s = RP.diagnostics.snaps2D[end]
     @test all(isfinite, s.ψ_pla) && all(isfinite, s.ψ_coils) && isfinite(s.ψ_closure_abs)
+    # a coil added after the run had no change over the last step: the others' split stands
+    ΔI_last = copy(RP.coil_system.ΔI_step)
+    loop2 = deepcopy(RP.coil_system.coils[1])
+    loop2.location, loop2.name, loop2.current = (r = 1.2, z = -0.8), "loop2", 0.0
+    add_coil!(RP.coil_system, loop2)
+    initialize_coil_system!(RP)
+    @test RP.coil_system.ΔI_step == [ΔI_last; 0.0]
+    measure_field_sources!(RP, snap)
+    @test snap.Eϕ_coils == E_coils
+    # a coil set changed without add_coil!: the split is unknown, NaN
+    pop!(RP.coil_system.ΔI_step)
+    measure_field_sources!(RP, snap)
+    @test all(isnan, snap.Eϕ_coils) && all(isnan, snap.Eϕ_pla) && all(isfinite, snap.ψ_pla)
 end
 
 @testitem "field sources: old snapshot names are read into the new ones" begin
