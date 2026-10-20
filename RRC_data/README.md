@@ -183,12 +183,18 @@ is 2–7× above `Recomb_H3Ion`.
 
 ### Known gaps
 
-- `de2`, `de2b`, `di2`, `de3` charge the electrons the lowest threshold over v = 0…9. The
-  electron tables charge a vertical transition instead: dissociative ionization of H₂ costs 35 eV,
-  its 18.1 eV appearance energy plus 17 eV of fragment energy (BreakdownDynamics `E_DI_EV`). By
-  that convention H₂⁺ would cost about the vertical transitions at v = 0, 11.8 eV to 2pσᵤ and 30 eV
-  to p + p, less for the vibrationally excited ions. The fragments' Franck–Condon energies are not
-  in the catalog yet. Both belong with the energy ledger.
+These are questions of data, the values or the cross sections a table averages, not of the
+framework. Each is a new value in the data methods of `src/reactions/hydrogen_network.jl`, or a
+method for another closure, with nothing else to change.
+
+- `de2`, `de2b`, `di2`, `de3` (electron impact on the ions) charge the electrons the lowest
+  threshold over v = 0…9. Electron impact on H₂ charges a vertical transition instead: its
+  dissociative ionization `diz` costs 35 eV, the 18.1 eV appearance energy plus 17 eV of fragment
+  energy (BreakdownDynamics `E_DI_EV`), here and in BREAK alike. By that convention H₂⁺ would cost
+  about the vertical transitions at v = 0, 11.8 eV to 2pσᵤ and 30 eV to p + p, less for the
+  vibrationally excited ions: 2–4× the thresholds, in channels that destroy each H₂⁺ once. The
+  fragments' Franck–Condon energies are not in the catalog yet. Both belong with the energy
+  ledger.
 - The H₃⁺ recombination rate differs 2–7× between HYDHEL 2.2.15 and BREAK. Choose one when H3[1]
   is screened.
 - `cxH2` reads the `Charge_Exchange` table, suppressed below 4.9 eV (above). It needs a resonant
