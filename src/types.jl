@@ -444,6 +444,10 @@ Contains the plasma state variables including density, temperature, and velocity
     exprb::ExpRBTerms{FT} = ExpRBTerms{FT}(dims)
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
+    # The momentum the electrons took from the ions over the step, per volume [kg m⁻² s⁻¹]:
+    # Δt mₑ nₑ Rue_ei at the density the electron momentum equation saw (before continuity).
+    # The ions take −I_ei (`update_ui_para!`), so the exchange cancels exactly.
+    I_ei::Matrix{FT} = zeros(FT, dims)
 
     # The ion species summed node by node (`update_charge_states!`): Σ nₛ, Σ zₛ nₛ (the
     # charge the current and quasineutrality see), Σ zₛ² nₛ (what electrons scatter on),

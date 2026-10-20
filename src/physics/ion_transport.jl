@@ -903,14 +903,20 @@ function foreach_other_ion(f, RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 # Σₛ (nₛ/Σn) f(zₛ, mₛ) node by node into `out`, the first species' value where Σn ≤ 0. The
-# weights are formed first, so with one species `out` is its f exactly. Reads `plasma.ni_sum`.
+# weights are formed first, so with one species `out` is its f exactly. Σn is summed here from
+# the densities, so the mean never mixes them with a stale sum.
 function ion_mean!(out::AbstractMatrix{FT}, RP::RAPID{FT}, f) where {FT <: AbstractFloat}
     pla = RP.plasma
     f1 = FT(f(FT(bulk_ion_charge(RP)), bulk_ion_mass(RP)))
-    @. out = ifelse(pla.ni_sum > zero(FT), (pla.ni / pla.ni_sum) * f1, f1)
-    foreach_other_ion(RP) do n, z, m
-        fs = FT(f(z, m))
-        @. out += ifelse(pla.ni_sum > zero(FT), (n / pla.ni_sum) * fs, zero(FT))
+    @with_pool pool begin
+        total = acquire!(pool, FT, size(pla.ni)...)
+        total .= pla.ni
+        foreach_other_ion((n, z, m) -> (total .+= n), RP)
+        @. out = ifelse(total > zero(FT), (pla.ni / total) * f1, f1)
+        foreach_other_ion(RP) do n, z, m
+            fs = FT(f(z, m))
+            @. out += ifelse(total > zero(FT), (n / total) * fs, zero(FT))
+        end
     end
     return out
 end

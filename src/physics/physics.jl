@@ -169,6 +169,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
+        record_ei_impulse!(RP)   # before continuity moves nₑ
 
         # the momentum the near-vacuum relaxation took out
         RP.diagnostics.near_vacuum.relax_momentum +=
@@ -182,102 +183,83 @@ end
 """
     update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update the parallel ion velocity.
+Update the parallel ion velocity from the ions' momentum per volume ρ uᵢ, ρ = Σ mₛ nₛ after this
+step's continuity. In order: the ions born at rest dilute it, the parallel field (on the ions'
+charge per mass) and the neutral drag act on it, and it takes −I_ei, the opposite of the
+impulse the electron momentum equation recorded, so the e–i exchange cancels exactly whatever
+the scheme and the densities.
 """
 function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return @timeit RAPID_TIMER "update_ui_para!" begin
-        # Alias
-        cnst = RP.config.constants
+        update_charge_states!(RP)   # ρ and the means of the densities as they are now
         pla = RP.plasma
-        m_i = bulk_ion_mass(RP)   # the ion this equation moves, not the default
-
-        eff_atomic_coll_freq = zeros(FT, size(pla.ui_para))
-        if RP.flags.Atomic_Collision
-            iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
-            iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
-
-            # ½ on elastic: those collisions shed only half the momentum.
-            eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
-
-            # Ions are born at rest, so ionization is a dilution rate: events per
-            # second over the ions already present, n_e·ν_iz/(n_e/Z) = Z·ν_iz. Uses
-            # the step-entry ν_en_iz_tot that continuity and the energy equation share.
-            if RP.flags.src
-                Z_i = FT(bulk_ion_charge(RP))
-                # INTERIM(diz-ion-species): ν_en_iz_tot, not ν_en_iz alone, because every
-                # ion is booked as H₂⁺ and so DI dilutes this population too. Why, and
-                # what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
-                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz_tot
-            end
-
-            # TODO: convection/pressure are ignored for ions; adding them needs a
-            # Zeff review.
-            replace!(eff_atomic_coll_freq, NaN => 0.0)
-        end
-
-        qi = cnst.ee
-
+        dt = RP.dt
+        ee = RP.config.constants.ee
         one_FT = one(FT)
-        if RP.flags.scheme.decay === ExpRB
-            # Same sink form as `update_ue_para!`, same caveat — see there.
-            #
-            # **The exponent carries the ATOMIC rate ONLY, and that is deliberate.**
-            # Coulomb friction stays the explicit increment below, so a Coulomb-stiff
-            # cell is stepped at forward Euler whatever this says — and with
-            # `Atomic_Collision` off the whole update is, since `bern(0) = 1`. Both look
-            # like gaps next to `update_ue_para!`, which carries `ν_ei_eff` inside its
-            # exponent. Do not "fix" it by folding `(mₑ/mᵢ)ν_ei` in here.
-            #
-            # e-i friction is an INTERNAL force, and this pair conserves the momentum it
-            # moves EXACTLY, at any Δt. `update_ue_para!` runs first and loses
-            # `mₑn·Δt·ν_ei(u_e^{n+1} − u_i^n)`; the increment below is charged with that
-            # already-updated `u_e` and the same old `u_i`, so the ions gain
-            # `mᵢn·Δt·(mₑ/mᵢ)ν_ei(u_e^{n+1} − u_i^n)` — the same number, opposite sign,
-            # and the two telescope to zero. Making this half implicit in `u_i` would
-            # charge the ions at `u_i^{n+1}` while the electrons were charged at `u_i^n`,
-            # and the exchange would stop cancelling: measured, that costs ~3e-4 of the
-            # total momentum over 60 steps. `physics_test.jl`'s "e-i Coulomb friction
-            # conserves momentum and equalises u_e, u_i" is what enforces this.
-            #
-            # The stability the fold would buy is not needed: the ion-side rate is the
-            # electron one times mₑ/mᵢ ≈ 2.7e-4, so a Δt resolving the electron friction
-            # leaves this term four orders from its own stability limit. An exact
-            # conservation law is worth more than stability in a regime the mass ratio
-            # already rules out.
-            #
-            # The cancellation does depend on the electron half being backward Euler,
-            # so `scheme.decay = ExpRB` does NOT conserve — 42 % lost over 60 steps.
-            # `internal/docs/src/notes/issues/`
-            # `ei-momentum-exchange-exact-only-under-backward-euler.md` records that and
-            # the centre-of-mass split that would make conservation structural instead
-            # of a cancellation, for any scheme.
-            decay_exponent = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
-            bern_decay = exprb_bern.(decay_exponent)
-            @. pla.ui_para = (
-                (bern_decay + decay_exponent) * pla.ui_para +
-                    RP.dt * qi * RP.fields.E_para_tot / m_i
-            ) / bern_decay
-        else
-            # θ = 1 outright, not `θ_imp.decay`: this equation has never read the
-            # weight store, so wiring it up would silently move anyone who set it.
-            θ = one_FT  # Backward Euler
-            @. pla.ui_para = (
-                pla.ui_para * (one_FT - (one_FT - θ) * RP.dt * eff_atomic_coll_freq) +
-                    RP.dt * qi * RP.fields.E_para_tot / m_i
-            ) /
-                (one_FT + θ * RP.dt * eff_atomic_coll_freq)
+        ρ = pla.mni_sum
+
+        # Births at rest first: ρ u stays as it was, now carried by more mass
+        if RP.flags.src
+            Δρ = born_ion_mass(RP)
+            @. pla.ui_para *= ifelse(ρ > zero(FT), max(zero(FT), one_FT - Δρ / ρ), one_FT)
         end
 
-        # Add electron-ion momentum transfer effect
-        if RP.flags.Coulomb_Collision
-            if RP.flags.Spitzer_Resistivity
-                Rui_ei = @. pla.sptz_fac * (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
-            else
-                Rui_ei = @. (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
-            end
-            pla.ui_para .+= RP.dt * Rui_ei
+        # The neutral drag, one rate for every species (the H₂⁺ surfaces); ½ on elastic: those
+        # collisions shed only half the momentum
+        ν_a = zeros(FT, size(pla.ui_para))
+        if RP.flags.Atomic_Collision
+            K_ela = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
+            K_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
+            @. ν_a = pla.n_H2_gas * (FT(0.5) * K_ela + K_cx)
+            replace!(ν_a, NaN => zero(FT))
         end
+
+        # The parallel field on the ions' charge per mass, e Σ zₛ nₛ / Σ mₛ nₛ (the means weight
+        # by density, so one species gives e z/m exactly)
+        @with_pool pool begin
+            Z_mean = ion_mean!(acquire!(pool, FT, size(pla.ni)...), RP, (z, m) -> z)
+            accel = @. dt * ee * Z_mean * RP.fields.E_para_tot / pla.mi_mean
+            if RP.flags.scheme.decay === ExpRB
+                # the exponent carries the drag only: the e–i friction is the recorded impulse below
+                decay_exponent = @. exprb_cap_exponent(-ν_a * dt)
+                bern_decay = exprb_bern.(decay_exponent)
+                @. pla.ui_para = ((bern_decay + decay_exponent) * pla.ui_para + accel) / bern_decay
+            else
+                @. pla.ui_para = (pla.ui_para + accel) / (one_FT + dt * ν_a)   # backward Euler
+            end
+        end
+
+        # The electrons' friction
+        if RP.flags.Coulomb_Collision
+            @. pla.ui_para -= ifelse(ρ > zero(FT), pla.I_ei / ρ, zero(FT))
+        end
+        return RP
     end
+end
+
+# The ion mass this step's reactions created, per volume: Σₛ mₛ ΔNₛ over the species, from the
+# published reaction counts. Creations only: an ion destroyed takes its momentum with it.
+function born_ion_mass(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    counts = check_reaction_counts(RP)
+    Δρ = zeros(FT, size(RP.plasma.ni))
+    for species in RP.transport.ion_species
+        Δn = net_ion_count(counts, species.key)
+        isnothing(Δn) && continue
+        @. Δρ += species.mass * max(Δn, zero(FT))
+    end
+    return Δρ
+end
+
+# The electrons' momentum from the ions over the step, per volume, at the density their momentum
+# equation saw; zero without Coulomb collisions. The ions take −I_ei (`update_ui_para!`).
+function record_ei_impulse!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    if RP.flags.Coulomb_Collision
+        @. pla.I_ei = RP.dt * RP.config.constants.me * pla.ne * pla.Rue_ei
+    else
+        fill!(pla.I_ei, zero(FT))
+    end
+    return RP
 end
 
 """
@@ -2220,6 +2202,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
+        record_ei_impulse!(RP)   # before continuity moves nₑ
 
         update_Jϕ!(RP)
 

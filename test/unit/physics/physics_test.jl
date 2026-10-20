@@ -1520,7 +1520,7 @@ end
 @testitem "e-i Coulomb friction conserves momentum and equalises u_e, u_i" setup = [PhysicsFixtures] begin
     # The most fundamental statement about the Coulomb term: it is an INTERNAL exchange.
     # With E∥ = 0 and no neutral drag it is the only channel acting, so
-    #   d/dt [ me·ne·u_e + mi·ni·u_i ] = 0        (exactly, when ne = ni)
+    #   d/dt [ me·ne·u_e + mi·ni·u_i ] = 0        (exactly: the ions take the recorded impulse)
     # and both species must relax onto the common centre-of-mass velocity
     #   u_cm = (me·u_e0 + mi·u_i0)/(me + mi)
     # on the timescale 1/nu_ei_eff.
@@ -1558,7 +1558,7 @@ end
 
     n0 = 1.0e18
     RP.plasma.ne .= n0
-    RP.plasma.ni .= n0                    # ne == ni is what makes the exchange exact
+    RP.plasma.ni .= n0
     RP.plasma.Te_eV .= 10.0
     RP.plasma.Ti_eV .= 1.0
     RAPID2D.update_transport_quantities!(RP)

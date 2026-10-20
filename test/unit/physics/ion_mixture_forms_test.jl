@@ -115,3 +115,73 @@ end
     both = mixture_channel([ch1, ch2], [zeros(2, 2), zeros(2, 2)])
     @test all(both.v_para .≈ 4.0)
 end
+
+@testitem "The e–i friction is an exchange: momentum per volume is kept exactly, whatever the scheme" begin
+    using RAPID2D: ExpRB, Theta
+    # Coulomb the only channel, no drive: the ions take the opposite of the impulse the
+    # electrons recorded, so mₑnₑuₑ + ρuᵢ is kept to round-off under θ and ExpRB, and with
+    # nₑ ≠ nᵢ, and both velocities meet at the centre of mass
+    function relax(scheme; θ = 1.0, ne = 1.0e18, ni = 1.0e18)
+        config = SimulationConfig{Float64}(NR = 12, NZ = 12, prefilled_gas_pressure = 5.0e-3, R0B0 = 1.0, dt = 1.0e-9)
+        RP = RAPID{Float64}(config)
+        RP.flags = SimulationFlags{Float64}(
+            ud_evolve = true, Implicit = true, Atomic_Collision = false, Coulomb_Collision = true,
+            Spitzer_Resistivity = true, src = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
+            diffu = false, convec = false, Ampere = false, E_para_self_ES = false, E_para_self_EM = false,
+            update_ni_independently = false, Include_ud_convec_term = false, Include_ud_pressure_term = false,
+            Include_ud_diffu_term = false,
+        )
+        RP.flags.scheme.decay = scheme
+        RP.flags.θ_imp.decay = θ
+        initialize!(RP)
+        RP.plasma.ne .= ne
+        RP.plasma.ni .= ni
+        RP.plasma.Te_eV .= 10.0
+        RP.plasma.Ti_eV .= 1.0
+        RAPID2D.update_transport_quantities!(RP)
+        RP.fields.E_para_tot .= 0.0
+        inw = RP.G.nodes.in_wall_nids
+        RP.dt = 1 / (sum(RP.plasma.ν_ei_eff[inw]) / length(inw))
+        me, mi = RP.config.constants.me, RP.config.constants.mi
+        ue0, ui0 = 1.0e5, 0.0
+        RP.plasma.ue_para .= ue0
+        RP.plasma.ui_para .= ui0
+        for _ in 1:60
+            RAPID2D.update_ue_para!(RP)
+            RAPID2D.update_ui_para!(RP)
+        end
+        ue = sum(RP.plasma.ue_para[inw]) / length(inw)
+        ui = sum(RP.plasma.ui_para[inw]) / length(inw)
+        p0 = me * ne * ue0 + mi * ni * ui0
+        u_cm = p0 / (me * ne + mi * ni)
+        return (drift = (me * ne * ue + mi * ni * ui) / p0 - 1, ue = ue / u_cm, ui = ui / u_cm)
+    end
+    for (scheme, θ) in ((Theta, 1.0), (Theta, 0.5), (ExpRB, 1.0)), (ne, ni) in ((1.0e18, 1.0e18), (1.3e18, 1.0e18))
+        r = relax(scheme; θ, ne, ni)
+        @test abs(r.drift) < 1.0e-13
+        @test r.ue ≈ 1 rtol = 1.0e-8
+        @test r.ui ≈ 1 rtol = 1.0e-8
+    end
+end
+
+@testitem "Ions born at rest dilute the drift by their mass, without atomic collisions" setup = [MixtureCase] begin
+    using RAPID2D: update_ui_para!, reset_reaction_counts!
+    # the born mass Δρ = Σ mₛ ΔNₛ (this step's counts) keeps ρ uᵢ: u → u (1 − Δρ/ρ), with ρ
+    # the density after the step; nothing else acts here (no field, no drag, no friction)
+    RP = mixture_case(n_toy = 0.0)
+    RP.flags.Atomic_Collision = false
+    RP.flags.Coulomb_Collision = false
+    RP.flags.src = true
+    RAPID2D.update_charge_states!(RP)
+    pla, rx, mi = RP.plasma, RP.reactions, RP.config.constants.mi
+    RP.fields.E_para_tot .= 0.0
+    pla.ui_para .= 2.0e3
+    reset_reaction_counts!(RP)
+    rx.counts.iz .= 2.0e17                 # 20 % of the ions are this step's births…
+    rx.counts.diz .= 0.5e17                # …and DI's ion is booked to H2[1] too
+    union!(rx.published, (:iz, :diz))
+    update_ui_para!(RP)
+    @test pla.ui_para ≈ fill(2.0e3 * (1 - 2.5e17 / 1.0e18), size(pla.ui_para))
+    # the toy species is unregistered: no reaction makes it, so it does not dilute
+    @test RAPID2D.born_ion_mass(RP) ≈ fill(mi * 2.5e17, size(pla.ni))
+end
