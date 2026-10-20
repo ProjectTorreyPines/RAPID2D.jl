@@ -106,7 +106,7 @@ end
 function network_block(columns::Vector{Int}, rows::Vector{<:NetworkRow})
     inside(s) = s in columns
     block_rows = [j for (j, row) in enumerate(rows) if inside(row.implicit)]
-    inflow = [j for (j, row) in enumerate(rows) if !inside(row.implicit) && any(c -> inside(first(c)) && last(c) > 0, row.ion_change)]
+    inflow = [j for (j, row) in enumerate(rows) if !inside(row.implicit) && any(entry -> inside(first(entry)) && last(entry) > 0, row.ion_change)]
     position(s) = findfirst(==(s), columns)
     tridiagonal = all(
         abs(position(s) - position(rows[j].implicit)) <= 1 for j in block_rows for (s, _) in rows[j].ion_change if inside(s)
