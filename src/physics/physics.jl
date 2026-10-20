@@ -466,17 +466,16 @@ The bottom of the rate tables' `Ē` axis [eV] — below it `RRC_EoverP_Erg`'s
 `ClampExtrap` freezes every coefficient and the interpolant stops meaning anything.
 
 **A function barrier, not a convenience.** `RAPID.eRRCs` is declared as the abstract
-`AbstractSpeciesRRCs{FT}`, so `RP.eRRCs.Kerg_ela.Erg_eV` infers `Any` at the call
-site, and one `Any` scalar inside a `@.` costs the fused kernel its specialization.
-The `::FT` is what makes it concrete again. Hoisting also avoids the `first` trap:
-`Number` is iterable, so `first` under `@.` would dot into `first.(Erg_eV)` — the
-identity on a vector, not a scalar floor.
+`AbstractSpeciesRRCs{FT}`, and one `Any` scalar inside a `@.` costs the fused kernel its
+specialization; read through [`erg_axis_bounds`](@ref), the floor is a concrete `FT`.
+Hoisting also avoids the `first` trap: `Number` is iterable, so `first` under `@.` would
+dot into `first.(Erg_eV)` — the identity on a vector, not a scalar floor.
 
 Read off `Kerg_ela`, but it is every surface's floor: all of them share the one
 `Erg_eV` vector the constructor read.
 """
 @inline mean_energy_floor(RP::RAPID{FT}) where {FT <: AbstractFloat} =
-    first(RP.eRRCs.Kerg_ela.Erg_eV)::FT
+    first(erg_axis_bounds(RP, :Kerg_ela))
 
 """
     cold_target_factor(Ē, T_gas_eV, Ē_floor)

@@ -81,6 +81,7 @@ include("control/ideal_vertical_field.jl")   # the ideal vertical-field actuator
 # Include the cross-section models
 include("reactions/electron_Xsec.jl")
 include("reactions/reaction_rate_coefficients.jl")
+include("reactions/rate_models.jl")   # rate coefficients by model (a table or a fit) and context
 
 # Include simulation workflows
 include("step_transaction.jl")   # a step as a transaction: the state it writes, put back when an attempt is rejected

@@ -10,17 +10,20 @@ Concrete implementations must provide methods to compute or interpolate reaction
 abstract type AbstractReactionRateCoefficient{T <: AbstractFloat} end
 
 """
-    RRC_EoverP_Erg{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
+    RRC_EoverP_Erg{FT, D, I, DK} <: AbstractReactionRateCoefficient{FT}
 
 Reaction rate coefficient model based on electric field over pressure (E/p) and particle energy.
 Stores both raw data and an interpolation object for efficient calculation of rate coefficients.
+The parameters after `FT` are the concrete types of the data and of the two interpolants, so a
+call on a surface is inferred. Mutable only to be held by reference: a container read by a
+runtime field name would otherwise copy its surfaces out; every field is `const`.
 
 # Fields
 - `EoverP::Vector{FT}`: Electric field over pressure (E/p) coordinates
 - `Erg_eV::Vector{FT}`: Particle energy in eV
-- `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp`: Interpolant; clamps to the table boundary outside its bounds
-- `dK_dĒ`: `∂K/∂Ē` at the same point — see below
+- `raw_data::D`: Raw reaction rate data as a matrix
+- `itp::I`: Interpolant; clamps to the table boundary outside its bounds
+- `dK_dĒ::DK`: `∂K/∂Ē` at the same point — see below
 
 # The derivative surface
 
@@ -39,16 +42,16 @@ damps `Tₑ` toward zero outside the wall, putting those nodes at `Ē = 0`.
 
 When the upstream fix lands, drop the second interpolant and take
 `deriv_view(itp, (0, 1))` directly."""
-struct RRC_EoverP_Erg{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
+mutable struct RRC_EoverP_Erg{FT <: AbstractFloat, D <: AbstractMatrix{FT}, I, DK} <: AbstractReactionRateCoefficient{FT}
     # 2 variables for given reaction rate coefficient
-    EoverP::Vector{FT}  # Electric field over pressure (E/p) coordinates
-    Erg_eV::Vector{FT}  # Particle's energy
+    const EoverP::Vector{FT}  # Electric field over pressure (E/p) coordinates
+    const Erg_eV::Vector{FT}  # Particle's energy
 
-    raw_data::AbstractArray{FT}
-    itp  # Interpolant; clamps to the table boundary outside its bounds
-    dK_dĒ  # ∂K/∂Ē of the same interpolant; clamps on E/p, raises on Ē (see above)
+    const raw_data::D
+    const itp::I  # Interpolant; clamps to the table boundary outside its bounds
+    const dK_dĒ::DK  # ∂K/∂Ē of the same interpolant; clamps on E/p, raises on Ē (see above)
 
-    function RRC_EoverP_Erg(EoverP::Vector{FT}, Erg_eV::Vector{FT}, raw_data::AbstractArray{FT}) where {FT <: AbstractFloat}
+    function RRC_EoverP_Erg(EoverP::Vector{FT}, Erg_eV::Vector{FT}, raw_data::AbstractMatrix{FT}) where {FT <: AbstractFloat}
         # ClampExtrap: below the table's minimum E/p the rate relaxes to the room-T
         # Maxwellian (bottom row), not 0 — E/p=0 means no field, not no collisions.
         itp = linear_interp((EoverP, Erg_eV), raw_data; extrap = ClampExtrap())
@@ -56,22 +59,25 @@ struct RRC_EoverP_Erg{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT
             (EoverP, Erg_eV), raw_data;
             extrap = (ClampExtrap(), NoExtrap())
         )
-        return new{FT}(EoverP, Erg_eV, raw_data, itp, deriv_view(itp_d, (0, 1)))
+        dK_dĒ = deriv_view(itp_d, (0, 1))
+        return new{FT, typeof(raw_data), typeof(itp), typeof(dK_dĒ)}(EoverP, Erg_eV, raw_data, itp, dK_dĒ)
     end
 end
 
 """
-    RRC_T_ud{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
+    RRC_T_ud{FT, D, I, DK} <: AbstractReactionRateCoefficient{FT}
 
 Reaction rate coefficient model based on temperature and parallel drift velocity.
-Used for reactions where the rate depends on temperature and drift velocity.
+Used for reactions where the rate depends on temperature and drift velocity. The parameters after
+`FT` are the concrete types of the data and of the two interpolants; mutable only to be held by
+reference, as [`RRC_EoverP_Erg`](@ref), with every field `const`.
 
 # Fields
 - `T_eV::Vector{FT}`: Temperature in eV
 - `ud_para::Vector{FT}`: Parallel drift velocity
-- `raw_data::AbstractArray{FT}`: Raw reaction rate data as a matrix
-- `itp`: Interpolant; clamps to the table boundary outside its bounds
-- `dK_dT`: `∂K/∂T` at the same point
+- `raw_data::D`: Raw reaction rate data as a matrix
+- `itp::I`: Interpolant; clamps to the table boundary outside its bounds
+- `dK_dT::DK`: `∂K/∂T` at the same point
 
 # The derivative surface
 
@@ -83,16 +89,16 @@ uses `NoExtrap` and callers clamp it themselves, because out of range the value
 is frozen and the honest derivative is `0`, not the boundary cell's slope
 (FastInterpolations returns the latter — upstream bug, derivative views only).
 """
-struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
+mutable struct RRC_T_ud{FT <: AbstractFloat, D <: AbstractMatrix{FT}, I, DK} <: AbstractReactionRateCoefficient{FT}
     # 2 variables for given reaction rate coefficient
-    T_eV::Vector{FT}  # Temperature in eV
-    ud_para::Vector{FT}  # parallel velocity
+    const T_eV::Vector{FT}  # Temperature in eV
+    const ud_para::Vector{FT}  # parallel velocity
 
-    raw_data::AbstractArray{FT}
-    itp  # Interpolant; clamps to the table boundary outside its bounds
-    dK_dT  # ∂K/∂T of the same interpolant; raises on T, clamps on u_d (see above)
+    const raw_data::D
+    const itp::I  # Interpolant; clamps to the table boundary outside its bounds
+    const dK_dT::DK  # ∂K/∂T of the same interpolant; raises on T, clamps on u_d (see above)
 
-    function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractArray{FT}) where {FT <: AbstractFloat}
+    function RRC_T_ud(T_eV::Vector{FT}, ud_para::Vector{FT}, raw_data::AbstractMatrix{FT}) where {FT <: AbstractFloat}
         size(raw_data) == (length(T_eV), length(ud_para)) || throw(
             DimensionMismatch(
                 "surface is $(size(raw_data)) but the axes are " *
@@ -106,7 +112,8 @@ struct RRC_T_ud{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
             (T_eV, ud_para), raw_data;
             extrap = (NoExtrap(), ClampExtrap())
         )
-        return new{FT}(T_eV, ud_para, raw_data, itp, deriv_view(itp_d, (1, 0)))
+        dK_dT = deriv_view(itp_d, (1, 0))
+        return new{FT, typeof(raw_data), typeof(itp), typeof(dK_dT)}(T_eV, ud_para, raw_data, itp, dK_dT)
     end
 end
 
@@ -163,23 +170,20 @@ end
 
 The endpoints of one `(T, u_d)` ion surface's temperature axis [eV], as a concrete
 `Tuple{FT,FT}`. The ion-side twin of [`erg_axis_bounds`](@ref), and a function barrier
-for the same reason: `RAPID.iRRCs` is the abstract `AbstractSpeciesRRCs{FT}` and
-`reaction` selects the field at runtime, so `first(rrc.T_eV)` arrives `::AbstractFloat`
-and would enter `clamp.` over the whole grid as a non-concrete scalar operand.
+for the same reason: the surface is read in a method on the container, and the pair comes
+back `::Tuple{FT,FT}` to enter `clamp.` over the whole grid as concrete scalar operands.
 
-**Separate from [`ion_rate_jacobian`](@ref) on purpose.** That function also asserts
-`::Matrix{FT}` on its `dK_dT` call, and that assertion alone makes its RETURN type
-concrete — so a test on the return type cannot see whether these scalars are pinned.
-Mutation-checked: removing the `::FT` here leaves `ion_rate_jacobian` inferring
-`Matrix{Float64}` regardless. This accessor is what makes the scalar layer testable.
+**Separate from [`ion_rate_jacobian`](@ref) on purpose**, so the scalar layer has a test of
+its own rather than only through that function's return type.
 """
-@inline function t_axis_bounds(
-        RP::RAPID{FT}, reaction::Symbol
-    ) where {FT <: AbstractFloat}
-    rrc = getfield(RP.iRRCs, reaction)
+@inline t_axis_bounds(RP::RAPID{FT}, reaction::Symbol) where {FT <: AbstractFloat} =
+    t_axis_bounds(RP.iRRCs, reaction)::Tuple{FT, FT}
+
+function t_axis_bounds(rrcs::AbstractSpeciesRRCs, reaction::Symbol)
+    rrc = getfield(rrcs, reaction)
     rrc isa RRC_T_ud ||
         throw(ArgumentError("the T axis is defined for (T, u_d) surfaces; $reaction is not one"))
-    return (first(rrc.T_eV)::FT, last(rrc.T_eV)::FT)
+    return (first(rrc.T_eV), last(rrc.T_eV))
 end
 
 """
@@ -193,25 +197,14 @@ Returns `∂K/∂T`, not `∂ν/∂T`: the caller owns the `n_gas` and the per-c
 weights (`½` on elastic), exactly as it owns them for the value.
 """
 function ion_rate_jacobian(RP::RAPID{FT}, reaction::Symbol) where {FT <: AbstractFloat}
-    rrc = getfield(RP.iRRCs, reaction)
-    rrc isa RRC_T_ud ||
-        throw(ArgumentError("∂/∂T_i is defined for (T, u_d) surfaces; $reaction is not one"))
-
-    # Two concretising assertions, and BOTH are needed — dropping either leaves this
-    # function inferring `Any`, which then propagates into the two whole-grid
-    # broadcasts `update_ion_power_jacobian!` builds from its result.
-    #   `::FT`        — `RP.iRRCs` is the abstract `AbstractSpeciesRRCs{FT}` and
-    #                   `reaction` selects the field at runtime, so `first(rrc.T_eV)`
-    #                   arrives `::AbstractFloat` and would enter `clamp.` as a
-    #                   non-concrete scalar operand.
-    #   `::Matrix{FT}` — `RRC_T_ud` declares `itp` and `dK_dT` with no type at all
-    #                   (see the struct), so the call is `Any` however well the
-    #                   scalars are pinned.
-    # Pinned by `rrc_type_stability_test.jl`; the same barrier idiom as
-    # [`erg_axis_bounds`](@ref) and [`mean_energy_floor`](@ref).
+    # The bounds come back `::FT` from `t_axis_bounds` (which also refuses any other kind
+    # of surface), and the result is written into a buffer allocated here, so the return
+    # type is `Matrix{FT}`; an `Any` would propagate into the two whole-grid broadcasts
+    # `update_ion_power_jacobian!` builds from it. Pinned by `rrc_type_stability_test.jl`.
     T_lo, T_hi = t_axis_bounds(RP, reaction)
     T_query = clamp.(RP.plasma.Ti_eV, T_lo, T_hi)
-    out = rrc.dK_dT((T_query, abs.(RP.plasma.ui_para)))::Matrix{FT}
+    out = similar(T_query)
+    surface_derivative!(out, RP.iRRCs, reaction, HeavyPairContext(T_query, abs.(RP.plasma.ui_para)))
     # Exact equality is the in-range test — `clamp` returns its argument untouched
     # inside the interval and a bound outside it.
     @. out = ifelse(RP.plasma.Ti_eV == T_query, out, zero(FT))
@@ -219,39 +212,42 @@ function ion_rate_jacobian(RP::RAPID{FT}, reaction::Symbol) where {FT <: Abstrac
 end
 
 """
-    RRC_T_ud_gFac{FT<:AbstractFloat} <: AbstractReactionRateCoefficient{FT}
+    RRC_T_ud_gFac{FT, D, I} <: AbstractReactionRateCoefficient{FT}
 
 Reaction rate coefficient model based on temperature, parallel drift velocity, and distribution function g-factor.
-Used for more complex reactions where the distribution function shape affects the rate.
+Used for more complex reactions where the distribution function shape affects the rate. The
+parameters after `FT` are the concrete types of the (3-D) data and of the interpolant; mutable
+only to be held by reference, as [`RRC_EoverP_Erg`](@ref), with every field `const`.
 
 # Fields
 - `T_eV::Vector{FT}`: Temperature in eV
 - `ud_para::Vector{FT}`: Parallel drift velocity
 - `gFac::Vector{FT}`: g-factor of the distribution function
-- `raw_data::AbstractArray{FT}`: Raw reaction rate data
-- `itp`: Interpolant; clamps to the table boundary outside its bounds
+- `raw_data::D`: Raw reaction rate data
+- `itp::I`: Interpolant; clamps to the table boundary outside its bounds
 """
-struct RRC_T_ud_gFac{FT <: AbstractFloat} <: AbstractReactionRateCoefficient{FT}
+mutable struct RRC_T_ud_gFac{FT <: AbstractFloat, D <: AbstractArray{FT, 3}, I} <: AbstractReactionRateCoefficient{FT}
     # 3 variables for given reaction rate coefficient
-    T_eV::Vector{FT}  # Temperature in eV
-    ud_para::Vector{FT}  # parallel velocity
-    gFac::Vector{FT}  # g-factor of Distribution function
+    const T_eV::Vector{FT}  # Temperature in eV
+    const ud_para::Vector{FT}  # parallel velocity
+    const gFac::Vector{FT}  # g-factor of Distribution function
 
-    raw_data::AbstractArray{FT}
-    itp  # Interpolant; clamps to the table boundary outside its bounds
+    const raw_data::D
+    const itp::I  # Interpolant; clamps to the table boundary outside its bounds
 
-    function RRC_T_ud_gFac(T_eV::Vector{FT}, ud_para::Vector{FT}, gFac::Vector{FT}, raw_data::AbstractArray{FT}) where {FT <: AbstractFloat}
+    function RRC_T_ud_gFac(T_eV::Vector{FT}, ud_para::Vector{FT}, gFac::Vector{FT}, raw_data::AbstractArray{FT, 3}) where {FT <: AbstractFloat}
         # ClampExtrap: out-of-domain (T, u_d, gFac) queries clamp to the nearest boundary rate.
         itp = linear_interp((T_eV, ud_para, gFac), raw_data; extrap = ClampExtrap())
-        return new{FT}(T_eV, ud_para, gFac, raw_data, itp)
+        return new{FT, typeof(raw_data), typeof(itp)}(T_eV, ud_para, gFac, raw_data, itp)
     end
 end
 
 """
-    Electron_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
+    Electron_RRCs{FT, E, T} <: AbstractSpeciesRRCs{FT}
 
 Container for electron-related reaction rate coefficient models.
-Stores various reaction models for electron-neutral and electron-ion interactions.
+Stores various reaction models for electron-neutral and electron-ion interactions. `E` and `T`
+are the concrete types of its (E/p, Ē) and (T, u_d) surfaces.
 
 # Fields
 
@@ -294,34 +290,34 @@ Never form `Kerg_x/K_x` at runtime: the DISS pair is deliberately asymmetric and
 - `Recomb_H2Ion`: Rate coefficient for H2+ recombination
 - `Recomb_H3Ion`: Rate coefficient for H3+ recombination
 """
-struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
+struct Electron_RRCs{FT <: AbstractFloat, E <: RRC_EoverP_Erg{FT}, T <: RRC_T_ud{FT}} <: AbstractSpeciesRRCs{FT}
     # ── particle ledger [m³/s] — count EVENTS
-    K_iz::RRC_EoverP_Erg{FT}
-    K_diss_iz::RRC_EoverP_Erg{FT}
-    K_exc::RRC_EoverP_Erg{FT}
-    K_diss_exc::RRC_EoverP_Erg{FT}
+    K_iz::E
+    K_diss_iz::E
+    K_exc::E
+    K_diss_exc::E
 
     # ── momentum ledger [m³/s] — v_z-weighted drift friction, K_mom = Σ K_mom_by_*
-    K_mom::RRC_EoverP_Erg{FT}
-    K_mom_by_ela::RRC_EoverP_Erg{FT}
-    K_mom_by_exc::RRC_EoverP_Erg{FT}
-    K_mom_by_diss_exc::RRC_EoverP_Erg{FT}
-    K_mom_by_iz::RRC_EoverP_Erg{FT}
-    K_mom_by_diss_iz::RRC_EoverP_Erg{FT}
+    K_mom::E
+    K_mom_by_ela::E
+    K_mom_by_exc::E
+    K_mom_by_diss_exc::E
+    K_mom_by_iz::E
+    K_mom_by_diss_iz::E
 
     # ── energy ledger [W·m³] — carry ENERGY; BD spells these `L_*`
-    Kerg_ela::RRC_EoverP_Erg{FT}
-    Kerg_exc::RRC_EoverP_Erg{FT}
-    Kerg_diss_exc::RRC_EoverP_Erg{FT}
-    Kerg_tot::RRC_EoverP_Erg{FT}
+    Kerg_ela::E
+    Kerg_exc::E
+    Kerg_diss_exc::E
+    Kerg_tot::E
 
     # From eRRCs_T_ud.h5, and NOT the same quantity as `K_diss_iz`: different
     # coordinates, different data generation, no consumer. Named `_legacy` so the
     # collision with the live channel cannot be made by accident.
-    Dissoc_Ionz_legacy::RRC_T_ud{FT}
-    Halpha::RRC_T_ud{FT}
-    Recomb_H2Ion::RRC_T_ud{FT}
-    Recomb_H3Ion::RRC_T_ud{FT}
+    Dissoc_Ionz_legacy::T
+    Halpha::T
+    Recomb_H2Ion::T
+    Recomb_H3Ion::T
 
     function Electron_RRCs(eRRC_EoverP_Erg_fileName::String, eRRC_T_ud_fileName::String)
         @assert isfile(eRRC_EoverP_Erg_fileName) "File not found: $eRRC_EoverP_Erg_fileName"
@@ -382,7 +378,7 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
 
         FT = eltype(EoverP)  # Determine the floating-point type from the data
 
-        return new{FT}(
+        return new{FT, typeof(K_iz), typeof(Halpha)}(
             K_iz, K_diss_iz, K_exc, K_diss_exc,
             K_mom, K_mom_by_ela, K_mom_by_exc, K_mom_by_diss_exc,
             K_mom_by_iz, K_mom_by_diss_iz,
@@ -393,10 +389,11 @@ struct Electron_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
 end
 
 """
-    H2_Ion_RRCs{FT<:AbstractFloat} <: AbstractSpeciesRRCs{FT}
+    H2_Ion_RRCs{FT, T} <: AbstractSpeciesRRCs{FT}
 
 Container for H2+ ion-related reaction rate coefficient models.
-Stores various reaction models for H2+ interactions with background gas.
+Stores various reaction models for H2+ interactions with background gas. `T` is the concrete
+type of its (T, u_d) surfaces.
 
 # Fields
 - `Elastic`: Rate coefficient for elastic collisions
@@ -405,12 +402,12 @@ Stores various reaction models for H2+ interactions with background gas.
 - `Projectile_Dissociation`: Rate coefficient for dissociation of projectile ions
 - `Particle_Exchange`: Rate coefficient for particle exchange processes
 """
-struct H2_Ion_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
-    Elastic::RRC_T_ud{FT}
-    Charge_Exchange::RRC_T_ud{FT}
-    Target_Ionization::RRC_T_ud{FT}
-    Projectile_Dissociation::RRC_T_ud{FT}
-    Particle_Exchange::RRC_T_ud{FT}
+struct H2_Ion_RRCs{FT <: AbstractFloat, T <: RRC_T_ud{FT}} <: AbstractSpeciesRRCs{FT}
+    Elastic::T
+    Charge_Exchange::T
+    Target_Ionization::T
+    Projectile_Dissociation::T
+    Particle_Exchange::T
 
     function H2_Ion_RRCs(iRRCs_T_ud_fileName::String)
         # Create RRC_T_ud objects for each reaction type from the given H5 file
@@ -428,7 +425,7 @@ struct H2_Ion_RRCs{FT <: AbstractFloat} <: AbstractSpeciesRRCs{FT}
 
         FT = eltype(T_eV)  # Determine the floating-point type from the data
 
-        return new{FT}(Elastic, Charge_Exchange, Target_Ionization, Projectile_Dissociation, Particle_Exchange)
+        return new{FT, typeof(Elastic)}(Elastic, Charge_Exchange, Target_Ionization, Projectile_Dissociation, Particle_Exchange)
     end
 end
 
@@ -462,8 +459,9 @@ end
 """
     get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
 
-Calculate electron reaction rate coefficients for the specified reaction using interpolation.
-Automatically selects appropriate physical parameters from the RAPID model.
+The rate coefficient of one electron surface at every node: a (E/p, Ē) surface in the
+[`ElectronImpactContext`](@ref) of the state, a (T, u_d) surface in its
+[`ElectronDriftContext`](@ref) ([`rate_coefficient`](@ref) of a [`TabulatedRate`](@ref)).
 
 # Arguments
 - `RP::RAPID{FT}`: RAPID plasma model containing physical state variables
@@ -474,17 +472,14 @@ Automatically selects appropriate physical parameters from the RAPID model.
 - RRC (reaction rate coefficient) values at each spatial point
 """
 function get_electron_RRC(RP::RAPID{FT}, eRRCs::Electron_RRCs{FT}, reaction::Symbol) where {FT <: AbstractFloat}
-    return if hasfield(typeof(eRRCs), reaction)
-        RRC = getfield(eRRCs, reaction)
-        if RRC isa RRC_EoverP_Erg
-            return RRC.itp(_eRRC_query_point(RP))
-        elseif RRC isa RRC_T_ud
-            return RRC.itp((RP.plasma.Te_eV, abs.(RP.plasma.ue_para)))
-        end
-    else
-        throw(ArgumentError("Invalid reaction type: $reaction"))
-    end
+    hasfield(typeof(eRRCs), reaction) || throw(ArgumentError("Invalid reaction type: $reaction"))
+    rrc = getfield(eRRCs, reaction)
+    return rate_coefficient(TabulatedRate(rrc), electron_rate_context(RP, rrc))
 end
+
+# The context an electron surface is queried in, by its axes
+electron_rate_context(RP::RAPID, ::RRC_EoverP_Erg) = ElectronImpactContext(RP)
+electron_rate_context(RP::RAPID, ::RRC_T_ud) = ElectronDriftContext(RP)
 
 # Convenience dispatch
 function get_electron_RRC(RP::RAPID{FT}, reaction::Symbol) where {FT <: AbstractFloat}
@@ -494,8 +489,8 @@ end
 """
     get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol) where FT<:AbstractFloat
 
-Calculate H2+ ion reaction rate coefficients for the specified reaction using interpolation.
-Automatically selects appropriate physical parameters from the RAPID model.
+The rate coefficient of one H2+ surface at every node, in the [`HeavyPairContext`](@ref) of the
+state ([`rate_coefficient`](@ref) of a [`TabulatedRate`](@ref)).
 
 # Arguments
 - `RP::RAPID{FT}`: RAPID plasma model containing physical state variables
@@ -506,14 +501,8 @@ Automatically selects appropriate physical parameters from the RAPID model.
 - RRC (reaction rate coefficient) values at each spatial point
 """
 function get_H2_ion_RRC(RP::RAPID{FT}, iRRCs::H2_Ion_RRCs{FT}, reaction::Symbol) where {FT <: AbstractFloat}
-    return if hasfield(typeof(iRRCs), reaction)
-        RRC = getfield(iRRCs, reaction)
-        if RRC isa RRC_T_ud
-            return RRC.itp((RP.plasma.Ti_eV, abs.(RP.plasma.ui_para)))
-        end
-    else
-        throw(ArgumentError("Invalid reaction type: $reaction"))
-    end
+    hasfield(typeof(iRRCs), reaction) || throw(ArgumentError("Invalid reaction type: $reaction"))
+    return rate_coefficient(TabulatedRate(getfield(iRRCs, reaction)), HeavyPairContext(RP))
 end
 
 # Convenience dispatch
@@ -626,29 +615,23 @@ end
 
 The endpoints of one `(E/p, Ē)` surface's `Ē` axis [eV], as a concrete `Tuple{FT,FT}`.
 
-**A function barrier, not a convenience** — the same one [`mean_energy_floor`](@ref) is,
-and for the same reason twice over. `RAPID.eRRCs` is declared as the abstract
-`AbstractSpeciesRRCs{FT}`, and `reaction` selects the field at RUNTIME, so
-`getfield(RP.eRRCs, reaction).Erg_eV` infers `Vector{FT} where FT<:AbstractFloat` and
-`first` of it comes back `::AbstractFloat`. Handing that to
-`clamp.(mean_Ke_eV, Ē_lo, Ē_hi)` costs the fused kernel its specialization, on every
-node, on every call. The `::FT` is what makes it concrete again.
-
-**The `isa` test below does not do that job.** `rrc isa RRC_EoverP_Erg` narrows to the
-UnionAll, not to `RRC_EoverP_Erg{FT}`, so it validates without concretising — which is
-exactly the premise a review once cleared this site on. The annotations are load-bearing;
-the `isa` is only an error message.
+**A function barrier, not a convenience.** `RAPID.eRRCs` is declared as the abstract
+`AbstractSpeciesRRCs{FT}`, and `reaction` selects the field at RUNTIME, so read off that
+field the bounds arrive `::AbstractFloat`; handed to `clamp.(mean_Ke_eV, Ē_lo, Ē_hi)` that
+costs the fused kernel its specialization, on every call. So the surface is read in a method
+on the container, and the `::Tuple{FT,FT}` makes the pair concrete again.
 
 Every `RRC_EoverP_Erg` shares the one `Erg_eV` vector the constructor read, so the pair
 is the same for every surface and `Ē_lo` is [`mean_energy_floor`](@ref).
 """
-@inline function erg_axis_bounds(
-        RP::RAPID{FT}, reaction::Symbol
-    ) where {FT <: AbstractFloat}
-    rrc = getfield(RP.eRRCs, reaction)
+@inline erg_axis_bounds(RP::RAPID{FT}, reaction::Symbol) where {FT <: AbstractFloat} =
+    erg_axis_bounds(RP.eRRCs, reaction)::Tuple{FT, FT}
+
+function erg_axis_bounds(rrcs::AbstractSpeciesRRCs, reaction::Symbol)
+    rrc = getfield(rrcs, reaction)
     rrc isa RRC_EoverP_Erg ||
         throw(ArgumentError("the Ē axis is defined for (E/p, Ē) surfaces; $reaction is not one"))
-    return (first(rrc.Erg_eV)::FT, last(rrc.Erg_eV)::FT)
+    return (first(rrc.Erg_eV), last(rrc.Erg_eV))
 end
 
 """
@@ -672,21 +655,16 @@ instead of reporting a false dependence. Not a corner case:
 function update_rate_jacobian!(
         RP::RAPID{FT}, reaction::Symbol, out::AbstractMatrix{FT}
     ) where {FT <: AbstractFloat}
-    rrc = getfield(RP.eRRCs, reaction)
-    rrc isa RRC_EoverP_Erg ||
-        throw(ArgumentError("∂/∂Tₑ is defined for (E/p, Ē) surfaces; $reaction is not one"))
-
-    abs_Epara_over_pGas, mean_Ke_eV = _eRRC_query_point(RP)
-
     # Clamp on the Ē axis only. E/p carries no Tₑ dependence, so the interpolant
     # clamps it exactly as the value path does and nothing needs masking there.
-    # Through `erg_axis_bounds` rather than off `rrc` directly: the bounds are scalar
-    # operands of a whole-grid broadcast, and read off the abstract field they arrive
-    # `::AbstractFloat`. See that function; pinned by `rrc_type_stability_test.jl`.
+    # Through `erg_axis_bounds`, which also refuses any other kind of surface: the
+    # bounds are scalar operands of a whole-grid broadcast, concrete only through that
+    # barrier. See that function; pinned by `rrc_type_stability_test.jl`.
     Ē_lo, Ē_hi = erg_axis_bounds(RP, reaction)
+    abs_Epara_over_pGas, mean_Ke_eV = _eRRC_query_point(RP)
     Ē_query = clamp.(mean_Ke_eV, Ē_lo, Ē_hi)
 
-    rrc.dK_dĒ(out, (abs_Epara_over_pGas, Ē_query))
+    surface_derivative!(out, RP.eRRCs, reaction, ElectronImpactContext(abs_Epara_over_pGas, Ē_query))
     # Exact equality is the in-range test: `clamp` returns its argument untouched
     # inside the interval and a bound outside it.
     @. out = ifelse(
