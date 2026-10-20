@@ -201,8 +201,9 @@ The step tⁿ → tⁿ + Δt, Δt = `RP.dt`, as a transaction. An attempt runs [
 and books what belongs to the step (the ion-source ledger, the negative-density floor). A rejected
 attempt is put back ([`restore_step_state!`](@ref)) and the step taken in two halves, each a
 transaction of its own; a rejected half is halved again, down to Δt/2⁶. A rejection there puts the
-state back as the step found it and throws. `RP.dt` is Δt again on every exit, and `RP.time_s`
-lands on tⁿ + Δt exactly.
+state back as the step found it and throws. `RP.dt` is Δt again on every exit, and an accepted
+step lands `RP.time_s` on tⁿ + Δt exactly. An exception inside an attempt is not rolled back:
+the state stays where the attempt failed, to be inspected.
 
 Between two accepted parts, the electrostatic estimate and `update_transport_quantities!` run as
 after a step; the field-line analysis waits for the end of the step. After a step taken in parts,

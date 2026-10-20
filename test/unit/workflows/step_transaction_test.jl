@@ -109,6 +109,8 @@ end
     # sets, nested records, numbers, flags, a function), comes back bit for bit
     function perturb!(obj, name)
         v = getfield(obj, name)
+        # a coil voltage changes kind both ways, a number for a function and back
+        name === :voltage_applied && return setfield!(obj, name, v isa Function ? 1.0 : sin)
         if v isa Vector{<:Real}
             push!(v, 7.0)
         elseif v isa Array{<:Real}
@@ -119,13 +121,12 @@ end
             setfield!(obj, name, !v)
         elseif v isa Real
             setfield!(obj, name, v + one(v))
-        elseif v isa Union{Function, Tuple}
-            name === :voltage_applied && setfield!(obj, name, sin)
         elseif ismutable(v)
             foreach(n -> perturb!(v, n), fieldnames(typeof(v)))
         end
         return obj
     end
+    RP.coil_system.coils[1].voltage_applied = t -> 50.0   # a waveform, as a function
     for _ in 1:3                       # some state to put back, not only the initial zeros
         step!(RP)
     end
@@ -144,6 +145,7 @@ end
     RP.plasma.mean_ExB_R = RP.plasma.mean_ExB_R .- 1
     RP.closed_surface.solve = deepcopy(RP.closed_surface.solve)
     RP.diagnostics.near_vacuum = deepcopy(RP.diagnostics.near_vacuum)
+    RP.transport.ion_N = zeros(size(RP.transport.ion_N, 1), 2)   # another shape: replaced back
     rebound = RP.fields.Bϕ
     @test !same(StepState(RP), before)
     restore_step_state!(RP, ck)
@@ -203,11 +205,15 @@ end
     end
     dt, t0, n0 = RP.dt, RP.time_s, RP.step
 
-    # rejects the whole step once; records the length and start of every attempt it judges
+    # rejects the whole step once; records the length and start of every attempt it judges, and
+    # the callback records the attempts it is called on
     attempts = Tuple{Float64, Float64}[]
+    called = Tuple{Float64, Float64}[]
     verdict = rp -> (push!(attempts, (rp.dt, rp.time_s)); length(attempts) == 1 ? Reject(:test) : Accept())
-    take_step!(RP, StepTransaction(RP); verdict)
+    callback_before_step = rp -> push!(called, (rp.dt, rp.time_s))
+    take_step!(RP, StepTransaction(RP); verdict, callback_before_step)
     @test attempts == [(dt, t0), (dt / 2, t0), (dt / 2, t0 + 32 * (dt / 64))]
+    @test called == attempts            # once on every attempt, the rejected one included
     @test RP.time_s === t0 + dt          # on the step's end exactly, as an unsplit step
     @test RP.step == n0 + 1              # one step, however many parts
     @test RP.dt === dt

@@ -209,39 +209,38 @@ end
 # ── contractions generated from the table ────────────────────────────────────────────────
 #
 # A channel contributes to a column with its coefficient. The channels are summed in table
-# order and a common coefficient is applied once, `c·(N₁ + N₂)`: the expression the
-# hand-written accessors always had, so the rounding and the signed zeros are unchanged.
-# A column whose channels carry different coefficients is refused here until a producer
-# needs one (the reaction catalog generalizes this).
+# order and a common coefficient is applied once, coefficient·(N₁ + N₂): one sum and one sign,
+# signed zeros kept (the contraction tests pin the expressions). A column whose channels carry
+# different coefficients is refused until a producer needs one.
 
 function _column_channels(column)
     chans = [ch for ch in keys(REACTION_STOICHIOMETRY) if column(REACTION_STOICHIOMETRY[ch]) != 0]
-    coefs = unique(column(REACTION_STOICHIOMETRY[ch]) for ch in chans)
-    length(coefs) <= 1 || error("a column with mixed coefficients needs the general contraction")
-    return chans, isempty(coefs) ? 0 : only(coefs)
+    coefficients = unique(column(REACTION_STOICHIOMETRY[ch]) for ch in chans)
+    length(coefficients) <= 1 || error("a column with mixed coefficients needs the general contraction")
+    return chans, isempty(coefficients) ? 0 : only(coefficients)
 end
 
-function _contraction(chans, c, ref)
+function _contraction(chans, coefficient, ref)
     terms = [ref(ch) for ch in chans]
-    sum_expr = length(terms) == 1 ? terms[1] : foldl((a, b) -> :($a .+ $b), terms)
+    sum_expr = length(terms) == 1 ? terms[1] : foldl((acc, term) -> :($acc .+ $term), terms)
     length(terms) == 1 && (sum_expr = :(copy($sum_expr)))
-    return c == 1 ? sum_expr : c == -1 ? :(-($sum_expr)) : :($c .* $sum_expr)
+    return coefficient == 1 ? sum_expr : coefficient == -1 ? :(-($sum_expr)) : :($coefficient .* $sum_expr)
 end
 
-function _contraction_at(chans, c, ref)
+function _contraction_at(chans, coefficient, ref)
     terms = [ref(ch) for ch in chans]
-    sum_expr = length(terms) == 1 ? terms[1] : foldl((a, b) -> :($a + $b), terms)
-    return c == 1 ? sum_expr : c == -1 ? :(-($sum_expr)) : :($c * $sum_expr)
+    sum_expr = length(terms) == 1 ? terms[1] : foldl((acc, term) -> :($acc + $term), terms)
+    return coefficient == 1 ? sum_expr : coefficient == -1 ? :(-($sum_expr)) : :($coefficient * $sum_expr)
 end
 
-let (chans, c) = _column_channels(row -> row.electron)
-    @eval net_electron_count(N::ReactionCounts) = $(_contraction(chans, c, ch -> :(N.$ch)))
+let (chans, coefficient) = _column_channels(row -> row.electron)
+    @eval net_electron_count(N::ReactionCounts) = $(_contraction(chans, coefficient, ch -> :(N.$ch)))
 end
 
-let (chans, c) = _column_channels(row -> row.H2_gas)
-    @eval net_H2_gas_count(N::ReactionCounts) = $(_contraction(chans, c, ch -> :(N.$ch)))
+let (chans, coefficient) = _column_channels(row -> row.H2_gas)
+    @eval net_H2_gas_count(N::ReactionCounts) = $(_contraction(chans, coefficient, ch -> :(N.$ch)))
     @eval @inline net_H2_gas_count(N::ReactionCounts, k::Integer) =
-        $(_contraction_at(chans, c, ch -> :(N.$ch[k])))
+        $(_contraction_at(chans, coefficient, ch -> :(N.$ch[k])))
 end
 
 """
@@ -277,8 +276,8 @@ net_H2_gas_count
 
 const _ION_PRODUCERS = let
     producers = Dict{SpeciesKey, Vector{Pair{Symbol, Int}}}()
-    for ch in keys(REACTION_STOICHIOMETRY), (key, ν) in REACTION_STOICHIOMETRY[ch].ions
-        push!(get!(producers, key, Pair{Symbol, Int}[]), ch => ν)
+    for ch in keys(REACTION_STOICHIOMETRY), (key, coefficient) in REACTION_STOICHIOMETRY[ch].ions
+        push!(get!(producers, key, Pair{Symbol, Int}[]), ch => coefficient)
     end
     producers
 end
@@ -297,13 +296,13 @@ a transportable species.
 function net_ion_count(N::ReactionCounts{FT}, key::SpeciesKey) where {FT <: AbstractFloat}
     producers = get(_ION_PRODUCERS, key, nothing)
     isnothing(producers) && return nothing
-    coefs = unique(last.(producers))
-    length(coefs) == 1 || error("an ion with mixed coefficients needs the general contraction")
+    coefficients = unique(last.(producers))
+    length(coefficients) == 1 || error("an ion with mixed coefficients needs the general contraction")
     acc = getproperty(N, first(producers[1]))::Matrix{FT}
     acc = length(producers) == 1 ? copy(acc) : acc
     for (ch, _) in producers[2:end]
         acc = acc .+ (getproperty(N, ch)::Matrix{FT})
     end
-    c = only(coefs)
-    return c == 1 ? acc : c .* acc
+    coefficient = only(coefficients)
+    return coefficient == 1 ? acc : coefficient .* acc
 end
