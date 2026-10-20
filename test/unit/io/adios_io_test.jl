@@ -367,3 +367,30 @@ end
         @test !(:snap2D_started in fieldnames(typeof(RP)))
     end
 end
+
+@testitem "A length-1 vector field survives the round trip (one coil)" begin
+    if !Sys.iswindows()
+        # adios_load returns a (1, Nt) variable flattened to a vector over time; the reader
+        # used to hand the scalar to a vector field, fail, and leave the default in place
+        tmp = mktempdir(; cleanup = false)
+        bp = joinpath(tmp, "one_coil.bp")
+        for k in 1:3
+            s = Snapshot0D{Float64}()
+            s.step = k
+            s.coils_I = [100.0 * k]
+            s.coils_V_applied = [-1.5 * k]
+            write_to_adiosBP!(bp, [s]; append = k > 1)
+        end
+        snaps = adiosBP_to_snap0D(bp)
+        @test [s.coils_I for s in snaps] == [[100.0], [200.0], [300.0]]
+        @test [s.coils_V_applied for s in snaps] == [[-1.5], [-3.0], [-4.5]]
+        @test [s.step for s in snaps] == [1, 2, 3]              # scalars as before
+
+        # two coils were already read correctly and stay so
+        bp2 = joinpath(tmp, "two_coils.bp")
+        s = Snapshot0D{Float64}()
+        s.coils_I = [1.0, 2.0]
+        write_to_adiosBP!(bp2, [s])
+        @test adiosBP_to_snap0D(bp2)[1].coils_I == [1.0, 2.0]
+    end
+end

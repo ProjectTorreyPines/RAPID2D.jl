@@ -17,7 +17,7 @@ on:
       nworkers:
         description: >-
           Override ReTestItems workers for all jobs. 0 = sequential
-          TestItemRunner. Blank = per-OS default (ubuntu 4, macOS 3).
+          TestItemRunner. Blank = per-OS default (ubuntu 2, macOS 1).
         default: ''
   schedule:
     - cron: '0 0 * * 0'  # Run at midnight on Sunday every week
@@ -50,17 +50,18 @@ jobs:
           # worker keeps up to ~40 %) and were once terminated. A memory threshold is no way out:
           # ReTestItems replaces a worker with SIGTERM, which loses that worker's coverage, and
           # macOS reports ~99 % in use from the start. macOS stays the longer job.
-          # heap_size_hint (JULIA_HEAP_SIZE_HINT, which Pkg.test and every worker inherit): without
-          # it each process's GC grows its heap as if it had the runner to itself, and two workers
-          # reached 56 % and 37 % (97.7 % in use) before the runner was shut down. A quarter of the
-          # runner per process makes the GC collect first; no worker is killed. Unset on macOS.
+          # No heap-size hint (JULIA_HEAP_SIZE_HINT): the memory that ran the runner out was the
+          # testitems' globals, live data no GC can collect (now released in runtests_parallel.jl);
+          # a 25 % hint left the peaks where they were and tripled the GC time inside the items.
+          # One worker on macOS: with the testitems' globals released a worker still reaches
+          # ~3 GB (runtime, packages, compiled code, the heaviest item), so two of them and the
+          # coordinator overfill the 7 GB runner, and every item waits on swapped pages.
           - os: ubuntu-latest
             nworkers: 2
             precompile_tasks: 4
             coverage: true
-            heap_size_hint: '25%'
           - os: macos-latest
-            nworkers: 2
+            nworkers: 1
             precompile_tasks: 2
             coverage: false
 
@@ -95,7 +96,6 @@ jobs:
           RAPID_RUN_REGRESSION: 'true'  # also run the :regression testitems
           RETESTITEMS_RETRIES: '0'  # fail fast; don't let a retry mask a flaky item
           JULIA_NUM_PRECOMPILE_TASKS: ${{ matrix.precompile_tasks }}
-          JULIA_HEAP_SIZE_HINT: ${{ matrix.heap_size_hint }}  # empty = Julia's default
 
       - uses: julia-actions/julia-processcoverage@v1
         if: ${{ matrix.coverage }}

@@ -152,7 +152,7 @@ end
 end
 
 @testitem "ExpRB growth: electrons and ions still agree on the event count" setup = [ExpRBGrowthFixtures] begin
-    using RAPID2D: ExpRB, check_reaction_counts, net_electron_count, net_ion_count
+    using RAPID2D: ExpRB, check_reaction_counts, net_electron_count, net_ion_count, species_key
 
     # Two different checks share this item. The FIRST assertion below is real: the
     # electron continuity solve's actual Δnₑ must equal the ledger
@@ -162,7 +162,7 @@ end
     # The SECOND assertion is NOT a conservation check — matching the honest framing
     # in `reactions_test.jl` and `ion_continuity_test.jl`. Under the INTERIM
     # (`REACTION_STOICHIOMETRY.diz`, DI's ion booked to the H₂⁺ column)
-    # `net_ion_count(N, :H2⁺)` and `net_electron_count(N)` are literally the same
+    # `net_ion_count(N, H2[1])` and `net_electron_count(N)` are literally the same
     # expression, `N.iz .+ N.diz` — equal here because they are the same code, not
     # because the ion continuity equation was exercised or anything was proven about
     # charge balance. It pins that fact against the interim being read as a proof,
@@ -185,7 +185,7 @@ end
         inw = RP.G.nodes.in_wall_nids
         Δne = RP.plasma.ne .- prev
         @test Δne[inw] ≈ net_electron_count(counts)[inw] rtol = 1.0e-10
-        @test net_ion_count(counts, :H2⁺)[inw] ≈ net_electron_count(counts)[inw] rtol = 1.0e-14
+        @test net_ion_count(counts, species_key(RAPID2D.Particles.H2[1]))[inw] ≈ net_electron_count(counts)[inw] rtol = 1.0e-14
     end
 end
 

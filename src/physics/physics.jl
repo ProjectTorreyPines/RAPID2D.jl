@@ -466,17 +466,16 @@ The bottom of the rate tables' `Ē` axis [eV] — below it `RRC_EoverP_Erg`'s
 `ClampExtrap` freezes every coefficient and the interpolant stops meaning anything.
 
 **A function barrier, not a convenience.** `RAPID.eRRCs` is declared as the abstract
-`AbstractSpeciesRRCs{FT}`, so `RP.eRRCs.Kerg_ela.Erg_eV` infers `Any` at the call
-site, and one `Any` scalar inside a `@.` costs the fused kernel its specialization.
-The `::FT` is what makes it concrete again. Hoisting also avoids the `first` trap:
-`Number` is iterable, so `first` under `@.` would dot into `first.(Erg_eV)` — the
-identity on a vector, not a scalar floor.
+`AbstractSpeciesRRCs{FT}`, and one `Any` scalar inside a `@.` costs the fused kernel its
+specialization; read through [`erg_axis_bounds`](@ref), the floor is a concrete `FT`.
+Hoisting also avoids the `first` trap: `Number` is iterable, so `first` under `@.` would
+dot into `first.(Erg_eV)` — the identity on a vector, not a scalar floor.
 
 Read off `Kerg_ela`, but it is every surface's floor: all of them share the one
 `Erg_eV` vector the constructor read.
 """
 @inline mean_energy_floor(RP::RAPID{FT}) where {FT <: AbstractFloat} =
-    first(RP.eRRCs.Kerg_ela.Erg_eV)::FT
+    first(erg_axis_bounds(RP, :Kerg_ela))
 
 """
     cold_target_factor(Ē, T_gas_eV, Ē_floor)
@@ -1379,6 +1378,14 @@ function book_ionization_sources!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.update_ni_independently
             Ntracker.cum0D_Ni_src += sum(Ne_iz)
             @. Ntracker.cum2D_Ni_src += Ne_iz
+            # per species, from each species' own count (the total above stays the
+            # electron count, which equals Σ over species under the current table)
+            counts = RP.reactions.counts
+            grow_species_entries!(Ntracker, length(RP.transport.ion_species))
+            for (s, sp) in enumerate(RP.transport.ion_species)
+                Δn = net_ion_count(counts, sp.key)
+                isnothing(Δn) || (Ntracker.cum0D_Ni_src_s[s] += sum(Δn .* RP.G.inVol2D))
+            end
         end
         return RP
     end # @timeit
@@ -1759,14 +1766,15 @@ end
 """
     coil_induced_Eϕ(RP, ΔI) -> Matrix
 
-The toroidal field a change `ΔI` of the coil currents over one step induces on the grid,
-−ψ_coils(ΔI)/(R Δt) with ψ_coils from [`coil_flux_on_grid`](@ref); zero for no change. Below the
-Ampère gate it is the whole induced field; the 2D snapshots split the induced field with it.
+The toroidal field a change `ΔI` of the coil currents over the coils' last step induces on the
+grid, −ψ_coils(ΔI)/(R Δt) with Δt = `coil_system.Δt` (`RP.dt`, or the last part of a step taken
+in parts) and ψ_coils from [`coil_flux_on_grid`](@ref); zero for no change. Below the Ampère gate
+it is the whole induced field; the 2D snapshots split the induced field with it.
 """
 function coil_induced_Eϕ(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
     (isempty(ΔI) || all(iszero, ΔI)) && return zeros(FT, RP.G.NR, RP.G.NZ)
     ψ = coil_flux_on_grid(RP, ΔI)
-    return @. -ψ / (RP.G.R2D * RP.dt)
+    return @. -ψ / (RP.G.R2D * RP.coil_system.Δt)
 end
 
 """

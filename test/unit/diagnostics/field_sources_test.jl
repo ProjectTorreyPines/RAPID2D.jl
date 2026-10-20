@@ -53,6 +53,24 @@ end
     @test all(isfinite, snap.ψ_pla)
 end
 
+@testitem "field sources: after a step taken in parts the coils' field is read over its last part" setup = [CoilFluxColumn] begin
+    using RAPID2D: measure_field_sources!, take_step!, StepTransaction, Accept, Reject
+    # below the gate the induced field is the coils' alone, from their change over the last
+    # part of the step, Δt/2 long, while RP.dt is back at Δt: the plasma's part stays zero
+    RP = column_with_loops([(0.6, 0.0, 1.0e-4, 10.0, "OH")]; t_end = 25.0e-6)
+    RP.flags.Ampere_Itor_threshold = 1.0e6
+    quiet(() -> run_simulation!(RP))
+    dt = RP.dt
+    calls = Ref(0)
+    take_step!(RP, StepTransaction(RP); verdict = rp -> (calls[] += 1; calls[] == 1 ? Reject(:test) : Accept()))
+    @test RP.coil_system.Δt == dt / 2 && RP.dt == dt
+    snap = Snapshot2D{Float64}(; dims_RZ = (RP.G.NR, RP.G.NZ))
+    measure_field_sources!(RP, snap)
+    @test any(!iszero, RP.coil_system.ΔI_step)
+    @test snap.Eϕ_coils == RP.fields.Eϕ_coils_pla
+    @test all(iszero, snap.Eϕ_pla)
+end
+
 @testitem "field sources: above the gate, the step's coil-current change, a split run, the closure" setup = [CoilFluxColumn] begin
     using RAPID2D: measure_field_sources!, get_all_currents, coil_flux_on_grid, add_coil!
     # a column carrying current beside a loop inside the grid, coupled from the first step
@@ -72,7 +90,7 @@ end
     measure_field_sources!(RP, snap)
     # the coils' part is the field of the step's current change, computed here on its own; the
     # plasma's is the rest of the field the model applied, and not zero above the gate
-    E_coils = -coil_flux_on_grid(RP, RP.coil_system.ΔI_step) ./ (RP.G.R2D .* RP.dt)
+    E_coils = -coil_flux_on_grid(RP, RP.coil_system.ΔI_step) ./ (RP.G.R2D .* RP.coil_system.Δt)
     @test snap.Eϕ_coils == E_coils
     @test snap.Eϕ_pla == RP.fields.Eϕ_coils_pla .- E_coils
     @test maximum(abs, snap.Eϕ_pla) > 0 && maximum(abs, E_coils) > 0

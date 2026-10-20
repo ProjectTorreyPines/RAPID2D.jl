@@ -2,7 +2,7 @@ export set_ion_species!, bulk_ion_charge, bulk_ion_mass
 
 # From a set of ion species to an advanced density.
 #
-# The policy types and `IonSpecies` are declared in `ion_species.jl`, ahead of
+# The ion records and the policy types are declared in `species.jl`, ahead of
 # `types.jl`; this file is everything that consumes them — grouping, assembly and
 # the batch solve.
 
@@ -258,7 +258,7 @@ object, which is what lets the mixture return it untouched.
 `ν_ss'` is a refinement the per-species policy could use; it is not what
 separates the two policies today.
 """
-function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_turb) where {FT <: AbstractFloat}
+function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_turb) where {FT <: AbstractFloat}
     pla, tp, F = RP.plasma, RP.transport, RP.fields
 
     # Competing mechanisms are composed as DIFFUSIVITIES, not as mean free paths:
@@ -381,7 +381,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonSpecies{FT}, shared_t
         )
         throw(
             ArgumentError(
-                "the $name channel of $(species.name) is not finite at $(length(bad)) node(s): " *
+                "the $name channel of $(species.label) is not finite at $(length(bad)) node(s): " *
                     "$detail. Every classified trace publishes a finite length " *
                     "(`FLF_TERMINATIONS`), so this points at a degenerate channel input " *
                     "— e.g. the E×B speed where B_tot = 0 — not at open geometry."
@@ -442,8 +442,8 @@ Advance every ion species one step of
 
 under the θ-scheme, grouped by `RP.flags.ion_transport_policy`.
 
-The ionization source is `net_ion_count(counts, name)` — `N.iz .+ N.diz` for
-`:H2⁺` under the INTERIM(diz-ion-species) stoichiometry (both channels' ions are booked to this
+The ionization source is `net_ion_count(counts, key)` — `N.iz .+ N.diz` for
+`H2[1]` under the INTERIM(diz-ion-species) stoichiometry (both channels' ions are booked to this
 column) — one ion per event, at a rate set by the **electron** density, so for
 ions it is a pure explicit source with no diagonal counterpart. The counts come
 from `update_RRCs!`'s step-entry rates; the tables are not re-queried here.
@@ -486,7 +486,7 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
             # is exactly the Δt the count was formed with.
             counts = check_reaction_counts(RP)
             for (sid, sp) in enumerate(tp.ion_species)
-                Δn = net_ion_count(counts, sp.name)
+                Δn = net_ion_count(counts, sp.key)
                 isnothing(Δn) && continue     # no channel makes or destroys it
                 @views S[:, sid] .= vec(Δn) ./ dt
             end
@@ -749,7 +749,31 @@ function book_ion_wall_loss!(
     for (k, f) in enumerate(faces)
         Ntracker.cum2D_Ni_loss[f.nid] += ledger.absorbed[k]
     end
+
+    # The same, per species: each species through a ledger of its own. A separate
+    # reduction, so the species entries sum to the total above only to round-off.
+    grow_species_entries!(Ntracker, length(species))
+    for (c, s) in enumerate(group.sids)
+        own = WallLedger{FT}(length(faces))
+        accumulate_wall_absorption!(
+            own, faces, v_absorb, view(N, :, s), RP.dt; n_prev = view(n_prev, :, c), θ = θ
+        )
+        if !isnothing(pinch) && s != pinch.driver
+            Z_z = FT(species[s].charge)
+            accumulate_wall_absorption!(own, faces, Z_z .* pinch.v_out, view(n_prev, :, c), RP.dt)
+        end
+        Ntracker.cum0D_Ni_loss_s[s] += sum(own.absorbed)
+    end
     return RP
+end
+
+# The per-species ledger entries follow the species list, including a list written
+# straight into the transport buffers (a test path that bypasses `set_ion_species!`).
+function grow_species_entries!(Ntracker, ns::Integer)
+    for v in (Ntracker.cum0D_Ni_src_s, Ntracker.cum0D_Ni_loss_s)
+        length(v) < ns && append!(v, zeros(eltype(v), ns - length(v)))
+    end
+    return Ntracker
 end
 
 """
@@ -764,7 +788,8 @@ second column cannot accumulate there), but three things outside them are not,
 and each is silently wrong rather than loudly missing:
 
   - `γ_2nd_electron` is one number, so only column 1 could yield secondary electrons;
-  - `Ni_loss` does not split by species;
+  - `Ni_loss` books one total (the per-species entries beside it are not yet what the
+    snapshots read);
   - the ion charge density is `n·Z` from this species, and would have to become
     `Σ_s n_s Z_s` at every site that builds a current (see
     `internal/docs/src/notes/TODO/ion-inventory-multi-species.md`).
@@ -772,7 +797,7 @@ and each is silently wrong rather than loudly missing:
 `plasma.ni` IS this species' density — not a total over species, and not a
 quantity a second field mirrors.
 """
-function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonSpecies{FT}}) where {FT <: AbstractFloat}
+function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}}) where {FT <: AbstractFloat}
     length(species) == 1 || throw(
         ArgumentError(
             "exactly one ion species is supported, got $(length(species)). " *

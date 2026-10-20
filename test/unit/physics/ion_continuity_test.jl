@@ -98,10 +98,10 @@ end
     # The title is true again, but for a DIFFERENT reason than when it was written.
     # It used to hold because DI did not exist. Since Task C1, electron continuity
     # grows by `ν_en_iz_tot` (both channels). Since Task C2, the ion source is
-    # `net_ion_count(counts, :H2⁺) = N.iz .+ N.diz` — the SAME total — because the
+    # `net_ion_count(counts, H2[1]) = N.iz .+ N.diz` — the SAME total — because the
     # interim books DI's ion (really H⁺) onto the H₂⁺ column, `set_ion_species!`
     # having no second species to give it yet (see `REACTION_STOICHIOMETRY.diz`).
-    # So this is not a conservation proof: `net_ion_count(N, :H2⁺)` and
+    # So this is not a conservation proof: `net_ion_count(N, H2[1])` and
     # `net_electron_count(N)` are the same expression by construction, and the
     # interim is exactly what makes them coincide.
 
@@ -228,7 +228,7 @@ end
 end
 
 @testitem "A species collides with the BULK, not with itself" setup = [IonRun] begin
-    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+    using RAPID2D: IonRecord, ion_transport_channels, shared_turbulent_channel,
         channel_D_para, channel_D_perp
 
     # Ti and the fluid velocity are shared — the reaction set carries one ion
@@ -257,8 +257,8 @@ end
     ee = RP.config.constants.ee
     μ_i, Z_i = 2, 1                            # H₂⁺, the bulk
 
-    coll(m, Z) = ion_transport_channels(RP, IonSpecies(:probe, m, Z), turb)[1]
-    bohm(m, Z) = ion_transport_channels(RP, IonSpecies(:probe, m, Z), turb)[2]
+    coll(m, Z) = ion_transport_channels(RP, IonRecord(:probe, m, Z), turb)[1]
+    bohm(m, Z) = ion_transport_channels(RP, IonRecord(:probe, m, Z), turb)[2]
     inw = RP.G.nodes.in_wall_nids
     at(x) = x[inw]
     ref = coll(2m_p, 1)
@@ -311,7 +311,7 @@ end
 
 @testitem "The Z² scaling applies to Coulomb collisions, not to the neutral gas" setup = [IonRun] begin
     using RAPID2D.Statistics
-    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel
+    using RAPID2D: IonRecord, ion_transport_channels, shared_turbulent_channel
 
     # νi_eff is ion-neutral plus ion-ion. Only the Coulomb half carries Z²; a
     # charge-exchange or elastic collision with H₂ does not care that the ion is
@@ -324,7 +324,7 @@ end
         RP.flags.Coulomb_Collision = coulomb
         update_transport_quantities!(RP)
         turb = shared_turbulent_channel(RP)
-        λ(Z) = ion_transport_channels(RP, IonSpecies(:probe, 2m_p, Z), turb)[1].λ_para
+        λ(Z) = ion_transport_channels(RP, IonRecord(:probe, 2m_p, Z), turb)[1].λ_para
         inw = RP.G.nodes.in_wall_nids
         return mean(λ(1)[inw] ./ λ(6)[inw])
     end
@@ -336,7 +336,7 @@ end
 end
 
 @testitem "Bohm's 1/Z is a modelling choice, so it has a flag" setup = [IonRun] begin
-    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+    using RAPID2D: IonRecord, ion_transport_channels, shared_turbulent_channel,
         channel_D_perp
 
     # D_B = Te/(16 Z e B) follows from reading Bohm as a random walk of ρ_s per
@@ -346,9 +346,9 @@ end
     # 1/Z is a modelling choice and belongs behind a flag rather than baked in.
     m_p = 1.6726e-27
     D⊥(RP, turb, Z) = channel_D_perp(
-        ion_transport_channels(RP, IonSpecies(:probe, 2m_p, Z), turb)[2]
+        ion_transport_channels(RP, IonRecord(:probe, 2m_p, Z), turb)[2]
     )
-    v⊥(RP, turb, Z) = ion_transport_channels(RP, IonSpecies(:probe, 2m_p, Z), turb)[2].v_perp
+    v⊥(RP, turb, Z) = ion_transport_channels(RP, IonRecord(:probe, 2m_p, Z), turb)[2].v_perp
 
     RP = ion_case()
     @test RP.flags.bohm_charge_scaling            # default: unchanged behaviour
@@ -374,7 +374,7 @@ end
 end
 
 @testitem "The wall speed is the population's MEAN speed, not the D-convention speed" setup = [IonRun] begin
-    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+    using RAPID2D: IonRecord, ion_transport_channels, shared_turbulent_channel,
         channel_ceiling
 
     # Γ = ¼·n·v̄·|b̂·n̂| is an integral over the Maxwellian, so it needs ⟨|v|⟩ —
@@ -389,7 +389,7 @@ end
     turb = shared_turbulent_channel(RP)
     mi = RP.config.constants.mi
     ee = RP.config.constants.ee
-    coll = ion_transport_channels(RP, IonSpecies(:H2⁺, mi, 1), turb)[1]
+    coll = ion_transport_channels(RP, IonRecord(:H2⁺, mi, 1), turb)[1]
 
     inw = RP.G.nodes.in_wall_nids
     v̄ = @. sqrt(8 * RP.plasma.Ti_eV * ee / (π * mi))
@@ -403,7 +403,7 @@ end
 end
 
 @testitem "The collisional channel is exact in both limits, and composes at D" setup = [IonRun] begin
-    using RAPID2D: IonSpecies, ion_transport_channels, shared_turbulent_channel,
+    using RAPID2D: IonRecord, ion_transport_channels, shared_turbulent_channel,
         channel_D_para, channel_D_perp, maxwellian_mean_speed, wall_step_ceiling
 
     # Two mechanisms bound a parallel step: a collision rate and a geometric length.
@@ -429,7 +429,7 @@ end
     mi = RP.config.constants.mi
     ee = RP.config.constants.ee
     inw = RP.G.nodes.in_wall_nids
-    H2⁺ = IonSpecies(:H2⁺, mi, 1)
+    H2⁺ = IonRecord(:H2⁺, mi, 1)
     # The ExB channel is mass- and charge-free, so the caller builds it once and
     # hands the same object to every species — that is what lets a mixture return
     # it untouched instead of averaging a constant.

@@ -273,6 +273,42 @@ function build_and_run(shadow, patterns, nworkers)
             cd(mktempdir())
             @info "Worker scratch directory" pwd()
         end,
+        # ReTestItems evaluates each testitem as a module in Main that is never freed, with the
+        # body at the module's top level: what a body binds there (`RP = …`) stays alive as
+        # long as the worker. Over the suite that held ~15 GB of live heap on one worker and ran
+        # the CI runners out of memory. After each item its plain globals are set to nothing, as
+        # TestItemRunner's release_module_globals! does on the serial path. The item's module is
+        # Main.var"##<item name>#<n>"; the test_end module's own has " test_end" before the '#'.
+        test_end_expr = quote
+            import Test
+            let prefix = "##" * Test.get_testset().description * "#"
+                for modname in names(Main; all = true)
+                    startswith(string(modname), prefix) || continue
+                    mod = getfield(Main, modname)
+                    mod isa Module || continue
+                    for name in names(mod; all = true)
+                        # the module's own names, compiler-generated ones, submodules and
+                        # unset bindings are left alone
+                        (name === :eval || name === :include || name === nameof(mod)) && continue
+                        occursin('#', string(name)) && continue
+                        isdefined(mod, name) || continue
+                        value = getfield(mod, name)
+                        value isa Module && continue
+                        try
+                            Core.eval(mod, Expr(:(=), name, nothing))
+                        catch
+                            # a typed global takes an empty array of its type; a `const` and a
+                            # name brought in by `using` cannot be released
+                            value isa Array || continue
+                            try
+                                Core.eval(mod, Expr(:(=), name, similar(value, ntuple(_ -> 0, ndims(value)))))
+                            catch
+                            end
+                        end
+                    end
+                end
+            end
+        end,
         # Known: coverage collected through workers is racy. A worker writes its .cov
         # files inside exit(), and ReTestItems terminates it (SIGTERM, escalating to
         # SIGKILL) as soon as its socket closes, which a GC finalizer can do before that

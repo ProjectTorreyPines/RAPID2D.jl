@@ -226,8 +226,9 @@ Note: Individual coil currents and voltages are stored in each Coil object.
 ## Circuit state and matrices
 - `mutual_inductance::Matrix{FT}`: Mutual inductance matrix M between all coils [H]
 - `time_s::FT`: The coils' clock, the end of the last step taken [s]
-- `Δt::FT`, `θimp::FT`: The step and the resistive θ-weight `A_LR_circuit` was built with;
-  the solvers set them from `RP.dt` and `flags.θ_imp.circuit`
+- `Δt::FT`, `θimp::FT`: The step the coils last advanced over and the resistive θ-weight,
+  which `A_LR_circuit` was built with; the solvers set them from `RP.dt` and
+  `flags.θ_imp.circuit`
 - `A_LR_circuit::Matrix{FT}`: Circuit matrix M + θimp Δt R [H]
 - `inv_A_LR_circuit::Matrix{FT}`: Its inverse [H^-1]
 
@@ -239,8 +240,8 @@ Note: Individual coil currents and voltages are stored in each Coil object.
 
 ## Spatial information
 - `inside_domain_indices::Vector{Int}`: Indices of coils inside the plasma domain
-- `ΔI_step::Vector{FT}`: The change of the coil currents over the last accepted step [A]
-  (`solve_timestep!` sets it; the 2D snapshots' induced field of the coils uses it)
+- `ΔI_step::Vector{FT}`: The change of the coil currents over the last accepted step, `Δt`
+  long [A] (`solve_timestep!` sets it; the 2D snapshots' induced field of the coils uses it)
 
 ## Physical constants
 - `μ0::FT`: Vacuum permeability [H/m]

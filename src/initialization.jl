@@ -211,7 +211,7 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFl
     # H₂⁺ is the only ion species the reaction set produces, but the machinery
     # behind it is written for a list: appending H⁺ or Cᶻ⁺ here is what adds them
     # to the transport solve.
-    set_ion_species!(RP, [IonSpecies(:H2⁺, FT(RP.config.constants.mi), 1)])
+    set_ion_species!(RP, [IonRecord(Particles.H2[1]; mass = FT(RP.config.constants.mi))])
 
     # Set initial gas density
     RP.plasma.n_H2_gas .= RP.config.prefilled_gas_pressure ./

@@ -77,11 +77,10 @@ end
     @test all(out .≈ rrc.dK_dĒ((qp, qe)))
     @test all(>(0), out)
 
-    # `dK_dĒ` is an untyped field, exactly like `itp`, so each CALL pays a fixed
-    # dynamic-dispatch box. What must not happen is allocation per NODE — that is
-    # what would turn the design note's "one extra table evaluation" into a real
-    # cost. Measure the scaling, not the constant, and hold the derivative path to
-    # the value path's standard rather than to an absolute that `itp` also misses.
+    # What must not happen is allocation per NODE — that is what would turn the
+    # design note's "one extra table evaluation" into a real cost. Measure the
+    # scaling, not the constant, and hold the derivative path to the value path's
+    # standard rather than to an absolute.
     alloc(f, out, q) = (f(out, q); @allocated f(out, q))
     small = alloc(rrc.dK_dĒ, out, (qp, qe))
     big_q = (fill(50.0, 10n), fill(1.0, 10n))

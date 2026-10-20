@@ -470,31 +470,24 @@ function process_symbol_based_snapshots!(snapshots, Adict, symbol_paths, dim_tt)
 
         for (key, symbols) in symbol_paths
             Adata = Adict[key]
-            # extracted_value = extract_time_data(Adata, tt)
+            # snap.field, or snap.parent.field for a nested path
+            parent = length(symbols) == 1 ? snap : foldl(getfield, symbols[1:(end - 1)]; init = snap)
+            target_type = fieldtype(typeof(parent), symbols[end])
 
             Ndim = ndims(Adata)
-            if Ndim == 1
-                extracted_value = Adata[tt]
+            extracted_value = if Ndim == 1
+                # One value per step. adios_load flattens a (1, Nt) variable to a vector
+                # over steps whether each step held a scalar or a length-1 array, so the
+                # field's type decides which it was (a single coil's `coils_I`).
+                typeintersect(target_type, AbstractVector) === Union{} ? Adata[tt] : [Adata[tt]]
             else
-                extracted_value = collect(selectdim(Adata, Ndim, tt))
+                collect(selectdim(Adata, Ndim, tt))
             end
 
-            if extracted_value !== nothing
-                try
-                    # Convert to appropriate type
-                    if length(symbols) == 1
-                        # Direct field access: snap.field = value
-                        target_type = fieldtype(typeof(snap), symbols[1])
-                        setfield!(snap, symbols[1], extracted_value)
-                    else
-                        # Nested field access: snap.parent.field = value
-                        parent = foldl(getfield, symbols[1:(end - 1)]; init = snap)
-                        target_type = fieldtype(typeof(parent), symbols[end])
-                        setfield!(parent, symbols[end], extracted_value)
-                    end
-                catch e
-                    @warn("Failed to assign $(join(symbols, '.')) from key $key at time $tt: $e")
-                end
+            try
+                setfield!(parent, symbols[end], extracted_value)
+            catch e
+                @warn("Failed to assign $(join(symbols, '.')) from key $key at time $tt: $e")
             end
         end
     end

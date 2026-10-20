@@ -139,25 +139,19 @@ end
     # and reached through `RP.iRRCs` instead of `RP.eRRCs`. Found by sweeping for the
     # pattern rather than by reading the diff, which is why it outlived the first fix.
     #
-    # Two separate leaks have to be closed here, and closing only the obvious one
-    # leaves the return type `Any`:
-    #
-    #   1. `first(rrc.T_eV)` off the abstract field — the same `::FT` as elsewhere.
-    #   2. `RRC_T_ud` declares `itp` and `dK_dT` with NO TYPE AT ALL, so `rrc.dK_dT(…)`
-    #      is `Any` however well the scalars are pinned.
-    #
-    # Unlike `update_rate_jacobian!` — which returns its `out` ARGUMENT and so has an
-    # inferrable return type no matter how dynamic its interior — this function builds
-    # its result, so `@inferred` on the function itself is the honest pin.
+    # The surface comes off the abstract field, so the call into it is dynamic; the
+    # result is written into a buffer the function allocates from the clamped query,
+    # whose type rests on `first(rrc.T_eV)` arriving `::FT` — the same barrier as
+    # elsewhere. Unlike `update_rate_jacobian!` — which returns its `out` ARGUMENT and
+    # so has an inferrable return type no matter how dynamic its interior — this
+    # function builds its result, so `@inferred` on the function itself is a pin.
     RP = ts_RAPID()
 
     jac_of(rp, sym) = ion_rate_jacobian(rp, sym)
     tbounds_of(rp, sym) = t_axis_bounds(rp, sym)
 
-    # The scalar layer needs its OWN assertion. `ion_rate_jacobian`'s `::Matrix{FT}`
-    # makes the return type concrete whether or not the T-axis scalars are pinned, so
-    # `@inferred` on the function alone cannot see this leak — verified by mutation:
-    # dropping the `::FT` still leaves the function inferring `Matrix{Float64}`.
+    # The scalar layer has its own assertion, so a leak there is named by the accessor
+    # rather than only through the function's return type.
     for sym in (
             :Elastic, :Charge_Exchange, :Target_Ionization,
             :Projectile_Dissociation, :Particle_Exchange,
@@ -187,4 +181,21 @@ end
     # unreachable for any symbol that names one — an unknown symbol fails earlier, in
     # `getfield`. Asserted as it behaves rather than as the guard suggests.
     @test_throws FieldError ion_rate_jacobian(RP, :not_a_surface)
+end
+
+@testitem "RRC accessors: the rate entry points are inferred through the concrete containers" setup = [TypeStabilityFixtures] begin
+    using RAPID2D: get_electron_RRC, get_H2_ion_RRC
+
+    # The containers' fields carry their surfaces' concrete types, so a symbol picks one
+    # of two (E/p, Ē) or (T, u_d) types and the call infers through both. The containers
+    # are passed as ARGUMENTS: `RP.eRRCs` is declared abstract, and a read of it inside
+    # the closure would see `Any`.
+    RP = ts_RAPID()
+    e_rate(rp, eRRCs, sym) = get_electron_RRC(rp, eRRCs, sym)
+    i_rate(rp, iRRCs, sym) = get_H2_ion_RRC(rp, iRRCs, sym)
+    for sym in (:K_iz, :K_mom, :Kerg_exc, :Halpha)
+        @test @inferred(e_rate(RP, RP.eRRCs, sym)) isa Matrix{Float64}
+    end
+    @test @inferred(i_rate(RP, RP.iRRCs, :Elastic)) isa Matrix{Float64}
+    @test any(!iszero, get_electron_RRC(RP, RP.eRRCs, :K_mom))   # anti-vacuity
 end

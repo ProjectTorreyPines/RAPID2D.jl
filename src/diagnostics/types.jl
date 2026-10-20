@@ -352,6 +352,10 @@ Tracks cumulative sources and losses of particles and energy
     cum0D_Ne_loss::FT = zero(FT)            # Cumulative electron loss
     cum0D_Ni_src::FT = zero(FT)             # Cumulative ion source
     cum0D_Ni_loss::FT = zero(FT)            # Cumulative ion loss
+    # The ion source and loss per species (`transport.ion_species` order), recorded beside
+    # the totals by their own reductions: they sum to the totals to round-off
+    cum0D_Ni_src_s::Vector{FT} = FT[]
+    cum0D_Ni_loss_s::Vector{FT} = FT[]
 
     # 2D (spatially-resolved) tracking
     cum2D_Ne_src::Matrix{FT} = zeros(FT, dims_RZ)     # Cumulative electron source (R,Z)
@@ -406,6 +410,18 @@ A step solved again above the Ampère gate puts it back as it was.
 end
 
 """
+    StepRetries()
+
+The attempts at a step the verdict rejected over a run, by its reason, and the steps then taken
+in parts ([`take_step!`](@ref)). A rejected attempt leaves no other trace: the state, the
+ledgers and the counts above are put back.
+"""
+@kwdef mutable struct StepRetries
+    rejected::Dict{Symbol, Int} = Dict{Symbol, Int}()
+    split_steps::Int = 0
+end
+
+"""
 Main Diagnostics container
 Pure struct-based approach using @kwdef for automatic initialization
 No legacy Dictionary compatibility layer
@@ -431,6 +447,9 @@ No legacy Dictionary compatibility layer
 
     # what the near-vacuum treatments did (`near_vacuum.jl`)
     near_vacuum::NearVacuumLedger{FT} = NearVacuumLedger{FT}()
+
+    # the attempts at a step the verdict rejected (`take_step!`)
+    step_retries::StepRetries = StepRetries()
 end
 
 function Diagnostics{FT}(dim_R::Int, dim_Z::Int) where {FT <: AbstractFloat}
