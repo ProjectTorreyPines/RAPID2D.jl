@@ -232,12 +232,8 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
             update_ui_para!(RP)
         end
 
-        # The e–i exchange over the step, one increment from Tₑⁿ, Tᵢⁿ at this step's densities,
-        # taken by the ions and given by the electrons
-        exchange = ei_exchange_energy!(RP)
-
         if RP.flags.Ti_evolve
-            update_Ti!(RP; exchange)
+            update_Ti!(RP)
         end
 
         if RP.flags.Global_JxB_Force
@@ -246,8 +242,12 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
 
         # Electron temperature evolution if enabled
         if RP.flags.Te_evolve
-            update_Te!(RP; exchange)
+            update_Te!(RP)
         end
+
+        # The e–i exchange over the step, one exact increment from the temperatures the two
+        # updates left, taken by the ions and given by the electrons
+        apply_ei_exchange!(RP)
 
         # Neutral gas density evolution if enabled
         if RP.flags.Gas_evolve

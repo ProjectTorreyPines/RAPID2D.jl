@@ -1278,6 +1278,9 @@ end
         Gas_evolve = false, Ampere = false, E_para_self_ES = false,
     )
     initialize!(RP)
+    # the ions start below the default floor, which their own update would apply before the
+    # exchange: lowered, so the exchange is all that acts
+    RP.config.min_Te = 1.0e-8
 
     # ne chosen so that ν_ei ≈ 1e5 /s, i.e. τ_ei = 10 µs (asserted below)
     RP.plasma.ne .= 2.841e15

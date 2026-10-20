@@ -217,32 +217,52 @@ end
     @test ei_relaxation_rate!(similar(RP.plasma.ni), RP) ≈ @.(2 * me * mi / (me + mi)^2 * RP.plasma.ν_ei)
 end
 
-@testitem "Called alone, the temperature updates take the exchange of the present state" setup = [MixtureCase] begin
-    using RAPID2D: ei_exchange_energy!, update_Te!, update_Ti!
-    RP = mixture_case(n_toy = 0.0, Te = 10.0)
-    RP.dt = 1.0e-4
-    update_coulomb_collision_parameters!(RP)
-    ΔE = copy(ei_exchange_energy!(RP))
-    for update! in (update_Te!, update_Ti!)
-        alone, given, without = deepcopy(RP), deepcopy(RP), deepcopy(RP)
-        update!(alone)
-        update!(given; exchange = ΔE)
-        update!(without; exchange = nothing)
-        temperature(rp) = update! === update_Te! ? rp.plasma.Te_eV : rp.plasma.Ti_eV
-        @test temperature(alone) == temperature(given)
-        @test temperature(alone) != temperature(without)
-    end
+@testitem "The exchange starts from the temperatures the other terms left, so it cannot drive one past the floor" begin
+    using RAPID2D: prepare_timestep!, solve_timestep!
+    # A stiff exchange (λΔt ≈ 100) on electrons their own update cools hard in the same step,
+    # here the max_Te limit from 100 eV to 20. From the step-entry temperatures the electrons
+    # would give ~49.5 eV, land below zero and be floored, with energy made. From the ones the
+    # updates left, the two meet at the mean of 20 and 1, and only move energy between them.
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 9, NZ = 9, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-4, t_end_s = 1.0e-3,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(; cleanup = false),
+    )
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags{Float64}(
+        Atomic_Collision = false, Coulomb_Collision = true, src = false, diffu = false, convec = false,
+        Ampere = false, E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        ud_evolve = false, Te_evolve = true, Ti_evolve = true, update_ni_independently = false,
+        mean_ExB = false, turb_ExB_mixing = false,
+    )
+    initialize!(RP)
+    inw = RP.G.nodes.in_wall_nids
+    pla = RP.plasma
+    pla.ne[inw] .= 1.0e18
+    pla.ni .= pla.ne
+    pla.Te_eV .= 100.0
+    pla.Ti_eV .= 1.0
+    RP.config.max_Te = 20.0
+    prepare_timestep!(RP)
+    pla.ν_ei .= 1.0e9                            # the step's input: a stiff exchange
+    solve_timestep!(RP)
+    ee, V = RP.config.constants.ee, RP.G.inVol2D[inw]
+    thermal = 1.5ee * sum(V .* (pla.ne[inw] .* pla.Te_eV[inw] .+ pla.ni[inw] .* pla.Ti_eV[inw]))
+    @test thermal ≈ 1.5ee * sum(V .* pla.ne[inw] .* (20.0 + 1.0)) rtol = 1.0e-12
+    @test pla.Te_eV[inw] ≈ fill(10.5, length(inw)) rtol = 1.0e-10
+    @test pla.Ti_eV[inw] ≈ fill(10.5, length(inw)) rtol = 1.0e-10
 end
 
 @testitem "A temperature that does not evolve is a bath for the exchange" setup = [MixtureCase] begin
-    using RAPID2D: ei_exchange_energy!, ei_relaxation_rate!
+    using RAPID2D: ei_exchange_energy!, ei_relaxation_rate!, apply_ei_exchange!
     for (te, ti) in ((true, false), (false, true))
         RP = mixture_case(n_toy = 0.0, Te = 10.0)
         RP.dt = 1.0e-4
         RP.flags.Te_evolve, RP.flags.Ti_evolve = te, ti
         update_coulomb_collision_parameters!(RP)
         pla, ee = RP.plasma, RP.config.constants.ee
-        ΔE = ei_exchange_energy!(RP)
+        ΔE = copy(ei_exchange_energy!(RP))
         a = ei_relaxation_rate!(similar(pla.ni), RP)
         k = first(RP.G.nodes.in_wall_nids)
         ne, nI, gap = pla.ne[k], pla.ni_sum[k], pla.Te_eV[k] - pla.Ti_eV[k]
@@ -251,6 +271,11 @@ end
         else        # the ions onto the fixed electrons
             @test pla.Te_eV[k] - (pla.Ti_eV[k] + ΔE[k] / (1.5ee * nI)) ≈ gap * exp(-a[k] * ne / nI * RP.dt) rtol = 1.0e-10
         end
+        # applied, the bath keeps its temperature and the other takes the increment
+        Te0, Ti0 = copy(pla.Te_eV), copy(pla.Ti_eV)
+        apply_ei_exchange!(RP)
+        @test (te ? pla.Ti_eV : pla.Te_eV) == (te ? Ti0 : Te0)
+        @test te ? pla.Te_eV[k] ≈ Te0[k] - ΔE[k] / (1.5ee * ne) : pla.Ti_eV[k] ≈ Ti0[k] + ΔE[k] / (1.5ee * nI)
     end
     RP = mixture_case(n_toy = 0.0)
     RP.flags.Coulomb_Collision = false

@@ -276,16 +276,15 @@ The energy the electrons give the ions by Coulomb collisions over the step, per 
 
     (3/2) e nₑ dTₑ/dt = −Q,   (3/2) e n_I dTᵢ/dt = +Q,   Q = (3/2) e nₑ a (Tₑ − Tᵢ)
 
-over Δt from Tₑⁿ, Tᵢⁿ at the densities after this step's continuity, with
+over Δt from the temperatures and densities as they are, with
 a = Σₛ 2mₑmₛ/(mₑ+mₛ)² νₑₛ and νₑₛ = ν_ei zₛ² nₛ/Σz²n ([`ei_relaxation_rate!`](@ref)):
 
     ΔE = (3/2) e nₑ a (Tₑ − Tᵢ) (1 − e^{−λΔt})/λ,   λ = a [Tₑ evolves] + a nₑ/n_I [Tᵢ evolves]
 
 A temperature that does not evolve is a bath: it does not move and leaves λ. Zero without
-Coulomb collisions and outside the wall. `solve_timestep!` hands it to `update_Ti!` and
-`update_Te!`, one increment taken by both with opposite signs. Its mean power over the step, per
-electron and per ion, goes to `ePowers.equi` and `iPowers.equi` [W], the exchange the powers'
-`tot` leaves out.
+Coulomb collisions and outside the wall. Its mean power over the step, per electron and per ion,
+goes to `ePowers.equi` and `iPowers.equi` [W], the exchange the powers' `tot` leaves out.
+[`apply_ei_exchange!`](@ref) gives it to both temperatures.
 """
 function ei_exchange_energy!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
@@ -309,6 +308,26 @@ function ei_exchange_energy!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @. pla.ePowers.equi = ifelse(pla.ne > zero(FT), ΔE / (RP.dt * pla.ne), zero(FT))
     @. pla.iPowers.equi = ifelse(pla.ni_sum > zero(FT), ΔE / (RP.dt * pla.ni_sum), zero(FT))
     return ΔE
+end
+
+"""
+    apply_ei_exchange!(RP) -> RP
+
+The e–i exchange over the step as a substep of its own, after both temperatures' other terms
+(`solve_timestep!`): [`ei_exchange_energy!`](@ref) from the temperatures those left, taken by the
+ions and given by the electrons, each only if it evolves. The relaxation moves the two toward each
+other without crossing, so it cannot carry a temperature its own terms cooled past the floor.
+"""
+function apply_ei_exchange!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    ΔE = ei_exchange_energy!(RP)
+    RP.flags.Coulomb_Collision || return RP
+    pla = RP.plasma
+    ee = RP.config.constants.ee
+    RP.flags.Te_evolve &&
+        @. pla.Te_eV -= ifelse(pla.ne > zero(FT), ΔE / (FT(1.5) * ee * pla.ne), zero(FT))
+    RP.flags.Ti_evolve &&
+        @. pla.Ti_eV += ifelse(pla.ni_sum > zero(FT), ΔE / (FT(1.5) * ee * pla.ni_sum), zero(FT))
+    return RP
 end
 
 """
@@ -355,13 +374,12 @@ where:
 - κ_e is the thermal conductivity
 - The last term represents convective transport
 
-The energy given to the ions over the step, `exchange` [J/m³], is taken after the solve: by
-default [`ei_exchange_energy!`](@ref) of the present state. `solve_timestep!` passes the one
-increment `update_Ti!` takes too; `exchange = nothing` leaves the exchange out.
+The e–i exchange is not here: it couples Tₑ and Tᵢ, and `solve_timestep!` takes it as a substep
+of its own after both updates ([`apply_ei_exchange!`](@ref)).
 
 The implementation supports both explicit and implicit time integration schemes.
 """
-function update_Te!(RP::RAPID{FT}; exchange = ei_exchange_energy!(RP)) where {FT <: AbstractFloat}
+function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_Te!" begin
         # Update power terms for energy equation
         update_electron_heating_powers!(RP)
@@ -464,10 +482,6 @@ function update_Te!(RP::RAPID{FT}; exchange = ei_exchange_energy!(RP)) where {FT
         RP.diagnostics.near_vacuum.relax_energy +=
             FT(1.5) * ee * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.Te_eV, Te_ref)
 
-        # the energy given to the ions, the increment `update_Ti!` takes with the other sign
-        isnothing(exchange) ||
-            @. pla.Te_eV -= ifelse(pla.ne > zero(FT), exchange / (FT(1.5) * ee * pla.ne), zero(FT))
-
         # Apply temperature limits
         @. pla.Te_eV = max(pla.Te_eV, RP.config.min_Te)
         @. pla.Te_eV = min(pla.Te_eV, RP.config.max_Te)
@@ -484,10 +498,9 @@ Update the ion temperature based on energy balance equation.
 This function evolves the ion temperature by solving the ion energy equation:
 (3/2)*∂Ti/∂t = P_ion_heating
 
-where P_ion_heating is the atomic collision heating. The energy taken from the electrons
-over the step, `exchange` [J/m³], is added after it: by default [`ei_exchange_energy!`](@ref) of
-the present state. `solve_timestep!` passes the one increment `update_Te!` gives too;
-`exchange = nothing` leaves the exchange out.
+where P_ion_heating is the atomic collision heating. The e–i exchange is not here: it couples Tₑ
+and Tᵢ, and `solve_timestep!` takes it as a substep of its own after both updates
+([`apply_ei_exchange!`](@ref)).
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
@@ -501,7 +514,7 @@ the present state. `solve_timestep!` passes the one increment `update_Te!` gives
 - Applies temperature limits after update
 - Sets ion temperature equal to electron temperature if Ti_evolve is disabled
 """
-function update_Ti!(RP::RAPID{FT}; exchange = ei_exchange_energy!(RP)) where {FT <: AbstractFloat}
+function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_Ti!" begin
         # Update ion heating power terms
         update_ion_heating_powers!(RP)
@@ -521,12 +534,6 @@ function update_Ti!(RP::RAPID{FT}; exchange = ei_exchange_energy!(RP)) where {FT
                 (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / ee / exprb_bern(atomic_exponent)
         else
             @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / (ee)
-        end
-
-        # the energy taken from the electrons, the increment `update_Te!` gives with the other sign
-        if !isnothing(exchange)
-            update_charge_states!(RP)   # the ion density as it is now
-            @. pla.Ti_eV += ifelse(pla.ni_sum > zero(FT), exchange / (FT(1.5) * ee * pla.ni_sum), zero(FT))
         end
 
         # Apply temperature limits (same as electrons for simplicity)

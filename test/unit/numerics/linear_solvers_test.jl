@@ -149,7 +149,7 @@ end
     RAPID2D.update_transport_quantities!(RP)
 
     for step in 1:3
-        RAPID2D.update_Te!(RP; exchange = nothing)   # the solve alone: the exchange follows it
+        RAPID2D.update_Te!(RP)
         Te_ref = reshape(
             RP.operators.A_LHS.matrix \ vec(RP.operators.RHS),
             RP.G.NR, RP.G.NZ
