@@ -263,6 +263,73 @@ function record_ei_impulse!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
+    ei_exchange_energy!(RP) -> Matrix
+
+The energy the electrons give the ions by Coulomb collisions over the step, per volume
+[J/m³], into `plasma.ei_exchange_energy`: the exact solution of their linear relaxation
+
+    (3/2) e nₑ dTₑ/dt = −Q,   (3/2) e n_I dTᵢ/dt = +Q,   Q = (3/2) e nₑ a (Tₑ − Tᵢ)
+
+over Δt from Tₑⁿ, Tᵢⁿ at the densities after this step's continuity, with
+a = Σₛ 2mₑmₛ/(mₑ+mₛ)² νₑₛ and νₑₛ = ν_ei zₛ² nₛ/Σz²n ([`ei_relaxation_rate!`](@ref)):
+
+    ΔE = (3/2) e nₑ a (Tₑ − Tᵢ) (1 − e^{−λΔt})/λ,   λ = a [Tₑ evolves] + a nₑ/n_I [Tᵢ evolves]
+
+A temperature that does not evolve is a bath: it does not move and leaves λ. Zero without
+Coulomb collisions and outside the wall. `solve_timestep!` hands it to `update_Ti!` and
+`update_Te!`, one increment taken by both with opposite signs.
+"""
+function ei_exchange_energy!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    ΔE = pla.ei_exchange_energy
+    if !RP.flags.Coulomb_Collision
+        fill!(ΔE, zero(FT))
+        return ΔE
+    end
+    update_charge_states!(RP)
+    ee = RP.config.constants.ee
+    te, ti = RP.flags.Te_evolve, RP.flags.Ti_evolve
+    @with_pool pool begin
+        a = ei_relaxation_rate!(acquire!(pool, FT, size(pla.ni)...), RP)
+        ΔE .= relaxation_energy.(a, pla.ne, pla.ni_sum, pla.Te_eV, pla.Ti_eV, RP.dt, te, ti, ee)
+    end
+    for k in RP.G.nodes.on_out_wall_nids
+        ΔE[k] = zero(FT)
+    end
+    return ΔE
+end
+
+"""
+    ei_relaxation_rate!(a, RP) -> a
+
+Σₛ 2mₑmₛ/(mₑ+mₛ)² νₑₛ node by node, νₑₛ = ν_ei zₛ² nₛ/Σz²n the electrons' collision rate on
+species s: the rate at which the electron temperature relaxes onto the ions'. With one
+species it is 2mₑmᵢ/(mₑ+mᵢ)² ν_ei.
+"""
+function ei_relaxation_rate!(a::AbstractMatrix{FT}, RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    me = RP.config.constants.me
+    reduced(m) = FT(2) * m * me / (m + me)^2
+    z1, m1 = FT(bulk_ion_charge(RP)), bulk_ion_mass(RP)
+    # the weights zₛ² nₛ/Σz²n first, so one species gives its own coefficient exactly
+    @. a = ifelse(pla.Z2ni_sum > zero(FT), (z1^2 * pla.ni / pla.Z2ni_sum) * reduced(m1), reduced(m1))
+    foreach_other_ion(RP) do n, z, m
+        @. a += ifelse(pla.Z2ni_sum > zero(FT), (z^2 * n / pla.Z2ni_sum) * reduced(m), zero(FT))
+    end
+    @. a *= pla.ν_ei
+    return a
+end
+
+# (3/2) e nₑ a (Tₑ − Tᵢ) (1 − e^{−λΔt})/λ, the window → Δt as λ → 0; nothing where either
+# population is absent
+@inline function relaxation_energy(a, ne, nI, Te, Ti, dt, Te_evolves::Bool, Ti_evolves::Bool, ee)
+    (ne > zero(ne) && nI > zero(nI)) || return zero(a)
+    λ = (Te_evolves ? a : zero(a)) + (Ti_evolves ? a * ne / nI : zero(a))
+    window = λ * dt > zero(a) ? -expm1(-λ * dt) / λ : dt
+    return 1.5 * ee * ne * a * (Te - Ti) * window
+end
+
+"""
     update_Te!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Update the electron temperature based on energy balance equation.
@@ -272,13 +339,16 @@ This function evolves the electron temperature by solving the electron energy eq
 
 where:
 - P_heat includes ohmic heating and other power sources
-- P_loss includes ionization, excitation, radiation, and equilibration losses
+- P_loss includes ionization, excitation and radiation losses
 - κ_e is the thermal conductivity
 - The last term represents convective transport
 
+The energy given to the ions over the step, `exchange` [J/m³] from
+[`ei_exchange_energy!`](@ref), is taken after the solve; without it there is no exchange.
+
 The implementation supports both explicit and implicit time integration schemes.
 """
-function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function update_Te!(RP::RAPID{FT}; exchange = nothing) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_Te!" begin
         # Update power terms for energy equation
         update_electron_heating_powers!(RP)
@@ -381,6 +451,10 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         RP.diagnostics.near_vacuum.relax_energy +=
             FT(1.5) * ee * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.Te_eV, Te_ref)
 
+        # the energy given to the ions, the increment `update_Ti!` takes with the other sign
+        isnothing(exchange) ||
+            @. pla.Te_eV -= ifelse(pla.ne > zero(FT), exchange / (FT(1.5) * ee * pla.ne), zero(FT))
+
         # Apply temperature limits
         @. pla.Te_eV = max(pla.Te_eV, RP.config.min_Te)
         @. pla.Te_eV = min(pla.Te_eV, RP.config.max_Te)
@@ -397,7 +471,9 @@ Update the ion temperature based on energy balance equation.
 This function evolves the ion temperature by solving the ion energy equation:
 (3/2)*∂Ti/∂t = P_ion_heating
 
-where P_ion_heating includes atomic collision heating and equilibration with electrons.
+where P_ion_heating is the atomic collision heating. The energy taken from the electrons
+over the step, `exchange` [J/m³] from [`ei_exchange_energy!`](@ref), is added after it;
+without it there is no exchange.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
@@ -411,7 +487,7 @@ where P_ion_heating includes atomic collision heating and equilibration with ele
 - Applies temperature limits after update
 - Sets ion temperature equal to electron temperature if Ti_evolve is disabled
 """
-function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function update_Ti!(RP::RAPID{FT}; exchange = nothing) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_Ti!" begin
         # Update ion heating power terms
         update_ion_heating_powers!(RP)
@@ -432,6 +508,10 @@ function update_Ti!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         else
             @. pla.Ti_eV += (FT(2.0) / FT(3.0)) * pla.iPowers.tot * dt / (ee)
         end
+
+        # the energy taken from the electrons, the increment `update_Te!` gives with the other sign
+        isnothing(exchange) ||
+            @. pla.Ti_eV += ifelse(pla.ni_sum > zero(FT), exchange / (FT(1.5) * ee * pla.ni_sum), zero(FT))
 
         # Apply temperature limits (same as electrons for simplicity)
         @. pla.Ti_eV = max(pla.Ti_eV, RP.config.min_Te)
@@ -507,10 +587,8 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
     @timeit RAPID_TIMER "update_electron_heating_powers!" begin
         # Extract physical constants + reaction energies (all in RP.config.constants).
         @unpack ee, qe, me, iz_erg_eV, diss_iz_erg_eV = RP.config.constants
-        # `m_i` is the ion mass electrons equilibrate with in the equi term below.
-        # The elastic recoil no longer needs a separate neutral mass here: `P_en_ela`
-        # already carries 2mₑ/M internally (see the ela block).
-        m_i = bulk_ion_mass(RP)
+        # The elastic recoil needs no separate neutral mass here: `P_en_ela` already
+        # carries 2mₑ/M internally (see the ela block).
 
         # Alias common objects for readability
         pla = RP.plasma
@@ -721,17 +799,21 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         end
 
 
-        # Equilibration power with ions (energy exchange from temperature differences)
+        # The exchange with the ions at the present temperatures, per electron: a diagnostic. The
+        # step gives the ions the exact increment instead (`ei_exchange_energy!`), so it is not
+        # in `tot`.
         if RP.flags.Coulomb_Collision
-            # Factor for energy transfer rate between electrons and ions
-            @. ePowers.equi = (FT(2.0) * (m_i * me / (m_i + me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
+            @with_pool pool begin
+                a = ei_relaxation_rate!(acquire!(pool, FT, size(pla.ni)...), RP)
+                @. ePowers.equi = FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * a
+            end
         end
 
-        # Calculate total power (sum of all components)
+        # Calculate total power (sum of all components; the exchange is applied on its own)
         @. ePowers.tot = (
             ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu + ePowers.visc_heat
                 - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.diss_iz
-                - ePowers.exc - ePowers.diss_exc - ePowers.equi
+                - ePowers.exc - ePowers.diss_exc
         )
 
         # # Zero out power values outside the wall
@@ -866,11 +948,7 @@ function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee *
             (pla.ν_en_iz + pla.ν_en_diss_iz)
     end
-    if RP.flags.Coulomb_Collision
-        m_i = bulk_ion_mass(RP)
-        μ_reduced = m_i * me / (m_i + me)^2
-        @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
-    end
+    # (the e–i exchange is not here: the step applies its exact solution on its own)
 
     # Indexed rather than `@views … .= `: the SubArray broadcast builds for that is a
     # heap allocation, small but per step, and this function's contract is that it
@@ -950,34 +1028,19 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             end
         end
 
-        if RP.flags.Coulomb_Collision
-            # ePowers.tot SUBTRACTS equi, so ∂/∂Tₑ of 2μ(3/2)e(Tₑ−T_i)ν_ei enters
-            # negative. At frozen ν_ei this is pure algebra — no RRC surface — and
-            # it can only damp, which is why leaving it out was an unforced loss
-            # rather than a trade. `update_ion_power_jacobian!` carries the same
-            # term; the two must agree about one piece of physics.
-            #
-            # bulk_ion_mass, not a neutral mass: one is the ion Tₑ equilibrates
-            # with, the other the neutral it recoils off. Equal for H₂/H₂⁺ and
-            # unequal for any other declared ion. Hoisted, because `@.` would
-            # call it once per cell.
-            m_i = bulk_ion_mass(RP)
-            μ_reduced = m_i * me / (m_i + me)^2
-            @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
-        end
+        # (the e–i exchange is not here: the step applies its exact solution on its own)
 
         # Gated on the terms being PRESENT, not on the flag. `ePowers.drag`'s
         # Coulomb half is charged unconditionally inside `Atomic_Collision`, using
         # whatever `sptz_fac·ν_ei` initialization left behind — so it survives
-        # `Coulomb_Collision = false`, unlike `ePowers.equi`. A flag-gated warning
+        # `Coulomb_Collision = false`. A flag-gated warning
         # would stay silent in exactly the case where the omission is unannounced.
         # Indexed rather than broadcast: one grid-sized temporary per step is a lot
         # to allocate for a `maxlog = 1` decision.
         if any(i -> !iszero(pla.sptz_fac[i] * pla.ν_ei[i]), eachindex(pla.sptz_fac))
             @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from exprb.eig_Te: ν_ei is Spitzer-like, " *
-                "not an RRC surface, so the Tₑ dependence THROUGH ν_ei — in P_equi and in " *
-                "P_drag's Coulomb half — is left out. P_equi's explicit (Tₑ−T_i) factor " *
-                "is differentiated. This under-damps the transient; the fixed point is " *
+                "not an RRC surface, so the Tₑ dependence THROUGH ν_ei in P_drag's Coulomb half " *
+                "is left out. This under-damps the transient; the fixed point is " *
                 "λ-independent and unaffected." maxlog = 1
         end
 
@@ -1055,9 +1118,7 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
         end
 
-        if RP.flags.Coulomb_Collision
-            @. pla.exprb.eig_Ti -= (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * pla.ν_ei
-        end
+        # (the e–i exchange is not here: the step applies its exact solution on its own)
 
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
         if !isempty(on_out_wall_nids)
@@ -1147,13 +1208,20 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             @. iPowers.atomic = eff_atomic_coll_freq * avg_erg_change_by_atomic_collision
         end
 
-        # Handle equilibration power with electrons
+        # The exchange with the electrons at the present temperatures, per ion (nₑ/n_I times the
+        # electrons' rate): a diagnostic, the step applies the exact increment instead
         if RP.flags.Coulomb_Collision
-            @. iPowers.equi = (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
+            update_charge_states!(RP)
+            @with_pool pool begin
+                a = ei_relaxation_rate!(acquire!(pool, FT, size(pla.ni)...), RP)
+                @. iPowers.equi = ifelse(
+                    pla.ni_sum > zero(FT), FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * a * pla.ne / pla.ni_sum, zero(FT)
+                )
+            end
         end
 
-        # Calculate total ion heating power
-        @. iPowers.tot = iPowers.atomic + iPowers.equi
+        # Calculate total ion heating power (the exchange is applied on its own)
+        @. iPowers.tot = iPowers.atomic
 
         # Set power to zero outside wall boundaries
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids

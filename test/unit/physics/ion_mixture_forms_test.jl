@@ -185,3 +185,85 @@ end
     # the toy species is unregistered: no reaction makes it, so it does not dilute
     @test RAPID2D.born_ion_mass(RP) ≈ fill(mi * 2.5e17, size(pla.ni))
 end
+
+@testitem "The e–i exchange is the exact solution of the relaxation, one number for both" setup = [MixtureCase] begin
+    using RAPID2D: ei_exchange_energy!, ei_relaxation_rate!
+    # (3/2)e nₑ dTₑ/dt = −Q, (3/2)e n_I dTᵢ/dt = +Q, Q = (3/2)e nₑ a (Tₑ − Tᵢ): over Δt the
+    # gap decays by e^{−λΔt}, λ = a(1 + nₑ/n_I), and the energy moved is one number
+    for n_toy in (0.0, 1.0e17)                  # nₑ = Σ z n with and without a second species
+        RP = mixture_case(; n_toy, Te = 10.0)
+        RP.dt = 1.0e-4
+        update_coulomb_collision_parameters!(RP)
+        pla, ee = RP.plasma, RP.config.constants.ee
+        ΔE = copy(ei_exchange_energy!(RP))
+        a = ei_relaxation_rate!(similar(pla.ni), RP)
+        inw = RP.G.nodes.in_wall_nids
+        k = first(inw)
+        ne, nI = pla.ne[k], pla.ni_sum[k]
+        λ = a[k] * (1 + ne / nI)
+        Te1 = pla.Te_eV[k] - ΔE[k] / (1.5ee * ne)
+        Ti1 = pla.Ti_eV[k] + ΔE[k] / (1.5ee * nI)
+        @test Te1 - Ti1 ≈ (pla.Te_eV[k] - pla.Ti_eV[k]) * exp(-λ * RP.dt) rtol = 1.0e-10
+        @test 1.5ee * (ne * (Te1 - pla.Te_eV[k]) + nI * (Ti1 - pla.Ti_eV[k])) ≈ 0 atol = 1.0e-12 * ΔE[k]
+        @test all(>(0), ΔE[inw])                # hot electrons give
+    end
+    # one species: the coefficient is 2mₑmᵢ/(mₑ+mᵢ)² ν_ei
+    RP = mixture_case(n_toy = 0.0)
+    update_coulomb_collision_parameters!(RP)
+    me, mi = RP.config.constants.me, RP.config.constants.mi
+    @test ei_relaxation_rate!(similar(RP.plasma.ni), RP) ≈ @.(2 * me * mi / (me + mi)^2 * RP.plasma.ν_ei)
+end
+
+@testitem "A temperature that does not evolve is a bath for the exchange" setup = [MixtureCase] begin
+    using RAPID2D: ei_exchange_energy!, ei_relaxation_rate!
+    for (te, ti) in ((true, false), (false, true))
+        RP = mixture_case(n_toy = 0.0, Te = 10.0)
+        RP.dt = 1.0e-4
+        RP.flags.Te_evolve, RP.flags.Ti_evolve = te, ti
+        update_coulomb_collision_parameters!(RP)
+        pla, ee = RP.plasma, RP.config.constants.ee
+        ΔE = ei_exchange_energy!(RP)
+        a = ei_relaxation_rate!(similar(pla.ni), RP)
+        k = first(RP.G.nodes.in_wall_nids)
+        ne, nI, gap = pla.ne[k], pla.ni_sum[k], pla.Te_eV[k] - pla.Ti_eV[k]
+        if te       # the electrons relax onto the fixed ions
+            @test pla.Te_eV[k] - ΔE[k] / (1.5ee * ne) - pla.Ti_eV[k] ≈ gap * exp(-a[k] * RP.dt) rtol = 1.0e-10
+        else        # the ions onto the fixed electrons
+            @test pla.Te_eV[k] - (pla.Ti_eV[k] + ΔE[k] / (1.5ee * nI)) ≈ gap * exp(-a[k] * ne / nI * RP.dt) rtol = 1.0e-10
+        end
+    end
+    RP = mixture_case(n_toy = 0.0)
+    RP.flags.Coulomb_Collision = false
+    @test all(iszero, ei_exchange_energy!(RP))
+end
+
+@testitem "With Coulomb collisions alone the thermal energy is kept over whole steps" begin
+    # no field, no drift, no atomic physics, no transport: the exchange is all that acts, and
+    # (3/2)e Σ V (nₑTₑ + nᵢTᵢ) is kept to round-off while the temperatures approach each other
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 9, NZ = 9, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-4, t_end_s = 2.0e-3,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(; cleanup = false),
+    )
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags{Float64}(
+        Atomic_Collision = false, Coulomb_Collision = true, src = false, diffu = false, convec = false,
+        Ampere = false, E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        ud_evolve = false, Te_evolve = true, Ti_evolve = true, update_ni_independently = false,
+        mean_ExB = false, turb_ExB_mixing = false,
+    )
+    initialize!(RP)
+    inw = RP.G.nodes.in_wall_nids
+    RP.plasma.ne[inw] .= 1.0e18
+    RP.plasma.ni .= RP.plasma.ne
+    RP.plasma.Te_eV .= 10.0
+    RP.plasma.Ti_eV .= 1.0
+    ee, V = RP.config.constants.ee, RP.G.inVol2D[inw]
+    thermal(rp) = 1.5ee * sum(V .* (rp.plasma.ne[inw] .* rp.plasma.Te_eV[inw] .+ rp.plasma.ni[inw] .* rp.plasma.Ti_eV[inw]))
+    E0, gap0 = thermal(RP), 9.0
+    redirect_stdout(() -> run_simulation!(RP), devnull)
+    @test thermal(RP) ≈ E0 rtol = 1.0e-12
+    gap = maximum(RP.plasma.Te_eV[inw] .- RP.plasma.Ti_eV[inw])
+    @test 0 < gap < 0.9 * gap0                   # and they did relax
+end

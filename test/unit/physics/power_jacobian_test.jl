@@ -241,19 +241,13 @@ end
     @test_logs min_level = Warn eig_at(quiet)
 end
 
-@testitem "eig_Te: the equilibration term is differentiated, not lumped in with ∂ν_ei/∂Tₑ" setup = [PowerJacobianFixtures] begin
+@testitem "eig_Te: the e–i exchange is left to its exact solution, Coulomb on or off" setup = [PowerJacobianFixtures] begin
     using RAPID2D: ExpRB
 
-    # `P_equi = 2μ(3/2)e(Tₑ − T_i)ν_ei` is subtracted from `ePowers.tot`, so it
-    # carries a Tₑ derivative that needs no table at all: `−2μ(3/2)e·ν_ei` at
-    # frozen ν_ei, and unconditionally stabilizing. Only `∂ν_ei/∂Tₑ` is
-    # Spitzer-like, and the omission had been written wide enough to drop both.
-    # `update_ion_power_jacobian!` keeps this exact term, so the two Jacobians
-    # disagreed about one piece of physics.
-    #
-    # The central-difference oracle above runs Coulomb-OFF, where P_equi is
-    # identically zero on both sides — which is how a missing term survived an
-    # oracle built to catch missing terms.
+    # The step gives the ions the exact solution of the e–i relaxation on its own
+    # (`ei_exchange_energy!`), so the exchange is in neither `ePowers.tot` nor `eig_Te`:
+    # the central difference of the assembled power and the eigenvalue agree with
+    # Coulomb on, and the eigenvalue does not depend on ν_ei.
     for Te in (1.0, 5.0), ν_ei in (1.0e8, 1.0e10)
         RP = pj_RAPID(; Te_eV = Te, coulomb = true)
         RP.flags.scheme.atomic = ExpRB
@@ -267,8 +261,6 @@ end
         @test maximum(abs, eig[inw] .- fd[inw]) / scale < 1.0e-5
     end
 
-    # Its sign is not a matter of regime: −ν_ei times positive constants, so it can
-    # only damp. That is the whole reason omitting it was tolerable-but-wrong.
     hot = pj_RAPID(; Te_eV = 5.0, coulomb = true)
     hot.flags.scheme.atomic = ExpRB
     hot.plasma.ν_ei .= 1.0e10
@@ -276,7 +268,7 @@ end
     cold.flags.scheme.atomic = ExpRB
     cold.plasma.ν_ei .= 0.0
     inw = hot.G.nodes.in_wall_nids
-    @test all(eig_at(hot)[inw] .< eig_at(cold)[inw])
+    @test eig_at(hot)[inw] == eig_at(cold)[inw]
 end
 
 @testitem "Power Jacobian: FullLinearResponse matches a finite difference of the new sinks" begin
@@ -555,25 +547,15 @@ end
     #
     # Make the dropped part identically zero instead. With Ē-independent surfaces
     # ∂K/∂Ē = 0, so Partial and the true ∂P/∂Tₑ must agree EXACTLY, and `eig_fd`
-    # becomes a genuine oracle for TWO of the three things Partial keeps: the
-    # cold-target slope and the dilution rate. Mutation-checked — deleting either is
-    # caught, at 43x and 5.0e5x tolerance respectively.
-    #
-    # **It does NOT cover the equilibration term, and an earlier version of this
-    # comment claimed it did** on the grounds that `Coulomb_Collision = true` made it
-    # "live rather than assumed". It is not a fixture problem and cannot be fixed by
-    # one: `2μ(3/2)e·ν_ei` is 4.7e-18 here against a `scale` of 2.4e6 set by the
-    # cold-target slope, so the term sits 24 orders below the tolerance and stays there
-    # for any `ν_ei` — 10¹⁰ still leaves 18 orders. The mass ratio μ ≈ 2.7e-4 and the
-    # `e` are what put it there.
-    #
-    # That term has its own item, which drives `ν_ei` directly at 1e8 and 1e10:
-    # "eig_Te: the equilibration term is differentiated, not lumped in with ∂ν_ei/∂Tₑ".
-    # Two tests, two regimes; neither pretends to be the other.
+    # becomes a genuine oracle for the two things Partial keeps: the cold-target slope
+    # and the dilution rate. Mutation-checked — deleting either is caught, at 43x and
+    # 5.0e5x tolerance respectively. The e–i exchange is in neither the power nor the
+    # eigenvalue (the step applies its exact solution); its own item says so:
+    # "eig_Te: the e–i exchange is left to its exact solution, Coulomb on or off".
     # Both units, at their real magnitudes. With one value for K and L alike the energy
     # sinks land 20 orders above every particle term, `scale` below is set entirely by
-    # the cold-target slope, and the dilution and equilibration terms this item exists
-    # to cover become unfalsifiable — verified by mutation, not assumed.
+    # the cold-target slope, and the dilution term this item exists to cover becomes
+    # unfalsifiable — verified by mutation, not assumed.
     RP = with_surfaces(
         pj_RAPID(; coulomb = true, depth = PartialLinearResponse);
         K_of_Ē = _ -> 1.0e-15, L_of_Ē = _ -> 1.0e-35

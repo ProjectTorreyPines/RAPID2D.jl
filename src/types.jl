@@ -448,6 +448,9 @@ Contains the plasma state variables including density, temperature, and velocity
     # Δt mₑ nₑ Rue_ei at the density the electron momentum equation saw (before continuity).
     # The ions take −I_ei (`update_ui_para!`), so the exchange cancels exactly.
     I_ei::Matrix{FT} = zeros(FT, dims)
+    # The energy the electrons gave the ions by Coulomb collisions over the step, per volume
+    # [J/m³] (`ei_exchange_energy!`): the ions take +, the electrons −.
+    ei_exchange_energy::Matrix{FT} = zeros(FT, dims)
 
     # The ion species summed node by node (`update_charge_states!`): Σ nₛ, Σ zₛ nₛ (the
     # charge the current and quasineutrality see), Σ zₛ² nₛ (what electrons scatter on),
