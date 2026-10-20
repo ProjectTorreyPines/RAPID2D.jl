@@ -608,7 +608,7 @@ Fields include diffusion coefficients in different directions.
     # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as
     # COLUMNS, which is exactly the multi-RHS layout the batch solve wants. Exactly
     # one column is filled for now — `set_ion_species!` says what a second needs.
-    ion_species::Vector{IonSpecies{FT}} = IonSpecies{FT}[]
+    ion_species::Vector{IonRecord{FT}} = IonRecord{FT}[]
     ion_N::Matrix{FT} = zeros(FT, prod(dims), 1)   # working densities [m⁻³]
     ion_S::Matrix{FT} = zeros(FT, prod(dims), 1)   # working sources [m⁻³s⁻¹]
     ion_solvers::Vector{SparseLUSolver{FT}} = SparseLUSolver{FT}[]  # one per transport group
@@ -843,10 +843,9 @@ end
 Particles created per event, per channel — the `νₖ,ₛ` of
 [`ReactionState`](@ref).
 
-Read at runtime only for `.θ` and `keys()`. The particle columns are the
-reference the accessors in `reactions.jl` were hand-written from, not a table
-they contract against — so treat them as documentation that has to be kept in
-step by hand, and see the note there before adding a channel.
+The electron, H₂ and ion columns are what the accessors in `reactions.jl` contract
+against (`net_electron_count`, `net_H2_gas_count`, `net_ion_count` are generated from them);
+`.θ` names the quadrature. Ions are keyed by [`SpeciesKey`](@ref).
 
 | channel | e | H₂⁺ | H₃⁺ | H⁺ | H₂ | H⁰ | `θ` family |
 |---|---|---|---|---|---|---|---|
@@ -858,8 +857,8 @@ step by hand, and see the note there before adding a channel.
 (italic rows are not implemented; the table records the intent so the
 stoichiometry is settled before the rates arrive.)
 
-¹ `diz`'s true ion is H⁺, in its own column. The `ions` field below books it to
-H₂⁺ instead — an INTERIM, not a correction to this row — because
+¹ `diz`'s true ion is H⁺ (`H[1]`), in its own column. The `ions` field below books it
+to H₂⁺ (`H2[1]`) instead — an INTERIM, not a correction to this row — because
 `set_ion_species!` refuses a second species. See the comment on
 `REACTION_STOICHIOMETRY.diz`.
 
@@ -869,22 +868,22 @@ see [`reaction_θ`](@ref). It is data rather than a line in the producer so that
 cares how the integral was evaluated can ask instead of assume.
 """
 const REACTION_STOICHIOMETRY = (
-    iz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
+    iz = (electron = 1, H2_gas = -1, ions = (species_key(Particles.H2[1]) => 1,), θ = :growth),
     # Dissociative ionization: e + H₂ → 2e + H⁺ + H⁰. One electron like `iz`, one H₂
     # destroyed, and one H⁰ that nothing tracks yet (which is why there is no H⁰ column).
     #
     # ⚠ The ion is H⁺, and this row says H₂⁺ ON PURPOSE. `set_ion_species!` refuses a
-    # second species — `ion_transport.jl:727` names six blockers — so a `:H⁺` here would
+    # second species (its docstring names the blockers), so an `H[1]` here would
     # create electrons with no ion and break quasi-neutrality. Carrying the charge on the
     # H₂⁺ column keeps the electron count, the charge and nuclei conservation all exact
     # and gets only the ion MASS wrong, for ≤8 % of ions at high E/p and exactly none
-    # below 35 eV impact. Change to `:H⁺ => 1` when multi-species ion transport lands.
+    # below 35 eV impact. Change to `H[1]` when multi-species ion transport lands.
     #
     # THIS COMMENT IS THE ANCHOR for that change. Every other site that follows the
     # interim carries the tag `INTERIM(diz-ion-species)` and points back here instead of
     # restating the rationale, so `grep -rn "INTERIM(diz-ion-species)" src/` enumerates
     # the full change list rather than leaving it to be rediscovered.
-    diz = (electron = 1, H2_gas = -1, ions = (:H2⁺ => 1,), θ = :growth),
+    diz = (electron = 1, H2_gas = -1, ions = (species_key(Particles.H2[1]) => 1,), θ = :growth),
 )
 
 """
@@ -1268,7 +1267,7 @@ Contains boolean flags that control various aspects of the simulation.
     update_ni_independently::Bool = true      # Update ion density independently
     Ti_evolve::Bool = true                   # Update ion temperature
 
-    # Whether ion species share one transport operator (see `ion_species.jl`).
+    # Whether ion species share one transport operator (see `species.jl`).
     # A TYPE, not a symbol: it dispatches at `ion_transport_groups` and nowhere
     # else, so no solver contains a branch on it.
     ion_transport_policy::IonTransportPolicy = SharedEffectiveTransport()

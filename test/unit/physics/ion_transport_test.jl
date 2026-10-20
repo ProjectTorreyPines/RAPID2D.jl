@@ -272,13 +272,13 @@ end
     @test_throws ArgumentError ion_transport_groups(PerSpeciesTransport(), ok, [ones(2, 2)])
 end
 
-@testitem "An ion species carries the mass and charge its channels need" begin
-    using RAPID2D: IonSpecies
+@testitem "An ion record carries the mass and charge its channels need" begin
+    using RAPID2D: IonRecord
 
-    h2p = IonSpecies(:H2⁺, 2 * 1.6726e-27, 1)
-    c6p = IonSpecies(:C⁶⁺, 12 * 1.6726e-27, 6)
+    h2p = IonRecord(:H2⁺, 2 * 1.6726e-27, 1)
+    c6p = IonRecord(:C⁶⁺, 12 * 1.6726e-27, 6)
 
-    @test h2p.name === :H2⁺
+    @test h2p.label === :H2⁺
     @test c6p.charge == 6
     @test h2p.mass < c6p.mass
     # mass and charge vary INDEPENDENTLY across the periodic table, which is why
@@ -286,6 +286,6 @@ end
     # and 6× in mass, and no single scalar recovers both.
     @test c6p.mass / h2p.mass ≈ c6p.charge / h2p.charge
 
-    @test_throws ArgumentError IonSpecies(:junk, -1.0, 1)
-    @test_throws ArgumentError IonSpecies(:junk, 1.0, 0)
+    @test_throws ArgumentError IonRecord(:junk, -1.0, 1)
+    @test_throws ArgumentError IonRecord(:junk, 1.0, 0)
 end

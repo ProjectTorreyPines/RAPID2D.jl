@@ -352,6 +352,10 @@ Tracks cumulative sources and losses of particles and energy
     cum0D_Ne_loss::FT = zero(FT)            # Cumulative electron loss
     cum0D_Ni_src::FT = zero(FT)             # Cumulative ion source
     cum0D_Ni_loss::FT = zero(FT)            # Cumulative ion loss
+    # The ion source and loss per species (`transport.ion_species` order), recorded beside
+    # the totals by their own reductions: they sum to the totals to round-off
+    cum0D_Ni_src_s::Vector{FT} = FT[]
+    cum0D_Ni_loss_s::Vector{FT} = FT[]
 
     # 2D (spatially-resolved) tracking
     cum2D_Ne_src::Matrix{FT} = zeros(FT, dims_RZ)     # Cumulative electron source (R,Z)

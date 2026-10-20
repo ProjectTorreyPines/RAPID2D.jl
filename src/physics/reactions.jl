@@ -6,12 +6,9 @@
 # The struct and the stoichiometry table live in `types.jl`; this is the arithmetic
 # `ΔNₛ = Σₖ νₖ,ₛ Nₖ` that turns one into the other, plus the freshness check.
 #
-# The accessors below are HAND-WRITTEN from `REACTION_STOICHIOMETRY`; nothing
-# derives them from it and nothing checks that they still agree. Only `.θ` and
-# `keys()` are actually read at runtime (`reaction_θ`, `check_reaction_counts`),
-# so the particle columns are documentation until a second channel makes the sums
-# worth generating. Adding a channel means editing the table AND every accessor —
-# that is the cost being deferred, and it is the moment to reconsider.
+# The contractions are generated from `REACTION_STOICHIOMETRY`'s columns (bottom of this
+# file). The producer, `update_reaction_counts!`, still names its two channels: it is the
+# one place that knows how each count is integrated.
 
 """
     reset_reaction_counts!(RP) -> RP
@@ -40,8 +37,9 @@ numbers and believe them.
 function reset_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     rx = RP.reactions
     empty!(rx.published)
-    fill!(rx.counts.iz, zero(FT))
-    fill!(rx.counts.diz, zero(FT))
+    for ch in keys(REACTION_STOICHIOMETRY)
+        fill!(getproperty(rx.counts, ch)::Matrix{FT}, zero(FT))
+    end
     return RP
 end
 
@@ -174,16 +172,16 @@ function update_reaction_counts!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         fill!(N.iz, zero(FT))
         fill!(N.diz, zero(FT))
     end
-    push!(rx.published, :iz)
-    push!(rx.published, :diz)
+    union!(rx.published, keys(REACTION_STOICHIOMETRY))
 
     return RP
 end
 
 """
-    check_reaction_counts(RP)
+    check_reaction_counts(RP, channels = keys(REACTION_STOICHIOMETRY))
 
-Throw unless [`update_reaction_counts!`](@ref) has run for the step in progress.
+Throw unless every channel in `channels` has a count for the step in progress
+([`update_reaction_counts!`](@ref) has run). Returns the counts.
 
 The producer must precede its consumers — nothing can know how many events
 happened before the equation that determines them is solved. That constraint
@@ -191,10 +189,10 @@ cannot be designed away, so it is checked instead of assumed: a stale read used
 to halve the ion source silently at `θ = ½`.
 
 Consumers are free to run in **any order among themselves**; they read one array
-and get bit-identical answers.
+and get bit-identical answers. A consumer that needs only some channels names them.
 """
-function check_reaction_counts(RP::RAPID)
-    missing_channels = filter(k -> k ∉ RP.reactions.published, keys(REACTION_STOICHIOMETRY))
+function check_reaction_counts(RP::RAPID, channels = keys(REACTION_STOICHIOMETRY))
+    missing_channels = filter(k -> k ∉ RP.reactions.published, collect(channels))
     isempty(missing_channels) || throw(
         ArgumentError(
             "reaction channel(s) $(join(missing_channels, ", ")) have no count for the " *
@@ -208,34 +206,62 @@ function check_reaction_counts(RP::RAPID)
     return RP.reactions.counts
 end
 
+# ── contractions generated from the table ────────────────────────────────────────────────
+#
+# A channel contributes to a column with its coefficient. The channels are summed in table
+# order and a common coefficient is applied once, `c·(N₁ + N₂)`: the expression the
+# hand-written accessors always had, so the rounding and the signed zeros are unchanged.
+# A column whose channels carry different coefficients is refused here until a producer
+# needs one (the reaction catalog generalizes this).
+
+function _column_channels(column)
+    chans = [ch for ch in keys(REACTION_STOICHIOMETRY) if column(REACTION_STOICHIOMETRY[ch]) != 0]
+    coefs = unique(column(REACTION_STOICHIOMETRY[ch]) for ch in chans)
+    length(coefs) <= 1 || error("a column with mixed coefficients needs the general contraction")
+    return chans, isempty(coefs) ? 0 : only(coefs)
+end
+
+function _contraction(chans, c, ref)
+    terms = [ref(ch) for ch in chans]
+    sum_expr = length(terms) == 1 ? terms[1] : foldl((a, b) -> :($a .+ $b), terms)
+    length(terms) == 1 && (sum_expr = :(copy($sum_expr)))
+    return c == 1 ? sum_expr : c == -1 ? :(-($sum_expr)) : :($c .* $sum_expr)
+end
+
+function _contraction_at(chans, c, ref)
+    terms = [ref(ch) for ch in chans]
+    sum_expr = length(terms) == 1 ? terms[1] : foldl((a, b) -> :($a + $b), terms)
+    return c == 1 ? sum_expr : c == -1 ? :(-($sum_expr)) : :($c * $sum_expr)
+end
+
+let (chans, c) = _column_channels(row -> row.electron)
+    @eval net_electron_count(N::ReactionCounts) = $(_contraction(chans, c, ch -> :(N.$ch)))
+end
+
+let (chans, c) = _column_channels(row -> row.H2_gas)
+    @eval net_H2_gas_count(N::ReactionCounts) = $(_contraction(chans, c, ch -> :(N.$ch)))
+    @eval @inline net_H2_gas_count(N::ReactionCounts, k::Integer) =
+        $(_contraction_at(chans, c, ch -> :(N.$ch[k])))
+end
+
 """
     net_electron_count(counts) -> Matrix
 
 `Σₖ νₖ,ₑ Nₖ` — electrons created per unit volume during this step, `[m⁻³]`.
-
-Both channels make exactly one electron per event (`REACTION_STOICHIOMETRY`), so
-this is `N.iz .+ N.diz`. Allocates: with two channels contributing there is no
-single array left to alias.
 """
-net_electron_count(N::ReactionCounts) = N.iz .+ N.diz
-# − N.rec_H2 − N.rec_H3
+net_electron_count
 
 """
     net_H2_gas_count(counts)    -> Matrix
     net_H2_gas_count(counts, k) -> scalar
 
-`Σₖ νₖ,H₂ Nₖ` — molecules created (negative: destroyed) per unit volume during
-this step. The neutral-gas sink is this, not a second estimate of it: today
-`ReactionCounts` only tracks `iz` and `diz`, and both destroy one H₂ per
-electron born, so the sum reduces to `−net_electron_count` — a consequence of
-which channels are booked, not a conservation identity.
+`Σₖ νₖ,H₂ Nₖ` — molecules created (negative: destroyed) per unit volume during this step.
+The neutral-gas sink is this, not a second estimate of it.
 
 **It undercounts.** Dissociative excitation (`e + H₂ → e + H + H*`) destroys an
-H₂ and makes no electron, so it is invisible to `−net_electron_count` by
-construction. Its particle rate `K_diss_exc` is already loaded by
-`update_RRCs!` (`reaction_rate_coefficients.jl:319`) — only its energy sibling
-`Kerg_diss_exc` is consumed (into `P_en_diss_exc`); the channel has no
-`ReactionCounts` field and never reaches this sum. Measured on the shipped
+H₂ and makes no electron, and the channel has no row in `REACTION_STOICHIOMETRY`.
+Its particle rate `K_diss_exc` is already loaded by `update_RRCs!` — only its energy
+sibling `Kerg_diss_exc` is consumed (into `P_en_diss_exc`). Measured on the shipped
 table, the median of `K_diss_exc/(K_iz + K_diss_iz)` over E/p is 18 at
 Ē = 5 eV, 2.1 at 10, 1.1 at 15, 0.79 at 20, 0.40 at 50 and 0.19 at 300 — so
 this sink under-consumes H₂ by 1.2–3× from burn-through up, and by more than an
@@ -243,33 +269,41 @@ order of magnitude in the few-eV band, where ionization has barely switched on
 and dissociative excitation is nearly the whole H₂ loss. (Quote the median, not
 the range: below Ē ≈ 5 eV the denominator is near zero on most E/p rows, so the
 ratio there is numerically unbounded and says nothing.)
-Booking it would need a `diss_exc` row in `REACTION_STOICHIOMETRY` (H₂ → −1,
-no electron) and a matching `ReactionCounts` field; deliberately out of scope
-here.
 
 The indexed form exists because the sink is an elementwise sweep over in-wall
 nodes and has no reason to pay for allocating the whole field.
 """
-net_H2_gas_count(N::ReactionCounts) = -(N.iz .+ N.diz)
-@inline net_H2_gas_count(N::ReactionCounts, k::Integer) = -(N.iz[k] + N.diz[k])
-# + N.rec_H3
+net_H2_gas_count
+
+const _ION_PRODUCERS = let
+    producers = Dict{SpeciesKey, Vector{Pair{Symbol, Int}}}()
+    for ch in keys(REACTION_STOICHIOMETRY), (key, ν) in REACTION_STOICHIOMETRY[ch].ions
+        push!(get!(producers, key, Pair{Symbol, Int}[]), ch => ν)
+    end
+    producers
+end
 
 """
-    net_ion_count(counts, name) -> Matrix or nothing
+    net_ion_count(counts, key::SpeciesKey) -> Matrix or nothing
 
-`Σₖ νₖ,ₛ Nₖ` for the ion species called `name`, or `nothing` when no channel
+`Σₖ νₖ,ₛ Nₖ` for the ion species with identity `key`, or `nothing` when no channel
 touches it — a species nothing creates or destroys has no source term rather
 than a zero one, so the caller can skip the work entirely.
 
-`:H2⁺` is `N.iz .+ N.diz`, not `N.iz` alone: under the INTERIM(diz-ion-species)
+`H2[1]` is `N.iz .+ N.diz`, not `N.iz` alone: under the INTERIM(diz-ion-species)
 (`REACTION_STOICHIOMETRY.diz`) DI's ion is booked here too, because H⁺ is not yet
-a transportable species. That makes this identically `net_electron_count` for
-now — not a conservation check, just the consequence of the interim.
+a transportable species.
 """
-function net_ion_count(N::ReactionCounts, name::Symbol)
-    name === :H2⁺ && return N.iz .+ N.diz
-    # :H⁺  → N.diz alone, once REACTION_STOICHIOMETRY.diz.ions changes to :H⁺ => 1
-    #        and H⁺ is a declared, transportable species — see the docstring above.
-    # :H3⁺ → −N.rec_H3
-    return nothing
+function net_ion_count(N::ReactionCounts{FT}, key::SpeciesKey) where {FT <: AbstractFloat}
+    producers = get(_ION_PRODUCERS, key, nothing)
+    isnothing(producers) && return nothing
+    coefs = unique(last.(producers))
+    length(coefs) == 1 || error("an ion with mixed coefficients needs the general contraction")
+    acc = getproperty(N, first(producers[1]))::Matrix{FT}
+    acc = length(producers) == 1 ? copy(acc) : acc
+    for (ch, _) in producers[2:end]
+        acc = acc .+ (getproperty(N, ch)::Matrix{FT})
+    end
+    c = only(coefs)
+    return c == 1 ? acc : c .* acc
 end

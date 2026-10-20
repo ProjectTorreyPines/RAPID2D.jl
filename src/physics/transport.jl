@@ -178,7 +178,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Ions carry no gradient ceiling yet — they have only stage 3a. It is NOT the one
     # line it looks like: an ion ceiling has to bound the total non-convective species
     # flux including the pinch term, it makes otherwise-grouped species operators
-    # differ, and `ion_transport_channels` receives an `IonSpecies` that carries no
+    # differ, and `ion_transport_channels` receives an `IonRecord` that carries no
     # density. The neutral gas is owed the same question — panel 2 of the 1-D spec is a
     # GAS problem and the gas channel has no gradient cap either. Both are queued
     # behind the ambipolar-gate work; see

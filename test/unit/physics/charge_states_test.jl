@@ -35,7 +35,7 @@
 end
 
 @testitem "The transport solve carries exactly one ion species" setup = [ChargeCase] begin
-    using RAPID2D: IonSpecies, set_ion_species!, bulk_ion_charge
+    using RAPID2D: IonRecord, Particles, set_ion_species!, bulk_ion_charge
 
     RP = charge_case()
     @test length(RP.transport.ion_species) == 1
@@ -46,7 +46,7 @@ end
     # instead of n·Z — none of which exist yet.
     mi = RP.config.constants.mi
     err = try
-        set_ion_species!(RP, [IonSpecies(:H2⁺, mi, 1), IonSpecies(:C⁶⁺, 6mi, 6)])
+        set_ion_species!(RP, [IonRecord(Particles.H2[1]; mass = mi), IonRecord(:C⁶⁺, 6mi, 6)])
         nothing
     catch e
         e
@@ -61,7 +61,7 @@ end
 end
 
 @testitem "There is no stored mean charge — Z comes from the species" setup = [ChargeCase] begin
-    using RAPID2D: IonSpecies, set_ion_species!, bulk_ion_charge
+    using RAPID2D: IonRecord, Particles, set_ion_species!, bulk_ion_charge
 
     RP = charge_case()
 
@@ -72,14 +72,14 @@ end
     # `Z_eff` survives — `sptz_fac` is a genuine consumer — and at one species it
     # is that species' charge exactly, not a value maintained alongside it.
     mi = RP.config.constants.mi
-    set_ion_species!(RP, [IonSpecies(:C⁶⁺, 6mi, 6)])
+    set_ion_species!(RP, [IonRecord(:C⁶⁺, 6mi, 6)])
     update_charge_states!(RP)
     @test bulk_ion_charge(RP) == 6
     @test all(==(6.0), RP.plasma.Zeff)
 end
 
 @testitem "Quasineutrality slaves ions with the declared species charge" setup = [ChargeCase] begin
-    using RAPID2D: IonSpecies, set_ion_species!, slave_ions_to_electrons!
+    using RAPID2D: IonRecord, Particles, set_ion_species!, slave_ions_to_electrons!
 
     # n_e = n_i Z, so the ion density balancing a given n_e is ne/Z. Reading Z from
     # the declared species rather than from a field means it CANNOT be stale: the
@@ -87,7 +87,7 @@ end
     # slaving, which is exactly the window a stored average got wrong.
     RP = charge_case()
     mi = RP.config.constants.mi
-    set_ion_species!(RP, [IonSpecies(:C⁶⁺, 6mi, 6)])
+    set_ion_species!(RP, [IonRecord(:C⁶⁺, 6mi, 6)])
     slave_ions_to_electrons!(RP)
     @test RP.plasma.ni ≈ RP.plasma.ne ./ 6
 
@@ -99,7 +99,7 @@ end
 end
 
 @testitem "A current carries the ion CHARGE density, not the ion density" setup = [ChargeCase] begin
-    using RAPID2D: IonSpecies, set_ion_species!, measure_snap2D
+    using RAPID2D: IonRecord, Particles, set_ion_species!, measure_snap2D
 
     # J∥ = e(n_i Z u_i∥ − n_e u_e∥). The ion term is a charge density; dropping the
     # Z under-reports the ion current by a factor of Z, silently, because H₂⁺ makes
@@ -111,10 +111,10 @@ end
     RP.plasma.ui_para .= 2.0e3
     ee = RP.config.constants.ee
 
-    set_ion_species!(RP, [IonSpecies(:H2⁺, mi, 1)])
+    set_ion_species!(RP, [IonRecord(Particles.H2[1]; mass = mi)])
     J_H2 = copy(measure_snap2D(RP).J_para)
 
-    set_ion_species!(RP, [IonSpecies(:C⁶⁺, 6mi, 6)])
+    set_ion_species!(RP, [IonRecord(:C⁶⁺, 6mi, 6)])
     J_C = measure_snap2D(RP).J_para
 
     pla = RP.plasma

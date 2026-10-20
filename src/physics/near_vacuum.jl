@@ -192,12 +192,16 @@ function correct_negative_densities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             if RP.flags.update_ni_independently
                 ni = RP.plasma.ni
+                removed_total = zero(FT)
                 @inbounds for nid in findall(<(zero(FT)), ni)
                     removed = ni[nid] * cell_volume(nid)                  # < 0: a negative loss
                     Ntracker.cum0D_Ni_loss += removed
                     Ntracker.cum2D_Ni_loss[nid] += removed
+                    removed_total += removed
                     ni[nid] = zero(FT)
                 end
+                # `ni` is the first species' density
+                isempty(Ntracker.cum0D_Ni_loss_s) || (Ntracker.cum0D_Ni_loss_s[1] += removed_total)
             end
         end
 

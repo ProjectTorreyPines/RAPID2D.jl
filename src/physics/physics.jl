@@ -1379,6 +1379,14 @@ function book_ionization_sources!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.update_ni_independently
             Ntracker.cum0D_Ni_src += sum(Ne_iz)
             @. Ntracker.cum2D_Ni_src += Ne_iz
+            # per species, from each species' own count (the total above stays the
+            # electron count, which equals Σ over species under the current table)
+            counts = RP.reactions.counts
+            grow_species_entries!(Ntracker, length(RP.transport.ion_species))
+            for (s, sp) in enumerate(RP.transport.ion_species)
+                Δn = net_ion_count(counts, sp.key)
+                isnothing(Δn) || (Ntracker.cum0D_Ni_src_s[s] += sum(Δn .* RP.G.inVol2D))
+            end
         end
         return RP
     end # @timeit

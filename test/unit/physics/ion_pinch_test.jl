@@ -190,7 +190,7 @@ end
 end
 
 @testitem "A trace species pinched into the wall is booked at the face, at the density the explicit term used" setup = [PinchRun] begin
-    using RAPID2D: IonSpecies
+    using RAPID2D: IonRecord
 
     # Two species written straight into the transport buffers. `set_ion_species!` still
     # refuses a second species for reasons outside this solve (one γ_2nd, Ni_loss not
@@ -207,7 +207,7 @@ end
         tp = RP.transport
         Ng = RP.G.NR * RP.G.NZ
         bulk = tp.ion_species[1]
-        tp.ion_species = [bulk, IonSpecies(:C6, 6 * bulk.mass, 6)]
+        tp.ion_species = [bulk, IonRecord(:C6, 6 * bulk.mass, 6)]
         tp.ion_N = zeros(Ng, 2)
         tp.ion_S = zeros(Ng, 2)
         tp.ion_N[RP.G.nodes.in_wall_nids, 2] .= 1.0e15          # a uniform trace inside the wall

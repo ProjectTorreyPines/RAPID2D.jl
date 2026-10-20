@@ -564,6 +564,8 @@ function reset_Ntracker_cumulative_0D!(RP::RAPID{FT}) where {FT <: AbstractFloat
     RP.diagnostics.Ntracker.cum0D_Ne_loss = zero(FT)
     RP.diagnostics.Ntracker.cum0D_Ni_src = zero(FT)
     RP.diagnostics.Ntracker.cum0D_Ni_loss = zero(FT)
+    fill!(RP.diagnostics.Ntracker.cum0D_Ni_src_s, zero(FT))
+    fill!(RP.diagnostics.Ntracker.cum0D_Ni_loss_s, zero(FT))
 
     return RP
 end
