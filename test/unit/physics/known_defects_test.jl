@@ -89,7 +89,7 @@ end
 @testitem "DEFECT: an imposed E_para_tot does not survive a single step" setup = [AtomicOnlyOneStep] begin
     # issues/failures-that-do-not-announce-themselves.md §2
     #
-    # `advance_timestep!` rebuilds `E_para_tot` from the external loop voltage every
+    # `advance_timestep!` rebuilds `E_para_tot` from the prescribed loop voltage every
     # step (`combine_field_sources!` → `calculate_parallel_electric_field!`),
     # so a caller imposing a parallel drive this way is silently overridden — sign
     # included. The idiom appears in scenario setups across the repo.

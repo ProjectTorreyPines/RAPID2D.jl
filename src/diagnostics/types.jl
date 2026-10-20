@@ -133,7 +133,7 @@ Contains volume-averaged quantities
     ctrl_power::FT = zero(FT)        # ∫Jϕ E_ϕ,ctrl dV over the last accepted step [W]
     ctrl_energy::FT = zero(FT)       # its time integral: energy from the actuator's store [J]
     ctrl_BZ_total_at_cen::FT = zero(FT)   # prescribed + control B_Z at the current centroid [T]
-    ctrl_decay_index_total::FT = zero(FT) # −(R/B_Z) ∂B_Z/∂R of that whole external field
+    ctrl_decay_index_total::FT = zero(FT) # −(R/B_Z) ∂B_Z/∂R of that prescribed + control field
 
     # Electron Heating Powers
     Pe_diffu::FT = zero(FT)       # Diffusion power

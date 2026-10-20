@@ -235,8 +235,8 @@ function measure_vertical_field_control!(snap0D, RP::RAPID{FT}) where {FT <: Abs
     snap0D.ctrl_BR_at_cen = st.a[1] * BR₁ + st.a[2] * BR₂
     snap0D.ctrl_force_R_residual = _target_force_R(policy.target, snap0D) + sum(@. J * F.BZ_ctrl * V)
     snap0D.ctrl_force_Z_residual = _target_force_Z(snap0D) - sum(@. J * F.BR_ctrl * V)
-    # the decay index of the whole external field (prescribed + control; the control adds no
-    # ∂B_Z/∂R), from the derivative, with the total B_Z in the denominator
+    # the decay index of the prescribed + control field (the control adds no ∂B_Z/∂R), from the
+    # derivative, with the total B_Z in the denominator
     h = G.dR / 2
     dBZ_dR = (_bilinear(G, F.BZ_presc, R_cen + h, Z_cen) - _bilinear(G, F.BZ_presc, R_cen - h, Z_cen)) / (2h)
     BZ_total = _bilinear(G, F.BZ_presc, R_cen, Z_cen) + snap0D.ctrl_BZ_at_cen

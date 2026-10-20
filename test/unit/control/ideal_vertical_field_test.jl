@@ -267,6 +267,28 @@ end
     @test sign.(F.E_para_self_ES[nonzero]) == sign.(-Eϕ_vacuum[nonzero] .* F.Bϕ[nonzero])
 end
 
+@testitem "ideal vertical field: the electrostatic estimate takes the control's E∥ as a prescribed one" setup = [CurrentDisc] begin
+    using RAPID2D: IdealVerticalFieldControl, write_vertical_control_field!, combine_field_sources!,
+        estimate_electrostatic_field_effects!
+    RP, _ = current_disc(; control = IdealVerticalFieldControl(t_on_s = 0.0))
+    st, F = RP.vertical_field_control, RP.fields
+    RP.flags.E_para_self_ES = true
+    st.R_ref = 1.6
+    st.dt_applied = 1.0e-6
+    st.a .= [1.0e-3, 0.0]                                       # Eϕ,ctrl ≈ −500 R V/m
+    write_vertical_control_field!(RP)
+    combine_field_sources!(RP)
+    estimate!() = (estimate_electrostatic_field_effects!(RP); copy(F.Epol_self))
+    with_ctrl = estimate!()
+    # the control's part moved into the prescribed one gives the same estimate
+    F.E_para_presc .+= F.E_para_ctrl
+    fill!(F.E_para_ctrl, 0.0)
+    @test isapprox(estimate!(), with_ctrl; rtol = 1.0e-12, nans = true)
+    # without it, a clearly different one
+    fill!(F.E_para_ctrl, 0.0)
+    @test !isapprox(estimate!(), with_ctrl; rtol = 1.0e-3, nans = true)
+end
+
 @testitem "ideal vertical field: the default leaves the code path of a run without control" setup = [CurrentDisc] begin
     using RAPID2D: IdealVerticalFieldControl, update_vertical_field_control!, combine_field_sources!
     RP, _ = current_disc()
@@ -345,7 +367,33 @@ end
     @test split.vertical_field_control.energy == RP.vertical_field_control.energy
 end
 
-@testitem "ideal vertical field: the whole external field's decay index, and the closed region in the 2D snapshot" setup = [CurrentDisc] begin
+@testitem "ideal vertical field: the control's E∥ drives u∥ in the coupled solve" setup = [CurrentDisc] begin
+    using RAPID2D: IdealVerticalFieldControl
+    # one step of the controlled disc above the Ampère gate, and the same step with the control's
+    # E∥ removed between preparing and solving it
+    one_step(; drop) = begin
+        RP, _ = current_disc(; B0 = 2.0e-3, n = 1.0e17, T = 5.0, control = IdealVerticalFieldControl(t_on_s = 0.0, ramp_s = 3.0e-6, response = RAPID2D.FirstOrderResponse(2.0e-6)))
+        pla, F = RP.plasma, RP.fields
+        on = pla.ne .> 0
+        pla.ue_para[on] .= pla.Jϕ[on] ./ (RP.config.constants.qe .* pla.ne[on] .* F.bϕ[on])
+        RP.t_end_s = RP.dt
+        E_ctrl = zero(F.E_para_ctrl)
+        callback(RP) = (E_ctrl .= RP.fields.E_para_ctrl; drop && fill!(RP.fields.E_para_ctrl, 0.0))
+        redirect_stdout(devnull) do
+            run_simulation!(RP; callback_before_step = callback)
+        end
+        return RP, E_ctrl, on
+    end
+    RP, E_ctrl, on = one_step(drop = false)
+    RP_drop, _, _ = one_step(drop = true)
+    @test RP.step == RP_drop.step == 1
+    @test any(!iszero, E_ctrl[on])
+    # the electrons pushed along qₑ E∥,ctrl
+    Δu = RP.plasma.ue_para .- RP_drop.plasma.ue_para
+    @test sum(Δu[on] .* RP.config.constants.qe .* E_ctrl[on]) > 0
+end
+
+@testitem "ideal vertical field: the prescribed + control field's decay index, and the closed region in the 2D snapshot" setup = [CurrentDisc] begin
     using RAPID2D: IdealVerticalFieldControl, update_vertical_field_control!, measure_snap0D!, measure_snap2D!
     # a curved prescribed field and a uniform control: n = −R ∂_R B_Z,presc / (B_Z,presc + a₁)
     RP0, _ = current_disc()
