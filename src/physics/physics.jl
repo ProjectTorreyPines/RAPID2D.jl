@@ -1767,14 +1767,15 @@ end
 """
     coil_induced_Eϕ(RP, ΔI) -> Matrix
 
-The toroidal field a change `ΔI` of the coil currents over one step induces on the grid,
-−ψ_coils(ΔI)/(R Δt) with ψ_coils from [`coil_flux_on_grid`](@ref); zero for no change. Below the
-Ampère gate it is the whole induced field; the 2D snapshots split the induced field with it.
+The toroidal field a change `ΔI` of the coil currents over the coils' last step induces on the
+grid, −ψ_coils(ΔI)/(R Δt) with Δt = `coil_system.Δt` (`RP.dt`, or the last part of a step taken
+in parts) and ψ_coils from [`coil_flux_on_grid`](@ref); zero for no change. Below the Ampère gate
+it is the whole induced field; the 2D snapshots split the induced field with it.
 """
 function coil_induced_Eϕ(RP::RAPID{FT}, ΔI::AbstractVector{FT}) where {FT <: AbstractFloat}
     (isempty(ΔI) || all(iszero, ΔI)) && return zeros(FT, RP.G.NR, RP.G.NZ)
     ψ = coil_flux_on_grid(RP, ΔI)
-    return @. -ψ / (RP.G.R2D * RP.dt)
+    return @. -ψ / (RP.G.R2D * RP.coil_system.Δt)
 end
 
 """

@@ -164,8 +164,11 @@ densities, the ion velocity and the temperatures, the global J×B force and the 
 A step below the threshold whose u∥ update carries the current across it is solved again by
 the coupled solve, from the state it started at, when that solve can run (Ampère, the
 inductive E∥ and u∥ evolution on).
+
+The step is `RP.dt`, which every solver reads; `dt` must equal it and will be removed.
 """
 function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
+    check_step_argument(RP, dt)
     @timeit RAPID_TIMER "solve_timestep!" begin
         I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
         I_coils_entry = get_all_currents(RP.coil_system)
@@ -258,12 +261,22 @@ end
     advance_timestep!(RP, dt = RP.dt)
 
 One whole time step: [`prepare_timestep!`](@ref), then [`solve_timestep!`](@ref).
-`run_simulation!` calls the two itself, with `callback_before_step` in between.
+`run_simulation!` calls the two itself, with `callback_before_step` in between, as an attempt
+of [`take_step!`](@ref). `dt` must equal `RP.dt` and will be removed.
 """
 function advance_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
+    check_step_argument(RP, dt)
     prepare_timestep!(RP)
-    solve_timestep!(RP, dt)
+    solve_timestep!(RP)
     return RP
+end
+
+# The step is RP.dt; an argument that differs from it was never used, and is refused rather than
+# silently ignored
+function check_step_argument(RP::RAPID{FT}, dt::FT) where {FT <: AbstractFloat}
+    dt == RP.dt ||
+        throw(ArgumentError("the step is RP.dt = $(RP.dt) s, which every solver reads; set it instead of passing dt = $dt s"))
+    return nothing
 end
 
 """
@@ -275,11 +288,13 @@ Handles time stepping, diagnostics output, and snapshot generation.
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing all simulation state
 - `controller`: optional `Controller` updated at the end of every step
-- `callback_before_step`: optional `f(RP)`, called on every step between
+- `callback_before_step`: optional `f(RP)`, called on every attempt at a step between
   `prepare_timestep!` and `solve_timestep!`: the state is at tⁿ and the step's inputs (the
   reaction counts, the prescribed fields at tⁿ, `Jϕ`) have just been set from it. Nothing
   resets them before the step solves, so what the callback writes to them is what the step
-  uses. The step recomputes `Jϕ` once it has updated u∥.
+  uses. The step recomputes `Jϕ` once it has updated u∥. A rejected attempt is put back and
+  the step taken in parts, each calling it again ([`take_step!`](@ref)): it must depend on
+  the state and the time only, with no effect outside `RP` that cannot be repeated.
 - `callback_after_step`: optional `f(RP)`, called at the end of every completed step, at
   tⁿ⁺¹, after that step's snapshots and the controller update.
 
@@ -341,24 +356,13 @@ function run_simulation!(
 
         # Main time loop
         @timeit RAPID_TIMER "main_time_loop" begin
+            tx = StepTransaction(RP)
             while RP.time_s < t_end - 0.1 * dt
 
-                # One time step: set its inputs from the state at tⁿ, let the caller see or
-                # adjust them, then solve to tⁿ⁺¹
-                prepare_timestep!(RP)
-                if !isnothing(callback_before_step)
-                    callback_before_step(RP)
-                end
-                solve_timestep!(RP, dt)
-
-                # Increment time
-                RP.time_s += dt
-                RP.step += 1
-
-                # Ledgers and floors after the step. Nothing zeroes the band outside the
-                # wall: no operator writes there.
-                book_ionization_sources!(RP)
-                correct_negative_densities!(RP)
+                # One time step as a transaction: set its inputs from the state at tⁿ, let the
+                # caller see or adjust them, solve to tⁿ⁺¹, then book the ledgers and floors; a
+                # rejected attempt is put back and the step taken in parts
+                take_step!(RP, tx; callback_before_step)
 
                 # every step under the surface-flux constraint, whose domain follows the closed lines
                 if RP.step == 1 || mod(RP.step, RP.flags.FLF_nstep) == 0 || RP.flags.closed_surface_flow isa SurfaceFluxConstraint

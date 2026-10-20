@@ -25,10 +25,10 @@ property rather than an ordering convention:
 ```
 
 Deliberately **not** keyed on `RP.step`. A step number looks like a validity
-token and is not one: `run_simulation!` increments `RP.step` between
-`advance_timestep!` and the wall passes, so those consumers — which belong to the
-step just advanced — would compare against the next step's number and fail. An
-explicit reset has no such coincidence to get right.
+token and is not one: `take_step!` increments `RP.step` between the solve and
+the wall passes, and once per step however many parts it is taken in, so those
+consumers — which belong to the step just advanced — would compare against the
+wrong number and fail. An explicit reset has no such coincidence to get right.
 
 Counts are zeroed as well as unpublished, so nothing that bypasses
 [`check_reaction_counts`](@ref) (a snapshot, a debugger) can read last step's

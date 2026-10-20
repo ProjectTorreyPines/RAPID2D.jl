@@ -410,6 +410,18 @@ A step solved again above the Ampère gate puts it back as it was.
 end
 
 """
+    StepRetries()
+
+The attempts at a step the verdict rejected over a run, by its reason, and the steps then taken
+in parts ([`take_step!`](@ref)). A rejected attempt leaves no other trace: the state, the
+ledgers and the counts above are put back.
+"""
+@kwdef mutable struct StepRetries
+    rejected::Dict{Symbol, Int} = Dict{Symbol, Int}()
+    split_steps::Int = 0
+end
+
+"""
 Main Diagnostics container
 Pure struct-based approach using @kwdef for automatic initialization
 No legacy Dictionary compatibility layer
@@ -435,6 +447,9 @@ No legacy Dictionary compatibility layer
 
     # what the near-vacuum treatments did (`near_vacuum.jl`)
     near_vacuum::NearVacuumLedger{FT} = NearVacuumLedger{FT}()
+
+    # the attempts at a step the verdict rejected (`take_step!`)
+    step_retries::StepRetries = StepRetries()
 end
 
 function Diagnostics{FT}(dim_R::Int, dim_Z::Int) where {FT <: AbstractFloat}

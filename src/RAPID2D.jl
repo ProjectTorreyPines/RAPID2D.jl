@@ -83,6 +83,7 @@ include("reactions/electron_Xsec.jl")
 include("reactions/reaction_rate_coefficients.jl")
 
 # Include simulation workflows
+include("step_transaction.jl")   # a step as a transaction: the state it writes, put back when an attempt is rejected
 include("workflows.jl")
 
 # Include plotting interface (actual implementations in extensions)
