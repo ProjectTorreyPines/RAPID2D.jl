@@ -104,34 +104,34 @@ The reactions among the hydrogen species other than H's ladder ([`ladder_rates`]
 electron impact on H₂ from the electron tables, on H₂⁺ and H₃⁺ from HYDHEL, and H₃⁺ formation
 at the Langevin rate.
 """
-function hydrogen_reactions(eRRCs::Electron_RRCs, c::PlasmaConstants{FT}) where {FT <: AbstractFloat}
-    e, H, H2, H3 = Particles.electron, Particles.H, Particles.H2, Particles.H3
+function hydrogen_reactions(eRRCs::Electron_RRCs, constants::PlasmaConstants{FT}) where {FT <: AbstractFloat}
+    electron, H, H2, H3 = Particles.electron, Particles.H, Particles.H2, Particles.H3
     table(name) = RateData(TabulatedRate(getfield(eRRCs, name)), SameForIsotopes(), "eRRCs_EoverP_Erg.h5 $name")
     fit(data; fraction = 1) = RateData(LogPolynomialRate(FT, data; fraction), SameForIsotopes(), data.source)
-    eV = c.ee
+    eV = constants.ee
     return (
         Reaction(
-            :iz, (e => 1, H2[0] => 1) => (e => 2, H2[1] => 1);
-            rate = table(:K_iz), producer = ElectronSolve(), energy = EventEnergy(c.iz_erg_eV * eV),
+            :iz, (electron => 1, H2[0] => 1) => (electron => 2, H2[1] => 1);
+            rate = table(:K_iz), producer = ElectronSolve(), energy = EventEnergy(constants.iz_erg_eV * eV),
         ),
         Reaction(
-            :diz, (e => 1, H2[0] => 1) => (e => 2, H[1] => 1, H[0] => 1);
-            rate = table(:K_diss_iz), producer = ElectronSolve(), energy = EventEnergy(c.diss_iz_erg_eV * eV),
+            :diz, (electron => 1, H2[0] => 1) => (electron => 2, H[1] => 1, H[0] => 1);
+            rate = table(:K_diss_iz), producer = ElectronSolve(), energy = EventEnergy(constants.diss_iz_erg_eV * eV),
         ),
         Reaction(
-            :dex, (e => 1, H2[0] => 1) => (e => 1, H[0] => 2);
+            :dex, (electron => 1, H2[0] => 1) => (electron => 1, H[0] => 2);
             rate = table(:K_diss_exc), producer = ElectronSolve(), energy = ContinuousPower(TabulatedRate(eRRCs.Kerg_diss_exc)),
         ),
         Reaction(
-            :de2, (e => 1, H2[1] => 1) => (e => 1, H[1] => 1, H[0] => 1);
+            :de2, (electron => 1, H2[1] => 1) => (electron => 1, H[1] => 1, H[0] => 1);
             rate = fit(HYDHEL_2_2_12), producer = LocalNetwork(implicit = H2[1]), energy = EventEnergy(FT(E_TH_2_2_12_EV) * eV),
         ),
         Reaction(
-            :di2, (e => 1, H2[1] => 1) => (e => 2, H[1] => 2);
+            :di2, (electron => 1, H2[1] => 1) => (electron => 2, H[1] => 2);
             rate = fit(HYDHEL_2_2_11), producer = LocalNetwork(implicit = H2[1]), energy = EventEnergy(FT(E_TH_2_2_11_EV) * eV),
         ),
         Reaction(
-            :dr2, (e => 1, H2[1] => 1) => (H[0] => 2,);
+            :dr2, (electron => 1, H2[1] => 1) => (H[0] => 2,);
             rate = fit(HYDHEL_2_2_14), producer = LocalNetwork(implicit = H2[1]), energy = CapturedElectron(),
         ),
         Reaction(
@@ -140,17 +140,17 @@ function hydrogen_reactions(eRRCs::Electron_RRCs, c::PlasmaConstants{FT}) where 
             producer = LocalNetwork(implicit = H2[1], frozen = H2[0]),
         ),
         Reaction(
-            :dr3a, (e => 1, H3[1] => 1) => (H2[0] => 1, H[0] => 1);
+            :dr3a, (electron => 1, H3[1] => 1) => (H2[0] => 1, H[0] => 1);
             rate = fit(HYDHEL_2_2_15; fraction = 1 - H3_DR_THREE_BODY), producer = LocalNetwork(implicit = H3[1]),
             energy = CapturedElectron(),
         ),
         Reaction(
-            :dr3b, (e => 1, H3[1] => 1) => (H[0] => 3,);
+            :dr3b, (electron => 1, H3[1] => 1) => (H[0] => 3,);
             rate = fit(HYDHEL_2_2_15; fraction = H3_DR_THREE_BODY), producer = LocalNetwork(implicit = H3[1]),
             energy = CapturedElectron(),
         ),
         Reaction(
-            :de3, (e => 1, H3[1] => 1) => (e => 1, H[1] => 1, H[0] => 2);
+            :de3, (electron => 1, H3[1] => 1) => (electron => 1, H[1] => 1, H[0] => 2);
             rate = fit(HYDHEL_2_2_16), producer = LocalNetwork(implicit = H3[1]), energy = EventEnergy(FT(E_TH_2_2_16_EV) * eV),
         ),
     )

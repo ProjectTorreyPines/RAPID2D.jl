@@ -42,14 +42,14 @@ The registry of the species `list`, a tuple such as `(H2[0], H[0], H2[1], H[1])`
 entry that is not a species, a species listed twice, a charge state its parent does not have,
 or a parent that leaves out part of its API.
 """
-function build_registry(list::Tuple, iso::AbstractHydrogenIsotope, c::PlasmaConstants{FT}) where {FT <: AbstractFloat}
+function build_registry(list::Tuple, iso::AbstractHydrogenIsotope, constants::PlasmaConstants{FT}) where {FT <: AbstractFloat}
     isempty(list) && throw(ArgumentError("the species list is empty"))
-    foreach(sp -> check_species(sp, iso, c), list)
+    foreach(sp -> check_species(sp, iso, constants), list)
     allunique(map(species_key, list)) ||
         throw(ArgumentError("a species is listed twice in ($(join(map(sp -> species_label(sp, iso), list), ", ")))"))
 
-    record(sp::Ion) = IonRecord{FT}(species_key(sp), species_label(sp, iso), FT(species_mass(sp, iso, c)), charge(sp))
-    record(sp::Neutral) = NeutralRecord{FT}(species_key(sp), species_label(sp, iso), FT(species_mass(sp, iso, c)))
+    record(sp::Ion) = IonRecord{FT}(species_key(sp), species_label(sp, iso), FT(species_mass(sp, iso, constants)), charge(sp))
+    record(sp::Neutral) = NeutralRecord{FT}(species_key(sp), species_label(sp, iso), FT(species_mass(sp, iso, constants)))
     ions = IonRecord{FT}[map(record, filter(sp -> sp isa Ion, list))...]
     neutrals = map(record, filter(sp -> sp isa Neutral, list))
     return SpeciesRegistry(
@@ -61,11 +61,11 @@ function build_registry(list::Tuple, iso::AbstractHydrogenIsotope, c::PlasmaCons
 end
 
 # A parent defines allowed_charges, composition, parent_name and neutral_mass
-function check_species(sp, iso, c)
+function check_species(sp, iso, constants)
     sp isa AbstractSpecies ||
         throw(ArgumentError("$(repr(sp)) in the species list is not a species; write one as `H2[1]` (`using RAPID2D.Particles: H2`)"))
     p = sp.parent
-    for (f, args) in ((allowed_charges, (p,)), (composition, (p,)), (parent_name, (p,)), (neutral_mass, (p, iso, c)))
+    for (f, args) in ((allowed_charges, (p,)), (composition, (p,)), (parent_name, (p,)), (neutral_mass, (p, iso, constants)))
         hasmethod(f, Tuple{map(typeof, args)...}) || throw(
             ArgumentError(
                 "$(nameof(typeof(p))) does not define `$(nameof(f))`: a parent defines allowed_charges, " *

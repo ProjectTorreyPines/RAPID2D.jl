@@ -7,8 +7,8 @@
     using RAPID2D: assemble_species_system, load_electron_RRCs, load_H2_Ion_RRCs, PlasmaConstants
     using RAPID2D.Particles: H, H2, H3
 
-    eRRCs, iRRCs, c = load_electron_RRCs(), load_H2_Ion_RRCs(), PlasmaConstants{Float64}()
-    assemble(list) = assemble_species_system(list, Protium(), c, eRRCs, iRRCs)
+    eRRCs, iRRCs, constants = load_electron_RRCs(), load_H2_Ion_RRCs(), PlasmaConstants{Float64}()
+    assemble(list) = assemble_species_system(list, Protium(), constants, eRRCs, iRRCs)
     reaction_labels(sys) = Set(a.reaction.label for a in sys.reactions)
     collision_labels(sys) = Set(a.collision.label for a in sys.collisions)
 
@@ -49,46 +49,45 @@ end
         EventEnergy, CapturedElectron, build_registry, assemble_species_system, load_electron_RRCs,
         load_H2_Ion_RRCs, PlasmaConstants, Ion
     using RAPID2D.Particles: H, H2, H3, electron
-    e = electron
 
     rate = RateData(ConstantRate(1.0e-14), SameForIsotopes(), "test")
     energy = EventEnergy(1.0e-18)
     network(sp) = LocalNetwork(implicit = sp)
 
     # balanced, then broken one way at a time
-    @test Reaction(:ok, (e => 1, H2[1] => 1) => (e => 2, H[1] => 2); rate, producer = network(H2[1]), energy) isa Reaction
-    @test_throws ArgumentError Reaction(:charge, (e => 1, H2[0] => 1) => (e => 1, H2[1] => 1); rate, producer = ElectronSolve(), energy)
-    @test_throws ArgumentError Reaction(:nuclei, (e => 1, H2[1] => 1) => (e => 1, H[1] => 1); rate, producer = network(H2[1]), energy)
-    @test_throws ArgumentError Reaction(:ternary, (e => 2, H[1] => 1) => (e => 1, H[0] => 1); rate, producer = network(H[1]), energy)
-    @test_throws ArgumentError Reaction(:count, (e => 1, H2[1] => 1) => (e => 0, H[1] => 2); rate, producer = network(H2[1]), energy)
-    @test_throws ArgumentError Reaction(:twice, (e => 1, H[1] => 1) => (H[0] => 1, H[0] => 1); rate, producer = network(H[1]), energy)
+    @test Reaction(:ok, (electron => 1, H2[1] => 1) => (electron => 2, H[1] => 2); rate, producer = network(H2[1]), energy) isa Reaction
+    @test_throws ArgumentError Reaction(:charge, (electron => 1, H2[0] => 1) => (electron => 1, H2[1] => 1); rate, producer = ElectronSolve(), energy)
+    @test_throws ArgumentError Reaction(:nuclei, (electron => 1, H2[1] => 1) => (electron => 1, H[1] => 1); rate, producer = network(H2[1]), energy)
+    @test_throws ArgumentError Reaction(:ternary, (electron => 2, H[1] => 1) => (electron => 1, H[0] => 1); rate, producer = network(H[1]), energy)
+    @test_throws ArgumentError Reaction(:count, (electron => 1, H2[1] => 1) => (electron => 0, H[1] => 2); rate, producer = network(H2[1]), energy)
+    @test_throws ArgumentError Reaction(:twice, (electron => 1, H[1] => 1) => (H[0] => 1, H[0] => 1); rate, producer = network(H[1]), energy)
 
     # the producer: the electron solve counts impact on a neutral; the network is implicit in a
     # reactant ion, and holds a heavy pair's other reactant frozen
-    @test_throws ArgumentError Reaction(:ion, (e => 1, H2[1] => 1) => (e => 2, H[1] => 2); rate, producer = ElectronSolve(), energy)
-    @test_throws ArgumentError Reaction(:implicit, (e => 1, H2[1] => 1) => (e => 2, H[1] => 2); rate, producer = network(H[1]), energy)
+    @test_throws ArgumentError Reaction(:ion, (electron => 1, H2[1] => 1) => (electron => 2, H[1] => 2); rate, producer = ElectronSolve(), energy)
+    @test_throws ArgumentError Reaction(:implicit, (electron => 1, H2[1] => 1) => (electron => 2, H[1] => 2); rate, producer = network(H[1]), energy)
     @test_throws ArgumentError Reaction(:pair, (H2[1] => 1, H2[0] => 1) => (H3[1] => 1, H[0] => 1); rate, producer = network(H2[1]))
     @test Reaction(
         :pair, (H2[1] => 1, H2[0] => 1) => (H3[1] => 1, H[0] => 1); rate, producer = LocalNetwork(implicit = H2[1], frozen = H2[0])
     ) isa Reaction
-    @test_throws ArgumentError Reaction(:no_energy, (e => 1, H[1] => 1) => (H[0] => 1,); rate, producer = network(H[1]))
-    @test Reaction(:captured, (e => 1, H[1] => 1) => (H[0] => 1,); rate, producer = network(H[1]), energy = CapturedElectron()) isa Reaction
+    @test_throws ArgumentError Reaction(:no_energy, (electron => 1, H[1] => 1) => (H[0] => 1,); rate, producer = network(H[1]))
+    @test Reaction(:captured, (electron => 1, H[1] => 1) => (H[0] => 1,); rate, producer = network(H[1]), energy = CapturedElectron()) isa Reaction
 
     # the list: species only, each once, in a charge state its parent has
-    c = PlasmaConstants{Float64}()
-    @test_throws ArgumentError build_registry((H2[0], :H2), Protium(), c)
-    @test_throws ArgumentError build_registry((H2[0], H2[0]), Protium(), c)
-    @test_throws ArgumentError build_registry((H2[0], Ion(H3, 2)), Protium(), c)
-    @test_throws ArgumentError build_registry((), Protium(), c)
+    constants = PlasmaConstants{Float64}()
+    @test_throws ArgumentError build_registry((H2[0], :H2), Protium(), constants)
+    @test_throws ArgumentError build_registry((H2[0], H2[0]), Protium(), constants)
+    @test_throws ArgumentError build_registry((H2[0], Ion(H3, 2)), Protium(), constants)
+    @test_throws ArgumentError build_registry((), Protium(), constants)
 
     # a rate given in the configuration replaces the catalog's; a label no active entry has is refused
     eRRCs, iRRCs = load_electron_RRCs(), load_H2_Ion_RRCs()
     list = (H2[0], H[0], H2[1], H[1])
-    sys = assemble_species_system(list, Protium(), c, eRRCs, iRRCs; rates = (:de2 => ConstantRate(1.0e-13),))
+    sys = assemble_species_system(list, Protium(), constants, eRRCs, iRRCs; rates = (:de2 => ConstantRate(1.0e-13),))
     de2 = only(filter(a -> a.reaction.label === :de2, sys.reactions))
     @test de2.rate === ConstantRate(1.0e-13) && de2.source == "config.rates"
-    @test_throws ArgumentError assemble_species_system(list, Protium(), c, eRRCs, iRRCs; rates = (:h3 => ConstantRate(1.0e-15),))
-    @test_throws ArgumentError assemble_species_system(list, Protium(), c, eRRCs, iRRCs; rates = (:de2 => 1.0e-13,))
+    @test_throws ArgumentError assemble_species_system(list, Protium(), constants, eRRCs, iRRCs; rates = (:h3 => ConstantRate(1.0e-15),))
+    @test_throws ArgumentError assemble_species_system(list, Protium(), constants, eRRCs, iRRCs; rates = (:de2 => 1.0e-13,))
 end
 
 @testitem "A parent that leaves out part of its API is refused" begin
@@ -109,16 +108,16 @@ end
         ResonantChargeExchange
     using RAPID2D.Particles: H, H2, H3
 
-    eRRCs, iRRCs, c = load_electron_RRCs(), load_H2_Ion_RRCs(), PlasmaConstants{Float64}()
+    eRRCs, iRRCs, constants = load_electron_RRCs(), load_H2_Ion_RRCs(), PlasmaConstants{Float64}()
     list = (H2[0], H[0], H2[1], H[1], H3[1])
-    hydrogen = assemble_species_system(list, Protium(), c, eRRCs, iRRCs)
-    deuterium = assemble_species_system(list, Deuterium(), c, eRRCs, iRRCs)
+    hydrogen = assemble_species_system(list, Protium(), constants, eRRCs, iRRCs)
+    deuterium = assemble_species_system(list, Deuterium(), constants, eRRCs, iRRCs)
 
     # labels and masses: the nuclei and the electrons, an ion z electron masses short
     @test [r.label for r in deuterium.registry.ions] == [Symbol("D2[1]"), Symbol("D[1]"), Symbol("D3[1]")]
-    @test hydrogen.registry.ions[2].mass ≈ c.mp rtol = 1.0e-15
-    @test hydrogen.registry.neutrals[1].mass ≈ 2 * (c.mp + c.me) rtol = 1.0e-15
-    @test deuterium.registry.ions[1].mass ≈ 2 * RAPID2D.DEUTERON_MASS + c.me rtol = 1.0e-15
+    @test hydrogen.registry.ions[2].mass ≈ constants.mp rtol = 1.0e-15
+    @test hydrogen.registry.neutrals[1].mass ≈ 2 * (constants.mp + constants.me) rtol = 1.0e-15
+    @test deuterium.registry.ions[1].mass ≈ 2 * RAPID2D.DEUTERON_MASS + constants.me rtol = 1.0e-15
 
     # the same reactions either way; electron impact keeps its rate
     @test [a.reaction.label for a in hydrogen.reactions] == [a.reaction.label for a in deuterium.reactions]
@@ -130,7 +129,7 @@ end
     end
 
     # a heavy pair at equal velocity: the deuterium rate at T is protium's at T μ_H/μ_D
-    reduced(a, b, iso) = (ma = species_mass(a, iso, c); mb = species_mass(b, iso, c); ma * mb / (ma + mb))
+    reduced(a, b, iso) = (ma = species_mass(a, iso, constants); mb = species_mass(b, iso, constants); ma * mb / (ma + mb))
     factor = reduced(H[1], H[0], Protium()) / reduced(H[1], H[0], Deuterium())
     cx_H = only(filter(a -> a.collision.label === :cxH, hydrogen.collisions))
     cx_D = only(filter(a -> a.collision.label === :cxH, deuterium.collisions))
@@ -146,8 +145,8 @@ end
     # data that hold for one isotope alone are refused for another
     model = ConstantRate(1.0e-14)
     collision = Collision(:x, H[1], H[0]; rate = RateData(model, ReferenceOnly(Protium()), "test"), moment = ResonantChargeExchange())
-    @test resolve_rate(collision.rate, collision, hydrogen.registry, c) === model
-    @test_throws ArgumentError resolve_rate(collision.rate, collision, deuterium.registry, c)
+    @test resolve_rate(collision.rate, collision, hydrogen.registry, constants) === model
+    @test_throws ArgumentError resolve_rate(collision.rate, collision, deuterium.registry, constants)
 end
 
 @testitem "An element's ladder enters through its parent's methods, without changes to the package" begin
@@ -159,7 +158,7 @@ end
     RAPID2D.allowed_charges(::ToyElement) = 0:2
     RAPID2D.composition(::ToyElement) = (:X => 1,)
     RAPID2D.parent_name(::ToyElement) = "X"
-    RAPID2D.neutral_mass(::ToyElement, ::RAPID2D.AbstractHydrogenIsotope, c::RAPID2D.PlasmaConstants) = 20 * c.mp
+    RAPID2D.neutral_mass(::ToyElement, ::RAPID2D.AbstractHydrogenIsotope, constants::RAPID2D.PlasmaConstants) = 20 * constants.mp
     RAPID2D.ladder_rates(::ToyElement, ::Type{FT}) where {FT} = LadderRates(
         (ConstantRate(FT(1.0e-14)), ConstantRate(FT(2.0e-15))), (ConstantRate(FT(3.0e-19)), ConstantRate(FT(4.0e-19))),
         (FT(7.0), FT(15.0)), ("toy ionization", "toy recombination"),
@@ -182,7 +181,7 @@ end
     RAPID2D.allowed_charges(::Rateless) = 0:1
     RAPID2D.composition(::Rateless) = (:Y => 1,)
     RAPID2D.parent_name(::Rateless) = "Y"
-    RAPID2D.neutral_mass(::Rateless, ::RAPID2D.AbstractHydrogenIsotope, c::RAPID2D.PlasmaConstants) = 9 * c.mp
+    RAPID2D.neutral_mass(::Rateless, ::RAPID2D.AbstractHydrogenIsotope, constants::RAPID2D.PlasmaConstants) = 9 * constants.mp
     @test_throws ArgumentError assemble_species_system(
         (H2[0], Rateless()[0], Rateless()[1]), Protium(), PlasmaConstants{Float64}(), load_electron_RRCs(), load_H2_Ion_RRCs()
     )

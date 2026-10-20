@@ -124,7 +124,7 @@ isotope_symbol(::Deuterium) = "D"
 isotope_symbol(::Tritium) = "T"
 
 "The isotope's nucleus mass [kg]."
-nucleus_mass(::Protium, c::PlasmaConstants) = c.mp
+nucleus_mass(::Protium, constants::PlasmaConstants) = constants.mp
 nucleus_mass(::Deuterium, ::PlasmaConstants{FT}) where {FT} = FT(DEUTERON_MASS)
 nucleus_mass(::Tritium, ::PlasmaConstants{FT}) where {FT} = FT(TRITON_MASS)
 
@@ -141,12 +141,12 @@ electron masses less ([`species_mass`](@ref)). Every parent defines it: the hydr
 take the nucleus from the isotope, other parents ignore the isotope.
 """
 function neutral_mass end
-neutral_mass(p::HydrogenParent, iso::AbstractHydrogenIsotope, c::PlasmaConstants) =
-    hydrogen_nuclei(p) * (nucleus_mass(iso, c) + c.me)
+neutral_mass(p::HydrogenParent, iso::AbstractHydrogenIsotope, constants::PlasmaConstants) =
+    hydrogen_nuclei(p) * (nucleus_mass(iso, constants) + constants.me)
 
 "A species' mass [kg] in a run of hydrogen `iso`."
-species_mass(sp::Neutral, iso::AbstractHydrogenIsotope, c::PlasmaConstants) = neutral_mass(sp.parent, iso, c)
-species_mass(sp::Ion, iso::AbstractHydrogenIsotope, c::PlasmaConstants) = neutral_mass(sp.parent, iso, c) - sp.z * c.me
+species_mass(sp::Neutral, iso::AbstractHydrogenIsotope, constants::PlasmaConstants) = neutral_mass(sp.parent, iso, constants)
+species_mass(sp::Ion, iso::AbstractHydrogenIsotope, constants::PlasmaConstants) = neutral_mass(sp.parent, iso, constants) - sp.z * constants.me
 
 "The parent's name in a run of hydrogen `iso`: `D2` for `H2` in deuterium."
 parent_name(p::AbstractParent, ::AbstractHydrogenIsotope) = parent_name(p)

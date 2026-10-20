@@ -1,3 +1,5 @@
+export ConstantRate, ArrheniusRate, LogPolynomialRate
+
 # Rate coefficients by model: a reaction's K = ⟨σv⟩ from a table or a fit, evaluated at the
 # coordinates of the colliding pair (its context).
 

@@ -28,15 +28,15 @@ struct ElectronSolve <: ReactionProducer end
     LocalNetwork(; implicit, frozen = nothing)
 
 Solved by the local reaction network, implicit in the ion `implicit`. The electron is a catalyst
-at its declared value; `frozen`, the second reactant of a heavy pair, is held at its step-entry
-density and its consumption taken out after the solve.
+at its declared value; `frozen`, the neutral second reactant of a heavy pair, is held at its
+step-entry density and its consumption taken out after the solve.
 """
-struct LocalNetwork{I <: IonSpecies, F <: Union{Nothing, AbstractSpecies}} <: ReactionProducer
+struct LocalNetwork{I <: IonSpecies, F <: Union{Nothing, NeutralSpecies}} <: ReactionProducer
     implicit::I
     frozen::F
 end
 
-LocalNetwork(; implicit::IonSpecies, frozen::Union{Nothing, AbstractSpecies} = nothing) = LocalNetwork(implicit, frozen)
+LocalNetwork(; implicit::IonSpecies, frozen::Union{Nothing, NeutralSpecies} = nothing) = LocalNetwork(implicit, frozen)
 
 # ── rates and isotopes ──────────────────────────────────────────────────────────────────
 
@@ -146,6 +146,7 @@ end
 
 electron_change(r::Reaction) = electron_count(r.products) - electron_count(r.reactants)
 electron_count(side) = sum(entry -> first(entry) isa Electron ? last(entry) : 0, side; init = 0)
+has_electron(side) = any(entry -> first(entry) isa Electron, side)   # from the types alone
 
 heavy_participants(side) = map(first, filter(entry -> first(entry) isa AbstractSpecies, side))
 
@@ -267,22 +268,22 @@ The reactions of `element`'s ladder, for every step z → z+1: the ionization `i
 by the electron solve from the neutral, by the network above it) and the recombination
 `rec<X><z+1>`, labelled by the parent's name (`izH0`, `recH1`).
 """
-function ladder_reactions(p::Element, rates::LadderRates, c::PlasmaConstants)
+function ladder_reactions(p::Element, rates::LadderRates, constants::PlasmaConstants)
     Z = last(allowed_charges(p))
     length(rates.ionization) == length(rates.recombination) == length(rates.potentials_eV) == Z ||
         throw(ArgumentError("$(parent_name(p)): a ladder of $Z steps takes $Z rates of each kind and $Z potentials"))
-    e = Particles.electron
+    electron = Particles.electron
     name = parent_name(p)
     steps = ntuple(Z) do k
         lower, upper = p[k - 1], p[k]
         ionization = Reaction(
-            Symbol(:iz, name, k - 1), (e => 1, lower => 1) => (e => 2, upper => 1);
+            Symbol(:iz, name, k - 1), (electron => 1, lower => 1) => (electron => 2, upper => 1);
             rate = RateData(rates.ionization[k], SameForIsotopes(), rates.sources[1]),
             producer = k == 1 ? ElectronSolve() : LocalNetwork(implicit = lower),
-            energy = EventEnergy(rates.potentials_eV[k] * c.ee),
+            energy = EventEnergy(rates.potentials_eV[k] * constants.ee),
         )
         recombination = Reaction(
-            Symbol(:rec, name, k), (e => 1, upper => 1) => (lower => 1,);
+            Symbol(:rec, name, k), (electron => 1, upper => 1) => (lower => 1,);
             rate = RateData(rates.recombination[k], SameForIsotopes(), rates.sources[2]),
             producer = LocalNetwork(implicit = upper),
             energy = CapturedElectron(),
@@ -293,12 +294,12 @@ function ladder_reactions(p::Element, rates::LadderRates, c::PlasmaConstants)
 end
 
 # The ladders of the elements a list carries
-function element_ladders(list::Tuple, c::PlasmaConstants{FT}) where {FT <: AbstractFloat}
+function element_ladders(list::Tuple, constants::PlasmaConstants{FT}) where {FT <: AbstractFloat}
     elements = unique(sp.parent for sp in list if sp.parent isa Element)
     return foldl(elements; init = ()) do ladders, p
         hasmethod(ladder_rates, Tuple{typeof(p), Type{FT}}) ||
             throw(ArgumentError("$(nameof(typeof(p))) is an element and defines no `ladder_rates`"))
-        (ladders..., ladder_reactions(p, ladder_rates(p, FT), c)...)
+        (ladders..., ladder_reactions(p, ladder_rates(p, FT), constants)...)
     end
 end
 
@@ -345,18 +346,18 @@ an override that names no active reaction or collision, or data that cannot be c
 isotope.
 """
 function assemble_species_system(
-        list::Tuple, iso::AbstractHydrogenIsotope, c::PlasmaConstants{FT}, eRRCs, iRRCs; rates::Tuple = ()
+        list::Tuple, iso::AbstractHydrogenIsotope, constants::PlasmaConstants{FT}, eRRCs, iRRCs; rates::Tuple = ()
     ) where {FT <: AbstractFloat}
-    registry = build_registry(list, iso, c)
-    reactions = (hydrogen_reactions(eRRCs, c)..., element_ladders(list, c)...)
-    collisions = hydrogen_collisions(iRRCs, c)
+    registry = build_registry(list, iso, constants)
+    reactions = (hydrogen_reactions(eRRCs, constants)..., element_ladders(list, constants)...)
+    collisions = hydrogen_collisions(iRRCs, constants)
     labels = (map(r -> r.label, reactions)..., map(x -> x.label, collisions)...)
     allunique(labels) || throw(ArgumentError("two reactions or collisions share a label in ($(join(labels, ", ")))"))
     overrides = rate_overrides(rates)
 
     present(entry) = isempty(missing_species(registry, entry))
-    activate(r::Reaction) = ActiveReaction(r, active_rate(r, overrides, registry, c)...)
-    activate(x::Collision) = ActiveCollision(x, active_rate(x, overrides, registry, c)...)
+    activate(r::Reaction) = ActiveReaction(r, active_rate(r, overrides, registry, constants)...)
+    activate(x::Collision) = ActiveCollision(x, active_rate(x, overrides, registry, constants)...)
     active_reactions = map(activate, filter(present, reactions))
     active_collisions = map(activate, filter(present, collisions))
 
@@ -386,9 +387,9 @@ function rate_overrides(rates::Tuple)
 end
 
 # The rate an active entry runs with, and its source: the override, or the catalog's resolved
-active_rate(entry, overrides, registry, c) =
+active_rate(entry, overrides, registry, constants) =
     haskey(overrides, entry.label) ? (overrides[entry.label], "config.rates") :
-    (resolve_rate(entry.rate, entry, registry, c), rate_source(entry.rate))
+    (resolve_rate(entry.rate, entry, registry, constants), rate_source(entry.rate))
 
 "The labels of the species `entry` involves that the registry lacks."
 missing_species(reg::SpeciesRegistry, r::Reaction) = unique(
@@ -405,10 +406,10 @@ The rate model of catalog entry `entry` for the registry's isotope, from its dec
 """
 resolve_rate(d::RateData{<:AbstractRateModel, SameForIsotopes}, _, ::SpeciesRegistry, ::PlasmaConstants) = d.model
 
-function resolve_rate(d::RateData{<:AbstractRateModel, <:EqualVelocity}, entry, reg::SpeciesRegistry, c::PlasmaConstants)
+function resolve_rate(d::RateData{<:AbstractRateModel, <:EqualVelocity}, entry, reg::SpeciesRegistry, constants::PlasmaConstants)
     reg.isotope === d.rule.reference && return d.model
     a, b = heavy_pair(entry)
-    return TemperatureScaled(d.model, reduced_mass(a, b, d.rule.reference, c) / reduced_mass(a, b, reg.isotope, c))
+    return TemperatureScaled(d.model, reduced_mass(a, b, d.rule.reference, constants) / reduced_mass(a, b, reg.isotope, constants))
 end
 
 function resolve_rate(d::RateData{<:AbstractRateModel, <:ReferenceOnly}, entry, reg::SpeciesRegistry, ::PlasmaConstants)
@@ -421,9 +422,9 @@ function resolve_rate(d::RateData{<:AbstractRateModel, <:ReferenceOnly}, entry, 
     )
 end
 
-function resolve_rate(d::LangevinCapture, entry, reg::SpeciesRegistry, c::PlasmaConstants{FT}) where {FT}
-    μ = reduced_mass(heavy_pair(entry)..., reg.isotope, c)
-    return ConstantRate(FT(2π * sqrt(d.polarizability * c.ee^2 / (4π * c.eps0 * μ))))
+function resolve_rate(d::LangevinCapture, entry, reg::SpeciesRegistry, constants::PlasmaConstants{FT}) where {FT}
+    μ = reduced_mass(heavy_pair(entry)..., reg.isotope, constants)
+    return ConstantRate(FT(2π * sqrt(d.polarizability * constants.ee^2 / (4π * constants.eps0 * μ))))
 end
 
 function heavy_pair(r::Reaction)
@@ -434,8 +435,8 @@ function heavy_pair(r::Reaction)
 end
 heavy_pair(x::Collision) = (x.ion, x.neutral)
 
-function reduced_mass(a::AbstractSpecies, b::AbstractSpecies, iso::AbstractHydrogenIsotope, c::PlasmaConstants)
-    ma, mb = species_mass(a, iso, c), species_mass(b, iso, c)
+function reduced_mass(a::AbstractSpecies, b::AbstractSpecies, iso::AbstractHydrogenIsotope, constants::PlasmaConstants)
+    ma, mb = species_mass(a, iso, constants), species_mass(b, iso, constants)
     return ma * mb / (ma + mb)
 end
 
