@@ -227,8 +227,8 @@ end
     const Warn = Base.CoreLogging.Warn      # Logging is stdlib, not a test dependency
 
     # ∂ν_ei/∂Tₑ is not a table lookup — it is Spitzer-like and lives outside the
-    # RRC path — so P_equi's and P_drag's Coulomb halves are left out of the
-    # Jacobian. That under-damps rather than over-damps, and the fixed point does
+    # RRC path — so P_drag's Coulomb half is left out of the Jacobian (the e–i
+    # exchange is not in it at all). That under-damps rather than over-damps, and the fixed point does
     # not depend on λ at all, so it is tolerable. It is not tolerable silently:
     # an omitted term someone later measures as an accuracy loss must be findable.
     RP = pj_RAPID(; coulomb = true)

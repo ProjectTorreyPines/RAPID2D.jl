@@ -194,7 +194,8 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
 - `diss_iz`: Lost to dissociative ionization (35 eV/event)
 - `dilution`: Redistribution when newborn electrons enter at rest; not a loss of total
   electron energy
-- `equi`: Temperature equilibration with the ions
+- `equi`: Given to the ions by Coulomb collisions, the step's mean (`ei_exchange_energy!`);
+  applied on its own, not in `tot`
 - `visc_heat`: the viscous heating of u∥ per electron, `mₑ Γ_M(u∥)` = −Π:∇u / nₑ with Π = −mₑ nₑ D ∇u∥; the
   kinetic energy of the parallel flow the diffusion erases (`viscous_heating!`)
 """
@@ -213,7 +214,7 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
     diss_exc::Matrix{FT} = zeros(FT, dims)   # Power lost to dissociative excitation (DISS group)
     diss_iz::Matrix{FT} = zeros(FT, dims)    # Power lost to dissociative ionization (35 eV/event)
     dilution::Matrix{FT} = zeros(FT, dims)   # Power from density dilution
-    equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
+    equi::Matrix{FT} = zeros(FT, dims)       # Given to the ions over the step, not in tot
     # The mixing's own heating: mₑ Γ_M(u∥), the kinetic energy of the parallel flow that the
     # exchange of momentum between parcels erased (electron-diffusive-transport.md §4)
     visc_heat::Matrix{FT} = zeros(FT, dims)
@@ -331,7 +332,8 @@ volumetric power density.
 # Fields
 - `tot`: Total, the sum the temperature update consumes
 - `atomic`: From atomic processes
-- `equi`: Temperature equilibration with the electrons
+- `equi`: Taken from the electrons by Coulomb collisions, the step's mean
+  (`ei_exchange_energy!`); applied on its own, not in `tot`
 """
 @kwdef mutable struct IonHeatingPowers{FT <: AbstractFloat}
     dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
@@ -339,7 +341,7 @@ volumetric power density.
     # Power terms - all in W PER ION (see the docstring), not W/m³
     tot::Matrix{FT} = zeros(FT, dims)        # Total
     atomic::Matrix{FT} = zeros(FT, dims)     # Power from atomic processes
-    equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
+    equi::Matrix{FT} = zeros(FT, dims)       # Taken from the electrons over the step, not in tot
 end
 
 # Constructor with dimensions

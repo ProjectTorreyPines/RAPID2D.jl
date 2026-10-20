@@ -206,12 +206,32 @@ end
         @test Te1 - Ti1 ≈ (pla.Te_eV[k] - pla.Ti_eV[k]) * exp(-λ * RP.dt) rtol = 1.0e-10
         @test 1.5ee * (ne * (Te1 - pla.Te_eV[k]) + nI * (Ti1 - pla.Ti_eV[k])) ≈ 0 atol = 1.0e-12 * ΔE[k]
         @test all(>(0), ΔE[inw])                # hot electrons give
+        # the diagnostics' equi is that energy's mean power, per electron and per ion
+        @test pla.ePowers.equi[inw] .* pla.ne[inw] .* RP.dt ≈ ΔE[inw] rtol = 1.0e-12
+        @test pla.iPowers.equi[inw] .* pla.ni_sum[inw] .* RP.dt ≈ ΔE[inw] rtol = 1.0e-12
     end
     # one species: the coefficient is 2mₑmᵢ/(mₑ+mᵢ)² ν_ei
     RP = mixture_case(n_toy = 0.0)
     update_coulomb_collision_parameters!(RP)
     me, mi = RP.config.constants.me, RP.config.constants.mi
     @test ei_relaxation_rate!(similar(RP.plasma.ni), RP) ≈ @.(2 * me * mi / (me + mi)^2 * RP.plasma.ν_ei)
+end
+
+@testitem "Called alone, the temperature updates take the exchange of the present state" setup = [MixtureCase] begin
+    using RAPID2D: ei_exchange_energy!, update_Te!, update_Ti!
+    RP = mixture_case(n_toy = 0.0, Te = 10.0)
+    RP.dt = 1.0e-4
+    update_coulomb_collision_parameters!(RP)
+    ΔE = copy(ei_exchange_energy!(RP))
+    for update! in (update_Te!, update_Ti!)
+        alone, given, without = deepcopy(RP), deepcopy(RP), deepcopy(RP)
+        update!(alone)
+        update!(given; exchange = ΔE)
+        update!(without; exchange = nothing)
+        temperature(rp) = update! === update_Te! ? rp.plasma.Te_eV : rp.plasma.Ti_eV
+        @test temperature(alone) == temperature(given)
+        @test temperature(alone) != temperature(without)
+    end
 end
 
 @testitem "A temperature that does not evolve is a bath for the exchange" setup = [MixtureCase] begin
@@ -234,7 +254,10 @@ end
     end
     RP = mixture_case(n_toy = 0.0)
     RP.flags.Coulomb_Collision = false
+    fill!(RP.plasma.ePowers.equi, 1.0)          # what an earlier step left
+    fill!(RP.plasma.iPowers.equi, 1.0)
     @test all(iszero, ei_exchange_energy!(RP))
+    @test all(iszero, RP.plasma.ePowers.equi) && all(iszero, RP.plasma.iPowers.equi)
 end
 
 @testitem "With Coulomb collisions alone the thermal energy is kept over whole steps" begin

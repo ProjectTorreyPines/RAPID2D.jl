@@ -784,20 +784,19 @@ end
 Declare which ion species the transport solve advances, and size the work
 buffers to match.
 
-**Exactly one species, for now.** Grouping, assembly, the batch solve and the
-face ledger are written against a list (and never write outside the wall, so a
-second column cannot accumulate there), but three things outside them are not,
-and each is silently wrong rather than loudly missing:
+**Exactly one species, for now.** Grouping, assembly, the batch solve, the
+face ledger and the mixture's sums (the currents, the collisions, the masses) are
+written against a list (and never write outside the wall, so a second column
+cannot accumulate there), but three things are not, and each is silently wrong
+rather than loudly missing:
 
   - `γ_2nd_electron` is one number, so only column 1 could yield secondary electrons;
   - `Ni_loss` books one total (the per-species entries beside it are not yet what the
     snapshots read);
-  - the ion charge density is `n·Z` from this species, and would have to become
-    `Σ_s n_s Z_s` at every site that builds a current (see
-    `internal/docs/src/notes/TODO/ion-inventory-multi-species.md`).
+  - `plasma.ni` round-trips only column 1.
 
-`plasma.ni` IS this species' density — not a total over species, and not a
-quantity a second field mirrors.
+`plasma.ni` is the first species' density, not a total over species; the total is
+`plasma.ni_sum` ([`update_charge_states!`](@ref)).
 """
 function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}}) where {FT <: AbstractFloat}
     length(species) == 1 || throw(
@@ -805,10 +804,8 @@ function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}})
             "exactly one ion species is supported, got $(length(species)). " *
                 "A second one needs three things that do not exist yet: " *
                 "`γ_2nd_electron` is one number, so only the first could yield secondary " *
-                "electrons; `Ni_loss` does not split by species; and every current builds " *
-                "its charge density as n·Z, which would have to become Σ_s n_s Z_s — as " *
-                "would `ν_ei`, `ν_ii` and `lnΛ_ii`, which take the bulk's charge and mass. " *
-                "`plasma.ni` also round-trips only column 1."
+                "electrons; `Ni_loss` does not split by species; and `plasma.ni` round-trips " *
+                "only column 1."
         )
     )
     tp = RP.transport
@@ -817,6 +814,7 @@ function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}})
     tp.ion_N = zeros(FT, Ng, length(species))
     tp.ion_S = zeros(FT, Ng, length(species))
     empty!(tp.ion_solvers)
+    update_charge_states!(RP)   # the means take the declared species at once
     return RP
 end
 
@@ -833,6 +831,8 @@ charge. That window is what a stored `Z_mean` had, and what it got wrong.
 This is also what the NRL collision rates on p.28 and the logarithms on p.34
 carry. They took `plasma.Zeff` before the two were distinguished, which was
 correct only because a hydrogen plasma makes every charge average equal 1.
+The mixture's stored sums and means close that window by being formed again
+by whatever reads them ([`update_charge_states!`](@ref)).
 """
 bulk_ion_charge(RP::RAPID) =
     isempty(RP.transport.ion_species) ? 1 : RP.transport.ion_species[1].charge
@@ -864,9 +864,9 @@ form the mean ion mass `mi_mean` and the composition `Zeff = Σ zₛ² nₛ / Σ
 species is `plasma.ni`, any other its transport column.
 
 The means weight each species by nₛ/Σn, formed first, so with one species they are its own
-mass and charge exactly; where Σn ≤ 0 they are the first species'. Called wherever an ion
-density is written (the ion solve, slaving, the negative-density floor, the initial state), by
-[`update_Jϕ!`](@ref) before it reads the charge, and at every transport refresh.
+mass and charge exactly; where Σn ≤ 0 they are the first species'. Every function that reads
+these fields calls this first, so they are the sums of the densities as they are when it runs,
+whoever wrote those last.
 """
 function update_charge_states!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma

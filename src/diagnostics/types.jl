@@ -143,13 +143,13 @@ Contains volume-averaged quantities
     Pe_iz::FT = zero(FT)          # Ionization power
     Pe_exc::FT = zero(FT)         # Excitation power
     Pe_dilution::FT = zero(FT)    # Dilution power
-    Pe_equi::FT = zero(FT)        # Equilibration power
+    Pe_equi::FT = zero(FT)        # Given to the ions over the step (not in Pe_tot)
     Pe_heat::FT = zero(FT)        # Heating power
     Pe_tot::FT = zero(FT)         # Total electron power
 
     # Ion heating powers
     Pi_atomic::FT = zero(FT)      # Atomic processes power
-    Pi_equi::FT = zero(FT)        # Equilibration power
+    Pi_equi::FT = zero(FT)        # Taken from the electrons over the step (not in Pi_tot)
     Pi_tot::FT = zero(FT)         # Total ion power
 
     # Source/loss tracking
@@ -327,13 +327,13 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Pe_iz::Matrix{FT} = zeros(FT, dims_RZ)          # Ionization power
     Pe_exc::Matrix{FT} = zeros(FT, dims_RZ)         # Excitation power
     Pe_dilution::Matrix{FT} = zeros(FT, dims_RZ)    # Dilution power
-    Pe_equi::Matrix{FT} = zeros(FT, dims_RZ)        # Equilibration power
+    Pe_equi::Matrix{FT} = zeros(FT, dims_RZ)        # Given to the ions over the step (not in Pe_tot)
     Pe_heat::Matrix{FT} = zeros(FT, dims_RZ)        # Heating power
     Pe_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total electron power
 
     # Ion heating powers
     Pi_atomic::Matrix{FT} = zeros(FT, dims_RZ)      # Atomic processes power
-    Pi_equi::Matrix{FT} = zeros(FT, dims_RZ)        # Equilibration power
+    Pi_equi::Matrix{FT} = zeros(FT, dims_RZ)        # Taken from the electrons over the step (not in Pi_tot)
     Pi_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total ion power
 
     η_resistivity::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel resistivity

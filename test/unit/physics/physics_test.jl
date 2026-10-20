@@ -1131,10 +1131,11 @@ end
 # freshly built RP both equal room_T_eV, atomic power is identically 0, and it FAILS.
 @testitem "Ion Heating Powers" begin
     using RAPID2D.Statistics
+    using RAPID2D: ei_exchange_energy!
 
     # Sign conventions of the two ion power channels, checked against hand-reasoned
     # limits: `atomic` (elastic + charge exchange with the neutral gas) and `equi`
-    # (Coulomb equilibration with the electrons).
+    # (the Coulomb exchange with the electrons, which `ei_exchange_energy!` writes).
     config = SimulationConfig{Float64}(
         device_Name = "manual",
         NR = 20, NZ = 20,
@@ -1169,6 +1170,7 @@ end
         update_transport_quantities!(RP)
         update_coulomb_collision_parameters!(RP)
         update_ion_heating_powers!(RP)
+        ei_exchange_energy!(RP)
 
         # ui=0 and Ti=T_gas ⇒ no atomic exchange at all
         @test mean(RP.plasma.iPowers.atomic) == 0.0
@@ -1184,6 +1186,7 @@ end
         update_transport_quantities!(RP)
         update_coulomb_collision_parameters!(RP)
         update_ion_heating_powers!(RP)
+        ei_exchange_energy!(RP)
 
         in_wall_nids = RP.G.nodes.in_wall_nids
         # Ion flow through the neutral gas heats the ions
@@ -1200,6 +1203,7 @@ end
         update_transport_quantities!(RP)
         update_coulomb_collision_parameters!(RP)
         update_ion_heating_powers!(RP)
+        ei_exchange_energy!(RP)
 
         in_wall_nids = RP.G.nodes.in_wall_nids
         # Ti > T_gas with no flow ⇒ ions cool against the gas
@@ -1228,7 +1232,8 @@ end
     # Disabling Coulomb collisions removes the equilibration channel entirely
     RP_no_coulomb = deepcopy(RP)
     RP_no_coulomb.flags.Coulomb_Collision = false
-    update_ion_heating_powers!(RP_no_coulomb)
+    RP_no_coulomb.plasma.iPowers.equi .= 1.0      # what an earlier step left
+    ei_exchange_energy!(RP_no_coulomb)
     @test all(RP_no_coulomb.plasma.iPowers.equi .== 0.0)
 
     # Hotter ions lose more energy to the gas than colder ones

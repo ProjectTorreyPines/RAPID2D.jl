@@ -38,9 +38,8 @@ end
     @test length(RP.transport.ion_species) == 1
     @test bulk_ion_charge(RP) == 1              # H₂⁺
 
-    # A second species is refused rather than half-supported. γ_2nd is not per
-    # species, `Ni_loss` does not split, and the charge density would need Σ n_z Z_z
-    # instead of n·Z — none of which exist yet.
+    # A second species is refused rather than half-supported: γ_2nd is not per
+    # species, `Ni_loss` does not split, and `plasma.ni` round-trips only column 1.
     mi = RP.config.constants.mi
     err = try
         set_ion_species!(RP, [IonRecord(Particles.H2[1]; mass = mi), IonRecord(:C⁶⁺, 6mi, 6)])
@@ -62,8 +61,8 @@ end
 
     RP = charge_case()
 
-    # `Z_mean` existed only to let `ni` mean "total ion density". With one species
-    # `ni` IS that species, so a per-ion average has nothing to average over.
+    # The ion charge density is the sum Σ zₛ nₛ itself (`Zni_sum`), so nothing divides
+    # by a stored mean charge to recover it.
     @test !hasproperty(RP.plasma, :Z_mean)
 
     # `Z_eff` survives — `sptz_fac` is a genuine consumer — and at one species it

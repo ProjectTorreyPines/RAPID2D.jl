@@ -224,9 +224,9 @@ module Particles
     const electron = Electron()
 end
 
-# The two charge averages a species MIXTURE needs — Z̄ = Σn_z Z_z/Σn_z per ion and
-# Z_eff = Σn_z Z_z²/n_e per electron — come back with the mixture; their forms, degenerate
-# cases and the 99:1 / 90:10 H₂⁺–C⁶⁺ numbers are in
+# A mixture's charge averages, Z̄ = Σ zₛ nₛ/Σ nₛ per ion and Z_eff = Σ zₛ² nₛ/Σ zₛ nₛ, come
+# from the species node by node (`update_charge_states!`, `ion_mean!`); their degenerate cases
+# and the 99:1 / 90:10 H₂⁺–C⁶⁺ numbers are in
 # internal/docs/src/notes/TODO/ion-inventory-multi-species.md.
 
 # ── transport policies ──────────────────────────────────────────────────────────────────

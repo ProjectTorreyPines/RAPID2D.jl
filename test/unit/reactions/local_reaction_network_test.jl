@@ -216,3 +216,15 @@ end
     @test solve_local_network!(starved.acc, starved.n_ion, starved.n_neutral, starved.plan, starved.inputs, 1.0) === Reject(:budget)
     @test (starved.n_ion, starved.n_neutral) == before
 end
+
+@testitem "An electron solve that takes more of an ion than the cell holds is refused, and changes nothing" setup = [LocalNetworkCase] begin
+    using RAPID2D: Reject
+    using RAPID2D.Particles: H, H2
+
+    case = network_case((H2[0], H[0], H2[1], H[1]))
+    s = ion_column(case, H[1])
+    case.inputs.ion_increment[s][2] = -2 * case.n_ion[s][2]     # the second cell only
+    before = (deepcopy(case.n_ion), deepcopy(case.n_neutral))
+    @test solve_local_network!(case.acc, case.n_ion, case.n_neutral, case.plan, case.inputs, 1.0e-6) === Reject(:positivity)
+    @test (case.n_ion, case.n_neutral) == before
+end

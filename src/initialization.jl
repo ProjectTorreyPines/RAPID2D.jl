@@ -711,7 +711,8 @@ end
 
 Assemble `config.species` into `RP.species` ([`assemble_species_system`](@ref)) and write the
 assembly report next to the snapshots, `<prefix>species.txt`; its warnings go to the log too.
-Without a species list `RP.species` is `nothing`.
+Without a species list `RP.species` is `nothing`. Throws when the list leaves out an ion species
+the transport moves, or has it at another mass (another isotope).
 """
 function initialize_species!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     config = RP.config
@@ -723,6 +724,7 @@ function initialize_species!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         config.species, config.hydrogen, config.constants, RP.eRRCs, RP.iRRCs;
         closures = config.closures, processes = config.processes, rates = config.rates,
     )
+    check_transport_species(sys.registry, RP.transport.ion_species)
     RP.species = sys
     path = joinpath(abspath(config.Output_path), config.Output_prefix) * "species.txt"
     mkpath(dirname(path))
@@ -732,6 +734,30 @@ function initialize_species!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         "$(length(sys.reactions)) reactions, $(length(sys.collisions)) collisions" report = path
     foreach(w -> @warn("Species: $w"), sys.report.warnings)
     return RP
+end
+
+# The step moves the transport's ion species (`set_ion_species!`), not yet the list's: each must be
+# in the list, at its mass. The transport's H₂⁺ takes `constants.mi`, 2 × 1.00797 u from hydrogen's
+# standard atomic weight, and the list 2mₚ + mₑ = 2.01510 u, 4e-4 below it; the tolerance admits
+# that difference and refuses another isotope or species.
+function check_transport_species(reg::SpeciesRegistry, transport_species)
+    for sp in transport_species
+        col = get(reg.ion_column, sp.key, nothing)
+        isnothing(col) && throw(
+            ArgumentError(
+                "the step moves $(sp.label), which config.species leaves out: the transport does not " *
+                    "take its species from the list yet"
+            )
+        )
+        listed = reg.ions[col]
+        isapprox(listed.mass, sp.mass; rtol = 1.0e-3) || throw(
+            ArgumentError(
+                "the step moves $(sp.label) at $(sp.mass) kg, and config.species has $(listed.label) at " *
+                    "$(listed.mass) kg: the transport does not take its species, or their isotope, from the list yet"
+            )
+        )
+    end
+    return nothing
 end
 
 """

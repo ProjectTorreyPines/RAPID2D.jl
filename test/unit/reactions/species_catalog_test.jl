@@ -279,3 +279,17 @@ end
     @test occursin("dr2     e + H2[1] → 2 H[0]", report)
     @test occursin("Warnings", report) && occursin("lacks H[1]", report)
 end
+
+@testitem "The list must hold the ion species the step moves, at its mass" begin
+    using RAPID2D: build_registry, check_transport_species, IonRecord, PlasmaConstants
+    using RAPID2D.Particles: H, H2
+
+    constants = PlasmaConstants{Float64}()
+    moved = [IonRecord(H2[1]; mass = constants.mi)]     # what the transport moves by default
+    # constants.mi is 4e-4 above the list's 2mₚ + mₑ, and admitted
+    @test isnothing(check_transport_species(build_registry((H2[0], H2[1]), Protium(), constants), moved))
+    # D₂⁺ is another mass: the step would still move H₂⁺
+    @test_throws ArgumentError check_transport_species(build_registry((H2[0], H2[1]), Deuterium(), constants), moved)
+    # a list without H2[1]
+    @test_throws ArgumentError check_transport_species(build_registry((H[0], H[1]), Protium(), constants), moved)
+end
