@@ -482,13 +482,13 @@ Fields include components of the magnetic and electric fields.
     # R0B0
     R0B0::FT = FT(0.0)
 
-    # External fields
-    BR_ext::Matrix{FT} = zeros(FT, dims)        # External radial magnetic field [T]
-    BZ_ext::Matrix{FT} = zeros(FT, dims)        # External vertical magnetic field [T]
-    LV_ext::Matrix{FT} = zeros(FT, dims)        # External Loop Voltage [V]
-    ψ_ext::Matrix{FT} = zeros(FT, dims)         # Prescribed flux: field files or the manual setup, not solved [Wb/rad]
-    Eϕ_ext::Matrix{FT} = zeros(FT, dims)        # External toroidal electric field [V/m]
-    E_para_ext::Matrix{FT} = zeros(FT, dims)    # External parallel electric field [V/m]; with vertical-field control, (Eϕ_ext + Eϕ_ctrl) bϕ
+    # The prescribed field: laid down as input (field files or the manual setup), not solved
+    BR_presc::Matrix{FT} = zeros(FT, dims)        # [T]
+    BZ_presc::Matrix{FT} = zeros(FT, dims)        # [T]
+    LV_presc::Matrix{FT} = zeros(FT, dims)        # loop voltage [V]
+    ψ_presc::Matrix{FT} = zeros(FT, dims)         # [Wb/rad]
+    Eϕ_presc::Matrix{FT} = zeros(FT, dims)        # [V/m]
+    E_para_presc::Matrix{FT} = zeros(FT, dims)    # Eϕ_presc bϕ [V/m]
 
     # The vertical-field control's vacuum field (`IdealVerticalFieldControl`), added to the total
     # only when the run has one
@@ -496,6 +496,7 @@ Fields include components of the magnetic and electric fields.
     BZ_ctrl::Matrix{FT} = zeros(FT, dims)       # [T]
     ψ_ctrl::Matrix{FT} = zeros(FT, dims)        # [Wb/rad]
     Eϕ_ctrl::Matrix{FT} = zeros(FT, dims)       # induced by ψ_ctrl's change over the step [V/m]
+    E_para_ctrl::Matrix{FT} = zeros(FT, dims)   # Eϕ_ctrl bϕ [V/m]
 
     # The fields of the currents RAPID2D solves for, coils (walls included) and plasma together: the
     # state the coupled solve carries. Each source alone is computed on demand (plasma_flux_on_grid,

@@ -51,7 +51,7 @@ function doubling_run(name; loop::Bool)
     )
     return (;
         RP, rec, model, Lc, t_d = doubling.t[], R_before = doubling.R_p[], R_after = column_resistance(RP),
-        V = mean(RP.fields.LV_ext[col]), n0 = mean(RP.plasma.ne[col]) / 2,
+        V = mean(RP.fields.LV_presc[col]), n0 = mean(RP.plasma.ne[col]) / 2,
     )
 end
 

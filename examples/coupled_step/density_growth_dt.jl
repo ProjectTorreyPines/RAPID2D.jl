@@ -33,7 +33,7 @@ function growing(dt)
             push!(rec.err, abs(Lc * rec.Ic[end] + Φ) / abs(Φ))
         end
     )
-    return (; rec, model, Lc, V = mean(RP.fields.LV_ext[col]))
+    return (; rec, model, Lc, V = mean(RP.fields.LV_presc[col]))
 end
 
 # the lumped model over one run's times, with R_p as that run's column had it

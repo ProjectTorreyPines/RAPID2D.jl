@@ -46,8 +46,8 @@ function lr_reference(RP::RAPID)
     G, F, pla = RP.G, RP.fields, RP.plasma
     ee, me, μ0 = RP.config.constants.ee, RP.config.constants.me, RP.config.constants.μ0
     col = findall(>(0), pla.ne)
-    ue_sat = @. -ee * F.Eϕ_ext[col] / (me * pla.ν_ei_eff[col])
-    LV = mean(F.LV_ext[col])
+    ue_sat = @. -ee * F.Eϕ_presc[col] / (me * pla.ν_ei_eff[col])
+    LV = mean(F.LV_presc[col])
     R_p = LV / sum(@. -ee * pla.ne[col] * ue_sat * G.dR * G.dZ)
     L_p = μ0 * R_FIL * (log(8 * R_FIL / A_FIL) - 2 + 0.25)
     L_kin = me / (N_FIL * ee^2) * (2π * R_FIL / (π * A_FIL^2))

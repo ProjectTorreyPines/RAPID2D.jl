@@ -14,7 +14,7 @@ export set_all_currents!, set_powered_currents!, set_controllable_currents!, set
 export get_coil_voltage_at_time, set_coil_voltage_function!
 export get_all_voltages_at_time, get_powered_voltages_at_time, get_controllable_voltages_at_time
 export create_sinusoidal_voltage, create_linear_voltage_ramp, create_step_voltage, create_piecewise_linear_voltage
-export evaluate_voltage_ext
+export evaluate_voltage_applied
 
 """
     add_coil!(csys::CoilSystem{FT}, coil::Coil{FT}) where FT<:AbstractFloat
@@ -86,7 +86,7 @@ end
 """
     set_coil_voltage!(csys::CoilSystem{FT}, coil_name::String, voltage::FT) where FT<:AbstractFloat
 
-Set external voltage for a powered coil by name.
+Set applied voltage for a powered coil by name.
 """
 function set_coil_voltage!(csys::CoilSystem{FT}, coil_name::String, voltage::FT) where {FT <: AbstractFloat}
     coil_idx = find_coil_by_name(csys, coil_name)
@@ -100,14 +100,14 @@ function set_coil_voltage!(csys::CoilSystem{FT}, coil_name::String, voltage::FT)
     end
 
     # Directly set the voltage in the coil
-    coil.voltage_ext = voltage
+    coil.voltage_applied = voltage
     return nothing
 end
 
 """
     get_coil_voltage(csys::CoilSystem, coil_name::String)
 
-Get external voltage for a powered coil by name.
+Get applied voltage for a powered coil by name.
 For time-dependent voltages, use get_coil_voltage_at_time instead.
 """
 function get_coil_voltage(csys::CoilSystem, coil_name::String)
@@ -121,19 +121,19 @@ function get_coil_voltage(csys::CoilSystem, coil_name::String)
         return zero(Float64)  # Return appropriate zero type
     end
 
-    # If voltage_ext is a function, we can't return a single value
-    if isa(coil.voltage_ext, Function)
+    # If voltage_applied is a function, we can't return a single value
+    if isa(coil.voltage_applied, Function)
         @warn "Coil '$coil_name' has time-dependent voltage. Use get_coil_voltage_at_time(coil, t) instead."
-        return coil.voltage_ext  # Return the function itself
+        return coil.voltage_applied  # Return the function itself
     end
 
-    return coil.voltage_ext
+    return coil.voltage_applied
 end
 
 """
     update_all_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) where FT<:AbstractFloat
 
-Update all external voltages for powered coils.
+Update all applied voltages for powered coils.
 Length of `new_voltages` must match number of powered coils.
 """
 function update_all_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) where {FT <: AbstractFloat}
@@ -142,7 +142,7 @@ function update_all_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) wh
     end
 
     for (i, coil_idx) in enumerate(csys.powered_indices)
-        csys.coils[coil_idx].voltage_ext = new_voltages[i]
+        csys.coils[coil_idx].voltage_applied = new_voltages[i]
     end
     return nothing
 end
@@ -150,7 +150,7 @@ end
 """
     update_controllable_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) where FT<:AbstractFloat
 
-Update external voltages for controllable coils only.
+Update applied voltages for controllable coils only.
 Length of `new_voltages` must match number of controllable coils.
 """
 function update_controllable_voltages!(csys::CoilSystem{FT}, new_voltages::Vector{FT}) where {FT <: AbstractFloat}
@@ -159,7 +159,7 @@ function update_controllable_voltages!(csys::CoilSystem{FT}, new_voltages::Vecto
     end
 
     for (i, coil_idx) in enumerate(csys.controllable_indices)
-        csys.coils[coil_idx].voltage_ext = new_voltages[i]
+        csys.coils[coil_idx].voltage_applied = new_voltages[i]
     end
     return nothing
 end
@@ -283,7 +283,7 @@ end
                                μ0::FT, resistivity::FT;
                                is_controllable=is_powered,
                                max_voltage=nothing, max_current=nothing,
-                               current=zero(FT), voltage_ext=zero(FT)) where FT<:AbstractFloat
+                               current=zero(FT), voltage_applied=zero(FT)) where FT<:AbstractFloat
 
 Create a coil with calculated resistance and self-inductance.
 """
@@ -292,7 +292,7 @@ function create_coil_from_parameters(
         μ0::FT, resistivity::FT;
         is_controllable = is_powered,
         max_voltage = nothing, max_current = nothing,
-        current = zero(FT), voltage_ext = zero(FT)
+        current = zero(FT), voltage_applied = zero(FT)
     ) where {FT <: AbstractFloat}
     location = (r = r, z = z)
     resistance = calculate_coil_resistance(area, r, resistivity)
@@ -300,7 +300,7 @@ function create_coil_from_parameters(
 
     return Coil(
         location, area, resistance, self_inductance, is_powered, is_controllable, name,
-        max_voltage, max_current, current, voltage_ext
+        max_voltage, max_current, current, voltage_applied
     )
 end
 
@@ -361,7 +361,7 @@ end
 """
     get_all_voltages(csys::CoilSystem{FT}) where FT<:AbstractFloat
 
-Return external voltages of all coils as a vector at t=0.
+Return applied voltages of all coils as a vector at t=0.
 For time-dependent voltages, use get_all_voltages_at_time(csys, t) instead.
 """
 function get_all_voltages(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
@@ -371,7 +371,7 @@ end
 """
     get_powered_voltages(csys::CoilSystem{FT}) where FT<:AbstractFloat
 
-Return external voltages of powered coils only as a vector at t=0.
+Return applied voltages of powered coils only as a vector at t=0.
 For time-dependent voltages, use get_powered_voltages_at_time(csys, t) instead.
 """
 function get_powered_voltages(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
@@ -381,7 +381,7 @@ end
 """
     get_controllable_voltages(csys::CoilSystem{FT}) where FT<:AbstractFloat
 
-Return external voltages of controllable coils only as a vector at t=0.
+Return applied voltages of controllable coils only as a vector at t=0.
 For time-dependent voltages, use get_controllable_voltages_at_time(csys, t) instead.
 """
 function get_controllable_voltages(csys::CoilSystem{FT}) where {FT <: AbstractFloat}
@@ -466,42 +466,42 @@ function get_coil_current(csys::CoilSystem, coil_name::String)
 end
 
 """
-    evaluate_voltage_ext(voltage_ext::Union{FT, Function}, t::FT) where FT<:AbstractFloat
+    evaluate_voltage_applied(voltage_applied::Union{FT, Function}, t::FT) where FT<:AbstractFloat
 
-Evaluate voltage_ext at time t. If voltage_ext is a value, return it directly.
+Evaluate voltage_applied at time t. If voltage_applied is a value, return it directly.
 If it's a function, call it with time t.
 
 # Arguments
-- `voltage_ext`: Either a constant voltage value or a function f(t) -> voltage
+- `voltage_applied`: Either a constant voltage value or a function f(t) -> voltage
 - `t`: Current time
 
 # Returns
 - Voltage value at time t
 """
-function evaluate_voltage_ext(voltage_ext::FT, t::FT) where {FT <: AbstractFloat}
-    return voltage_ext
+function evaluate_voltage_applied(voltage_applied::FT, t::FT) where {FT <: AbstractFloat}
+    return voltage_applied
 end
 
-function evaluate_voltage_ext(voltage_ext::Function, t::FT) where {FT <: AbstractFloat}
-    return voltage_ext(t)
+function evaluate_voltage_applied(voltage_applied::Function, t::FT) where {FT <: AbstractFloat}
+    return voltage_applied(t)
 end
 
 """
     get_coil_voltage_at_time(coil::Coil{FT}, t::FT) where FT<:AbstractFloat
 
-Get the voltage of a coil at time t, evaluating voltage_ext if it's a function.
+Get the voltage of a coil at time t, evaluating voltage_applied if it's a function.
 """
 function get_coil_voltage_at_time(coil::Coil{FT}, t::FT) where {FT <: AbstractFloat}
     if !coil.is_powered
         return zero(FT)
     end
-    return evaluate_voltage_ext(coil.voltage_ext, t)
+    return evaluate_voltage_applied(coil.voltage_applied, t)
 end
 
 """
     get_coil_voltage_at_time(csys::CoilSystem, coil_name::String, t::AbstractFloat)
 
-Get external voltage for a powered coil by name at time t.
+Get applied voltage for a powered coil by name at time t.
 """
 function get_coil_voltage_at_time(csys::CoilSystem, coil_name::String, t::AbstractFloat)
     coil_idx = find_coil_by_name(csys, coil_name)
@@ -516,7 +516,7 @@ end
 """
     get_all_voltages_at_time(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
 
-Return external voltages of all coils as a vector at time t.
+Return applied voltages of all coils as a vector at time t.
 For constant voltages, returns the constant value. For time-dependent voltages, evaluates at time t.
 """
 function get_all_voltages_at_time(csys::CoilSystem{FT}, t::FT = csys.time_s) where {FT <: AbstractFloat}
@@ -526,7 +526,7 @@ end
 """
     get_powered_voltages_at_time(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
 
-Return external voltages of powered coils only as a vector at time t.
+Return applied voltages of powered coils only as a vector at time t.
 """
 function get_powered_voltages_at_time(csys::CoilSystem{FT}, t::FT) where {FT <: AbstractFloat}
     return [get_coil_voltage_at_time(csys.coils[idx], t) for idx in csys.powered_indices]
@@ -535,7 +535,7 @@ end
 """
     get_controllable_voltages_at_time(csys::CoilSystem{FT}, t::FT) where FT<:AbstractFloat
 
-Return external voltages of controllable coils only as a vector at time t.
+Return applied voltages of controllable coils only as a vector at time t.
 """
 function get_controllable_voltages_at_time(csys::CoilSystem{FT}, t::FT) where {FT <: AbstractFloat}
     return [get_coil_voltage_at_time(csys.coils[idx], t) for idx in csys.controllable_indices]
@@ -574,7 +574,7 @@ function set_coil_voltage_function!(csys::CoilSystem, coil_name::String, voltage
     end
 
     # Set the voltage function
-    coil.voltage_ext = voltage_func
+    coil.voltage_applied = voltage_func
     return nothing
 end
 

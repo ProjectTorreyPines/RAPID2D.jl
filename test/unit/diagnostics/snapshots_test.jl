@@ -484,7 +484,7 @@ end
     @test snap.Te_eV[inw] == RP.plasma.Te_eV[inw]
     # fields are not plasma state and are not masked
     @test all(isfinite, snap.BR)
-    @test all(isfinite, snap.LV_ext)
+    @test all(isfinite, snap.LV_presc)
     # the 0D moments are taken over the in-wall volume from the plasma itself, not from
     # the masked copy
     s0 = RAPID2D.measure_snap0D(RP)

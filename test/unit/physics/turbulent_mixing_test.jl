@@ -333,7 +333,7 @@ end
     # the field, on every node, as the external field the step recombines from
     @test G.R2D .* F.BR ≈ XP.Bprime .* y
     @test G.R2D .* F.BZ ≈ XP.Bprime .* x
-    @test F.BR_ext == F.BR && F.BZ_ext == F.BZ
+    @test F.BR_presc == F.BR && F.BZ_presc == F.BZ
     # the null sits on a grid node, and B_pol vanishes there
     i0, j0 = argmin(abs.(G.R1D .- XP.R0)), argmin(abs.(G.Z1D .- XP.Z0))
     @test F.Bpol[i0, j0] <= 1.0e-12 * XP.Bprime
@@ -341,13 +341,13 @@ end
     # ∇·B = 0, exactly for central differences since R B_R is constant in R and B_Z in Z
     div = calculate_divergence(G, F.BR, F.BZ)
     @test maximum(abs, div[2:(end - 1), 2:(end - 1)]) <= 1.0e-12 * XP.Bprime / minimum(G.R1D) / G.dR
-    # ψ_ext is the analytic flux of this field, in the code's sign convention
-    @test F.ψ_ext ≈ XP.Bprime / 2 .* (x .^ 2 .- y .^ 2)
-    BRψ, BZψ = calculate_B_from_ψ(G, F.ψ_ext)
+    # ψ_presc is the analytic flux of this field, in the code's sign convention
+    @test F.ψ_presc ≈ XP.Bprime / 2 .* (x .^ 2 .- y .^ 2)
+    BRψ, BZψ = calculate_B_from_ψ(G, F.ψ_presc)
     @test BRψ[2:(end - 1), 2:(end - 1)] ≈ F.BR[2:(end - 1), 2:(end - 1)] rtol = 1.0e-10
     @test BZψ[2:(end - 1), 2:(end - 1)] ≈ F.BZ[2:(end - 1), 2:(end - 1)] rtol = 1.0e-10
     # field lines follow the contours of ψ: B·∇ψ = 0 where the gradient is central
-    gR, gZ = wall_gradient(G, F.ψ_ext)
+    gR, gZ = wall_gradient(G, F.ψ_presc)
     deep = [
         nid for nid in G.nodes.in_wall_nids if all(
                 RAPID2D.is_in_wall(G, G.nodes.rid[nid] + di, G.nodes.zid[nid] + dj) for di in -1:1, dj in -1:1

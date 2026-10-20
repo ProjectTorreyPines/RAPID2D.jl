@@ -59,7 +59,7 @@
 
     "The field-line analysis of the disc in its external field, so the closed region is known."
     function trace_closed_region!(RP)
-        RAPID2D.combine_external_and_self_fields!(RP)
+        RAPID2D.combine_field_sources!(RP)
         RAPID2D.flf_analysis_field_lines_rz_plane!(RP)
         return RP
     end
@@ -85,7 +85,7 @@ end
     @test fb.force_R_coils == 0 && fb.force_Z_coils == 0          # no coils
     # no external field: both estimates of the vertical field to add agree; no equilibrium radius,
     # no decay index, and no closed region traced yet
-    @test fb.force_R_ext == 0 && fb.BZ_ext_at_cen_by_Jϕ == 0
+    @test fb.force_R_presc == 0 && fb.BZ_presc_at_cen_by_Jϕ == 0
     @test fb.Bv_to_add ≈ fb.Bv_req rtol = 0.02
     @test isnan(fb.decay_index) && isnan(fb.R_eq) && isnan(fb.R_eq_stiffness)
     @test isnan(fb.R_axis) && isnan(fb.Z_axis)
@@ -99,11 +99,11 @@ end
     Λ = -4π * R0 * B0 / (μ0 * d.I)
     @test sign(B0) == -sign(d.I)                                   # it pushes the column inward
     @test fb.Bv_req ≈ B0 rtol = 1.0e-12
-    @test fb.BZ_ext_at_cen_by_Jϕ ≈ B0 rtol = 1.0e-12
+    @test fb.BZ_presc_at_cen_by_Jϕ ≈ B0 rtol = 1.0e-12
     @test fb.decay_index == 0                                      # a uniform field
     @test fb.decay_index_radial_limit ≈ 1 - 1 / Λ
-    @test fb.force_R_ext ≈ 2π * B0 * d.I * R0 rtol = 1.0e-10
-    @test fb.force_Z_ext == 0
+    @test fb.force_R_presc ≈ 2π * B0 * d.I * R0 rtol = 1.0e-10
+    @test fb.force_Z_presc == 0
     @test fb.R_eq ≈ R0 atol = 1.0e-3
     @test fb.R_eq_stiffness ≈ μ0 * d.I^2 / (2R0) * (1 - Λ) rtol = 0.02   # dF_R/dR at n = 0
     @test fb.R_eq_stiffness < 0                                    # restoring
@@ -116,11 +116,11 @@ end
     RP, d = current_disc(; B0)
     G, F = RP.G, RP.fields
     n_decay = 0.5
-    @. F.BZ_ext = B0 * (R0 / G.R2D)^n_decay
-    @. F.BR_ext = -n_decay * B0 * (R0 / G.R2D)^n_decay * G.Z2D / G.R2D   # curl-free to first order in Z
+    @. F.BZ_presc = B0 * (R0 / G.R2D)^n_decay
+    @. F.BR_presc = -n_decay * B0 * (R0 / G.R2D)^n_decay * G.Z2D / G.R2D   # curl-free to first order in Z
     fb = column_force_balance(RP)
     @test fb.decay_index ≈ n_decay rtol = 0.02
-    @test fb.force_Z_ext * Z0 < 0                                  # above the midplane, pushed back down
+    @test fb.force_Z_presc * Z0 < 0                                  # above the midplane, pushed back down
 end
 
 @testitem "column force balance: a coil's field stays out of l_i and the hoop force, as its own force" setup = [CurrentDisc] begin
@@ -188,7 +188,7 @@ end
     end
     @test column_force_balance(current_disc(; a, κ = b / a, tilt = π / 4)[1]).kappa_by_Jϕ ≈ 1 rtol = 0.02
     # a uniform B_R: the B_R to add is its opposite
-    RP.fields.BR_ext .= 1.0e-4
+    RP.fields.BR_presc .= 1.0e-4
     @test column_force_balance(RP).Br_to_add ≈ -1.0e-4 rtol = 0.01
     # pressure on the disc alone: the grid's tire tube is the disc's; with pressure around it, more
     @test column_force_balance(current_disc()[1]).force_R_pressure_all ≈ column_force_balance(current_disc()[1]).force_R_pressure
@@ -211,10 +211,10 @@ end
     # themselves (the two sums run in different orders)
     @test fb.I_closed ≈ d.I
     @test fb.Bv_to_add_closed ≈ fb.Bv_to_add atol = 1.0e-10 * abs(B0)
-    @test fb.force_Z_on_closed ≈ fb.force_Z_ext + fb.force_Z_coils + fb.force_Z_pla atol = 1.0e-10 * μ0 * d.I^2 / 4
+    @test fb.force_Z_on_closed ≈ fb.force_Z_presc + fb.force_Z_coils + fb.force_Z_pla atol = 1.0e-10 * μ0 * d.I^2 / 4
     # the ion mass on the disc, and the times to close the gap at constant force
     G = RP.G
-    F_R = fb.force_R_ext + fb.force_R_coils + fb.force_R_pla + fb.force_R_pressure + fb.force_R_toroidal
+    F_R = fb.force_R_presc + fb.force_R_coils + fb.force_R_pla + fb.force_R_pressure + fb.force_R_toroidal
     @test fb.column_mass ≈ bulk_ion_mass(RP) * 1.0e19 * 2π * R0 * d.area rtol = 1.0e-10
     @test fb.t_wall_inertial ≈ sqrt(2 * fb.column_mass * fb.wall_gap_R / abs(F_R))
     @test fb.nu_in_column == 0 && fb.t_wall_drag == 0                 # no gas, no drag
@@ -274,7 +274,7 @@ end
     fb_noamp = column_force_balance(RP_noamp)
     @test isnan(fb_noamp.li) && isnan(fb_noamp.force_R_pla) && isnan(fb_noamp.Bv_to_add)
     @test isnan(fb_noamp.force_R_coils)
-    @test isfinite(fb_noamp.R_cen_by_Jϕ) && fb_noamp.force_R_ext == 0
+    @test isfinite(fb_noamp.R_cen_by_Jϕ) && fb_noamp.force_R_presc == 0
     # below the current threshold, nothing
     fill!(RP.plasma.Jϕ, 0.0)
     @test all(isnan, column_force_balance(RP))

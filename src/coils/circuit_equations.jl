@@ -403,7 +403,7 @@ Advance one time step of the circuit equation without plasma contribution, the �
 
 This function implements the MATLAB circuit equation (there θ = 1):
 ```matlab
-circuit_rhs = obj.coils.LM_matrix*obj.coils.I + obj.dt*obj.coils.LV_ext;
+circuit_rhs = obj.coils.LM_matrix*obj.coils.I + obj.dt*obj.coils.LV_presc;
 new_coil_I_k = obj.coils.inv_A_LR_circuit*circuit_rhs;
 ```
 
@@ -431,7 +431,7 @@ function advance_LR_circuit_step!(csys::CoilSystem{FT}, t::FT = csys.time_s) whe
     currents = get_all_currents(csys)
     resistances = get_all_resistances(csys)
 
-    # Circuit equation: (L + θ R dt) * I_new = L * I_old + dt * (V_ext - (1-θ) * R * I_old)
+    # Circuit equation: (L + θ R dt) * I_new = L * I_old + dt * (V_applied - (1-θ) * R * I_old)
     circuit_rhs = csys.mutual_inductance * currents .+ csys.Δt * (voltages - (one(FT) - csys.θimp) * resistances .* currents)
 
     # Solve for new currents
@@ -489,7 +489,7 @@ function calculate_LR_circuit_rhs_by_coils(csys::CoilSystem{FT}, t::FT = csys.ti
     resistances = get_all_resistances(csys)
 
     # Right-hand side of LR circuit equation:
-    # L * I_old + dt * (V_ext - (1-θimp) * R * I)
+    # L * I_old + dt * (V_applied - (1-θimp) * R * I)
     return csys.mutual_inductance * currents .+ csys.Δt * (voltages - (one(FT) - csys.θimp) * resistances .* currents)
 end
 

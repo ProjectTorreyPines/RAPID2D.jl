@@ -49,10 +49,10 @@ end
         @test (G.R1D[1], G.R1D[end], G.Z1D[1], G.Z1D[end]) == (1.0, 2.0, -1.0, 1.0)   # the field file's box
         @test RP.wall.R[1:4] == [1.2, 1.2, 1.8, 1.8] && RP.wall.Z[1:4] == [-0.7, 0.7, 0.7, -0.7]
         # B_R = R and B_Z = Z are linear, so interpolation onto the grid is exact
-        @test RP.fields.BR_ext ≈ G.R2D && RP.fields.BZ_ext ≈ G.Z2D && all(==(5.0), RP.fields.LV_ext)
-        BR0 = copy(RP.fields.BR_ext)
-        update_external_fields!(RP, 1.0)                    # static: the same field later on
-        @test RP.fields.BR_ext == BR0
+        @test RP.fields.BR_presc ≈ G.R2D && RP.fields.BZ_presc ≈ G.Z2D && all(==(5.0), RP.fields.LV_presc)
+        BR0 = copy(RP.fields.BR_presc)
+        update_prescribed_fields!(RP, 1.0)                    # static: the same field later on
+        @test RP.fields.BR_presc == BR0
 
         # the manual fields with the wall from its file
         config.inputs.field = ""
@@ -124,8 +124,8 @@ end
     initialize!(RP)
     G, F = RP.G, RP.fields
     @test [G.R1D[1], G.R1D[end], G.Z1D[1], G.Z1D[end]] ≈ [0.8, 2.4, -1.2, 1.2]
-    @test all(==(0.0), F.BR_ext) && all(==(5.0e-3), F.BZ_ext)
-    @test F.Eϕ_ext ≈ 0.3 .* meanR(G) ./ G.R2D
+    @test all(==(0.0), F.BR_presc) && all(==(5.0e-3), F.BZ_presc)
+    @test F.Eϕ_presc ≈ 0.3 .* meanR(G) ./ G.R2D
     @test extrema(RP.wall.R) == (G.R1D[1] + 3 * G.dR, G.R1D[end] - 3 * G.dR)
 
     # every value is read from config.manual
@@ -134,8 +134,8 @@ end
     @test_logs (:info, r"^External field from the manual setup") (:info, r"^Wall from a default box 2 cells inside the domain") match_mode = :any initialize!(RP)
     G, F = RP.G, RP.fields
     @test [G.R1D[1], G.R1D[end], G.Z1D[1], G.Z1D[end]] ≈ [1.0, 2.0, -0.5, 0.5]
-    @test all(==(1.0e-3), F.BR_ext) && all(==(2.0e-3), F.BZ_ext)
-    @test F.Eϕ_ext ≈ 0.5 .* meanR(G) ./ G.R2D
+    @test all(==(1.0e-3), F.BR_presc) && all(==(2.0e-3), F.BZ_presc)
+    @test F.Eϕ_presc ≈ 0.5 .* meanR(G) ./ G.R2D
     @test extrema(RP.wall.R) == (G.R1D[1] + 2 * G.dR, G.R1D[end] - 2 * G.dR)
 
     # R_min/R_max/Z_min/Z_max still set the domain of any run, over the manual defaults

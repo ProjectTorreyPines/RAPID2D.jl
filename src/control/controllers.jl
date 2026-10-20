@@ -169,7 +169,7 @@ Note: This function directly modifies the coil voltages through references.
 function apply_control_signal!(controller::Controller{FT}, signal::FT) where {FT <: AbstractFloat}
     # Apply signal to all coils controlled by this controller
     for coil in controller.coils
-        coil.voltage_ext = signal
+        coil.voltage_applied = signal
     end
     return controller
 end

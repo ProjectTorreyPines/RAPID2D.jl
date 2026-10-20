@@ -162,7 +162,7 @@ end
         add_coil!(
             RP.coil_system, Coil{Float64}(;
                 location = (r = 0.6, z = 0.0), area = π * 0.1^2, resistance = 1.0e-3, self_inductance = 1.0e-3,
-                is_powered = true, is_controllable = false, name = "CS", voltage_ext = 100.0,
+                is_powered = true, is_controllable = false, name = "CS", voltage_applied = 100.0,
             )
         )
         return add_filament_shell!(RP; cenR = 1.5, r = 0.4)
@@ -439,7 +439,7 @@ end
     )
     initialize_coil_system!(RP)
     prepare_timestep!(RP)
-    RP.fields.E_para_ext[argmax(RP.plasma.ne)] = NaN
+    RP.fields.E_para_presc[argmax(RP.plasma.ne)] = NaN
     F, pla, csys = RP.fields, RP.plasma, RP.coil_system
     state() = (F.ψ_coils_pla, F.Eϕ_coils_pla, F.Eϕ_coils_pla_prev, pla.ue_para, pla.Rue_ei, csys.coils.current, csys.coils.ψ_pla, csys.time_s)
     before = deepcopy(state())

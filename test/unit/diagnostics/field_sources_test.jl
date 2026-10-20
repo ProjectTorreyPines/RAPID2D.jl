@@ -114,3 +114,27 @@ end
     paths0 = create_symbol_path_mapping(Snapshot0D{Float64}, Dict{String, Any}("time_s" => [0.1], "force_R_self" => [1.0]))
     @test paths0["force_R_self"] == [:force_R_pla]
 end
+
+@testitem "field sources: old prescribed-field names are read into the new ones" begin
+    using RAPID2D: create_symbol_path_mapping, process_symbol_based_snapshots!, RENAMED_SNAPSHOT_FIELDS
+    # every name a field was renamed to is a snapshot field
+    @test all(values(RENAMED_SNAPSHOT_FIELDS)) do n
+        hasfield(Snapshot0D{Float64}, Symbol(n)) || hasfield(Snapshot2D{Float64}, Symbol(n))
+    end
+    dims_RZ = (4, 5)
+    old = reshape(collect(1.0:20.0), dims_RZ..., 1)
+    Adict = Dict{String, Any}("time_s" => [0.1], "ψ_ext" => old, "LV_ext" => 2 .* old, "E_para_ext" => 3 .* old)
+    snaps = [Snapshot2D{Float64}(; dims_RZ)]
+    process_symbol_based_snapshots!(snaps, Adict, create_symbol_path_mapping(Snapshot2D{Float64}, Adict), 1)
+    @test snaps[1].ψ_presc == old[:, :, 1] && snaps[1].LV_presc == 2 .* old[:, :, 1]
+    @test snaps[1].E_para_presc == 3 .* old[:, :, 1]
+    # the 0D names
+    old0D = (
+        "Epara_ext" => :Epara_presc, "force_R_ext" => :force_R_presc, "force_Z_ext" => :force_Z_presc,
+        "BZ_ext_at_cen_by_Jϕ" => :BZ_presc_at_cen_by_Jϕ, "BR_ext_at_cen_by_Jϕ" => :BR_presc_at_cen_by_Jϕ,
+        "coils_V_ext" => :coils_V_applied,
+    )
+    Adict0 = Dict{String, Any}("time_s" => [0.1], (k => [1.0] for (k, _) in old0D)...)
+    paths0 = create_symbol_path_mapping(Snapshot0D{Float64}, Adict0)
+    @test all(paths0[k] == [v] for (k, v) in old0D)
+end

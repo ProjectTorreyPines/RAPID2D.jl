@@ -10,7 +10,7 @@
     using RAPID2D.LinearAlgebra: Diagonal
 
     const R0, Z0, κ = 1.5113, 0.0071, 1.3      # axis of the elliptic surfaces (off the nodes), elongation
-    const C_PSI = 3.0e-2                        # ψ_ext = C ((R − R0)² + ((Z − Z0)/κ)²)
+    const C_PSI = 3.0e-2                        # ψ_presc = C ((R − R0)² + ((Z − Z0)/κ)²)
     const RHO_N, N0, NU0, E0, TE = 0.4, 1.0e17, 1.0e6, 0.3, 10.0
     const R0B0, RBAR = 3.0, 1.5
     const QE, ME = -1.602176634e-19, 9.1093837015e-31
@@ -36,10 +36,10 @@
         )
         RAPID2D.initialize!(RP)
         G, F, pla = RP.G, RP.fields, RP.plasma
-        @. F.ψ_ext = C_PSI * ((G.R2D - R0)^2 + ((G.Z2D - Z0) / κ)^2)
-        RAPID2D.calculate_B_from_ψ!(G, F.ψ_ext, F.BR_ext, F.BZ_ext)
+        @. F.ψ_presc = C_PSI * ((G.R2D - R0)^2 + ((G.Z2D - Z0) / κ)^2)
+        RAPID2D.calculate_B_from_ψ!(G, F.ψ_presc, F.BR_presc, F.BZ_presc)
         fill!(F.ψ_coils_pla, 0.0); fill!(F.BR_coils_pla, 0.0); fill!(F.BZ_coils_pla, 0.0)
-        RAPID2D.combine_external_and_self_fields!(RP)
+        RAPID2D.combine_field_sources!(RP)
         pla.ne .= density.(G.R2D, G.Z2D, α) .* (G.nodes.state .> 0.5)
         pla.ni .= pla.ne
         fill!(pla.Te_eV, TE)

@@ -22,7 +22,7 @@ Represents a single toroidal current loop, which can be either a powered coil or
 
 # Mutable Fields (time-evolving state)
 - `current::FT`: Current flowing in the coil [A]
-- `voltage_ext::Union{FT, Function}`: External applied voltage [V] (for powered coils, 0 for passive)
+- `voltage_applied::Union{FT, Function}`: applied (source) voltage [V] (for powered coils, 0 for passive)
   Can be either a constant value or a function of time f(t) -> FT
 - `ψ_pla::FT`: The plasma's flux at the coil, ψ_pla(r_c) [Wb/rad], as the circuit last used it.
   The circuit's plasma term d/dt[2π ψ_pla(r_c)] is taken from this value, so a change of the
@@ -48,18 +48,18 @@ Represents a single toroidal current loop, which can be either a powered coil or
 
     # Mutable state
     current::FT = zero(FT)
-    voltage_ext::Union{FT, Function} = zero(FT)
+    voltage_applied::Union{FT, Function} = zero(FT)
     ψ_pla::FT = FT(NaN)
 
     # Inner constructor with validation
-    function Coil{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage = nothing, max_current = nothing, current = zero(FT), voltage_ext = zero(FT), ψ_pla = FT(NaN)) where {FT <: AbstractFloat}
+    function Coil{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage = nothing, max_current = nothing, current = zero(FT), voltage_applied = zero(FT), ψ_pla = FT(NaN)) where {FT <: AbstractFloat}
         @assert area > 0 "Coil area must be positive"
         @assert resistance >= 0 "Coil resistance must be non-negative"
         @assert self_inductance > 0 "Self-inductance must be positive: a toroidal loop always has some, and without it the coils' inductance matrix is indefinite"
         @assert location.r > 0 "R coordinate must be positive (toroidal geometry)"
         @assert !is_controllable || is_powered "Controllable coils must be powered (is_powered=true)"
 
-        new{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage, max_current, current, voltage_ext, ψ_pla)
+        new{FT}(location, area, resistance, self_inductance, is_powered, is_controllable, name, max_voltage, max_current, current, voltage_applied, ψ_pla)
     end
 end
 
@@ -69,12 +69,12 @@ function Coil(
         self_inductance::FT, is_powered::Bool, is_controllable::Bool, name::String,
         max_voltage::Union{FT, Nothing} = nothing,
         max_current::Union{FT, Nothing} = nothing,
-        current::FT = zero(FT), voltage_ext = zero(FT)
+        current::FT = zero(FT), voltage_applied = zero(FT)
     ) where {FT <: AbstractFloat}
     return Coil{FT}(;
         location, area, resistance, self_inductance,
         is_powered, is_controllable, name,
-        max_voltage, max_current, current, voltage_ext
+        max_voltage, max_current, current, voltage_applied
     )
 end
 
@@ -149,8 +149,8 @@ Enable convenient property setting for vectors of coils.
 
 Allows setting coil properties directly on vectors:
 - `coils.current = [100.0, 200.0, 300.0]` sets individual coil currents
-- `coils.voltage_ext = 500.0` sets all coils to the same voltage
-- `coils.voltage_ext = [100.0, 200.0, 300.0]` sets individual voltages
+- `coils.voltage_applied = 500.0` sets all coils to the same voltage
+- `coils.voltage_applied = [100.0, 200.0, 300.0]` sets individual voltages
 
 # Arguments
 - `coils::Vector{<:Coil}`: Vector of coils to modify
@@ -163,10 +163,10 @@ Allows setting coil properties directly on vectors:
 coils.current = [1000.0, 2000.0, 3000.0]
 
 # Set all coils to the same voltage
-coils.voltage_ext = 500.0
+coils.voltage_applied = 500.0
 
 # Set individual voltages
-coils.voltage_ext = [100.0, 200.0, 300.0]
+coils.voltage_applied = [100.0, 200.0, 300.0]
 ```
 """
 function Base.setproperty!(coils::Vector{<:Coil{<:AbstractFloat}}, sym::Symbol, values)
@@ -181,8 +181,8 @@ function Base.setproperty!(coils::Vector{<:Coil{<:AbstractFloat}}, sym::Symbol, 
     end
 
     # Check if the field is mutable (not in the immutable section)
-    # The mutable fields in Coil are: current, voltage_ext, ψ_pla
-    mutable_fields = (:current, :voltage_ext, :ψ_pla)
+    # The mutable fields in Coil are: current, voltage_applied, ψ_pla
+    mutable_fields = (:current, :voltage_applied, :ψ_pla)
     if sym ∉ mutable_fields
         throw(ArgumentError("Property $sym is not mutable. Only $(mutable_fields) can be set."))
     end
@@ -217,7 +217,7 @@ Note: Individual coil currents and voltages are stored in each Coil object.
 # Fields
 - `coils::Vector{Coil{FT}}`: Collection of all coils (powered and passive)
 - `n_total::Int`: Total number of coils
-- `n_powered::Int`: Number of powered coils (which has non-zero voltage_ext)
+- `n_powered::Int`: Number of powered coils (which has non-zero voltage_applied)
 - `n_controllable::Int`: Number of coils available for feedback control
 - `powered_indices::Vector{Int}`: Indices of powered coils in the coils vector
 - `controllable_indices::Vector{Int}`: Indices of controllable coils in the coils vector

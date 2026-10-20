@@ -10,8 +10,8 @@ Contains functions related to electromagnetic field calculations, including:
 """
 
 # Export public functions
-export update_external_fields!,
-    combine_external_and_self_fields!,
+export update_prescribed_fields!,
+    combine_field_sources!,
     calculate_magnetic_field_unit_vectors!,
     calculate_B_from_ψ!,
     calculate_B_from_ψ
@@ -69,41 +69,52 @@ end
 """
     calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Calculate the parallel electric field based on external and self-generated fields.
+Calculate the parallel electric field: the prescribed field's, the vertical-field control's,
+and the self-generated ones.
 """
 function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     F = RP.fields
-    # external parallel electric field: the prescribed one, and the vertical-field control's
+    # the prescribed field's parallel electric field, and the vertical-field control's
     control = _vertical_field_control_on(RP)
+    @. F.E_para_presc = F.Eϕ_presc * F.bϕ
     if control
-        @. F.E_para_ext = (F.Eϕ_ext + F.Eϕ_ctrl) * F.bϕ
-    else
-        @. F.E_para_ext = F.Eϕ_ext * F.bϕ
+        @. F.E_para_ctrl = F.Eϕ_ctrl * F.bϕ
     end
 
     # self parallel electric field, against the applied loop voltage
     if RP.flags.E_para_self_ES
         if control
-            @. F.E_para_self_ES = sign(-(F.Eϕ_ext + F.Eϕ_ctrl) * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+            @. F.E_para_self_ES = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
         else
-            @. F.E_para_self_ES = sign(-F.Eϕ_ext * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+            @. F.E_para_self_ES = sign(-F.Eϕ_presc * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
         end
     end
     if RP.flags.E_para_self_EM
         @. F.E_para_self_EM = F.Eϕ_coils_pla * F.bϕ
     end
 
-    # combine parallel electric fields
-    @. F.E_para_tot = F.E_para_ext + F.E_para_self_ES + F.E_para_self_EM
+    combine_E_para!(RP)
+    return RP
+end
 
+# E∥ total: the prescribed field's, the vertical-field control's (only in a run that has one), and
+# the self-generated ones
+function combine_E_para!(RP::RAPID)
+    F = RP.fields
+    if _vertical_field_control_on(RP)
+        @. F.E_para_tot = F.E_para_presc + F.E_para_ctrl + F.E_para_self_ES + F.E_para_self_EM
+    else
+        @. F.E_para_tot = F.E_para_presc + F.E_para_self_ES + F.E_para_self_EM
+    end
     return RP
 end
 
 """
-    update_external_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+    update_prescribed_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
 
-Update external electromagnetic fields based on the current simulation time or a specified time.
-This function handles interpolation from time series data and calculates derived external fields.
+Update the prescribed fields at the current simulation time or a specified time: interpolated
+from the external field source (field files) when there is one, left as set by the manual setup
+otherwise, and the toroidal electric field from the loop voltage.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance
@@ -112,35 +123,36 @@ This function handles interpolation from time series data and calculates derived
 # Returns
 - `RP::RAPID{FT}`: The updated RAPID instance
 """
-function update_external_fields!(RP::RAPID{FT}, time_s::FT = RP.time_s) where {FT <: AbstractFloat}
+function update_prescribed_fields!(RP::RAPID{FT}, time_s::FT = RP.time_s) where {FT <: AbstractFloat}
     F = RP.fields
 
-    # Use manual mode if no external field source is specified
+    # the manual setup's field stays as set; a field-file source is interpolated in time
     if !isnothing(RP.external_field)
-        # Get external fields at specified time
+        # the source's fields at the specified time
         extF = calculate_external_fields_at_time(RP.external_field, time_s)
 
         # Update field components
-        F.BR_ext .= extF.BR
-        F.BZ_ext .= extF.BZ
-        F.LV_ext .= extF.LV
-        F.ψ_ext .= extF.psi
+        F.BR_presc .= extF.BR
+        F.BZ_presc .= extF.BZ
+        F.LV_presc .= extF.LV
+        F.ψ_presc .= extF.psi
     end
 
     # Set toroidal magnetic field
     F.Bϕ = F.R0B0 ./ RP.G.R2D
 
     # Calculate toroidal electric field
-    F.Eϕ_ext .= F.LV_ext ./ (2π * RP.G.R2D)
+    F.Eϕ_presc .= F.LV_presc ./ (2π * RP.G.R2D)
 
     return RP
 end
 
 """
-    combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
+    combine_field_sources!(RP::RAPID{FT}, time_s::FT=RP.time_s) where {FT<:AbstractFloat}
 
-Combine external and self-generated electromagnetic fields and calculate derived field quantities.
-This function does NOT update the fields themselves, but assumes they are already updated separately.
+Sum the fields of each source, prescribed, coils and plasma (+ vertical-field control), and
+calculate derived field quantities. This function does NOT update the sources' fields themselves,
+but assumes they are already updated separately.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID simulation instance
@@ -150,18 +162,18 @@ This function does NOT update the fields themselves, but assumes they are alread
 - `RP::RAPID{FT}`: The updated RAPID instance with combined fields and derived quantities
 
 # Note
-External fields should be updated separately using `update_external_fields!` before calling this function.
-Self-generated fields should be updated using appropriate physics functions.
+The prescribed fields should be updated separately using `update_prescribed_fields!` before calling
+this function, and the coils' and plasma's fields by the Ampère solve.
 """
-function combine_external_and_self_fields!(RP::RAPID{FT}, time_s::FT = RP.time_s) where {FT <: AbstractFloat}
-    @timeit RAPID_TIMER "combine_external_and_self_fields!" begin
+function combine_field_sources!(RP::RAPID{FT}, time_s::FT = RP.time_s) where {FT <: AbstractFloat}
+    @timeit RAPID_TIMER "combine_field_sources!" begin
         F = RP.fields
 
-        # Combine external and self-generated fields
-        @. F.BR = F.BR_ext + F.BR_coils_pla
-        @. F.BZ = F.BZ_ext + F.BZ_coils_pla
-        @. F.Eϕ = F.Eϕ_ext + F.Eϕ_coils_pla
-        @. F.ψ = F.ψ_ext + F.ψ_coils_pla
+        # prescribed + coils and plasma
+        @. F.BR = F.BR_presc + F.BR_coils_pla
+        @. F.BZ = F.BZ_presc + F.BZ_coils_pla
+        @. F.Eϕ = F.Eϕ_presc + F.Eϕ_coils_pla
+        @. F.ψ = F.ψ_presc + F.ψ_coils_pla
         # the vertical-field control's vacuum field, only in a run that has one
         if _vertical_field_control_on(RP)
             F.BR .+= F.BR_ctrl
@@ -337,7 +349,12 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     # =========================================================================
     # Parallel electrostatic self-field component
     # E_para_self_ES = E_self_pol * (Bpol/Btot) * sign(direction)
-    E_pol_required_for_cancellation = @. abs(F.E_para_ext + RP.flags.E_para_self_EM * F.E_para_self_EM) * (F.Btot / F.Bpol)
+    EM = RP.flags.E_para_self_EM
+    E_pol_required_for_cancellation = if _vertical_field_control_on(RP)
+        @. abs(F.E_para_presc + F.E_para_ctrl + EM * F.E_para_self_EM) * (F.Btot / F.Bpol)
+    else
+        @. abs(F.E_para_presc + EM * F.E_para_self_EM) * (F.Btot / F.Bpol)
+    end
 
     ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
     # E_self_debye = @. sqrt(abs(pla.ne)*ee*pla.Te_eV/eps0)

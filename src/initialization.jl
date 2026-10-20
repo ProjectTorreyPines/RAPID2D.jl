@@ -152,8 +152,8 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     initialize_RRCs!(RP)
 
     # update E,B fields
-    update_external_fields!(RP)
-    combine_external_and_self_fields!(RP)
+    update_prescribed_fields!(RP)
+    combine_field_sources!(RP)
 
     # Measure field-line geometry BEFORE transport is first built: an unmeasured `flf`
     # reads as zero length and would cap D∥ at zero everywhere on step 0. The step-1
@@ -360,22 +360,22 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     # Electric field
     Eϕ = manual.Eϕ * mean(RP.G.R1D) ./ RP.G.R2D  # config.manual.Eϕ at the mean R
-    RP.fields.Eϕ_ext = Eϕ
-    RP.fields.LV_ext = Eϕ .* (2 * π * RP.G.R2D)
+    RP.fields.Eϕ_presc = Eϕ
+    RP.fields.LV_presc = Eϕ .* (2 * π * RP.G.R2D)
 
     # Parallel component of E
-    RP.fields.E_para_ext = Eϕ .* (RP.fields.Bϕ ./ RP.fields.Btot)
+    RP.fields.E_para_presc = Eϕ .* (RP.fields.Bϕ ./ RP.fields.Btot)
 
     # Initialize other field components
-    RP.fields.BR_ext = copy(RP.fields.BR)
-    RP.fields.BZ_ext = copy(RP.fields.BZ)
+    RP.fields.BR_presc = copy(RP.fields.BR)
+    RP.fields.BZ_presc = copy(RP.fields.BZ)
     # The flux of the uniform poloidal field (per radian): B_Z = (1/R)∂ψ/∂R gives B_Z R²/2. A
     # uniform B_R has no flux function in axisymmetry (∇·B = B_R/R ≠ 0); −B_R R Z reproduces B_R
     # and adds −B_R Z/R to B_Z. Contour tracing follows this ψ.
-    RP.fields.ψ_ext = @. manual.BZ * RP.G.R2D^2 / 2 - manual.BR * RP.G.R2D * RP.G.Z2D
+    RP.fields.ψ_presc = @. manual.BZ * RP.G.R2D^2 / 2 - manual.BR * RP.G.R2D * RP.G.Z2D
 
-    # Copy external fields to total fields initially
-    RP.fields.E_para_tot = copy(RP.fields.E_para_ext)
+    # the prescribed parallel field is the whole parallel field initially
+    RP.fields.E_para_tot = copy(RP.fields.E_para_presc)
 
 
     return RP

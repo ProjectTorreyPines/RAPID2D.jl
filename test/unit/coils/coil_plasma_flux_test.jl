@@ -36,7 +36,7 @@
             coil = Coil{Float64}(;
                 location = (r = rc, z = zc), area = π * 0.05^2, resistance = R,
                 self_inductance = μ0 * rc * (log(8rc / 0.05) - 7 / 4), is_powered = V != 0,
-                is_controllable = false, name, voltage_ext = V,
+                is_controllable = false, name, voltage_applied = V,
             )
             add_coil!(RP.coil_system, coil)
         end
@@ -182,7 +182,7 @@ end
         snaps = RP.diagnostics.snaps0D[(nsnap + 1):end]
         @test RP.coil_system.time_s ≈ RP.time_s
         @test length(snaps) == 2   # the resumed run's first snapshot, and the one at 100 µs
-        @test all(s.coils_V_ext[1] ≈ V(s.time_s) for s in snaps)
+        @test all(s.coils_V_applied[1] ≈ V(s.time_s) for s in snaps)
     end
 end
 

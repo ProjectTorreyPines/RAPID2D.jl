@@ -49,7 +49,7 @@
         L = RP.config.constants.μ0 * r * (log(8r / a) - 7 / 4)
         coil = Coil{Float64}(;
             location = (r = r, z = z), area = π * a^2, resistance = R, self_inductance = L,
-            is_powered = V != 0, is_controllable = false, name, current = I0, voltage_ext = V,
+            is_powered = V != 0, is_controllable = false, name, current = I0, voltage_applied = V,
         )
         add_coil!(RP.coil_system, coil)
         return L
@@ -283,9 +283,9 @@ end
     function decay(threshold)
         RP = column(; threshold, t_end = 3.5e-3)
         off = rp -> if rp.time_s >= 1.0e-3 - 1.0e-12
-            fill!(rp.fields.LV_ext, 0.0)
-            fill!(rp.fields.Eϕ_ext, 0.0)
-            fill!(rp.fields.E_para_ext, 0.0)
+            fill!(rp.fields.LV_presc, 0.0)
+            fill!(rp.fields.Eϕ_presc, 0.0)
+            fill!(rp.fields.E_para_presc, 0.0)
         end
         Ip = Float64[]
         run_quiet!(RP; before = off, after = rp -> push!(Ip, plasma_current(rp, current_density(rp))))
@@ -307,9 +307,9 @@ end
     add_loop!(RP, 1.2, 0.8)
     initialize_coil_system!(RP)
     off = rp -> if rp.time_s >= 1.0e-3 - 1.0e-12
-        fill!(rp.fields.LV_ext, 0.0)
-        fill!(rp.fields.Eϕ_ext, 0.0)
-        fill!(rp.fields.E_para_ext, 0.0)
+        fill!(rp.fields.LV_presc, 0.0)
+        fill!(rp.fields.Eϕ_presc, 0.0)
+        fill!(rp.fields.E_para_presc, 0.0)
     end
     Ip = Float64[]
     run_quiet!(RP; before = off, after = rp -> push!(Ip, plasma_current(rp, current_density(rp))))
@@ -572,18 +572,18 @@ end
     # step after crosses it. A run stopped at 10 µs and resumed steps as the whole run.
     function switched_on(t_end)
         RP = column(; n0 = 1.0e17, Te = 5.0, threshold = 1.0, t_end)
-        field = (LV = copy(RP.fields.LV_ext), Eϕ = copy(RP.fields.Eϕ_ext), Epara = copy(RP.fields.E_para_ext))
+        field = (LV = copy(RP.fields.LV_presc), Eϕ = copy(RP.fields.Eϕ_presc), Epara = copy(RP.fields.E_para_presc))
         return RP, field
     end
     function drive(field)
         return rp -> if rp.time_s < 15.0e-6 - 1.0e-12
-            fill!(rp.fields.LV_ext, 0.0)
-            fill!(rp.fields.Eϕ_ext, 0.0)
-            fill!(rp.fields.E_para_ext, 0.0)
+            fill!(rp.fields.LV_presc, 0.0)
+            fill!(rp.fields.Eϕ_presc, 0.0)
+            fill!(rp.fields.E_para_presc, 0.0)
         else
-            rp.fields.LV_ext .= field.LV
-            rp.fields.Eϕ_ext .= field.Eϕ
-            rp.fields.E_para_ext .= field.Epara
+            rp.fields.LV_presc .= field.LV
+            rp.fields.Eϕ_presc .= field.Eϕ
+            rp.fields.E_para_presc .= field.Epara
         end
     end
     whole, fw = switched_on(30.0e-6)

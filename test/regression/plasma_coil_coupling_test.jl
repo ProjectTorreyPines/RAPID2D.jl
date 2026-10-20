@@ -184,12 +184,12 @@
         # R = (me * νei) / (e² * ne) integrated over plasma volume
         RAPID2D.@unpack ee, me = RP.config.constants
         # Resistance by Coulomb collision
-        ue_sat_by_Eext = @. -ee * RP.fields.Eϕ_ext / (me * RP.plasma.ν_ei_eff)
+        ue_sat_by_Eext = @. -ee * RP.fields.Eϕ_presc / (me * RP.plasma.ν_ei_eff)
         ue_sat_by_Eext[.!isfinite.(ue_sat_by_Eext)] .= 0.0  # Avoid NaN
 
         # Estimate circuit parameters
         in_wall_nids = RP.G.nodes.in_wall_nids
-        LV_plasma = mean(RP.fields.LV_ext[in_wall_nids])
+        LV_plasma = mean(RP.fields.LV_presc[in_wall_nids])
         R_plasma = LV_plasma ./ sum(-ee * RP.plasma.ne[in_wall_nids] .* ue_sat_by_Eext[in_wall_nids] * RP.G.dR * RP.G.dZ)
 
         # Plasma geometry for inductance estimate
@@ -235,7 +235,7 @@
         coil = RP.coil_system.coils[1]
         L_coil = coil.self_inductance
         R_coil = coil.resistance
-        V_coil = coil.voltage_ext
+        V_coil = coil.voltage_applied
 
         # Extract plasma parameters (time-averaged for this simple analysis)
         L_plasma, R_plasma, LV_plasma = extract_plasma_circuit_parameters(RP; verbose)
@@ -596,8 +596,8 @@ end
     # Pure toroidal field with E0 = 0.0 — no external Eϕ imposed by this scenario.
     # NOTE: E0 = 0.0 does NOT mean undriven. `initialize!` above already installed the
     # manual-device default loop voltage (src/initialization.jl, set_RZ_B_E_manually!:
-    # 0.3 V/m); this helper overwrites Eϕ / Eϕ_ext / E_para_ext but NOT fields.LV_ext,
-    # and that surviving LV_ext is what drives the plasma loop. It is read back as V₂
+    # 0.3 V/m); this helper overwrites Eϕ / Eϕ_presc / E_para_presc but NOT fields.LV_presc,
+    # and that surviving LV_presc is what drives the plasma loop. It is read back as V₂
     # (and, via the saturated drift, as R_plasma) in extract_plasma_circuit_parameters.
     setup_toroidal_field!(RP; E0 = 0.0, verbose)
 

@@ -82,7 +82,7 @@ function run_coil_case(verbose::Bool)
 
 
     RAPID2D.solve_Ampere_equation!(RP)
-    combine_external_and_self_fields!(RP)
+    combine_field_sources!(RP)
     update_transport_quantities!(RP)
 
     if verbose
@@ -155,10 +155,10 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     # Zero poloidal field components
     fill!(RP.fields.BR, 0.0)
     fill!(RP.fields.BZ, 0.0)
-    fill!(RP.fields.BR_ext, 0.0)
-    fill!(RP.fields.BZ_ext, 0.0)
-    # and their flux: field-line following traces ψ = ψ_ext + ψ_coils_pla
-    fill!(RP.fields.ψ_ext, 0.0)
+    fill!(RP.fields.BR_presc, 0.0)
+    fill!(RP.fields.BZ_presc, 0.0)
+    # and their flux: field-line following traces ψ = ψ_presc + ψ_coils_pla
+    fill!(RP.fields.ψ_presc, 0.0)
     @. RP.fields.ψ = RP.fields.ψ_coils_pla
 
     # Set Jacobian for toroidal geometry
@@ -180,8 +180,8 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     E0 = 0.3  # V/m
     E0 = 0.0  # V/m
     @. RP.fields.Eϕ = E0 * $mean(RP.G.R1D) / RP.G.Jacob
-    @. RP.fields.Eϕ_ext = RP.fields.Eϕ
-    @. RP.fields.E_para_ext = RP.fields.Eϕ * RP.fields.bϕ
+    @. RP.fields.Eϕ_presc = RP.fields.Eϕ
+    @. RP.fields.E_para_presc = RP.fields.Eϕ * RP.fields.bϕ
 
     return if verbose
         println("  ✓ Magnetic field configuration set")

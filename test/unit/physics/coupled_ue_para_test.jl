@@ -62,7 +62,7 @@ end
         prepare_timestep!(b)
         u0 = copy(a.plasma.ue_para)
         solve_combined_momentum_Ampere_equations_with_coils!(a)
-        @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_coils_pla
+        @. b.fields.E_para_tot = b.fields.E_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
         update_ue_para!(b)
 
         Δu = a.plasma.ue_para .- u0
@@ -198,7 +198,7 @@ end
         u0, u_ref = copy(a.plasma.ue_para), reference(a)
         @test minimum(abs, u_ref[hole]) > 1.0e-3 * maximum(abs, u0)       # a reference other than 0
         solve_combined_momentum_Ampere_equations_with_coils!(a)
-        @. b.fields.E_para_tot = b.fields.E_para_ext + b.fields.bϕ * a.fields.Eϕ_coils_pla
+        @. b.fields.E_para_tot = b.fields.E_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
         update_ue_para!(b)
         Δu = a.plasma.ue_para .- u0
         @test maximum(abs, a.plasma.ue_para .- b.plasma.ue_para) <= 1.0e-12 * maximum(abs, Δu)

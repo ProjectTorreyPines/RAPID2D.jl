@@ -132,9 +132,9 @@ module RAPID2DPlotsExt
 
         @series begin
             subplot := 7
-            label := L"\mathrm{E_{ext}}" * label_postfix
+            label := L"\mathrm{E_{presc}}" * label_postfix
             linewidth := 2
-            times_ms, [s.Epara_ext for s in snaps0D]
+            times_ms, [s.Epara_presc for s in snaps0D]
         end
 
         @series begin

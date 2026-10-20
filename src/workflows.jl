@@ -77,7 +77,7 @@ function initialize_coupled_fields!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         solve_Ampere_equation!(RP; update_Eϕ_coils_pla = false)
         fill!(RP.fields.Eϕ_coils_pla, zero(FT))
         fill!(RP.fields.Eϕ_coils_pla_prev, zero(FT))
-        combine_external_and_self_fields!(RP)
+        combine_field_sources!(RP)
         update_Jϕ!(RP)   # bϕ has moved with the self field
     end
     return RP
@@ -87,7 +87,7 @@ end
     prepare_timestep!(RP)
 
 Set the inputs of the next step from the current state and time tⁿ, leaving the state itself
-unchanged: reset the per-step reaction counts, evaluate the external fields at `RP.time_s`,
+unchanged: reset the per-step reaction counts, evaluate the prescribed fields at `RP.time_s`,
 compute `Jϕ` from the densities and velocities, and, with `IdealVerticalFieldControl`, update
 the control field and combine the fields (`update_vertical_field_control!`).
 """
@@ -98,9 +98,9 @@ function prepare_timestep!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # ionization run outside `advance_timestep!` and must still see it.
         reset_reaction_counts!(RP)
 
-        # Update vacuum fields from external sources
-        @timeit RAPID_TIMER "external_fields" begin
-            update_external_fields!(RP)
+        # the prescribed fields at tⁿ
+        @timeit RAPID_TIMER "prescribed_fields" begin
+            update_prescribed_fields!(RP)
         end
 
         # Current calculations
@@ -210,7 +210,7 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
         # the coil currents' change over the step accepted above (a retried step restored them)
         RP.coil_system.ΔI_step = get_all_currents(RP.coil_system) .- I_coils_entry
 
-        combine_external_and_self_fields!(RP)
+        combine_field_sources!(RP)
 
         # Update electron density
         solve_electron_continuity_equation!(RP)
@@ -277,7 +277,7 @@ Handles time stepping, diagnostics output, and snapshot generation.
 - `controller`: optional `Controller` updated at the end of every step
 - `callback_before_step`: optional `f(RP)`, called on every step between
   `prepare_timestep!` and `solve_timestep!`: the state is at tⁿ and the step's inputs (the
-  reaction counts, the external fields at tⁿ, `Jϕ`) have just been set from it. Nothing
+  reaction counts, the prescribed fields at tⁿ, `Jϕ`) have just been set from it. Nothing
   resets them before the step solves, so what the callback writes to them is what the step
   uses. The step recomputes `Jϕ` once it has updated u∥.
 - `callback_after_step`: optional `f(RP)`, called at the end of every completed step, at

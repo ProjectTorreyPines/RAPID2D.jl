@@ -16,8 +16,8 @@
 
 include("common.jl")
 isempty(INPUT_PATH) && error("set RAPID_INPUT_PATH to the directory holding the device folders and *_First_Wall.dat")
-using RAPID2D: FieldLineGeometry, FieldLineFollowingResult, field_line_analysis!, update_external_fields!,
-    combine_external_and_self_fields!, MarchingSquaresTracer, CubicTracer, RK4Tracer, gradient, hessian
+using RAPID2D: FieldLineGeometry, FieldLineFollowingResult, field_line_analysis!, update_prescribed_fields!,
+    combine_field_sources!, MarchingSquaresTracer, CubicTracer, RK4Tracer, gradient, hessian
 
 name = "connection_length"
 out = output_dir(name)
@@ -64,8 +64,8 @@ for c in cases
     G = RP.G
     nids = G.nodes.in_wall_nids
     for t_ms in c.times_ms
-        update_external_fields!(RP, 1.0e-3 * t_ms)
-        combine_external_and_self_fields!(RP)
+        update_prescribed_fields!(RP, 1.0e-3 * t_ms)
+        combine_field_sources!(RP)
         g = FieldLineGeometry(RP; nodal_B = true)
         flf = map(tracers) do t
             f = field_line_analysis!(FieldLineFollowingResult{Float64}(G.NR, G.NZ), g, t)

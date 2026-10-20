@@ -145,8 +145,8 @@
         system = CoilSystem{FT}()
 
         # Add test coils
-        coil1 = pf_coil("PF1"; voltage_ext = 300.0)
-        coil2 = pf_coil("PF2"; z = -0.5, is_controllable = false, voltage_ext = 400.0)
+        coil1 = pf_coil("PF1"; voltage_applied = 300.0)
+        coil2 = pf_coil("PF2"; z = -0.5, is_controllable = false, voltage_applied = 400.0)
         coil3 = wall_coil("wall")
 
         add_coil!(system, coil1)
@@ -174,7 +174,7 @@
         new_controllable_voltages = [800.0]
         update_controllable_voltages!(system, new_controllable_voltages)
         @test get_controllable_voltages(system) == new_controllable_voltages
-        @test system.coils[2].voltage_ext == 700.0  # Non-controllable powered coil unchanged
+        @test system.coils[2].voltage_applied == 700.0  # Non-controllable powered coil unchanged
 
         # Test error handling for wrong vector sizes
         @test_throws ErrorException update_all_voltages!(system, [1.0])       # Wrong size
