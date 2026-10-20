@@ -96,3 +96,81 @@ point. Run it against any regenerated file:
 ```
 julia --project=. scripts/check_ion_rrc_tables.jl RRC_data/iRRCs_T_ud.h5
 ```
+
+## Rates of the species catalog
+
+`config.species` assembles a catalog of reactions and collisions (`src/reactions/hydrogen_network.jl`).
+Their rates come from the tables above and from fits.
+
+The fits are the Janev–Reiter Maxwellian rate coefficients of the EIRENE databases, section H.2,
+copied as printed; the code adds $\ln 10^{-6}$ to the first coefficient for m³/s:
+
+$$
+\ln \langle \sigma v \rangle \left[ \mathrm{cm^3/s} \right] = \sum_{n=0}^{8} b_n \left( \ln T \left[ \mathrm{eV} \right] \right)^n
+$$
+
+The source is `hydhel.tex` of the EIRENE repository (`Database/AMdata`, git f8f63fa0, 2026-04-15).
+HYDHEL prints each fit's lower bound; the upper bound, 10⁴ eV, is the one 2.1.8 prints. Outside
+its range a fit is frozen and its derivative is zero. `species_catalog_test.jl` checks the copied
+coefficients against the rate HYDHEL prints at each lower bound (6 %) and at each maximum (2 %).
+
+| label | reaction | rate | range [eV] | electron energy per event |
+|---|---|---|---|---|
+| `iz` | e + H2[0] → 2e + H2[1] | `K_iz` (E/p, Ē) | table | 15.426 eV (`iz_erg_eV`) |
+| `diz` | e + H2[0] → 2e + H[1] + H[0] | `K_diss_iz` (E/p, Ē) | table | 35 eV (`diss_iz_erg_eV`) |
+| `dex` | e + H2[0] → e + 2 H[0] | `K_diss_exc` (E/p, Ē) | table | power `Kerg_diss_exc` |
+| `izH0` | e + H[0] → 2e + H[1] | HYDHEL 2.1.5 (ground state) | 2 – 10⁴ | 13.598 eV |
+| `recH1` | e + H[1] → H[0] | HYDHEL 2.1.8 (into 1s only) | 0.1 – 10⁴ | captured electron |
+| `de2` | e + H2[1] → e + H[1] + H[0] | HYDHEL 2.2.12 | 0.2 – 10⁴ | 2.4 eV (H.1 threshold) |
+| `di2` | e + H2[1] → 2e + 2 H[1] | HYDHEL 2.2.11 | 3.16 – 10⁴ | 14.7 eV (H.1 threshold) |
+| `dr2` | e + H2[1] → 2 H[0] | HYDHEL 2.2.14 | 0.1 – 10⁴ | captured electron |
+| `h3` | H2[1] + H2[0] → H3[1] + H[0] | Langevin, polarizability of H₂ 0.8045 Å³ | — | — |
+| `dr3a` | e + H3[1] → H2[0] + H[0] | HYDHEL 2.2.15 × 0.25 | 0.1 – 10⁴ | captured electron |
+| `dr3b` | e + H3[1] → 3 H[0] | HYDHEL 2.2.15 × 0.75 | 0.1 – 10⁴ | captured electron |
+| `de3` | e + H3[1] → e + H[1] + 2 H[0] | HYDHEL 2.2.16 | 1.26 – 10⁴ | 14.0 eV (H.1 threshold) |
+
+| label | collision | rate | moment |
+|---|---|---|---|
+| `cxH` | H[1] on H[0] | HYDHEL 3.1.8 (vs. the proton temperature, H at rest; no range printed, 0.1 – 10⁴ used) | resonant charge exchange |
+| `elH2` | H2[1] on H2[0] | `iRRCs_T_ud.h5` `Elastic` | elastic, the fraction μ/mᵢ of the momentum |
+| `cxH2` | H2[1] on H2[0] | `iRRCs_T_ud.h5` `Charge_Exchange` | resonant charge exchange |
+
+A captured electron (a recombination) takes its kinetic energy out of the electron fluid. For
+Maxwellian electrons on a target at rest this follows from the rate itself, the H.8–H.2 relation
+of AMJUEL §1.3.8:
+
+$$
+\frac{\langle \sigma v E \rangle}{\langle \sigma v \rangle} = e T_e \left( \frac{3}{2} + \frac{d \ln K}{d \ln T_e} \right)
+$$
+
+For 2.2.14 it is 0.896 times the electron temperature, as AMJUEL's H.8 2.2.14 fit gives.
+
+H₃⁺ forms at the Langevin capture rate, which carries isotopes through the reduced mass μ:
+
+$$
+K = 2 \pi \sqrt{\frac{\alpha e^2}{4 \pi \varepsilon_0 \mu}}
+$$
+
+With the CRC Handbook polarizability of H₂ it is 2.09×10⁻⁹ cm³/s for H₂⁺ + H₂, near the measured
+2.1×10⁻⁹ cm³/s. H₃⁺ dissociative recombination branches 0.75 into 3H and 0.25 into H₂ + H (Datz
+et al., PRL 74, 896 (1995)).
+
+Electron-impact rates are shared by the isotopes (their vibrational dependence aside). The
+heavy-pair data are protium's and carry to another isotope at equal velocity, exact for resonant
+charge exchange and approximate for the elastic table:
+
+$$
+K(T) = K_\mathrm{H} \left( T \frac{\mu_\mathrm{H}}{\mu} \right)
+$$
+
+Data declared `ReferenceOnly` refuse another isotope until `config.rates` gives the rate.
+
+### Known gaps
+
+- `de2`, `di2`, `de3` charge the electrons the lowest threshold over v = 0…9. The mean loss is
+  larger: the vertical 1sσg → 2pσu transition of H₂⁺ at v = 0 is 11.8 eV. The fragments'
+  Franck–Condon energies are not in the catalog yet. Both belong with the energy ledger.
+- `izH0` has no excitation radiation of H(n ≥ 2), and `recH1` recombines into 1s alone, a lower
+  bound of the total. The collisional–radiative rates (AMJUEL H.4 and H.10, 2.1.5 and 2.1.8) are
+  the next step.
+- Collisions of H[1] on H2[0] and of H3[1] on H2[0] are not in the catalog yet.

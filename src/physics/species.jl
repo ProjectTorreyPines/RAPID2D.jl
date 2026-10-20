@@ -1,4 +1,5 @@
 export AbstractSpecies, NeutralSpecies, IonSpecies, Neutral, Ion, IonRecord, SpeciesKey, species_key
+export AbstractHydrogenIsotope, Protium, Deuterium, Tritium
 export IonTransportPolicy, SharedEffectiveTransport, PerSpeciesTransport
 
 # What a species is, and whether ion species share a transport equation.
@@ -94,6 +95,71 @@ charge(sp::Ion) = sp.z
 species_label(sp::AbstractSpecies) = Symbol(parent_name(sp.parent), "[", charge(sp), "]")
 
 """
+    Electron()
+
+The electron in a reaction's stoichiometry (`Particles.electron`): charge −1, no nuclei. Not a
+species: the electrons are the electron fluid, present in every run.
+"""
+struct Electron end
+
+charge(::Electron) = -1
+
+# ── the hydrogen of a run ───────────────────────────────────────────────────────────────
+
+"""
+    AbstractHydrogenIsotope
+
+The hydrogen of a run: [`Protium`](@ref) (the default), [`Deuterium`](@ref) or
+[`Tritium`](@ref). The hydrogen parents take their nucleus mass and display name from it;
+electron-impact rates are shared by the isotopes, and a heavy pair's rate follows the rule its
+data declare.
+"""
+abstract type AbstractHydrogenIsotope end
+struct Protium <: AbstractHydrogenIsotope end
+struct Deuterium <: AbstractHydrogenIsotope end
+struct Tritium <: AbstractHydrogenIsotope end
+
+isotope_symbol(::Protium) = "H"
+isotope_symbol(::Deuterium) = "D"
+isotope_symbol(::Tritium) = "T"
+
+"The isotope's nucleus mass [kg]."
+nucleus_mass(::Protium, c::PlasmaConstants) = c.mp
+nucleus_mass(::Deuterium, ::PlasmaConstants{FT}) where {FT} = FT(DEUTERON_MASS)
+nucleus_mass(::Tritium, ::PlasmaConstants{FT}) where {FT} = FT(TRITON_MASS)
+
+"The parents made of hydrogen alone: their mass and name follow the run's isotope."
+const HydrogenParent = Union{Hydrogen, H2Molecule, H3Molecule}
+
+hydrogen_nuclei(p::HydrogenParent) = last(only(composition(p)))
+
+"""
+    neutral_mass(parent, isotope, constants) -> kg
+
+The neutral parent's mass, its nuclei and electrons (binding energy neglected); an ion's is z
+electron masses less ([`species_mass`](@ref)). Every parent defines it: the hydrogen parents
+take the nucleus from the isotope, other parents ignore the isotope.
+"""
+function neutral_mass end
+neutral_mass(p::HydrogenParent, iso::AbstractHydrogenIsotope, c::PlasmaConstants) =
+    hydrogen_nuclei(p) * (nucleus_mass(iso, c) + c.me)
+
+"A species' mass [kg] in a run of hydrogen `iso`."
+species_mass(sp::Neutral, iso::AbstractHydrogenIsotope, c::PlasmaConstants) = neutral_mass(sp.parent, iso, c)
+species_mass(sp::Ion, iso::AbstractHydrogenIsotope, c::PlasmaConstants) = neutral_mass(sp.parent, iso, c) - sp.z * c.me
+
+"The parent's name in a run of hydrogen `iso`: `D2` for `H2` in deuterium."
+parent_name(p::AbstractParent, ::AbstractHydrogenIsotope) = parent_name(p)
+function parent_name(p::HydrogenParent, iso::AbstractHydrogenIsotope)
+    n = hydrogen_nuclei(p)
+    return n == 1 ? isotope_symbol(iso) : string(isotope_symbol(iso), n)
+end
+
+"The display label in a run of hydrogen `iso`: `D2[1]` for `H2[1]` in deuterium."
+species_label(sp::AbstractSpecies, iso::AbstractHydrogenIsotope) =
+    Symbol(parent_name(sp.parent, iso), "[", charge(sp), "]")
+
+"""
     SpeciesKey(composition, charge)
 
 A species' identity: its nuclei by element and its charge. Reaction tables and source
@@ -148,13 +214,14 @@ IonRecord(label::Symbol, mass::Real, charge::Integer) = IonRecord{float(typeof(m
     RAPID2D.Particles
 
 The parent particles by their usual names, `H`, `H2`, `H3`, for writing species as
-`H2[1]`. Not exported: `using RAPID2D.Particles: H, H2`.
+`H2[1]`, and the `electron` of a reaction. Not exported: `using RAPID2D.Particles: H, H2`.
 """
 module Particles
-    import ..RAPID2D: Hydrogen, H2Molecule, H3Molecule
+    import ..RAPID2D: Hydrogen, H2Molecule, H3Molecule, Electron
     const H = Hydrogen()
     const H2 = H2Molecule()
     const H3 = H3Molecule()
+    const electron = Electron()
 end
 
 # The two charge averages a species MIXTURE needs — Z̄ = Σn_z Z_z/Σn_z per ion and

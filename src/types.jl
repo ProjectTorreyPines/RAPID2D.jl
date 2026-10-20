@@ -126,6 +126,12 @@ Contains simulation configuration parameters.
     # Wall geometry
     wall_R::Vector{FT} = Vector{FT}()  # Radial coordinates of wall points
     wall_Z::Vector{FT} = Vector{FT}()  # Vertical coordinates of wall points
+
+    # Species: a list such as `(H2[0], H[0], H2[1], H[1])` (`using RAPID2D.Particles: H, H2`),
+    # assembled by `initialize!` into `RP.species`; `nothing` for none
+    species::Union{Nothing, Tuple} = nothing
+    hydrogen::AbstractHydrogenIsotope = Protium()   # the hydrogen isotope of the species
+    rates::Tuple = ()                               # `label => rate model` pairs replacing the catalog's
 end
 
 """
@@ -1670,6 +1676,8 @@ mutable struct RAPID{FT <: AbstractFloat}
 
     vertical_field_control::VerticalFieldControlState{FT}  # the vertical-field control's coefficients and ledger
 
+    species::Union{Nothing, SpeciesSystem}  # the species of `config.species` and their reactions; `nothing` without
+
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT <: AbstractFloat}
         # Get grid dimensions
@@ -1723,6 +1731,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             snap0D_path, snap2D_path,
             coil_system,
             VerticalFieldControlState{FT}(),
+            nothing,  # species, assembled by initialize!
         )
     end
 end

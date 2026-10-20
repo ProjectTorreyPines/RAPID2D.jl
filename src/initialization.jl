@@ -170,6 +170,7 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     initialize_diagnostics!(RP)
     initialize_snapshots_IO!(RP)
+    initialize_species!(RP)
 
     initialize_coil_system!(RP)
     refuse_unsupported_vertical_field_control(RP)
@@ -702,6 +703,31 @@ function initialize_snapshots_IO!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # creating the file if it is not there.
     moved = archive_snapshot_files(RP.snap0D_path, RP.snap2D_path)
     isempty(moved) || @info "Previous snapshot files moved aside" moved
+    return RP
+end
+
+"""
+    initialize_species!(RP) -> RP
+
+Assemble `config.species` into `RP.species` ([`assemble_species_system`](@ref)) and write the
+assembly report next to the snapshots, `<prefix>species.txt`; its warnings go to the log too.
+Without a species list `RP.species` is `nothing`.
+"""
+function initialize_species!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    config = RP.config
+    if isnothing(config.species)
+        RP.species = nothing
+        return RP
+    end
+    sys = assemble_species_system(config.species, config.hydrogen, config.constants, RP.eRRCs, RP.iRRCs; rates = config.rates)
+    RP.species = sys
+    path = joinpath(abspath(config.Output_path), config.Output_prefix) * "species.txt"
+    mkpath(dirname(path))
+    write(path, species_report(sys))
+    reg = sys.registry
+    @info "Species: $(length(reg.ions)) ions, $(length(reg.neutrals)) neutrals, " *
+        "$(length(sys.reactions)) reactions, $(length(sys.collisions)) collisions" report = path
+    foreach(w -> @warn("Species: $w"), sys.report.warnings)
     return RP
 end
 

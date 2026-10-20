@@ -23,6 +23,12 @@ const KB_J_PER_K = 1.380649e-23
 "CODATA Boltzmann constant [eV/K]."
 const KB_EV_PER_K = 8.617333262e-5
 
+"CODATA 2018 deuteron mass [kg]."
+const DEUTERON_MASS = 3.3435837724e-27
+
+"CODATA 2018 triton mass [kg]."
+const TRITON_MASS = 5.0073567446e-27
+
 """
     PlasmaConstants{FT<:AbstractFloat}
 
