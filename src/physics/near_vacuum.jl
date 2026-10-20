@@ -202,6 +202,7 @@ function correct_negative_densities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 end
                 # `ni` is the first species' density
                 isempty(Ntracker.cum0D_Ni_loss_s) || (Ntracker.cum0D_Ni_loss_s[1] += removed_total)
+                update_charge_states!(RP)
             end
         end
 

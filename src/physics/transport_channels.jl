@@ -413,7 +413,9 @@ Population-weighted mean of channels describing the **same** mechanism carried b
 
 Contrast [`total_tensor`](@ref), which *sums*. Summing is for independent arrival
 paths of one population; averaging is for one path shared by several populations,
-where the result must reproduce the mixture's total flux, not several times it.
+where the result must carry the mixture's total flux, not several times it. It
+does so exactly where the species share one composition profile: the mixture
+drops the composition-gradient part of Σ Dₛ∇nₛ, a closure of the shared operator.
 
 Two quantities are averaged, each because a flux is linear in it:
 
@@ -426,10 +428,11 @@ and the step follows as `λ = 2D/v`. Averaging `λ` directly instead would conse
 neither. `weights` are per-node densities; only their **ratio** matters, so the
 mixture does not drift as a discharge climbs nine orders in density.
 
-Where every weight vanishes the unweighted mean is used. Such a node is empty
+Where every weight vanishes the unweighted mean over the species present somewhere
+(a positive weight sum) is used, over all of them if none is. Such a node is empty
 *now* and is exactly where material is about to arrive, so a `0/0` — or a
 `D = 0`, which would be an artificial barrier at the plasma edge — must not be
-what the operator sees there.
+what the operator sees there, and a species with no inventory must not shape it.
 
 Channels that are the same object are returned as that object: a mass- and
 charge-free mechanism is genuinely shared, and this makes it free and exact
@@ -463,10 +466,12 @@ function mixture_channel(
     all(ch -> ch === first(channels), channels) && return first(channels)
 
     FT = eltype(first(channels).v_para)
-    ns = FT(length(channels))
+    present = [sum(w) > zero(FT) for w in weights]
+    any(present) || fill!(present, true)
+    n_present = FT(count(present))   # outside `@.`, which would dot `count` over the species
     Σw = sum(weights)
     empty = Σw .<= zero(FT)
-    norm = @. ifelse(empty, ns, Σw)
+    norm = @. ifelse(empty, n_present, Σw)
 
     v_para = zeros(FT, sz)
     v_perp = zeros(FT, sz)
@@ -478,8 +483,8 @@ function mixture_channel(
     # makes the mixture exact at b_n = 0 and 1.
     vm_para = zeros(FT, sz)
     vm_perp = zeros(FT, sz)
-    for (ch, w) in zip(channels, weights)
-        w̃ = @. ifelse(empty, one(FT), FT(w))
+    for (ch, w, at_empty) in zip(channels, weights, present)
+        w̃ = @. ifelse(empty, ifelse(at_empty, one(FT), zero(FT)), FT(w))
         @. v_para += w̃ * ch.v_para
         @. v_perp += w̃ * ch.v_perp
         @. vm_para += w̃ * ch.vm_para

@@ -93,15 +93,14 @@ end
 
 @testitem "Closed-surface block: Ampère's law holds for the constrained current" setup = [ClosedSurfaceRun] tags = [:physics] begin
     using RAPID2D: initialize_coupled_fields!, prepare_timestep!, solve_combined_momentum_Ampere_equations_with_coils!,
-        uψ_coupling_terms, bulk_ion_charge, BlockConstraint, PostProjection
-    # the interior rows of the coupled block's ψ equation, ΔGS ψ + c_ψu u∥ = −μ0 R n_i e Z u_i∥ bϕ
+        uψ_coupling_terms, BlockConstraint, PostProjection
+    # the interior rows of the coupled block's ψ equation, ΔGS ψ + c_ψu u∥ = −μ0 R e Σ zₛ nₛ u_i∥ bϕ
     # (no coils in the grid), with the u∥ the step keeps
     function ampere_residual(RP)
         G, pla, F = RP.G, RP.plasma, RP.fields
         ee, μ0 = RP.config.constants.ee, RP.config.constants.μ0
-        Zi = bulk_ion_charge(RP)
         _, c_ψu = uψ_coupling_terms(RP)
-        ions = vec(@. -μ0 * G.R2D * pla.ni * ee * Zi * pla.ui_para * F.bϕ)
+        ions = vec(@. -μ0 * G.R2D * pla.Zni_sum * ee * pla.ui_para * F.bϕ)
         res = RP.operators.ΔGS.matrix * vec(F.ψ_coils_pla) .+ c_ψu .* vec(pla.ue_para) .- ions
         res[G.BDY_idx] .= 0
         return maximum(abs, res) / maximum(abs, c_ψu .* vec(pla.ue_para))

@@ -445,12 +445,17 @@ Contains the plasma state variables including density, temperature, and velocity
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
 
-    # Effective charge, written by `update_charge_states!` and read by `sptz_fac`.
-    # With ONE ion species it equals that species' charge state everywhere, so it
-    # carries no information the species does not — it is a field because the
-    # multi-species form Σ n_z Z_z²/n_e genuinely varies in space, and this is the
-    # seam that form returns through. Nothing else may stand in for the charge
-    # state: use `bulk_ion_charge(RP)`, which cannot go stale.
+    # The ion species summed node by node (`update_charge_states!`): Σ nₛ, Σ zₛ nₛ (the
+    # charge the current and quasineutrality see), Σ zₛ² nₛ (what electrons scatter on),
+    # Σ mₛ nₛ [kg/m³], the mean ion mass Σ (nₛ/Σn) mₛ [kg] and the composition
+    # Zeff = Σ zₛ² nₛ / Σ zₛ nₛ (Spitzer). Where there are no ions the means are the first
+    # species' values; with one species every one is that species' density times 1, z, z², m,
+    # its mass and its charge.
+    ni_sum::Matrix{FT} = zeros(FT, dims)
+    Zni_sum::Matrix{FT} = zeros(FT, dims)
+    Z2ni_sum::Matrix{FT} = zeros(FT, dims)
+    mni_sum::Matrix{FT} = zeros(FT, dims)
+    mi_mean::Matrix{FT} = zeros(FT, dims)
     Zeff::Matrix{FT} = ones(FT, dims)
     # Current densities
     Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
@@ -603,6 +608,10 @@ Fields include diffusion coefficients in different directions.
     # half carries Z², a charge-exchange or elastic hit on H₂ does not.
     νi_neutral::Matrix{FT} = zeros(FT, dims)  # ion-neutral part of νi_eff [1/s]
     νi_coulomb::Matrix{FT} = zeros(FT, dims)  # ion-ion part of νi_eff [1/s]
+    # the mean ion `νi_coulomb` is the self-collision rate of, as at the refresh: its mass [kg]
+    # and its mean squared charge, which every species' Coulomb channel is scaled against
+    νi_coulomb_mass::Matrix{FT} = zeros(FT, dims)
+    νi_coulomb_Z2::Matrix{FT} = ones(FT, dims)
 
     # Ion transport. The species axis is present from the start so that H⁺, H₃⁺ and
     # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as

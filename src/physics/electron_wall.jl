@@ -16,11 +16,10 @@ with `D∥ = tp.Dpara` reproduces the tensor's parallel diffusivity exactly (λ 
 function electron_wall_channels(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, tp, F = RP.plasma, RP.transport, RP.fields
     me = RP.config.constants.me
-    mi = bulk_ion_mass(RP)
     vp_e = maxwellian_most_probable_speed.(pla.Te_eV, me)
     chans = Any[
         (parallel_collisional_channel(vp_e, tp.Dpara), F.bR, F.bZ),
-        (bohm_channel(pla.Te_eV, F.Bϕ, mi, 1), F.bR, F.bZ),
+        (bohm_channel(pla.Te_eV, F.Bϕ, pla.mi_mean, 1), F.bR, F.bZ),   # the mean ion mass
     ]
     turb = shared_turbulent_channel(RP)
     isnothing(turb) || push!(chans, (turb, F.bpol_R, F.bpol_Z))

@@ -653,6 +653,7 @@ function initialize_density!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     # Ion density matches electron for now
     RP.plasma.ni .= copy(RP.plasma.ne)
+    update_charge_states!(RP)
 
     return RP
 end
@@ -761,28 +762,23 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
 
     # Constants needed for calculation
     @unpack me, mp, ee, eps0 = RP.config.constants
-    # From the declared species, not `constants.mi`: `ion_transport_channels`
-    # scales every ion diffusivity from `ν_ii`, and it does so with `species.mass`.
-    # Reading a different mass here would make the two describe different ions.
-    mi = bulk_ion_mass(RP)
 
-    μ = mi / mp  # ion mass / proton mass
-    me_over_mi = me / mi  # electron to ion mass ratio
-
-    # Every Z below is the CHARGE STATE of the bulk ion, which is what NRL's
-    # p.28 rates and p.34 logarithms carry. It used to be read from `plasma.Zeff`,
-    # and that was right only because a single hydrogen species makes the charge
-    # state, the mean charge and the effective charge all equal 1. `Zeff` is now
-    # the per-electron average alone (`update_charge_states!`) and is consumed
-    # below by the Spitzer factor and by nothing else in this function.
-    Z_i = FT(bulk_ion_charge(RP))
+    # The ions as one mixture, node by node (`update_charge_states!`): electrons scatter on
+    # Σ zₛ² nₛ and see the composition charge `Zeff`, and `ν_ii` is the self-collision rate of
+    # the mixture's mean ion (mean mass `mi_mean`, mean squared charge, density Σ nₛ), the
+    # reference `ion_transport_channels` scales every species' Coulomb channel from. With one
+    # species these are its charge state, mass and density, as NRL's p.28 rates and p.34
+    # logarithms carry them.
+    update_charge_states!(RP)
+    Z2_mean = ion_mean!(similar(pla.ni), RP, (z, m) -> z^2)
+    μ = @. pla.mi_mean / mp  # ion mass / proton mass
 
     # Calculate temperature ratio threshold
-    Ti_mass_ratio = pla.Ti_eV * me_over_mi
+    Ti_mass_ratio = @. pla.Ti_eV * (me / pla.mi_mean)
 
     # Create index masks for different temperature regimes
     idx1 = @. (pla.Te_eV < Ti_mass_ratio)  # very low Te case
-    idx2 = @. (!idx1 & (pla.Te_eV > 10 * Z_i^2))  # normal Te case
+    idx2 = @. (!idx1 & (pla.Te_eV > 10 * pla.Zeff^2))  # normal Te case
     idx3 = @. (!idx1 & !idx2)  # low Te case
 
     # Calculate Coulomb logarithm based on different regimes
@@ -792,13 +788,14 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # a negative Float64 THROWS rather than returning NaN or a Complex, so the guard
     # could never fire. A continuity solve is free to land at n = -1e-55, and that
     # took down a whole run.
+    # (one species' Z² √nᵢ is Z·√(Z² nᵢ): the charge scattered on, times the screening density)
     @. pla.lnΛ[idx1] = 16.0 - log(
-        sqrt(max(zero(FT), pla.ni[idx1] * 1.0e-6)) *
+        sqrt(max(zero(FT), pla.Z2ni_sum[idx1] * 1.0e-6)) *
             (pla.Ti_eV[idx1])^(-1.5) *
-            Z_i^2 * μ
+            pla.Zeff[idx1] * μ[idx1]
     )
 
-    # Normal Te case (Te_eV > 10*Z_i^2)
+    # Normal Te case (Te_eV > 10*Zeff^2)
     @. pla.lnΛ[idx2] = 24.0 - log(
         sqrt(max(zero(FT), pla.ne[idx2] * 1.0e-6)) /
             pla.Te_eV[idx2]
@@ -807,7 +804,7 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # Low Te case
     @. pla.lnΛ[idx3] = 23.0 - log(
         sqrt(max(zero(FT), pla.ne[idx3] * 1.0e-6)) *
-            Z_i *
+            pla.Zeff[idx3] *
             (pla.Te_eV[idx3])^(-1.5)
     )
 
@@ -818,7 +815,7 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # Update collision frequency
     # ν_ei = n_e e^4 lnΛ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)
     ν_factor_Maxwellian = FT(1.863033936542749e-40)  # sqrt(2)*ee^4/(12π^(1.5)*ϵ0^2*sqrt(me))
-    @. pla.ν_ei = ν_factor_Maxwellian * Z_i^2 * pla.ni *
+    @. pla.ν_ei = ν_factor_Maxwellian * pla.Z2ni_sum *
         pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
 
     # Another way (NRL formula):
@@ -830,8 +827,8 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # inside a log, worth tens of percent whenever the electrons run hot. Every
     # per-species ion diffusivity is scaled from this one rate
     # (`ion_transport_channels`), so the error propagated to all of them.
-    pla.lnΛ_ii .= ion_ion_coulomb_log.(pla.ni, pla.Ti_eV, Z_i, μ)
-    @. pla.ν_ii = 4.8e-8 * Z_i^4 * (mi / mp)^(-0.5) * pla.ni * 1.0e-6 * pla.lnΛ_ii * pla.Ti_eV^(-1.5)
+    pla.lnΛ_ii .= ion_ion_coulomb_log.(pla.ni_sum, pla.Ti_eV, sqrt.(Z2_mean), μ)
+    @. pla.ν_ii = 4.8e-8 * Z2_mean^2 * (pla.mi_mean / mp)^(-0.5) * pla.ni_sum * 1.0e-6 * pla.lnΛ_ii * pla.Ti_eV^(-1.5)
 
     # # From lecture note (CH2_Fundamentals) of Prof. Hong
     # τ_ei = @.  (6.0 * sqrt(3.0)*π * eps0^2/ ee^4) * (sqrt(me)* (ee*pla.Te_eV)^(1.5)) / (pla.Zeff^4 * pla.ni * pla.lnΛ)
@@ -843,8 +840,8 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     @. pla.ν_ii[!isfinite(pla.ν_ii)] = zero(FT)
 
 
-    # The one genuine Z_eff consumer in this function: Spitzer resistivity is a
-    # single-fluid closure, so it wants the per-ELECTRON average Σn_zZ_z²/n_e.
+    # Spitzer resistivity is a single-fluid closure, so it takes the composition
+    # Zeff = Σ zₛ² nₛ / Σ zₛ nₛ.
     Zeff = pla.Zeff
     @. pla.sptz_fac = (1 + 1.198 * Zeff + 0.222 * Zeff^2) / (1 + 2.966 * Zeff + 0.753 * Zeff^2)
     # Set Spitzer factor to 0.51 for Zeff=1

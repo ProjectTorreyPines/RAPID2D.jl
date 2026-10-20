@@ -2010,7 +2010,6 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # Physical constants
         @unpack ee, me, μ0, qe = RP.config.constants
-        Z_i = FT(bulk_ion_charge(RP))   # scalar: `@.` would call it per element
 
         # u∥'s θ-weights, as in update_ue_para!: θu on the friction and its ledger, θ_op on the
         # nonlocal operators (advection, diffusion), 0 when Implicit = false
@@ -2072,7 +2071,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         flags.Include_ud_diffu_term && add_scaled!(A_u, -dt * θ_op, pops.A_diffu)
 
         # Toroidal current density Jϕ @ t=(n-th step)
-        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.Zni_sum * ee * pla.ui_para) * F.bϕ
 
         # Predicted ψ: the step's mean induced field extrapolated linearly, 2 E(n) − E(n−1). Its
         # boundary values start the outer iteration.
@@ -2110,7 +2109,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         sol = Vector{FT}(undef, sys === nothing ? 2N : size(sys.matrix, 1))
         RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde + ifelse(relax_weight > 0, relax_weight * ue_ref, zero(FT)))   # the same for every iteration
         sys === nothing || (RHS_u[ct.cu] .+= ct.ionization)
-        RHS_ψ_ions = @. -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
+        RHS_ψ_ions = @. -μ0 * G.R2D * pla.Zni_sum * ee * pla.ui_para * F.bϕ
         RHS_ψ = similar(RHS_ψ_ions)
 
         # The outer unknowns x = (boundary flux, coil currents), mixed as the docstring says. The
@@ -2150,7 +2149,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             sys === nothing || (Γ_over_B_k .= view(sol, (2N + 1):length(sol)) ./ sys.scale)
 
             # the circuits and the boundary flux of that current
-            @. Jϕ_k = (qe * pla.ne * ue_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+            @. Jϕ_k = (qe * pla.ne * ue_k + pla.Zni_sum * ee * pla.ui_para) * F.bϕ
             if Nc > 0
                 Φ_k .= plasma_flux_at_coils(csys, G, Jϕ_k)
                 I_k .= csys.inv_A_LR_circuit * (circuit_rhs_n .- 2π .* (Φ_k .- ψ_pla_coils_n))
@@ -2340,13 +2339,12 @@ function update_uMHD_by_global_JxB_force!(RP::RAPID{FT}) where {FT <: AbstractFl
     if !isempty(RP.flf.closed_surface_nids)
 
         @unpack me = RP.config.constants
-        mi = bulk_ion_mass(RP)   # the declared species, as transport uses
         nids = vcat(RP.G.nodes.on_wall_nids, RP.G.nodes.in_wall_nids)
         pla = RP.plasma
         F = RP.fields
 
-        # Calculate total plasma mass by integrating over volume
-        sum_plasma_mass = sum(@. (mi * pla.ni[nids] + me * pla.ne[nids]) * RP.G.inVol2D[nids])
+        # Calculate total plasma mass by integrating over volume (the ions' Σ mₛ nₛ)
+        sum_plasma_mass = sum(@. (pla.mni_sum[nids] + me * pla.ne[nids]) * RP.G.inVol2D[nids])
         sum_JxB_R = sum(@. pla.Jϕ[nids] * F.BZ[nids] * RP.G.inVol2D[nids])
         sum_JxB_Z = sum(@. -pla.Jϕ[nids] * F.BR[nids] * RP.G.inVol2D[nids])
 
