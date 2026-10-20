@@ -86,6 +86,7 @@ include("reactions/rate_models.jl")   # rate coefficients by model (a table or a
 include("reactions/energy_models.jl")   # what a reaction does to the electrons' energy: per event, per unit time
 include("reactions/reaction_catalog.jl")   # reactions and collisions among a run's species, and their assembly
 include("reactions/hydrogen_network.jl")   # the hydrogen reactions and collisions, with the sources of their rates
+include("reactions/local_network.jl")   # the reactions the electron solve does not count, solved cell by cell in blocks
 
 # Include simulation workflows
 include("step_transaction.jl")   # a step as a transaction: the state it writes, put back when an attempt is rejected
