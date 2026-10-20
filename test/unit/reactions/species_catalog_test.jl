@@ -12,9 +12,9 @@
     reaction_labels(sys) = Set(a.reaction.label for a in sys.reactions)
     collision_labels(sys) = Set(a.collision.label for a in sys.collisions)
 
-    # the default list: eight reactions, the H₃⁺ ones off for lack of H3[1], nothing to warn of
+    # the default list: nine reactions, the H₃⁺ ones off for lack of H3[1], nothing to warn of
     default = assemble((H2[0], H[0], H2[1], H[1]))
-    @test reaction_labels(default) == Set([:iz, :diz, :dex, :de2, :di2, :dr2, :izH0, :recH1])
+    @test reaction_labels(default) == Set([:iz, :diz, :dex, :de2, :de2b, :di2, :dr2, :izH0, :recH1])
     @test collision_labels(default) == Set([:cxH, :elH2, :cxH2])
     @test default.report.inactive == [label => [Symbol("H3[1]")] for label in (:h3, :dr3a, :dr3b, :de3)]
     @test isempty(default.report.warnings)
@@ -124,7 +124,7 @@ end
     T = [0.5, 3.0, 10.0, 100.0]
     electron_ctx = ElectronDriftContext(T, zeros(4))
     for (a, b) in zip(hydrogen.reactions, deuterium.reactions)
-        a.reaction.label in (:de2, :di2, :dr2, :dr3a, :dr3b, :de3, :izH0, :recH1) || continue
+        a.reaction.label in (:de2, :de2b, :di2, :dr2, :dr3a, :dr3b, :de3, :izH0, :recH1) || continue
         @test rate_coefficient(a.rate, electron_ctx) == rate_coefficient(b.rate, electron_ctx)
     end
 
@@ -159,7 +159,7 @@ end
     RAPID2D.composition(::ToyElement) = (:X => 1,)
     RAPID2D.parent_name(::ToyElement) = "X"
     RAPID2D.neutral_mass(::ToyElement, ::RAPID2D.AbstractHydrogenIsotope, constants::RAPID2D.PlasmaConstants) = 20 * constants.mp
-    RAPID2D.ladder_rates(::ToyElement, ::Type{FT}) where {FT} = LadderRates(
+    RAPID2D.ladder_rates(::ToyElement, ::RAPID2D.RateClosure, ::Type{FT}) where {FT} = LadderRates(
         (ConstantRate(FT(1.0e-14)), ConstantRate(FT(2.0e-15))), (ConstantRate(FT(3.0e-19)), ConstantRate(FT(4.0e-19))),
         (FT(7.0), FT(15.0)), ("toy ionization", "toy recombination"),
     )
@@ -187,6 +187,47 @@ end
     )
 end
 
+@testitem "A process takes its rate from the first closure it has data in; a new closure or process is a method" begin
+    using RAPID2D: assemble_species_system, load_electron_RRCs, load_H2_Ion_RRCs, PlasmaConstants, ReactionProcess,
+        RateClosure, KineticClosure, MaxwellianClosure, RateSources, RateData, SameForIsotopes, ConstantRate,
+        EventEnergy, LocalNetwork, species_report
+    using RAPID2D.Particles: H, H2, electron
+
+    eRRCs, iRRCs, constants = load_electron_RRCs(), load_H2_Ion_RRCs(), PlasmaConstants{Float64}()
+    list = (H2[0], H[0], H2[1], H[1])
+    assemble(; kwargs...) = assemble_species_system(list, Protium(), constants, eRRCs, iRRCs; kwargs...)
+    entry(sys, label) = only(filter(a -> a.reaction.label === label, sys.reactions))
+
+    # electron impact on H₂ has the kinetic closure; the rest the Maxwellian one
+    sys = assemble()
+    @test all(entry(sys, label).closure === KineticClosure() for label in (:iz, :diz, :dex))
+    @test all(entry(sys, label).closure === MaxwellianClosure() for label in (:de2, :de2b, :di2, :dr2, :izH0, :recH1))
+    @test all(a.closure === MaxwellianClosure() for a in sys.collisions)
+    @test occursin("kinetic, eRRCs_EoverP_Erg.h5 K_iz", species_report(sys))
+
+    # a process from outside the package: a type and its methods, Maxwellian data only
+    struct ToyDissociation <: ReactionProcess end
+    RAPID2D.process_label(::ToyDissociation) = :toy
+    RAPID2D.stoichiometry(::ToyDissociation) = (electron => 1, H2[1] => 1) => (electron => 1, H[1] => 1, H[0] => 1)
+    RAPID2D.producer(::ToyDissociation) = LocalNetwork(implicit = H2[1])
+    RAPID2D.rate_data(::ToyDissociation, ::MaxwellianClosure, ::RateSources) = RateData(ConstantRate(1.0e-14), SameForIsotopes(), "toy fit")
+    RAPID2D.electron_energy(::ToyDissociation, ::RateClosure, sources::RateSources) = EventEnergy(5.0 * sources.constants.ee)
+    toy = entry(assemble(; processes = (ToyDissociation(),)), :toy)
+    @test toy.closure === MaxwellianClosure() && toy.rate === ConstantRate(1.0e-14)
+
+    # kinetic data for it, one more method: preferred from then on, unless the run prefers Maxwellian
+    RAPID2D.rate_data(::ToyDissociation, ::KineticClosure, ::RateSources) = RateData(ConstantRate(2.0e-14), SameForIsotopes(), "toy table")
+    toy = entry(assemble(; processes = (ToyDissociation(),)), :toy)
+    @test toy.closure === KineticClosure() && toy.rate === ConstantRate(2.0e-14) && toy.source == "toy table"
+    toy = entry(assemble(; processes = (ToyDissociation(),), closures = (MaxwellianClosure(), KineticClosure())), :toy)
+    @test toy.closure === MaxwellianClosure() && toy.rate === ConstantRate(1.0e-14)
+
+    # a closure no process has data in leaves the active ones without a rate: refused
+    struct NoDataClosure <: RateClosure end
+    @test_throws ArgumentError assemble(; closures = (NoDataClosure(),))
+    @test_throws ArgumentError assemble(; processes = (:toy,))
+end
+
 @testitem "The HYDHEL fits give the values the database prints, and a captured electron's energy" begin
     using RAPID2D: LogPolynomialRate, ElectronDriftContext, rate_coefficient, event_energy!,
         CapturedElectron, ConstantRate, PlasmaConstants
@@ -196,14 +237,14 @@ end
     # coefficient, weighted by (ln T)⁸, would miss them by orders of magnitude
     K_cgs(fit, T) = 1.0e6 * rate_coefficient(LogPolynomialRate(Float64, fit), ElectronDriftContext([T], [0.0]))[1]
     at_lower_bound = (
-        (R.HYDHEL_2_1_5, 2.0, 7.22e-12), (R.HYDHEL_2_2_11, 3.16, 5.23e-12), (R.HYDHEL_2_2_12, 0.2, 1.23e-12),
+        (R.HYDHEL_2_1_5, 2.0, 7.22e-12), (R.HYDHEL_2_2_11, 3.16, 5.23e-12), (R.HYDHEL_2_2_12, 0.2, 1.23e-12), (R.HYDHEL_2_2_13, 2.0, 5.03e-12),
         (R.HYDHEL_2_2_14, 0.1, 2.23e-7), (R.HYDHEL_2_2_15, 0.1, 1.05e-7), (R.HYDHEL_2_2_16, 1.26, 9.46e-13),
     )
     for (fit, T, printed) in at_lower_bound
         @test K_cgs(fit, T) ≈ printed rtol = 0.06
     end
     Ts = exp.(range(log(0.1), log(1.0e4); length = 4001))
-    for (fit, printed) in ((R.HYDHEL_2_1_5, 3.11e-8), (R.HYDHEL_2_2_11, 9.06e-9), (R.HYDHEL_2_2_12, 1.15e-7), (R.HYDHEL_2_2_16, 4.18e-7))
+    for (fit, printed) in ((R.HYDHEL_2_1_5, 3.11e-8), (R.HYDHEL_2_2_11, 9.06e-9), (R.HYDHEL_2_2_12, 1.15e-7), (R.HYDHEL_2_2_13, 1.77e-8), (R.HYDHEL_2_2_16, 4.18e-7))
         @test maximum(T -> K_cgs(fit, T), Ts) ≈ printed rtol = 0.02
     end
 

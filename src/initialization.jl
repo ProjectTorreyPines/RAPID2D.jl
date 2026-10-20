@@ -719,7 +719,10 @@ function initialize_species!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         RP.species = nothing
         return RP
     end
-    sys = assemble_species_system(config.species, config.hydrogen, config.constants, RP.eRRCs, RP.iRRCs; rates = config.rates)
+    sys = assemble_species_system(
+        config.species, config.hydrogen, config.constants, RP.eRRCs, RP.iRRCs;
+        closures = config.closures, processes = config.processes, rates = config.rates,
+    )
     RP.species = sys
     path = joinpath(abspath(config.Output_path), config.Output_prefix) * "species.txt"
     mkpath(dirname(path))

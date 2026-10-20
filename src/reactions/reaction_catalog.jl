@@ -1,6 +1,6 @@
 export Reaction, Collision, ElectronSolve, LocalNetwork, RateData, LangevinCapture
 export SameForIsotopes, EqualVelocity, ReferenceOnly, ResonantChargeExchange, ElasticScattering
-export LadderRates, ladder_rates
+export ReactionProcess, CollisionProcess, RateSources, LadderRates, ladder_rates
 
 # Reactions and collisions among species, and their assembly for a run: a reaction is active
 # when the run carries every species it involves, and its rate is resolved for the run's
@@ -236,6 +236,116 @@ end
 Collision(label::Symbol, ion::Ion, neutral::Neutral; rate, moment::CollisionMoment) =
     Collision(label, ion, neutral, rate, moment)
 
+# ── processes: a reaction as physics, its rate by closure ───────────────────────────────
+
+"""
+    ReactionProcess
+
+A reaction as physics, apart from where its rate comes from. Its label, stoichiometry and
+producer are methods of the process ([`process_label`](@ref), [`stoichiometry`](@ref),
+[`producer`](@ref)); its rate and its electrons' energy are methods of the process and a
+[`RateClosure`](@ref) ([`rate_data`](@ref), [`electron_energy`](@ref)). A new reaction is a type
+with these methods; a new source for an existing rate is a method for another closure, taken
+wherever `config.closures` prefers it.
+"""
+abstract type ReactionProcess end
+
+"""
+    CollisionProcess
+
+An ion–neutral collision as physics: [`process_label`](@ref), [`collision_pair`](@ref) and
+[`collision_moment`](@ref) are methods of the process, and its rate a method of
+[`rate_data`](@ref) for each closure it has data in.
+"""
+abstract type CollisionProcess end
+
+const Process = Union{ReactionProcess, CollisionProcess}
+
+"""
+    RateSources(eRRCs, iRRCs, constants)
+
+What the data methods of a process may read: the run's electron and ion tables and its
+constants.
+"""
+struct RateSources{E, I, FT <: AbstractFloat}
+    eRRCs::E
+    iRRCs::I
+    constants::PlasmaConstants{FT}
+end
+
+float_type(::RateSources{<:Any, <:Any, FT}) where {FT} = FT
+
+"A process's label, the name `config.rates` and the report use."
+function process_label end
+
+"A reaction process's stoichiometry, `reactants => products` with counts."
+function stoichiometry end
+
+"The solve that counts a reaction process's events ([`ReactionProducer`](@ref))."
+function producer end
+
+"A collision process's (ion, neutral)."
+function collision_pair end
+
+"What a collision process moves ([`CollisionMoment`](@ref))."
+function collision_moment end
+
+"""
+    rate_data(process, closure, sources) -> RateData | LangevinCapture
+
+`process`'s rate in `closure`, from `sources`. A process defines it for each closure it has data
+in; one defined for `::RateClosure` holds in every closure.
+"""
+function rate_data end
+
+"""
+    electron_energy(process, closure, sources) -> ElectronEnergyModel | nothing
+
+What `process`'s electrons lose ([`ElectronEnergyModel`](@ref)), from the same data as its rate
+in `closure`; `nothing` for a process without electrons.
+"""
+function electron_energy end
+
+"Whether `process` has a rate in `closure`."
+has_rate(process::Process, closure::RateClosure, sources::RateSources) =
+    hasmethod(rate_data, Tuple{typeof(process), typeof(closure), typeof(sources)})
+
+"""
+    preferred_closure(process, closures, sources) -> RateClosure
+
+The first of `closures` that `process` has a rate in. Throws if there is none.
+"""
+function preferred_closure(process::Process, closures::Tuple, sources::RateSources)
+    for closure in closures
+        has_rate(process, closure, sources) && return closure
+    end
+    throw(
+        ArgumentError(
+            "$(process_label(process)) has no rate in any of the closures $(join(map(c -> nameof(typeof(c)), closures), ", "))"
+        )
+    )
+end
+
+"The reaction of `process`, with its rate and electron energy in `closure`."
+Reaction(process::ReactionProcess, closure::RateClosure, sources::RateSources) = Reaction(
+    process_label(process), stoichiometry(process);
+    rate = rate_data(process, closure, sources), producer = producer(process),
+    energy = electron_energy(process, closure, sources),
+)
+
+"The collision of `process`, with its rate in `closure`."
+Collision(process::CollisionProcess, closure::RateClosure, sources::RateSources) = Collision(
+    process_label(process), collision_pair(process)...;
+    rate = rate_data(process, closure, sources), moment = collision_moment(process),
+)
+
+# The heavy species a process involves
+function process_species(process::ReactionProcess)
+    reactants, products = stoichiometry(process)
+    return (heavy_participants(reactants)..., heavy_participants(products)...)
+end
+process_species(process::CollisionProcess) = collision_pair(process)
+
 # ── the charge-state ladder of an element ───────────────────────────────────────────────
 
 """
@@ -254,74 +364,107 @@ struct LadderRates{I <: Tuple, R <: Tuple, P <: Tuple}
 end
 
 """
-    ladder_rates(element, FT) -> LadderRates
+    ladder_rates(element, closure, FT) -> LadderRates
 
-The rates of `element`'s charge-state ladder in floating-point type `FT`. Every element defines
-it.
+The rates of `element`'s charge-state ladder in `closure`, in floating-point type `FT`. An element
+defines it for each closure it has data in.
 """
 function ladder_rates end
 
 """
-    ladder_reactions(element, rates, constants) -> Tuple
+    LadderIonization(element, z)
 
-The reactions of `element`'s ladder, for every step z → z+1: the ionization `iz<X><z>` (counted
-by the electron solve from the neutral, by the network above it) and the recombination
-`rec<X><z+1>`, labelled by the parent's name (`izH0`, `recH1`).
+e + X[z] → 2e + X[z+1], a step of `element`'s ladder, labelled `iz<X><z>` (`izH0`): counted by the
+electron solve from the neutral, by the network above it.
 """
-function ladder_reactions(p::Element, rates::LadderRates, constants::PlasmaConstants)
-    Z = last(allowed_charges(p))
-    length(rates.ionization) == length(rates.recombination) == length(rates.potentials_eV) == Z ||
-        throw(ArgumentError("$(parent_name(p)): a ladder of $Z steps takes $Z rates of each kind and $Z potentials"))
-    electron = Particles.electron
-    name = parent_name(p)
-    steps = ntuple(Z) do k
-        lower, upper = p[k - 1], p[k]
-        ionization = Reaction(
-            Symbol(:iz, name, k - 1), (electron => 1, lower => 1) => (electron => 2, upper => 1);
-            rate = RateData(rates.ionization[k], SameForIsotopes(), rates.sources[1]),
-            producer = k == 1 ? ElectronSolve() : LocalNetwork(implicit = lower),
-            energy = EventEnergy(rates.potentials_eV[k] * constants.ee),
-        )
-        recombination = Reaction(
-            Symbol(:rec, name, k), (electron => 1, upper => 1) => (lower => 1,);
-            rate = RateData(rates.recombination[k], SameForIsotopes(), rates.sources[2]),
-            producer = LocalNetwork(implicit = upper),
-            energy = CapturedElectron(),
-        )
-        (ionization, recombination)
-    end
-    return Tuple(Iterators.flatten(steps))
+struct LadderIonization{P <: Element} <: ReactionProcess
+    element::P
+    z::Int
 end
 
-# The ladders of the elements a list carries
-function element_ladders(list::Tuple, constants::PlasmaConstants{FT}) where {FT <: AbstractFloat}
+"""
+    LadderRecombination(element, z)
+
+e + X[z] → X[z−1], a step of `element`'s ladder, labelled `rec<X><z>` (`recH1`), solved by the
+network.
+"""
+struct LadderRecombination{P <: Element} <: ReactionProcess
+    element::P
+    z::Int
+end
+
+const LadderProcess = Union{LadderIonization, LadderRecombination}
+
+process_label(p::LadderIonization) = Symbol(:iz, parent_name(p.element), p.z)
+process_label(p::LadderRecombination) = Symbol(:rec, parent_name(p.element), p.z)
+
+stoichiometry(p::LadderIonization) =
+    (Particles.electron => 1, p.element[p.z] => 1) => (Particles.electron => 2, p.element[p.z + 1] => 1)
+stoichiometry(p::LadderRecombination) = (Particles.electron => 1, p.element[p.z] => 1) => (p.element[p.z - 1] => 1,)
+
+producer(p::LadderIonization) = p.z == 0 ? ElectronSolve() : LocalNetwork(implicit = p.element[p.z])
+producer(p::LadderRecombination) = LocalNetwork(implicit = p.element[p.z])
+
+# A ladder has data in the closures its element has ladder rates in
+has_rate(p::LadderProcess, closure::RateClosure, sources::RateSources) =
+    hasmethod(ladder_rates, Tuple{typeof(p.element), typeof(closure), Type{float_type(sources)}})
+
+function rate_data(p::LadderIonization, closure::RateClosure, sources::RateSources)
+    rates = checked_ladder_rates(p.element, closure, sources)
+    return RateData(rates.ionization[p.z + 1], SameForIsotopes(), rates.sources[1])
+end
+
+function rate_data(p::LadderRecombination, closure::RateClosure, sources::RateSources)
+    rates = checked_ladder_rates(p.element, closure, sources)
+    return RateData(rates.recombination[p.z], SameForIsotopes(), rates.sources[2])
+end
+
+electron_energy(p::LadderIonization, closure::RateClosure, sources::RateSources) =
+    EventEnergy(checked_ladder_rates(p.element, closure, sources).potentials_eV[p.z + 1] * sources.constants.ee)
+electron_energy(::LadderRecombination, ::RateClosure, ::RateSources) = CapturedElectron()
+
+function checked_ladder_rates(element::Element, closure::RateClosure, sources::RateSources)
+    rates = ladder_rates(element, closure, float_type(sources))
+    Z = last(allowed_charges(element))
+    length(rates.ionization) == length(rates.recombination) == length(rates.potentials_eV) == Z ||
+        throw(ArgumentError("$(parent_name(element)): a ladder of $Z steps takes $Z rates of each kind and $Z potentials"))
+    return rates
+end
+
+"The processes of `element`'s ladder, step by step."
+ladder_processes(element::Element) = Tuple(
+    Iterators.flatten(
+        (LadderIonization(element, z), LadderRecombination(element, z + 1)) for z in 0:(last(allowed_charges(element)) - 1)
+    )
+)
+
+# The ladder processes of the elements a list carries
+function element_ladders(list::Tuple)
     elements = unique(sp.parent for sp in list if sp.parent isa Element)
-    return foldl(elements; init = ()) do ladders, p
-        hasmethod(ladder_rates, Tuple{typeof(p), Type{FT}}) ||
-            throw(ArgumentError("$(nameof(typeof(p))) is an element and defines no `ladder_rates`"))
-        (ladders..., ladder_reactions(p, ladder_rates(p, FT), constants)...)
-    end
+    return foldl((processes, element) -> (processes..., ladder_processes(element)...), elements; init = ())
 end
 
 # ── assembly ────────────────────────────────────────────────────────────────────────────
 
 """
-    ActiveReaction(reaction, rate, source)
+    ActiveReaction(reaction, rate, source, closure)
 
-A reaction whose species the run all carries, with its rate model for the run's isotope and
-where that rate comes from.
+A reaction whose species the run all carries, with its rate model for the run's isotope, where
+that rate comes from, and the closure its data are in.
 """
-struct ActiveReaction{R <: Reaction, M <: AbstractRateModel}
+struct ActiveReaction{R <: Reaction, M <: AbstractRateModel, CL <: RateClosure}
     reaction::R
     rate::M
     source::String
+    closure::CL
 end
 
 "A collision whose two species the run carries, with its rate for the run's isotope."
-struct ActiveCollision{C <: Collision, M <: AbstractRateModel}
-    collision::C
+struct ActiveCollision{X <: Collision, M <: AbstractRateModel, CL <: RateClosure}
+    collision::X
     rate::M
     source::String
+    closure::CL
 end
 
 """
@@ -337,31 +480,45 @@ struct AssemblyReport
 end
 
 """
-    assemble_species_system(list, isotope, constants, eRRCs, iRRCs; rates = ()) -> SpeciesSystem
+    assemble_species_system(list, isotope, constants, eRRCs, iRRCs; closures, processes = (), rates = ()) -> SpeciesSystem
 
-The species system of `list`: its registry, and the reactions and collisions of the catalog
-(the hydrogen network and the ladder of every element listed) whose species it all carries,
-their rates resolved for `isotope` or replaced by `rates` (`label => model` pairs). Throws for
-an override that names no active reaction or collision, or data that cannot be carried to the
-isotope.
+The species system of `list`: its registry, and the processes of the catalog (the hydrogen
+network, the ladder of every element listed, and `processes`) whose species it all carries.
+Each takes its rate from the first of `closures` it has data in (kinetic, then Maxwellian, by
+default), resolved for `isotope`, or from `rates` (`label => model` pairs). Throws for a process
+with no rate in any of `closures`, an override that names no active process, or data that cannot
+be carried to the isotope.
 """
 function assemble_species_system(
-        list::Tuple, iso::AbstractHydrogenIsotope, constants::PlasmaConstants{FT}, eRRCs, iRRCs; rates::Tuple = ()
+        list::Tuple, iso::AbstractHydrogenIsotope, constants::PlasmaConstants{FT}, eRRCs, iRRCs;
+        closures::Tuple = (KineticClosure(), MaxwellianClosure()), processes::Tuple = (), rates::Tuple = (),
     ) where {FT <: AbstractFloat}
     registry = build_registry(list, iso, constants)
-    reactions = (hydrogen_reactions(eRRCs, constants)..., element_ladders(list, constants)...)
-    collisions = hydrogen_collisions(iRRCs, constants)
-    labels = (map(r -> r.label, reactions)..., map(x -> x.label, collisions)...)
+    sources = RateSources(eRRCs, iRRCs, constants)
+    all(c -> c isa RateClosure, closures) || throw(ArgumentError("`config.closures` takes rate closures, got $closures"))
+    all(p -> p isa Process, processes) ||
+        throw(ArgumentError("`config.processes` takes reaction and collision processes, got $processes"))
+    catalog = (HYDROGEN_PROCESSES..., element_ladders(list)..., processes...)
+    labels = map(process_label, catalog)
     allunique(labels) || throw(ArgumentError("two reactions or collisions share a label in ($(join(labels, ", ")))"))
     overrides = rate_overrides(rates)
 
-    present(entry) = isempty(missing_species(registry, entry))
-    activate(r::Reaction) = ActiveReaction(r, active_rate(r, overrides, registry, constants)...)
-    activate(x::Collision) = ActiveCollision(x, active_rate(x, overrides, registry, constants)...)
-    active_reactions = map(activate, filter(present, reactions))
-    active_collisions = map(activate, filter(present, collisions))
+    present(p) = isempty(missing_species(registry, p))
+    function activate(p::ReactionProcess)
+        closure = preferred_closure(p, closures, sources)
+        reaction = Reaction(p, closure, sources)
+        return ActiveReaction(reaction, active_rate(reaction, overrides, registry, constants)..., closure)
+    end
+    function activate(p::CollisionProcess)
+        closure = preferred_closure(p, closures, sources)
+        collision = Collision(p, closure, sources)
+        return ActiveCollision(collision, active_rate(collision, overrides, registry, constants)..., closure)
+    end
+    active = filter(present, catalog)
+    active_reactions = map(activate, filter(p -> p isa ReactionProcess, active))
+    active_collisions = map(activate, filter(p -> p isa CollisionProcess, active))
 
-    active_labels = Set{Symbol}(entry.label for entry in (reactions..., collisions...) if present(entry))
+    active_labels = Set{Symbol}(map(process_label, active))
     unknown = setdiff(keys(overrides), active_labels)
     isempty(unknown) || throw(
         ArgumentError(
@@ -370,8 +527,8 @@ function assemble_species_system(
         )
     )
 
-    inactive = [entry.label => missing_species(registry, entry) for entry in (reactions..., collisions...) if !present(entry)]
-    warnings = assembly_warnings(registry, list, active_reactions, (reactions..., collisions...))
+    inactive = [process_label(p) => missing_species(registry, p) for p in catalog if !present(p)]
+    warnings = assembly_warnings(registry, list, active_reactions, catalog)
     return SpeciesSystem(registry, active_reactions, active_collisions, AssemblyReport(inactive, warnings))
 end
 
@@ -391,18 +548,16 @@ active_rate(entry, overrides, registry, constants) =
     haskey(overrides, entry.label) ? (overrides[entry.label], "config.rates") :
     (resolve_rate(entry.rate, entry, registry, constants), rate_source(entry.rate))
 
-"The labels of the species `entry` involves that the registry lacks."
-missing_species(reg::SpeciesRegistry, r::Reaction) = unique(
-    Symbol[species_label(sp, reg.isotope) for sp in (heavy_participants(r.reactants)..., heavy_participants(r.products)...) if !has_species(reg, sp)]
-)
-missing_species(reg::SpeciesRegistry, x::Collision) =
-    Symbol[species_label(sp, reg.isotope) for sp in (x.ion, x.neutral) if !has_species(reg, sp)]
+"The labels of the species `process` involves that the registry lacks."
+missing_species(reg::SpeciesRegistry, process::Process) =
+    unique(Symbol[species_label(sp, reg.isotope) for sp in process_species(process) if !has_species(reg, sp)])
 
 """
     resolve_rate(rate, entry, registry, constants) -> AbstractRateModel
 
-The rate model of catalog entry `entry` for the registry's isotope, from its declaration `rate`
-([`RateData`](@ref) and its [`IsotopeRule`](@ref), or [`LangevinCapture`](@ref)).
+The rate model of `entry` (a reaction or a collision) for the registry's isotope, from its
+declaration `rate` ([`RateData`](@ref) and its [`IsotopeRule`](@ref), or
+[`LangevinCapture`](@ref)).
 """
 resolve_rate(d::RateData{<:AbstractRateModel, SameForIsotopes}, _, ::SpeciesRegistry, ::PlasmaConstants) = d.model
 
@@ -440,16 +595,16 @@ function reduced_mass(a::AbstractSpecies, b::AbstractSpecies, iso::AbstractHydro
     return ma * mb / (ma + mb)
 end
 
-# A main path of the default hydrogen list is off (an entry lacking default hydrogen species
+# A main path of the default hydrogen list is off (a process lacking default hydrogen species
 # alone, in a run that carries hydrogen), or nothing makes electrons
-function assembly_warnings(reg::SpeciesRegistry, list::Tuple, active_reactions, entries)
+function assembly_warnings(reg::SpeciesRegistry, list::Tuple, active_reactions, catalog)
     warnings = String[]
     defaults = Set(map(sp -> species_label(sp, reg.isotope), DEFAULT_HYDROGEN_SPECIES))
     if any(sp -> sp.parent isa HydrogenParent, list)
-        for entry in entries
-            lacking = missing_species(reg, entry)
+        for process in catalog
+            lacking = missing_species(reg, process)
             (!isempty(lacking) && lacking ⊆ defaults) || continue
-            push!(warnings, "$(entry.label) ($(entry_summary(entry, reg.isotope))) is off: the list lacks $(join(lacking, ", "))")
+            push!(warnings, "$(process_label(process)) ($(entry_summary(process, reg.isotope))) is off: the list lacks $(join(lacking, ", "))")
         end
     end
     any(a -> electron_change(a.reaction) > 0, active_reactions) ||
@@ -466,16 +621,27 @@ side_summary(side, iso) = join((n == 1 ? participant_label(x, iso) : "$n $(parti
 
 entry_summary(r::Reaction, iso) = "$(side_summary(r.reactants, iso)) → $(side_summary(r.products, iso))"
 entry_summary(x::Collision, iso) = "$(species_label(x.ion, iso)) on $(species_label(x.neutral, iso))"
+entry_summary(p::ReactionProcess, iso) = let (reactants, products) = stoichiometry(p)
+    "$(side_summary(reactants, iso)) → $(side_summary(products, iso))"
+end
+entry_summary(p::CollisionProcess, iso) = let (ion, neutral) = collision_pair(p)
+    "$(species_label(ion, iso)) on $(species_label(neutral, iso))"
+end
 
 producer_summary(::ElectronSolve, _) = "electron solve"
 producer_summary(p::LocalNetwork, iso) =
     "network, implicit $(species_label(p.implicit, iso))" * (isnothing(p.frozen) ? "" : ", frozen $(species_label(p.frozen, iso))")
 
+closure_summary(::KineticClosure) = "kinetic"
+closure_summary(::MaxwellianClosure) = "Maxwellian"
+closure_summary(closure::RateClosure) = string(nameof(typeof(closure)))
+
 """
     species_report(system) -> String
 
 The species system as text: the species with their columns and masses, the active reactions
-and collisions with their producers and rate sources, what is off and why, and the warnings.
+and collisions with their producers, closures and rate sources, what is off and why, and the
+warnings.
 """
 function species_report(sys::SpeciesSystem)
     reg = sys.registry
@@ -491,12 +657,18 @@ function species_report(sys::SpeciesSystem)
     println(io, "Reactions")
     for a in sys.reactions
         r = a.reaction
-        println(io, "  $(rpad(r.label, 7)) $(rpad(entry_summary(r, iso), 34)) $(producer_summary(r.producer, iso)); $(a.source)")
+        println(
+            io, "  $(rpad(r.label, 7)) $(rpad(entry_summary(r, iso), 34)) $(producer_summary(r.producer, iso)); ",
+            "$(closure_summary(a.closure)), $(a.source)"
+        )
     end
     println(io, "Collisions")
     for a in sys.collisions
         x = a.collision
-        println(io, "  $(rpad(x.label, 7)) $(rpad(entry_summary(x, iso), 34)) $(nameof(typeof(x.moment))); $(a.source)")
+        println(
+            io, "  $(rpad(x.label, 7)) $(rpad(entry_summary(x, iso), 34)) $(nameof(typeof(x.moment))); ",
+            "$(closure_summary(a.closure)), $(a.source)"
+        )
     end
     isempty(sys.report.inactive) || println(io, "Off")
     for (label, lacking) in sys.report.inactive

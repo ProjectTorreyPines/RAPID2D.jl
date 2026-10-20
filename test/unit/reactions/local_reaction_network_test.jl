@@ -88,7 +88,10 @@ end
     using RAPID2D: ConstantRate, Accept
     using RAPID2D.Particles: H, H2
 
-    rates = (:de2 => ConstantRate(5.0e-14), :di2 => ConstantRate(2.0e-14), :dr2 => ConstantRate(1.0e-14), :recH1 => ConstantRate(0.0))
+    rates = (
+        :de2 => ConstantRate(5.0e-14), :de2b => ConstantRate(0.0), :di2 => ConstantRate(2.0e-14), :dr2 => ConstantRate(1.0e-14),
+        :recH1 => ConstantRate(0.0),
+    )
     case = network_case((H2[0], H[0], H2[1], H[1]); Te = [5.0], ne = [2.0e18], rates)
     s = ion_column(case, H2[1])
     λ = (5.0e-14 + 2.0e-14 + 1.0e-14) * 2.0e18
@@ -113,7 +116,7 @@ end
     using RAPID2D.Particles: H, H2, H3
 
     off = ConstantRate(0.0)
-    rates = (:de2 => off, :di2 => off, :dr2 => off, :recH1 => off, :dr3a => off, :dr3b => off, :de3 => off)
+    rates = (:de2 => off, :de2b => off, :di2 => off, :dr2 => off, :recH1 => off, :dr3a => off, :dr3b => off, :de3 => off)
     case = network_case((H2[0], H[0], H2[1], H[1], H3[1]); Te = [5.0], rates)
     K = only(case.inputs.K[row_index(case, :h3)])
     n_H2 = case.n_neutral[neutral_column(case, H2[0])][1]
@@ -156,7 +159,7 @@ end
     RAPID2D.composition(::Ladder3) = (:X => 1,)
     RAPID2D.parent_name(::Ladder3) = "X"
     RAPID2D.neutral_mass(::Ladder3, ::RAPID2D.AbstractHydrogenIsotope, constants::RAPID2D.PlasmaConstants) = 12 * constants.mp
-    RAPID2D.ladder_rates(::Ladder3, ::Type{FT}) where {FT} = LadderRates(
+    RAPID2D.ladder_rates(::Ladder3, ::RAPID2D.RateClosure, ::Type{FT}) where {FT} = LadderRates(
         (ConstantRate(FT(4.0e-14)), ConstantRate(FT(2.0e-14)), ConstantRate(FT(1.0e-14))),
         (ConstantRate(FT(1.0e-14)), ConstantRate(FT(3.0e-14)), ConstantRate(FT(5.0e-14))),
         (FT(11.3), FT(24.4), FT(47.9)), ("toy", "toy"),
@@ -186,7 +189,7 @@ end
     using RAPID2D.Particles: H, H2, H3
 
     off = ConstantRate(0.0)
-    rates = (:de2 => off, :di2 => off, :dr2 => off, :recH1 => off, :dr3a => off, :dr3b => off, :de3 => off)
+    rates = (:de2 => off, :de2b => off, :di2 => off, :dr2 => off, :recH1 => off, :dr3a => off, :dr3b => off, :de3 => off)
     case = network_case((H2[0], H[0], H2[1], H[1], H3[1]); rates)
     Δt = 1.0e-3
     h3 = row_index(case, :h3)

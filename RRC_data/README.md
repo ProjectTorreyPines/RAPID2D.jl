@@ -102,6 +102,17 @@ julia --project=. scripts/check_ion_rrc_tables.jl RRC_data/iRRCs_T_ud.h5
 `config.species` assembles a catalog of reactions and collisions (`src/reactions/hydrogen_network.jl`).
 Their rates come from the tables above and from fits.
 
+Each reaction and collision is a process type, and its data come by closure. The rate is a method
+`rate_data(process, closure, sources)` and the electron energy is `electron_energy(...)`. A run
+takes, for each process, the first closure in `config.closures` the process has data in
+(`KineticClosure`, then `MaxwellianClosure`, by default).
+
+- Electron impact on H₂ has BREAK's kinetic, non-Maxwellian closure: the (E/p, Ē) surfaces.
+- The other processes have the traditional Maxwellian closure only: the fits and tables below.
+- A kinetic table for them (BreakdownDynamics.jl averaging their HYDHEL H.1 cross sections over
+  the same EEDFs) would be one more method for `KineticClosure`, taken over automatically.
+- A process from outside the package (a type and its methods) joins through `config.processes`.
+
 The fits are the Janev–Reiter Maxwellian rate coefficients of the EIRENE databases, section H.2,
 copied as printed; the code adds $\ln 10^{-6}$ to the first coefficient for m³/s:
 
@@ -121,7 +132,8 @@ coefficients against the rate HYDHEL prints at each lower bound (6 %) and at eac
 | `dex` | e + H2[0] → e + 2 H[0] | `K_diss_exc` (E/p, Ē) | table | power `Kerg_diss_exc` |
 | `izH0` | e + H[0] → 2e + H[1] | HYDHEL 2.1.5 (ground state) | 2 – 10⁴ | 13.598 eV |
 | `recH1` | e + H[1] → H[0] | HYDHEL 2.1.8 (into 1s only) | 0.1 – 10⁴ | captured electron |
-| `de2` | e + H2[1] → e + H[1] + H[0] | HYDHEL 2.2.12 | 0.2 – 10⁴ | 2.4 eV (H.1 threshold) |
+| `de2` | e + H2[1] → e + H[1] + H[0] | HYDHEL 2.2.12 (2pσᵤ, H in 1s) | 0.2 – 10⁴ | 2.4 eV (H.1 threshold) |
+| `de2b` | e + H2[1] → e + H[1] + H[0] | HYDHEL 2.2.13 (2pπᵤ, H in n = 2) | 2 – 10⁴ | 14.0 eV (H.1 threshold) |
 | `di2` | e + H2[1] → 2e + 2 H[1] | HYDHEL 2.2.11 | 3.16 – 10⁴ | 14.7 eV (H.1 threshold) |
 | `dr2` | e + H2[1] → 2 H[0] | HYDHEL 2.2.14 | 0.1 – 10⁴ | captured electron |
 | `h3` | H2[1] + H2[0] → H3[1] + H[0] | Langevin, polarizability of H₂ 0.8045 Å³ | — | — |
@@ -165,11 +177,22 @@ $$
 
 Data declared `ReferenceOnly` refuse another isotope until `config.rates` gives the rate.
 
+Against BREAK's recombination tables at zero drift (`eRRCs_T_ud.h5`, from the cross sections in
+BREAK's `c_MCC.cpp`), HYDHEL 2.2.14 agrees with `Recomb_H2Ion` to ±30 % at 0.5–20 eV. HYDHEL 2.2.15
+is 2–7× above `Recomb_H3Ion`.
+
 ### Known gaps
 
-- `de2`, `di2`, `de3` charge the electrons the lowest threshold over v = 0…9. The mean loss is
-  larger: the vertical 1sσg → 2pσu transition of H₂⁺ at v = 0 is 11.8 eV. The fragments'
-  Franck–Condon energies are not in the catalog yet. Both belong with the energy ledger.
+- `de2`, `de2b`, `di2`, `de3` charge the electrons the lowest threshold over v = 0…9. The
+  electron tables charge a vertical transition instead: dissociative ionization of H₂ costs 35 eV,
+  its 18.1 eV appearance energy plus 17 eV of fragment energy (BreakdownDynamics `E_DI_EV`). By
+  that convention H₂⁺ would cost about the vertical transitions at v = 0, 11.8 eV to 2pσᵤ and 30 eV
+  to p + p, less for the vibrationally excited ions. The fragments' Franck–Condon energies are not
+  in the catalog yet. Both belong with the energy ledger.
+- The H₃⁺ recombination rate differs 2–7× between HYDHEL 2.2.15 and BREAK. Choose one when H3[1]
+  is screened.
+- `cxH2` reads the `Charge_Exchange` table, suppressed below 4.9 eV (above). It needs a resonant
+  charge-exchange rate without the cut (HYDHEL 4.3.1) before the collisions are wired in.
 - `izH0` has no excitation radiation of H(n ≥ 2), and `recH1` recombines into 1s alone, a lower
   bound of the total. The collisional–radiative rates (AMJUEL H.4 and H.10, 2.1.5 and 2.1.8) are
   the next step.

@@ -131,6 +131,8 @@ Contains simulation configuration parameters.
     # assembled by `initialize!` into `RP.species`; `nothing` for none
     species::Union{Nothing, Tuple} = nothing
     hydrogen::AbstractHydrogenIsotope = Protium()   # the hydrogen isotope of the species
+    closures::Tuple = (KineticClosure(), MaxwellianClosure())   # rate closures, by preference
+    processes::Tuple = ()                           # reaction and collision processes beyond the catalog
     rates::Tuple = ()                               # `label => rate model` pairs replacing the catalog's
 end
 
