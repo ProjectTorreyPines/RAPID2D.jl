@@ -1,6 +1,7 @@
 # The ion species as a mixture (`update_charge_states!` and its consumers): the sums the
-# current, the collisions and the masses read, with a toy species written straight into the
-# transport buffers beside the bulk H2[1] (a second declared species is still refused).
+# current, the collisions and the masses read, with a toy species laid out beside the bulk H2[1]
+# past the one-species guard of `set_ion_species!` (`layout_ion_species!`) and its density
+# written into the species store.
 
 @testsnippet MixtureCase begin
     "The bulk H2[1] at `n_bulk`, and a toy species of charge `z_toy`, mass 6 mᵢ, at `n_toy`."
@@ -19,11 +20,8 @@
         pla.Te_eV .= Te
         pla.Ti_eV .= 1.0
         mi = RP.config.constants.mi
-        tp.ion_species = [tp.ion_species[1], RAPID2D.IonRecord(:toy, 6mi, z_toy)]
-        tp.ion_N = zeros(RP.G.NR * RP.G.NZ, 2)
-        tp.ion_S = zeros(RP.G.NR * RP.G.NZ, 2)
-        tp.ion_N[:, 2] .= n_toy
-        empty!(tp.ion_solvers)
+        RAPID2D.layout_ion_species!(RP, [tp.ion_species[1], RAPID2D.IonRecord(:toy, 6mi, z_toy)])
+        pla.n_ions[2] .= n_toy
         return RP
     end
 end
@@ -32,26 +30,26 @@ end
     RP = mixture_case()
     update_charge_states!(RP)
     pla, mi = RP.plasma, RP.config.constants.mi
-    @test all(≈(1.1e18), pla.ni_sum)
-    @test all(≈(1.6e18), pla.Zni_sum)          # 1e18 + 6 × 1e17
-    @test all(≈(4.6e18), pla.Z2ni_sum)         # 1e18 + 36 × 1e17
-    @test all(≈(mi * 1.0e18 + 6mi * 1.0e17), pla.mni_sum)
+    @test all(≈(1.1e18), pla.ni_tot)
+    @test all(≈(1.6e18), pla.Zni_tot)          # 1e18 + 6 × 1e17
+    @test all(≈(4.6e18), pla.Z2ni_tot)         # 1e18 + 36 × 1e17
+    @test all(≈(mi * 1.0e18 + 6mi * 1.0e17), pla.mni_tot)
     @test all(≈((mi * 1.0e18 + 6mi * 1.0e17) / 1.1e18), pla.mi_mean)
     @test all(≈(4.6 / 1.6), pla.Zeff)
 
     # one species: its own mass and charge, exactly
     RP1 = mixture_case(n_toy = 0.0)
-    RP1.transport.ion_species = RP1.transport.ion_species[1:1]
+    RAPID2D.layout_ion_species!(RP1, RP1.transport.ion_species[1:1])
     update_charge_states!(RP1)
     @test all(==(mi), RP1.plasma.mi_mean) && all(==(1.0), RP1.plasma.Zeff)
-    @test RP1.plasma.Zni_sum == RP1.plasma.ni
+    @test RP1.plasma.Zni_tot == RP1.plasma.ni
 end
 
 @testitem "Where there are no ions the means are the first species'" setup = [MixtureCase] begin
     RP = mixture_case(n_bulk = 0.0, n_toy = 0.0)
     update_charge_states!(RP)
     pla = RP.plasma
-    @test all(iszero, pla.ni_sum) && all(iszero, pla.Zni_sum) && all(iszero, pla.Z2ni_sum) && all(iszero, pla.mni_sum)
+    @test all(iszero, pla.ni_tot) && all(iszero, pla.Zni_tot) && all(iszero, pla.Z2ni_tot) && all(iszero, pla.mni_tot)
     @test all(==(RP.config.constants.mi), pla.mi_mean)
     @test all(==(1.0), pla.Zeff)
 end
@@ -199,7 +197,7 @@ end
         a = ei_relaxation_rate!(similar(pla.ni), RP)
         inw = RP.G.nodes.in_wall_nids
         k = first(inw)
-        ne, nI = pla.ne[k], pla.ni_sum[k]
+        ne, nI = pla.ne[k], pla.ni_tot[k]
         λ = a[k] * (1 + ne / nI)
         Te1 = pla.Te_eV[k] - ΔE[k] / (1.5ee * ne)
         Ti1 = pla.Ti_eV[k] + ΔE[k] / (1.5ee * nI)
@@ -208,7 +206,7 @@ end
         @test all(>(0), ΔE[inw])                # hot electrons give
         # the diagnostics' equi is that energy's mean power, per electron and per ion
         @test pla.ePowers.equi[inw] .* pla.ne[inw] .* RP.dt ≈ ΔE[inw] rtol = 1.0e-12
-        @test pla.iPowers.equi[inw] .* pla.ni_sum[inw] .* RP.dt ≈ ΔE[inw] rtol = 1.0e-12
+        @test pla.iPowers.equi[inw] .* pla.ni_tot[inw] .* RP.dt ≈ ΔE[inw] rtol = 1.0e-12
     end
     # one species: the coefficient is 2mₑmᵢ/(mₑ+mᵢ)² ν_ei
     RP = mixture_case(n_toy = 0.0)
@@ -265,7 +263,7 @@ end
         ΔE = copy(ei_exchange_energy!(RP))
         a = ei_relaxation_rate!(similar(pla.ni), RP)
         k = first(RP.G.nodes.in_wall_nids)
-        ne, nI, gap = pla.ne[k], pla.ni_sum[k], pla.Te_eV[k] - pla.Ti_eV[k]
+        ne, nI, gap = pla.ne[k], pla.ni_tot[k], pla.Te_eV[k] - pla.Ti_eV[k]
         if te       # the electrons relax onto the fixed ions
             @test pla.Te_eV[k] - ΔE[k] / (1.5ee * ne) - pla.Ti_eV[k] ≈ gap * exp(-a[k] * RP.dt) rtol = 1.0e-10
         else        # the ions onto the fixed electrons

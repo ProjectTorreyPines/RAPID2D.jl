@@ -51,7 +51,7 @@ function update_Jϕ!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     F = RP.fields
     @unpack qe, ee = RP.config.constants
     update_charge_states!(RP)
-    @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.Zni_sum * ee * pla.ui_para) * F.bϕ
+    @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.Zni_tot * ee * pla.ui_para) * F.bϕ
     return RP
 end
 
@@ -326,7 +326,7 @@ function run_simulation!(
             # there and nothing books it, so an initial condition written over the whole
             # grid is cleared there once, here, and never touched again.
             RP.plasma.ne[RP.G.nodes.on_out_wall_nids] .= zero(FT)
-            RP.plasma.ni[RP.G.nodes.on_out_wall_nids] .= zero(FT)
+            clear_ions_outside_wall!(RP)
             # the near-vacuum relaxation must end well below the plasma the run starts from
             check_vacuum_relaxation_density!(RP)
             RP.flags.secondary_electron && RP.flags.update_ni_independently &&

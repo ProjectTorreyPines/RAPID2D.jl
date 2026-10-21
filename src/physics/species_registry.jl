@@ -92,3 +92,81 @@ struct SpeciesSystem{R <: SpeciesRegistry, RX <: Tuple, CX <: Tuple, A}
     collisions::CX
     report::A
 end
+
+# ── the species store's layout ──────────────────────────────────────────────────────────
+
+"""
+    SpeciesStoreLayout{FT}
+
+What the species store holds (`plasma.n_ions`, `plasma.n_gas`): the ion parents, each with its
+charge states z = 1…Z as `n_ions[k][:, :, z]`, and the parents of the neutral gas as
+`n_gas[j]`, with their records; and where the solvers' species columns lie in it — the
+registry's (`ion_slots`, `gas_slots`, the reaction network's columns) and the transport's
+(`transport_slots`). Built by [`species_store_layout`](@ref); constant over a run.
+"""
+struct SpeciesStoreLayout{FT <: AbstractFloat}
+    ion_parents::Vector{String}
+    ion_records::Vector{Vector{IonRecord{FT}}}
+    gas_parents::Vector{String}
+    gas_records::Vector{NeutralRecord{FT}}
+    ion_slots::Vector{Tuple{Int, Int}}
+    gas_slots::Vector{Int}
+    transport_slots::Vector{Tuple{Int, Int}}
+end
+
+# The parent a record belongs to: its nuclei, or the record alone when it has none (a test probe)
+store_parent(r::IonRecord) = isempty(r.key.composition) ? (r.key.composition, r.label) : (r.key.composition, Symbol())
+parent_display_name(label::Symbol) = String(first(split(String(label), '[')))
+
+"""
+    species_store_layout(ions, neutrals, transport) -> SpeciesStoreLayout
+
+The layout for the ion records `ions` and the neutral records `neutrals`, in the solvers' column
+order, and the transport's ion records `transport`, each one of `ions`. The ions group by parent
+(their nuclei), in the order the parents first appear; a parent's charge states run 1…Z with none
+missing, so that `n_ions[k][:, :, z]` is charge state z. A record with no nuclei (a test probe)
+is a parent of its own, one plane. Each neutral is a parent of the gas.
+"""
+function species_store_layout(
+        ions::AbstractVector{IonRecord{FT}}, neutrals, transport::AbstractVector{IonRecord{FT}},
+    ) where {FT <: AbstractFloat}
+    parents = unique(map(store_parent, ions))
+    ion_records = [sort!([r for r in ions if store_parent(r) == p]; by = r -> r.charge) for p in parents]
+    for (p, records) in zip(parents, ion_records)
+        isempty(first(p)) && continue
+        charges = [r.charge for r in records]
+        charges == 1:length(charges) || throw(
+            ArgumentError(
+                "$(parent_display_name(first(records).label)) has charge states $(join(charges, ", ")) in the list: " *
+                    "a parent's ions are stored by charge state, 1…Z with none missing"
+            )
+        )
+    end
+    slot = Dict{Tuple{SpeciesKey, Symbol}, Tuple{Int, Int}}(
+        (r.key, r.label) => (k, z) for (k, records) in enumerate(ion_records) for (z, r) in enumerate(records)
+    )
+    find_slot(r) = get(slot, (r.key, r.label)) do
+        throw(ArgumentError("the transport moves $(r.label), which is not among the stored ions"))
+    end
+    return SpeciesStoreLayout{FT}(
+        [parent_display_name(first(records).label) for records in ion_records], ion_records,
+        [parent_display_name(r.label) for r in neutrals], NeutralRecord{FT}[neutrals...],
+        Tuple{Int, Int}[slot[(r.key, r.label)] for r in ions], collect(eachindex(neutrals)),
+        Tuple{Int, Int}[find_slot(r) for r in transport],
+    )
+end
+
+# The layout of a run without a species list: the transport's ions, and the H₂ gas
+function legacy_store_layout(transport::AbstractVector{IonRecord{FT}}, constants::PlasmaConstants) where {FT <: AbstractFloat}
+    return species_store_layout(transport, (h2_gas_record(FT, constants),), transport)
+end
+
+# The layout a run starts with, before `initialize!` declares the transport's species: the
+# default H₂⁺, and the H₂ gas
+default_store_layout(constants::PlasmaConstants{FT}) where {FT <: AbstractFloat} =
+    species_store_layout([IonRecord(Particles.H2[1]; mass = FT(constants.mi))], (h2_gas_record(FT, constants),), IonRecord{FT}[])
+
+function h2_gas_record(::Type{FT}, constants::PlasmaConstants) where {FT <: AbstractFloat}
+    h2 = Particles.H2[0]
+    return NeutralRecord{FT}(species_key(h2), species_label(h2, Protium()), FT(species_mass(h2, Protium(), constants)))
+end

@@ -192,10 +192,10 @@ end
 @testitem "A trace species pinched into the wall is booked at the face, at the density the explicit term used" setup = [PinchRun] begin
     using RAPID2D: IonRecord
 
-    # Two species written straight into the transport buffers. `set_ion_species!` still
-    # refuses a second species for reasons outside this solve (one γ_2nd, Ni_loss not
-    # split by species, Σ n_s Z_s in the currents); the grouping, the batch solve and the
-    # ledger are written against the list and are what this exercises.
+    # Two species laid out past the one-species guard (`layout_ion_species!`): `set_ion_species!`
+    # refuses a second species for reasons outside this solve (one γ_2nd, Ni_loss not split by
+    # species); the grouping, the batch solve and the ledger are written against the list and
+    # are what this exercises.
     function two_species(; pinch)
         # per-species operators, so the bulk column is exactly independent of the trace
         RP = pinch_case(pinch = pinch, policy = RAPID2D.PerSpeciesTransport())
@@ -204,22 +204,16 @@ end
         vec(RP.plasma.ni)[setdiff(1:(RP.G.NR * RP.G.NZ), RP.G.nodes.in_wall_nids)] .= 0.0
         RP.plasma.ne .= RP.plasma.ni
         update_transport_quantities!(RP)
-        tp = RP.transport
-        Ng = RP.G.NR * RP.G.NZ
-        bulk = tp.ion_species[1]
-        tp.ion_species = [bulk, IonRecord(:C6, 6 * bulk.mass, 6)]
-        tp.ion_N = zeros(Ng, 2)
-        tp.ion_S = zeros(Ng, 2)
-        tp.ion_N[RP.G.nodes.in_wall_nids, 2] .= 1.0e15          # a uniform trace inside the wall
-        empty!(tp.ion_solvers)
+        bulk = RP.transport.ion_species[1]
+        RAPID2D.layout_ion_species!(RP, [bulk, IonRecord(:C6, 6 * bulk.mass, 6)])
+        vec(RP.plasma.n_ions[2])[RP.G.nodes.in_wall_nids] .= 1.0e15   # a uniform trace inside the wall
         return RP
     end
     function advance(RP; nsteps = 10)
         G = RP.G
         inw = G.nodes.in_wall_nids
         vol = vec(G.Jacob) .* (2π * G.dR * G.dZ)
-        RP.transport.ion_N[:, 1] .= vec(RP.plasma.ni)
-        inside(col) = sum(vol[inw] .* RP.transport.ion_N[inw, col])
+        inside(col) = sum(vol[inw] .* vec(RP.plasma.n_ions[col])[inw])
         N0 = inside(1) + inside(2)
         trace0 = inside(2)
         RP.diagnostics.Ntracker.cum0D_Ni_loss = 0.0
@@ -229,7 +223,7 @@ end
         outside = setdiff(1:(G.NR * G.NZ), inw)
         return (;
             lost = N0 - inside(1) - inside(2), lost_trace = trace0 - inside(2),
-            booked = RP.diagnostics.Ntracker.cum0D_Ni_loss, N = RP.transport.ion_N, outside,
+            booked = RP.diagnostics.Ntracker.cum0D_Ni_loss, N = reduce(hcat, vec.(RP.plasma.n_ions)), outside,
         )
     end
 

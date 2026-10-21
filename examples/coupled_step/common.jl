@@ -56,7 +56,7 @@ end
 function current_density(RP)
     RAPID2D.update_charge_states!(RP)   # the ion charge Σ zₛ nₛ of the densities as they are
     p, c = RP.plasma, RP.config.constants
-    return @. (c.qe * p.ne * p.ue_para + p.Zni_sum * c.ee * p.ui_para) * RP.fields.bϕ
+    return @. (c.qe * p.ne * p.ue_para + p.Zni_tot * c.ee * p.ui_para) * RP.fields.bϕ
 end
 plasma_current(RP, J) = sum(J) * RP.G.dR * RP.G.dZ
 

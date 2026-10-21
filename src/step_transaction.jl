@@ -33,7 +33,7 @@ step_verdict(::RAPID) = Accept()
 # are used, or refreshed from the state after an accepted step.
 const STEP_STATE_RECORDS = (:plasma, :fields, :vertical_field_control)
 const STEP_STATE_FIELDS = (
-    transport = (:ion_N, :ion_S),            # after the first column, their only store
+    transport = (),        # its ion columns are gathered from the species store (plasma) at each solve
     reactions = (:counts, :published),
     diagnostics = (:Ntracker, :ampere_picard, :near_vacuum),
     closed_surface = (:solve, :ledger),
@@ -44,12 +44,7 @@ const STEP_STATE_FIELDS = (
     rapid = (:prev_n, :step, :time_s),
 )
 
-# A checkpoint's copies of the ion columns, of the coil system's step state and of a coil's
-mutable struct SavedIonColumns{FT <: AbstractFloat}
-    ion_N::Matrix{FT}
-    ion_S::Matrix{FT}
-end
-
+# A checkpoint's copies of the coil system's step state and of a coil's
 mutable struct SavedCoil{FT <: AbstractFloat}
     current::FT
     ψ_pla::FT
@@ -78,7 +73,6 @@ mutable struct StepState{FT <: AbstractFloat}
     plasma::PlasmaState{FT}
     fields::Fields{FT}
     vertical_field_control::VerticalFieldControlState{FT}
-    transport::SavedIonColumns{FT}
     reactions::ReactionState{FT}
     diagnostics::Diagnostics{FT}
     closed_surface::ClosedSurfaceState{FT}
@@ -93,7 +87,7 @@ function StepState(RP::RAPID{FT}) where {FT <: AbstractFloat}
     none = Matrix{FT}(undef, 0, 0)
     ck = StepState{FT}(
         deepcopy(RP.plasma), deepcopy(RP.fields), deepcopy(RP.vertical_field_control),
-        SavedIonColumns{FT}(copy(none), copy(none)), ReactionState{FT}(dims = (NR, NZ)),
+        ReactionState{FT}(dims = (NR, NZ)),
         Diagnostics{FT}(NR, NZ), ClosedSurfaceState{FT}(NR, NZ),
         SavedCoilSystem{FT}(zero(FT), FT[], zero(FT), zero(FT), copy(none), copy(none), SavedCoil{FT}[]),
         zeros(FT, NR, NZ), 0, zero(FT),
@@ -113,6 +107,7 @@ function save_step_state!(ck::StepState{FT}, RP::RAPID{FT}) where {FT <: Abstrac
         push!(coils, SavedCoil{FT}(zero(FT), zero(FT), zero(FT)))
     end
     resize!(coils, n)
+    check_store_layout(ck.plasma, RP.plasma)   # before anything is copied
     return copy_step_state!(ck, RP)
 end
 
@@ -125,6 +120,7 @@ Put the checkpoint `ck` back into `RP`: what a step writes is again, bit for bit
 function restore_step_state!(RP::RAPID{FT}, ck::StepState{FT}) where {FT <: AbstractFloat}
     length(RP.coil_system.coils) == length(ck.coil_system.coils) ||
         error("the coil set changed during the step; its state cannot be put back")
+    check_store_layout(RP.plasma, ck.plasma)   # before anything is copied
     return copy_step_state!(RP, ck)
 end
 
@@ -133,7 +129,7 @@ function copy_step_state!(dst, src)
     for name in STEP_STATE_RECORDS
         copy_state!(getfield(dst, name), getfield(src, name))
     end
-    for owner in (:transport, :reactions, :diagnostics, :closed_surface, :coil_system)
+    for owner in (:reactions, :diagnostics, :closed_surface, :coil_system)
         copy_fields!(getfield(dst, owner), getfield(src, owner), STEP_STATE_FIELDS[owner])
     end
     for (d, s) in zip(getfield(dst, :coil_system).coils, getfield(src, :coil_system).coils)
@@ -154,13 +150,17 @@ function copy_fields!(dst, src, names)
 end
 
 # One field of `dst` takes the value `s`, in place where its present value `d` allows: an array
-# of numbers by its contents (a vector resized to `s`), a set by its elements, a mutable record of
-# this package field by field. Anything else, an array of another shape included, is assigned, a
-# mutable value as a copy.
+# of numbers by its contents (a vector resized to `s`), an array of such arrays of the same
+# shapes array by array (so that an array shared with another field stays shared: the species
+# store), a set by its elements, a mutable record of this package field by field. Anything else,
+# an array of another shape included, is assigned, a mutable value as a copy.
 function copy_field!(dst, name::Symbol, d, s)
     if d isa Array && typeof(d) === typeof(s) && isbitstype(eltype(s)) && (ndims(s) == 1 || size(d) == size(s))
         ndims(s) == 1 && resize!(d, length(s))
         copyto!(d, s)
+    elseif d isa Array{<:Array} && typeof(d) === typeof(s) && isbitstype(eltype(eltype(s))) &&
+            size(d) == size(s) && all(k -> size(d[k]) == size(s[k]), eachindex(s))
+        foreach(copyto!, d, s)
     elseif d isa AbstractSet && typeof(d) === typeof(s)
         union!(empty!(d), s)
     elseif typeof(d) === typeof(s) && ismutabletype(typeof(s)) && parentmodule(typeof(s)) === @__MODULE__

@@ -528,7 +528,7 @@ end
 
     function reset_to_initial_conditions!(RP)
         RP.plasma.ne = copy(ini_n)
-        RP.plasma.ni = copy(ini_n)
+        RP.plasma.ni .= ini_n
         RP.fields.BR_presc .= 1.0e-4
         RP.fields.BZ_presc .= 1.0e-4
         RAPID2D.combine_field_sources!(RP)
@@ -609,7 +609,7 @@ end
         end
         initialize!(RP)
         RP.plasma.ne = copy(ini_n)
-        RP.plasma.ni = copy(ini_n)
+        RP.plasma.ni .= ini_n
         RP.fields.BR_presc .= 1.0e-4
         RP.fields.BZ_presc .= 1.0e-4
         RAPID2D.combine_field_sources!(RP)
@@ -685,7 +685,7 @@ end
     ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
 
     RP.plasma.ne = copy(ini_n)
-    RP.plasma.ni = copy(ini_n)
+    RP.plasma.ni .= ini_n
     RP.fields.BR_presc .= 1.0e-4
     RP.fields.BZ_presc .= 1.0e-4
     RAPID2D.combine_field_sources!(RP)
@@ -773,7 +773,7 @@ end
         ini_n = gaussian_density(RP.G; R0, Z0, σR = 0.1, σZ = 0.1, peak = 1.0e6)
         ini_n[RP.G.nodes.on_out_wall_nids] .= 0.0
         RP.plasma.ne = copy(ini_n)
-        RP.plasma.ni = copy(ini_n)
+        RP.plasma.ni .= ini_n
         RP.fields.BR_presc .= 1.0e-4
         RP.fields.BZ_presc .= 1.0e-4
         RAPID2D.combine_field_sources!(RP)

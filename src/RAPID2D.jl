@@ -63,6 +63,7 @@ include("numerics/face_flux.jl")           # ∇·(u f) on cell faces, wall-awar
 include("numerics/wall_advection.jl")      # (u·∇)f from the mass flux; ∇·u and ∇f on in-wall nodes
 include("diagnostics/field_moments.jl")    # shape statistics, for direction checks
 include("physics/wall_ledger.jl")          # per-face absorbed/emitted inventory
+include("physics/species_store.jl")        # every species' density: the store, laid out by parent and charge state
 include("physics/ion_transport.jl")        # which equation the ion species share
 include("physics/electron_wall.jl")
 include("physics/electron_operators.jl")   # the per-step electron in-wall operators; what u∥ and Te solve with

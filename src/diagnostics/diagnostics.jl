@@ -26,7 +26,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
 
     # total number of electrons and ions (all species) in the device volume
     Ne2D = pla.ne .* inVol2D
-    Ni2D = pla.ni_sum .* inVol2D
+    Ni2D = pla.ni_tot .* inVol2D
 
     total_Ne = sum(Ne2D)
     total_Ni = sum(Ni2D)
@@ -41,7 +41,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
 
     # Ion quantities
     snap0D.ni = total_Ni / RP.G.device_inVolume
-    snap0D.ni_max = maximum(pla.ni_sum)
+    snap0D.ni_max = maximum(pla.ni_tot)
     snap0D.ui_para = sum(@. pla.ui_para * Ni2D) / total_Ni
     snap0D.Ti_eV = sum(@. pla.Ti_eV * Ni2D) / total_Ni
     snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * pla.mi_mean * pla.ui_para^2) / ee) * Ni2D) / total_Ni
@@ -52,7 +52,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.I_tor_endpoint = sum(
         @. (
             pla.ne * RP.config.constants.qe * pla.ue_para +
-                pla.Zni_sum * RP.config.constants.ee * pla.ui_para
+                pla.Zni_tot * RP.config.constants.ee * pla.ui_para
         ) * F.bϕ
     ) * RP.G.dR * RP.G.dZ
 
@@ -398,7 +398,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     # Current densities (parallel current components). The ion term is the ion CHARGE
     # density, Σ zₛ nₛ, not the ion density.
     snap2D.Jϕ .= pla.Jϕ
-    @. snap2D.J_para = ee * (pla.Zni_sum * pla.ui_para - pla.ne * pla.ue_para)
+    @. snap2D.J_para = ee * (pla.Zni_tot * pla.ui_para - pla.ne * pla.ue_para)
 
     # Poloidal flux
     snap2D.ψ .= F.ψ
@@ -430,7 +430,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.γ_shape_fac .= pla.γ_shape_fac
 
     # Ion quantities (all species: their sum, sharing one velocity and temperature)
-    snap2D.ni .= pla.ni_sum
+    snap2D.ni .= pla.ni_tot
     snap2D.ui_para .= pla.ui_para
     snap2D.uiR .= pla.uiR
     snap2D.uiϕ .= pla.uiϕ

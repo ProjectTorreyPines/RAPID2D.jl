@@ -283,16 +283,18 @@ end
     @test occursin("Warnings", report) && occursin("lacks H[1]", report)
 end
 
-@testitem "The list must hold the ion species the step moves, at its mass" begin
-    using RAPID2D: build_registry, check_transport_species, IonRecord, PlasmaConstants
+@testitem "With a list the step moves its ion species as the list has them" begin
+    using RAPID2D: build_registry, check_transport_species, IonRecord, PlasmaConstants, species_key
     using RAPID2D.Particles: H, H2
 
     constants = PlasmaConstants{Float64}()
-    moved = [IonRecord(H2[1]; mass = constants.mi)]     # what the transport moves by default
-    # constants.mi is 4e-4 above the list's 2mₚ + mₑ, and admitted
-    @test isnothing(check_transport_species(build_registry((H2[0], H2[1]), Protium(), constants), moved))
-    # D₂⁺ is another mass: the step would still move H₂⁺
-    @test_throws ArgumentError check_transport_species(build_registry((H2[0], H2[1]), Deuterium(), constants), moved)
+    reg = build_registry((H2[0], H2[1]), Protium(), constants)
+    listed = reg.ions[reg.ion_column[species_key(H2[1])]]
+    @test isnothing(check_transport_species(reg, [listed]))
+    # the record without a list (constants.mi, 4e-4 above the list's 2mₚ + mₑ) is not the list's
+    @test_throws ArgumentError check_transport_species(reg, [IonRecord(H2[1]; mass = constants.mi)])
+    # nor is protium's H₂⁺ deuterium's
+    @test_throws ArgumentError check_transport_species(build_registry((H2[0], H2[1]), Deuterium(), constants), [listed])
     # a list without H2[1]
-    @test_throws ArgumentError check_transport_species(build_registry((H[0], H[1]), Protium(), constants), moved)
+    @test_throws ArgumentError check_transport_species(build_registry((H[0], H[1]), Protium(), constants), [listed])
 end
