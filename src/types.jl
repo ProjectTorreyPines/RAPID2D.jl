@@ -374,6 +374,7 @@ Contains the plasma state variables including density, temperature, and velocity
     n_gas::Vector{Matrix{FT}} = [zeros(FT, dims)]
     ni_slot::Tuple{Int, Int} = (1, 1)
     h2_slot::Int = 1
+    store_generation::Int = 0           # how many layouts the store has had: a new one changes it
 
     # Temperatures
     Te_eV::Matrix{FT} = zeros(FT, dims) # Electron temperature [eV]
@@ -507,7 +508,7 @@ ion_plane(pla::PlasmaState, (k, z)::Tuple{Int, Int}) = view(getfield(pla, :n_ion
 # The species store is written in place (`.=`) and laid out only by `build_species_store!` (the
 # step transaction copies a store of the same layout back, its slots included): a rebound entry
 # would leave the solvers reading the arrays it replaced
-const SPECIES_STORE_FIELDS = (:ni, :n_H2_gas, :n_ions, :n_gas, :ni_slot, :h2_slot)
+const SPECIES_STORE_FIELDS = (:ni, :n_H2_gas, :n_ions, :n_gas, :ni_slot, :h2_slot, :store_generation)
 
 function Base.setproperty!(pla::PlasmaState, name::Symbol, x)
     name in SPECIES_STORE_FIELDS && throw(

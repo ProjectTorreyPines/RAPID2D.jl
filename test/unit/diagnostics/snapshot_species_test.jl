@@ -19,17 +19,23 @@
     )
     const X = SnapLadder()
 
-    "A run of H₂, H and X with X[2] seeded, `nsteps` steps long with a snapshot at every step."
-    function species_run(; nsteps = 3)
+    "A run of `species` in `hydrogen`, `nsteps` steps long with a snapshot at every step."
+    function species_case(; nsteps = 3, species, hydrogen = Protium())
         config = SimulationConfig{Float64}(;
             device_Name = "manual", NR = 9, NZ = 9, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
             wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
             prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-8, t_end_s = nsteps * 1.0e-8,
             snap0D_Δt_s = 1.0e-8, snap2D_Δt_s = 1.0e-8, Output_path = mktempdir(; cleanup = false),
-            species = (H2[0], H2[1], H[0], H[1], X[0], X[1], X[2], X[3]),
+            species, hydrogen,
         )
         RP = RAPID{Float64}(config)
         initialize!(RP)
+        return RP
+    end
+
+    "A run of H₂, H and X with X[2] seeded."
+    function species_run(; nsteps = 3)
+        RP = species_case(; nsteps, species = (H2[0], H2[1], H[0], H[1], X[0], X[1], X[2], X[3]))
         RP.plasma.n_ions[3][:, :, 2] .= 1.0e15
         return RP
     end
@@ -89,6 +95,21 @@ end
     write_to_adiosBP!(joinpath(dir, "one0D.bp"), d.snaps0D[end])
     @test isequal(only(adiosBP_to_snap2D(joinpath(dir, "one2D.bp"))), d.snaps2D[end])
     @test isequal(only(adiosBP_to_snap0D(joinpath(dir, "one0D.bp"))), d.snaps0D[end])
+end
+
+@testitem "In deuterium `n_H2_gas` is the D₂ gas, measured, read back and in time" setup = [SnapshotSpeciesCase] begin
+    using RAPID2D: measure_snap0D, measure_snap2D, adiosBP_to_snap0D, adiosBP_to_snap2D
+
+    RP = species_case(species = (H2[0], H2[1]), hydrogen = Deuterium())
+    s2, s0 = measure_snap2D(RP), measure_snap0D(RP)
+    @test s2.gas_parents == ["D2"] && s2.n_H2_gas === s2.ng_D2 && s0.n_H2_gas === s0.ng_D2
+    @test s2.n_H2_gas == RP.plasma.n_H2_gas
+    @test :n_H2_gas in propertynames(s2) && :n_H2_gas in propertynames(s0)
+
+    run_simulation!(RP)
+    r2, r0 = adiosBP_to_snap2D(RP.snap2D_path), adiosBP_to_snap0D(RP.snap0D_path)
+    @test r2[end].n_H2_gas === r2[end].ng_D2 && r0[end].n_H2_gas === r0[end].ng_D2
+    @test r2.n_H2_gas == r2.ng_D2 && size(r2.n_H2_gas) == (9, 9, length(r2)) && r0.n_H2_gas == r0.ng_D2
 end
 
 @testitem "A file of the first layout reads its ion density as the total and its H₂ gas as the H2 parent's" begin

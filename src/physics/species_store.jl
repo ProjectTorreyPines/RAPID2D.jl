@@ -50,6 +50,7 @@ function build_species_store!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     setfield!(pla, :n_gas, n_gas)
     setfield!(pla, :ni_slot, ni_slot)
     setfield!(pla, :h2_slot, findfirst(g -> g.key == species_key(Particles.H2[0]), layout.gas_records))
+    setfield!(pla, :store_generation, getfield(pla, :store_generation) + 1)
     RP.store_layout = layout
     return RP
 end
@@ -104,12 +105,15 @@ function clear_ions_outside_wall!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return RP
 end
 
-# Two plasma states hold stores of one layout: the same parents, charge states and slots, so that
-# one is copied into the other in place and the slots mean the same species
+# Two plasma states hold stores of one layout, so that one is copied into the other in place and
+# the slots mean the same species: laid out by the same build (its generation; a new layout of the
+# same shapes, another ion in the bulk's place, has another), of the same shapes and slots
 function check_store_layout(a::PlasmaState, b::PlasmaState)
-    same = map(size, getfield(a, :n_ions)) == map(size, getfield(b, :n_ions)) &&
-        map(size, getfield(a, :n_gas)) == map(size, getfield(b, :n_gas)) &&
+    same = getfield(a, :store_generation) == getfield(b, :store_generation) &&
+        same_shapes(getfield(a, :n_ions), getfield(b, :n_ions)) && same_shapes(getfield(a, :n_gas), getfield(b, :n_gas)) &&
         getfield(a, :ni_slot) == getfield(b, :ni_slot) && getfield(a, :h2_slot) == getfield(b, :h2_slot)
-    same || error("the species store changed its layout during the step; its densities cannot be put back")
+    same || error("the species store was laid out anew during the step; its densities cannot be put back")
     return nothing
 end
+
+same_shapes(a::Vector, b::Vector) = length(a) == length(b) && all(k -> size(a[k]) == size(b[k]), eachindex(a))

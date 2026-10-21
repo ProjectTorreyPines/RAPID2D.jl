@@ -360,14 +360,22 @@ end
 
 const AnySnapshot = Union{Snapshot0D, Snapshot2D}
 
-# A field, or a species: `ni_<parent>`, `ng_<parent>`, and the H₂ gas by its old name `n_H2_gas`
+# The hydrogen molecule's gas parent in each isotope (H2, D2, T2): the one `n_H2_gas` names, in a
+# snapshot as in the plasma
+const HYDROGEN_GAS_PARENTS = Tuple(parent_display_name(species_label(Particles.H2[0], iso)) for iso in (Protium(), Deuterium(), Tritium()))
+
+# A field, or a species: `ni_<parent>`, `ng_<parent>`, and the hydrogen molecule's gas by its old
+# name `n_H2_gas`
 @inline function Base.getproperty(s::AnySnapshot, name::Symbol)
     hasfield(typeof(s), name) && return getfield(s, name)
     return species_property(s, name)
 end
 
 function species_property(s::AnySnapshot, name::Symbol)
-    name === :n_H2_gas && return species_property(s, :ng_H2)
+    if name === :n_H2_gas
+        j = findfirst(in(HYDROGEN_GAS_PARENTS), getfield(s, :gas_parents))
+        isnothing(j) || return getfield(s, :ng_parents)[j]
+    end
     str = String(name)
     if startswith(str, "ni_")
         k = findfirst(==(chopprefix(str, "ni_")), getfield(s, :ion_parents))
@@ -385,7 +393,7 @@ species_names(s::AnySnapshot) = (
 )
 
 function Base.propertynames(s::AnySnapshot, ::Bool = false)
-    h2 = "H2" in getfield(s, :gas_parents) ? (:n_H2_gas,) : ()
+    h2 = any(in(HYDROGEN_GAS_PARENTS), getfield(s, :gas_parents)) ? (:n_H2_gas,) : ()
     return (fieldnames(typeof(s))..., species_names(s)..., h2...)
 end
 

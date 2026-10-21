@@ -226,10 +226,16 @@ end
     @test all(==(2.0), held_ni) && parent(held_ni) === RP.plasma.n_ions[1]
     @test all(==(5.0), RP.plasma.n_ions[2][:, :, 3]) && held_gas == gas && held_gas === RP.plasma.n_H2_gas
 
-    # a layout changed between the save and the restore cannot be put back into
+    # a layout changed between the save and the restore cannot be put back into, a species added…
     RP = store_case()
     ck = StepState(RP)
     layout_ion_species!(RP, [RP.transport.ion_species[1], IonRecord(:C6, 6 * RP.transport.ion_species[1].mass, 6)])
+    @test_throws ErrorException restore_step_state!(RP, ck)
+    # …or another ion in the bulk's place, every shape and slot as before
+    RP = store_case()
+    ck = StepState(RP)
+    layout_ion_species!(RP, [IonRecord(:C6, 6 * RP.transport.ion_species[1].mass, 6)])
+    @test size.(RP.plasma.n_ions) == size.(ck.plasma.n_ions) && RP.plasma.ni_slot == ck.plasma.ni_slot
     @test_throws ErrorException restore_step_state!(RP, ck)
 end
 

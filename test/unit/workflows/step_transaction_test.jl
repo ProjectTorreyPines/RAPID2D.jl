@@ -112,8 +112,9 @@ end
         v = getfield(obj, name)
         # a coil voltage changes kind both ways, a number for a function and back
         name === :voltage_applied && return setfield!(obj, name, v isa Function ? 1.0 : sin)
-        # the species store's slots are its layout, fixed over a run (the transaction refuses a change)
-        name in (:ni_slot, :h2_slot) && return obj
+        # the species store's slots and generation are its layout, fixed over a run (the transaction
+        # refuses a change)
+        name in (:ni_slot, :h2_slot, :store_generation) && return obj
         if v isa Array{<:Array{<:Real}}            # the species store: every density in it
             foreach(a -> a .= a .* 2 .+ 1, v)
         elseif v isa Vector{<:Real}
