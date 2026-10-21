@@ -209,7 +209,7 @@ module RAPID2DPlotsExt
         )
     end
 
-    function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, field; colorscale = :auto, streamlines = true, wall = nothing, kwargs...)
+    function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, field; colorscale = :auto, clims = nothing, streamlines = true, wall = nothing, kwargs...)
 
         # Get field data
         field_data = RAPID2D.snapshot_matrix(snap2D, field)
@@ -247,12 +247,16 @@ module RAPID2DPlotsExt
         contour!(p, R1D, Z1D, ψ', levels = range(extrema(ψ)..., 11), color = :white)
 
         if colorscale == :log10
-            if clims[1] <= 0
-                new_clims = (min(1.0e-3, 1.0e-3 * clims[2]), clims[2])  # Avoid log10 of zero or negative
+            # the limits given, or the field's top three decades
+            lims = something(clims, (1.0e-3, 1.0) .* RAPID2D.finite_extrema((field_data,))[2])
+            if lims[1] <= 0
+                new_clims = (min(1.0e-3, 1.0e-3 * lims[2]), lims[2])  # Avoid log10 of zero or negative
             else
-                new_clims = clims
+                new_clims = lims
             end
             p = plot!(p, clims = new_clims, colorbar_scale = :log10)
+        elseif clims !== nothing
+            p = plot!(p, clims = clims)
         end
 
 
