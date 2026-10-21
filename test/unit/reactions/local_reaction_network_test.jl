@@ -13,9 +13,10 @@
     tables = (load_electron_RRCs(), load_H2_Ion_RRCs())
 
     # Cells at electron temperatures Te: the plan, densities, and the inputs, rates and energies from
-    # the rows' own models, the electron solve adding no ions and using no neutrals
-    function network_case(list; Te = [2.0, 8.0, 30.0], ne = fill(1.0e18, length(Te)), rates = ())
-        sys = assemble_species_system(list, Protium(), constants, tables...; rates)
+    # the rows' own models, the electron solve adding no ions and using no neutrals. The keywords
+    # (rates, processes) go to the assembly
+    function network_case(list; Te = [2.0, 8.0, 30.0], ne = fill(1.0e18, length(Te)), kwargs...)
+        sys = assemble_species_system(list, Protium(), constants, tables...; kwargs...)
         plan = local_network_plan(sys)
         cells = length(Te)
         n_ion = [fill(1.0e17 * s, cells) for s in 1:plan.n_ion]
@@ -224,6 +225,56 @@ end
     end
     @test allocated(case.plan, case.inputs, case.n_ion, case.n_neutral) == 0
     @test allocated(coupled, case.inputs, case.n_ion, case.n_neutral) == 0
+end
+
+@testitem "A reaction back up the production order closes a cycle: one block, fed by the block before it" setup = [LocalNetworkCase] begin
+    using RAPID2D: ReactionProcess, RateClosure, MaxwellianClosure, RateSources, RateData, SameForIsotopes,
+        ConstantRate, LocalNetwork, Accept, ScalarSolve, SingleBlock
+    using RAPID2D.Particles: H, H2, H3
+
+    # a toy association H[1] + H2[0] → H3[1] turns H[1] back into H3[1]: the two become one cycle,
+    # downstream of H2[1], whose rows into them are the cycle's inflow
+    struct ToyAssociation <: ReactionProcess end
+    RAPID2D.process_label(::ToyAssociation) = :toy
+    RAPID2D.stoichiometry(::ToyAssociation) = (H[1] => 1, H2[0] => 1) => (H3[1] => 1,)
+    RAPID2D.producer(::ToyAssociation) = LocalNetwork(implicit = H[1], frozen = H2[0])
+    RAPID2D.rate_data(::ToyAssociation, ::MaxwellianClosure, ::RateSources) = RateData(ConstantRate(1.0e-15), SameForIsotopes(), "toy")
+    RAPID2D.electron_energy(::ToyAssociation, ::RateClosure, ::RateSources) = nothing
+    case = network_case((H2[0], H[0], H2[1], H[1], H3[1]); processes = (ToyAssociation(),))
+    @test length(case.plan.blocks) == 2
+    upstream, cycle = case.plan.blocks
+    @test only(upstream.columns) == ion_column(case, H2[1]) && upstream.solver isa ScalarSolve
+    @test sort(cycle.columns) == sort([ion_column(case, H3[1]), ion_column(case, H[1])])
+    @test !isempty(cycle.inflow)
+
+    # the blocks in turn, the whole cell as one block and a dense solve agree, at a step short and
+    # one far beyond the H2[1] lifetime
+    coupled = local_network_plan(case.sys; block_structure = SingleBlock())
+    for Δt in (1.0e-6, 1.0e-3)
+        expected = [network_matrix(case, k, Δt) \ [case.n_ion[s][k] for s in 1:case.plan.n_ion] for k in 1:3]
+        for plan in (case.plan, coupled)
+            n_ion = deepcopy(case.n_ion)
+            acc = NetworkAccumulator{Float64}(plan, (3,))
+            @test solve_local_network!(acc, n_ion, deepcopy(case.n_neutral), plan, case.inputs, Δt) === Accept()
+            @test all([n_ion[s][k] for s in 1:case.plan.n_ion] ≈ expected[k] for k in 1:3)
+            @test all(all(>=(0), n) for n in n_ion)
+        end
+    end
+end
+
+@testitem "Pivoted LU solves a block that is no M-matrix, a zero first pivot included" begin
+    using RAPID2D: block_solve!, PivotedLUSolve
+
+    # the block in the leading rows of a larger scratch, as the network holds it; the rest is NaN
+    # so that touching it would show
+    A = [0.0 2.0 1.0; 1.0 1.0 0.0; 3.0 0.0 1.0]
+    x = [1.0, -2.0, 0.5]
+    matrix, rhs = fill(NaN, 4, 4), fill(NaN, 4)
+    matrix[1:3, 1:3] .= A
+    rhs[1:3] .= A * x
+    block_solve!(PivotedLUSolve(), matrix, rhs, 3)
+    @test rhs[1:3] ≈ x rtol = 1.0e-12
+    @test isnan(rhs[4])
 end
 
 @testitem "The electron solve's use of a neutral and the network's share one budget; a refused step changes nothing" setup = [LocalNetworkCase] begin

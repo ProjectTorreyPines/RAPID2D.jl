@@ -118,6 +118,9 @@ end
     @test hydrogen.registry.ions[2].mass ≈ constants.mp rtol = 1.0e-15
     @test hydrogen.registry.neutrals[1].mass ≈ 2 * (constants.mp + constants.me) rtol = 1.0e-15
     @test deuterium.registry.ions[1].mass ≈ 2 * RAPID2D.DEUTERON_MASS + constants.me rtol = 1.0e-15
+    tritium = assemble_species_system(list, Tritium(), constants, eRRCs, iRRCs)
+    @test [r.label for r in tritium.registry.ions] == [Symbol("T2[1]"), Symbol("T[1]"), Symbol("T3[1]")]
+    @test tritium.registry.ions[1].mass ≈ 2 * RAPID2D.TRITON_MASS + constants.me rtol = 1.0e-15
 
     # the same reactions either way; electron impact keeps its rate
     @test [a.reaction.label for a in hydrogen.reactions] == [a.reaction.label for a in deuterium.reactions]

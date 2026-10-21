@@ -60,6 +60,30 @@ end
     @test_throws ArgumentError ArrheniusRate(1.0e-14, 0.0, 0.0, (0.0, 10.0))
 end
 
+@testitem "A heavy pair's rate carried to another mass is its model at factor·T, its slope factor times the model's" begin
+    using RAPID2D: LogPolynomialRate, TemperatureScaled, HeavyPairContext, ElectronDriftContext, rate_coefficient,
+        rate_derivative!, derivative_support, HasDerivative
+
+    fit = LogPolynomialRate((-30.0, 2.0, -0.3, 0.01), (1.0, 50.0))
+    factor = 0.6
+    scaled = TemperatureScaled(fit, factor)
+    T, u = [1.0, 7.0, 30.0, 120.0], zeros(4)          # factor·T below, inside and above the fit's range
+    at_scaled_T = HeavyPairContext(factor .* T, u)
+    @test rate_coefficient(scaled, HeavyPairContext(T, u)) == rate_coefficient(fit, at_scaled_T)
+    @test rate_derivative!(zeros(4), scaled, HeavyPairContext(T, u)) == factor .* rate_derivative!(zeros(4), fit, at_scaled_T)
+    @test derivative_support(scaled) === derivative_support(fit) === HasDerivative()
+    # the chain rule against the slope of the scaled rate itself
+    for Tm in (4.0, 20.0)
+        h = 1.0e-6 * Tm
+        around = HeavyPairContext([Tm - h, Tm, Tm + h], zeros(3))
+        K = rate_coefficient(scaled, around)
+        @test rate_derivative!(zeros(3), scaled, around)[2] ≈ (K[3] - K[1]) / (2h) rtol = 1.0e-6
+    end
+
+    # electron rates are the same for every isotope: a scaled rate has no electron context
+    @test_throws MethodError rate_coefficient(scaled, ElectronDriftContext(T, u))
+end
+
 @testitem "A tabulated rate is its table's answer, in the context of the table's axes" begin
     using RAPID2D: RRC_EoverP_Erg, RRC_T_ud, RRC_T_ud_gFac, TabulatedRate, ElectronImpactContext,
         ElectronDriftContext, HeavyPairContext, rate_coefficient, rate_coefficient!, rate_derivative!,

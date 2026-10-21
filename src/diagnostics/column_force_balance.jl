@@ -172,11 +172,8 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # if the column could move: its ion mass, the ion–neutral drag rate, the gap to the wall on the
     # centroid's midplane in the direction of the net radial force, and the time to close it at
     # constant force, inertial (√(2Mℓ/|F|)) and drag-limited (ℓ M ν / |F|). Limits, not dynamics
-    # the mass species by species, Σₛ mₛ Σ nₛ V; one ion–neutral rate serves every species
-    column_mass = bulk_ion_mass(RP) * sum(pla.ni[inside] .* V_in)
-    foreach_other_ion(RP) do n, z, m
-        column_mass += m * sum(n[inside] .* V_in)
-    end
+    # the mass of every ion species, Σ (Σₛ mₛ nₛ) V; one ion–neutral rate serves every species
+    column_mass = sum(pla.mni_sum[inside] .* V_in)
     ni_V_in = pla.ni_sum[inside] .* V_in
     nu_in_column = sum(ni_V_in) > 0 ? sum(RP.transport.νi_neutral[inside] .* ni_V_in) / sum(ni_V_in) : FT(NaN)
     wall_gap_R = _wall_gap_R(G, R_cen_by_Jϕ, Z_cen_by_Jϕ, force_R_net)

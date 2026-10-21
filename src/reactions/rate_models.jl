@@ -159,8 +159,9 @@ end
 """
     TemperatureScaled(model, factor)
 
-`model` at the context's temperature times `factor`, K(T) = K_model(factor·T): a heavy pair's
-rate carried to other masses at equal velocity, `factor = μ_ref/μ`.
+`model` at the pair's temperature times `factor`, K(T) = K_model(factor·T): a heavy pair's
+rate carried to other masses at equal velocity, `factor = μ_ref/μ`, in a
+[`HeavyPairContext`](@ref). Electron rates are the same for every isotope and are never scaled.
 """
 struct TemperatureScaled{M <: AbstractRateModel, FT <: AbstractFloat} <: AbstractRateModel
     model::M
@@ -271,28 +272,25 @@ rate_coefficient!(out::AbstractArray, m::TabulatedRate{<:RRC_T_ud}, ctx::Tempera
 rate_derivative!(out::AbstractArray, m::TabulatedRate{<:RRC_T_ud}, ctx::TemperatureContext) =
     m.table.dK_dT(out, (ctx.T_eV, ctx.u))
 
-function rate_coefficient!(out::AbstractArray, m::TemperatureScaled, ctx::TemperatureContext)
+function rate_coefficient!(out::AbstractArray, m::TemperatureScaled, ctx::HeavyPairContext)
     @with_pool pool begin
         T = acquire!(pool, eltype(ctx.T_eV), size(ctx.T_eV)...)
         T .= m.factor .* ctx.T_eV
-        rate_coefficient!(out, m.model, with_temperature(ctx, T))
+        rate_coefficient!(out, m.model, HeavyPairContext(T, ctx.u))
     end
     return out
 end
 
 # d/dT K_model(factor·T) = factor·K′_model(factor·T)
-function rate_derivative!(out::AbstractArray, m::TemperatureScaled, ctx::TemperatureContext)
+function rate_derivative!(out::AbstractArray, m::TemperatureScaled, ctx::HeavyPairContext)
     @with_pool pool begin
         T = acquire!(pool, eltype(ctx.T_eV), size(ctx.T_eV)...)
         T .= m.factor .* ctx.T_eV
-        rate_derivative!(out, m.model, with_temperature(ctx, T))
+        rate_derivative!(out, m.model, HeavyPairContext(T, ctx.u))
     end
     out .*= m.factor
     return out
 end
-
-with_temperature(ctx::ElectronDriftContext, T) = ElectronDriftContext(T, ctx.u)
-with_temperature(ctx::HeavyPairContext, T) = HeavyPairContext(T, ctx.u)
 
 # ∂K of the surface `reaction` of a container of tables at `ctx`: a barrier, so the call into
 # the surface is specialized however abstractly the caller holds the container
