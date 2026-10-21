@@ -72,8 +72,7 @@ end
     run_simulation!(
         RP; callback_before_step = rp -> begin
             pla, F, c = rp.plasma, rp.fields, rp.config.constants
-            Z = RAPID2D.bulk_ion_charge(rp)
-            J = @. (pla.ne * c.qe * pla.ue_para + pla.ni * (c.ee * Z) * pla.ui_para) * F.bϕ
+            J = @. (pla.ne * c.qe * pla.ue_para + pla.Zni_sum * c.ee * pla.ui_para) * F.bϕ
             push!(mismatch, maximum(abs, J .- pla.Jϕ))
         end
     )

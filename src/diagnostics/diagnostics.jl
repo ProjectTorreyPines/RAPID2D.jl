@@ -12,21 +12,21 @@ Updates the provided snap0D with current simulation state and volume-averaged qu
 """
 function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: AbstractFloat}
 
+    update_charge_states!(RP)   # the ion sums of the densities as they are now
     pla = RP.plasma
     F = RP.fields
     inVol2D = RP.G.inVol2D  # alias for convenience
 
     @unpack ee, me = RP.config.constants  # Unpack constants for convenience
-    mi = bulk_ion_mass(RP)                    # Ki_eV is the ion's kinetic energy
 
     # Store metadata
     snap0D.time_s = RP.time_s
     snap0D.dt = RP.dt
     snap0D.step = RP.step
 
-    # total number of electrons and ions in the device volume
+    # total number of electrons and ions (all species) in the device volume
     Ne2D = pla.ne .* inVol2D
-    Ni2D = pla.ni .* inVol2D
+    Ni2D = pla.ni_sum .* inVol2D
 
     total_Ne = sum(Ne2D)
     total_Ni = sum(Ni2D)
@@ -41,19 +41,18 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
 
     # Ion quantities
     snap0D.ni = total_Ni / RP.G.device_inVolume
-    snap0D.ni_max = maximum(pla.ni)
+    snap0D.ni_max = maximum(pla.ni_sum)
     snap0D.ui_para = sum(@. pla.ui_para * Ni2D) / total_Ni
     snap0D.Ti_eV = sum(@. pla.Ti_eV * Ni2D) / total_Ni
-    snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * mi * pla.ui_para^2) / ee) * Ni2D) / total_Ni
+    snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * pla.mi_mean * pla.ui_para^2) / ee) * Ni2D) / total_Ni
 
     # Toroidal current: the stored Jϕ, and the one of the step's end state (free runs do not
     # refresh Jϕ after the density and the ions move)
     snap0D.I_tor = sum(pla.Jϕ * RP.G.dR * RP.G.dZ)
-    Z_i = FT(bulk_ion_charge(RP))
     snap0D.I_tor_endpoint = sum(
         @. (
             pla.ne * RP.config.constants.qe * pla.ue_para +
-                pla.ni * RP.config.constants.ee * Z_i * pla.ui_para
+                pla.Zni_sum * RP.config.constants.ee * pla.ui_para
         ) * F.bϕ
     ) * RP.G.dR * RP.G.dZ
 
@@ -343,6 +342,7 @@ Updates the provided snap2D with current simulation state and 2D field distribut
 function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: AbstractFloat}
 
     @assert snap2D.dims_RZ == (RP.G.NR, RP.G.NZ) "Snapshot dimensions must match RAPID grid dimensions"
+    update_charge_states!(RP)   # the ion sums of the densities as they are now
 
     # Get current index
     pla = RP.plasma                  # alias for convenience
@@ -350,7 +350,6 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     tp = RP.transport                 # alias for convenience
 
     @unpack ee, me = RP.config.constants  # Unpack constants for convenience
-    mi = bulk_ion_mass(RP)                    # Ki_eV is the ion's kinetic energy
 
     # Store metadata
     snap2D.step = RP.step
@@ -396,12 +395,10 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     @. snap2D.Ni_src_rate = Ntracker.cum2D_Ni_src / RP.config.snap2D_Δt_s
     @. snap2D.Ni_loss_rate = Ntracker.cum2D_Ni_loss / RP.config.snap2D_Δt_s
 
-    # Current densities (parallel current components). The ion term is a CHARGE
-    # density, `ni·Z` — it read `ni` alone, which was right only because H₂⁺ has
-    # Z = 1, and would have under-reported the current for any other ion.
+    # Current densities (parallel current components). The ion term is the ion CHARGE
+    # density, Σ zₛ nₛ, not the ion density.
     snap2D.Jϕ .= pla.Jϕ
-    Z_i = FT(bulk_ion_charge(RP))
-    @. snap2D.J_para = ee * (pla.ni * Z_i * pla.ui_para - pla.ne * pla.ue_para)
+    @. snap2D.J_para = ee * (pla.Zni_sum * pla.ui_para - pla.ne * pla.ue_para)
 
     # Poloidal flux
     snap2D.ψ .= F.ψ
@@ -432,8 +429,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     snap2D.γ_shape_fac .= pla.γ_shape_fac
 
-    # Ion quantities
-    snap2D.ni .= pla.ni
+    # Ion quantities (all species: their sum, sharing one velocity and temperature)
+    snap2D.ni .= pla.ni_sum
     snap2D.ui_para .= pla.ui_para
     snap2D.uiR .= pla.uiR
     snap2D.uiϕ .= pla.uiϕ
@@ -455,7 +452,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     # Calculate mean energies
     @. snap2D.Ke_eV = 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
-    @. snap2D.Ki_eV = 1.5 * pla.Ti_eV + 0.5 * mi * pla.ui_para^2 / ee
+    @. snap2D.Ki_eV = 1.5 * pla.Ti_eV + 0.5 * pla.mi_mean * pla.ui_para^2 / ee
 
     # Collision frequencies using RRC methods
     if RP.flags.Atomic_Collision

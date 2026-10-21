@@ -134,14 +134,12 @@ end
     eig = eig_Te_at(RP)
 
     pla = RP.plasma
-    m_i = RAPID2D.bulk_ion_mass(RP)
-    μ = m_i * c.me / (m_i + c.me)^2
     Ē_eV = @. 1.5 * pla.Te_eV + 0.5 * c.me * pla.ue_para^2 / c.ee
     Ē_floor = first(RP.eRRCs.Kerg_ela.Erg_eV)
     Ē_safe = @. max(Ē_eV, Ē_floor)
+    # (the e–i exchange is not among them: the step applies its exact solution on its own)
     𝔅 = @. (pla.P_en_ela + pla.P_en_exc) * 2.25 * pla.T_gas_eV / Ē_safe^2 +  # P_ela, P_exc
-        1.5 * c.ee * (pla.ν_en_iz + pla.ν_en_diss_iz) +                       # P_dilution
-        2 * μ * 1.5 * c.ee * pla.ν_ei                                         # P_equi
+        1.5 * c.ee * (pla.ν_en_iz + pla.ν_en_diss_iz)                         # P_dilution
     expected = @. -(2 / 3) * 𝔅 / c.ee
 
     inw = RP.G.nodes.in_wall_nids
@@ -198,10 +196,8 @@ end
         # ν_en_iz_tot, not ν_en_iz alone: under the interim (REACTION_STOICHIOMETRY.diz)
         # DI's ion is booked to H₂⁺ too, matching update_ion_power_jacobian!.
         @. ν_a += Z_i * pla.ν_en_iz_tot                      # src is on in this fixture
+        # the e–i exchange is not in it, Coulomb or not: the step applies its exact solution
         expected = @. -ν_a * 1.5 * ee
-        if coulomb
-            @. expected -= (2 * (mi * me / (mi + me)^2)) * 1.5 * ee * pla.ν_ei
-        end
         @. expected *= 2 / 3 / ee
 
         inw = kr.G.nodes.in_wall_nids

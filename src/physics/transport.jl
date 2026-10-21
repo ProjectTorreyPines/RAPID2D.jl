@@ -28,16 +28,14 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # its `Te/De ≡ mₑνₑ/e` cancellation to be exact. Unpacking `ee` as well would put
     # two names for one constant in scope.
     @unpack me = RP.config.constants
-    # `vp_i` reaches the ion collisional diffusivity and, through the ambipolar
-    # average, the ELECTRON one — so a mass that disagrees with the species the
-    # ion equation transports would move both.
-    mi = bulk_ion_mass(RP)
 
-    # Charge state first: `Zeff` reaches the Spitzer factor a few lines below. The
-    # charge density and the quasineutrality slaving do NOT come through here —
-    # they take the species' own charge, which is why nothing downstream depends on
-    # this call having run.
+    # The ion species summed first: the collision rates, the Spitzer factor and the ion
+    # mass below read them.
     update_charge_states!(RP)
+    # `vp_i` reaches the ion collisional diffusivity and, through the ambipolar
+    # average, the ELECTRON one: the mean ion mass node by node, the species' own
+    # where there is one.
+    mi = pla.mi_mean
 
     # The one RRC evaluation point of the step. Everything downstream — the rest of this
     # function and the whole of the next advance_timestep! — reads plasma.ν_en_* instead
@@ -70,6 +68,10 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     else
         fill!(tp.νi_coulomb, zero(FT))
     end
+    # the mean ion that rate is built for, kept with it: the species' Coulomb channels are
+    # scaled against this, not against a composition that moves during the step
+    tp.νi_coulomb_mass .= pla.mi_mean
+    ion_mean!(tp.νi_coulomb_Z2, RP, (z, m) -> z^2)
 
     # `vp = √(2T/m)` is the moment that makes the line below come out at D∥ = T/(mν):
     # ½vp² = T/m exactly. Any other Maxwellian speed would need a different

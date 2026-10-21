@@ -342,14 +342,14 @@ electron_kinetic_energy(G::GridGeometry, n::AbstractVecOrMat, u::AbstractVecOrMa
     sum(me / 2 * n[k] * u[k]^2 * 2π * G.R2D[k] * G.dR * G.dZ for k in nodes; init = zero(me * G.dR))
 
 """
-    surface_statistics(basis, ne, ni, ue, ui, Te_eV; me, ee) -> (; n_min, drift, imbalance)
+    surface_statistics(basis, ne, Zni, ue, ui, Te_eV; me, ee) -> (; n_min, drift, imbalance)
 
 Per basis function of `basis`, over the Ω_c nodes it covers: the smallest electron density, the largest
 electron–ion drift against the electron thermal speed, |uₑ − uᵢ| / √(e Tₑ / mₑ), and the largest
-relative density imbalance |nₑ − nᵢ| / nₑ.
+relative charge imbalance |nₑ − Σ zₛ nₛ| / nₑ, with `Zni` the ion charge density Σ zₛ nₛ.
 """
 function surface_statistics(
-        b::ClosedSurfaceBasis{FT}, ne, ni, ue, ui, Te_eV; me::Real, ee::Real,
+        b::ClosedSurfaceBasis{FT}, ne, Zni, ue, ui, Te_eV; me::Real, ee::Real,
     ) where {FT}
     M = length(b.knots)
     n_min, drift, imbalance = fill(FT(Inf), M), zeros(FT, M), zeros(FT, M)
@@ -359,7 +359,7 @@ function surface_statistics(
         k = b.nodes[rows[p]]
         n_min[s] = min(n_min[s], ne[k])
         drift[s] = max(drift[s], abs(ue[k] - ui[k]) / sqrt(ee * Te_eV[k] / me))
-        imbalance[s] = max(imbalance[s], abs(ne[k] - ni[k]) / ne[k])
+        imbalance[s] = max(imbalance[s], abs(ne[k] - Zni[k]) / ne[k])
     end
     return (; n_min, drift, imbalance)
 end

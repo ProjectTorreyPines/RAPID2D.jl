@@ -38,6 +38,8 @@ include("numerics/coupled_block.jl")         # the coupled solve's u∥–ψ blo
 include("numerics/fixed_point.jl")           # the fixed-point solve, and Newton's step for an affine map
 include("numerics/anderson.jl")              # Anderson mixing for the coupled solve's fixed point
 include("physics/species.jl")       # species, ion records and the transport policies; types.jl needs them
+include("physics/species_registry.jl")   # a run's species as records, and the system RAPID holds
+include("reactions/rate_closures.jl")   # how a rate is averaged over the colliding distribution, the choice the config holds
 include("numerics/field_lines/field_line_tracer_policies.jl")   # how a field line is followed: the tracer policies the flags hold
 include("numerics/field_lines/closed_surface_flux_types.jl")   # the closed-surface flux constraint: policies, basis, state
 include("control/ideal_vertical_field_types.jl")   # the vertical-field control the flags hold, and its state
@@ -82,6 +84,10 @@ include("control/ideal_vertical_field.jl")   # the ideal vertical-field actuator
 include("reactions/electron_Xsec.jl")
 include("reactions/reaction_rate_coefficients.jl")
 include("reactions/rate_models.jl")   # rate coefficients by model (a table or a fit) and context
+include("reactions/energy_models.jl")   # what a reaction does to the electrons' energy: per event, per unit time
+include("reactions/reaction_catalog.jl")   # reactions and collisions among a run's species, and their assembly
+include("reactions/hydrogen_network.jl")   # the hydrogen reactions and collisions, with the sources of their rates
+include("reactions/local_network.jl")   # the reactions the electron solve does not count, solved cell by cell in blocks
 
 # Include simulation workflows
 include("step_transaction.jl")   # a step as a transaction: the state it writes, put back when an attempt is rejected

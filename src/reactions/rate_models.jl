@@ -1,3 +1,5 @@
+export ConstantRate, ArrheniusRate, LogPolynomialRate
+
 # Rate coefficients by model: a reaction's K = ⟨σv⟩ from a table or a fit, evaluated at the
 # coordinates of the colliding pair (its context).
 
@@ -121,6 +123,29 @@ function check_fit_range(T_range)
 end
 
 """
+    JanevFit(coefficients, T_range, source)
+
+A Janev–Reiter Maxwellian rate fit as the EIRENE databases print it (HYDHEL and AMJUEL, section
+H.2): ln⟨σv⟩[cm³/s] = Σₙ₌₀⁸ bₙ (ln T[eV])ⁿ, `coefficients` = (b₀, …, b₈), used on `T_range` [eV].
+`LogPolynomialRate(FT, fit)` is its rate in m³/s.
+"""
+struct JanevFit
+    coefficients::NTuple{9, Float64}
+    T_range::NTuple{2, Float64}
+    source::String
+end
+
+"""
+    LogPolynomialRate(FT, fit::JanevFit; fraction = 1)
+
+The fit's rate in m³/s (b₀ + ln 10⁻⁶) times `fraction`, a branch of the fitted reaction.
+"""
+function LogPolynomialRate(::Type{FT}, fit::JanevFit; fraction::Real = 1) where {FT <: AbstractFloat}
+    b = fit.coefficients
+    return LogPolynomialRate(FT.((b[1] + log(1.0e-6) + log(fraction), Base.tail(b)...)), FT.(fit.T_range))
+end
+
+"""
     TabulatedRate(table)
 
 A rate table: an [`RRC_EoverP_Erg`](@ref) in an [`ElectronImpactContext`](@ref), an
@@ -129,6 +154,18 @@ other pairing has no method.
 """
 struct TabulatedRate{R <: AbstractReactionRateCoefficient} <: AbstractRateModel
     table::R
+end
+
+"""
+    TemperatureScaled(model, factor)
+
+`model` at the pair's temperature times `factor`, K(T) = K_model(factor·T): a heavy pair's
+rate carried to other masses at equal velocity, `factor = μ_ref/μ`, in a
+[`HeavyPairContext`](@ref). Electron rates are the same for every isotope and are never scaled.
+"""
+struct TemperatureScaled{M <: AbstractRateModel, FT <: AbstractFloat} <: AbstractRateModel
+    model::M
+    factor::FT
 end
 
 abstract type DerivativeSupport end
@@ -143,6 +180,7 @@ Whether `model` has a derivative in its context's energy coordinate ([`rate_deri
 derivative_support(::AbstractRateModel) = NoDerivative()
 derivative_support(::Union{ConstantRate, ArrheniusRate, LogPolynomialRate}) = HasDerivative()
 derivative_support(::TabulatedRate{<:Union{RRC_EoverP_Erg, RRC_T_ud}}) = HasDerivative()
+derivative_support(m::TemperatureScaled) = derivative_support(m.model)
 
 # ── evaluation ──────────────────────────────────────────────────────────────────────────
 
@@ -233,6 +271,26 @@ rate_coefficient!(out::AbstractArray, m::TabulatedRate{<:RRC_T_ud}, ctx::Tempera
     m.table.itp(out, (ctx.T_eV, ctx.u))
 rate_derivative!(out::AbstractArray, m::TabulatedRate{<:RRC_T_ud}, ctx::TemperatureContext) =
     m.table.dK_dT(out, (ctx.T_eV, ctx.u))
+
+function rate_coefficient!(out::AbstractArray, m::TemperatureScaled, ctx::HeavyPairContext)
+    @with_pool pool begin
+        T = acquire!(pool, eltype(ctx.T_eV), size(ctx.T_eV)...)
+        T .= m.factor .* ctx.T_eV
+        rate_coefficient!(out, m.model, HeavyPairContext(T, ctx.u))
+    end
+    return out
+end
+
+# d/dT K_model(factor·T) = factor·K′_model(factor·T)
+function rate_derivative!(out::AbstractArray, m::TemperatureScaled, ctx::HeavyPairContext)
+    @with_pool pool begin
+        T = acquire!(pool, eltype(ctx.T_eV), size(ctx.T_eV)...)
+        T .= m.factor .* ctx.T_eV
+        rate_derivative!(out, m.model, HeavyPairContext(T, ctx.u))
+    end
+    out .*= m.factor
+    return out
+end
 
 # ∂K of the surface `reaction` of a container of tables at `ctx`: a barrier, so the call into
 # the surface is specialized however abstractly the caller holds the container

@@ -287,14 +287,14 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # everything separating two ion species arrives through m and Z.
     #
     # `νi_coulomb` is the SELF-collision rate (NRL Plasma Formulary p.28,
-    # ν_i ∝ Z⁴μ^-½ n λ T^-3/2), which is what `update_coulomb_collision_parameters!`
-    # computes for the bulk. A trace species does not collide with itself: it
-    # collides with the BULK, and NRL's ion–ion test-particle rate (p.33) is
+    # ν_i ∝ Z⁴μ^-½ n λ T^-3/2), which `update_coulomb_collision_parameters!` computes
+    # for the mixture's mean ion (mean mass `mi_mean`, mean squared charge). A species
+    # collides with that mean ion, and NRL's ion–ion test-particle rate (p.33) is
     #
     #     ν_s^{z|i} ∝ n_i Z_z²Z_i² λ (μ_i^½/μ_z)(1 + μ_i/μ_z) T^-3/2
     #
     # Dividing that by the same expression at z = i gives `coulomb_scale` below,
-    # which is exactly 1 for the bulk.
+    # which is exactly 1 for a lone species.
     #
     # Only the Coulomb half of ν is scaled this way. An ion–neutral collision rate
     # goes as n₀σ√(T/m) (NRL p.39), so its contribution is species-independent
@@ -308,9 +308,10 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # the pinch term, not a shared D. See
     # `internal/docs/src/details/impurity-transport-basics.md` §4. No present result
     # moves: at z = bulk, μ = 1 and the two forms are identical.
-    m_ref = bulk_ion_mass(RP)   # the mass `ν_ii` was built with; μ is a ratio TO the bulk
-    mass_ratio = FT(m_ref / species.mass)
-    coulomb_scale = FT(species.charge^2) * sqrt(mass_ratio) * (1 + mass_ratio) / 2
+    # the mean ion `ν_ii` was built with, node by node, at the refresh; μ is a ratio TO it
+    Z_ratio2 = @. FT(species.charge^2) / tp.νi_coulomb_Z2
+    mass_ratio = @. tp.νi_coulomb_mass / species.mass
+    coulomb_scale = @. Z_ratio2 * sqrt(mass_ratio) * (1 + mass_ratio) / 2
     vm_s = maxwellian_mean_speed.(pla.Ti_eV, species.mass)
     ν_s = @. tp.νi_neutral + coulomb_scale * tp.νi_coulomb
     # `&`, not `&&`: inside `@.` the comparisons are elementwise masks, and `&&` is
@@ -511,6 +512,7 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
         end
 
         vec(pla.ni) .= view(N, :, 1)
+        update_charge_states!(RP)
         return RP
     end
 end
@@ -782,20 +784,19 @@ end
 Declare which ion species the transport solve advances, and size the work
 buffers to match.
 
-**Exactly one species, for now.** Grouping, assembly, the batch solve and the
-face ledger are written against a list (and never write outside the wall, so a
-second column cannot accumulate there), but three things outside them are not,
-and each is silently wrong rather than loudly missing:
+**Exactly one species, for now.** Grouping, assembly, the batch solve, the
+face ledger and the mixture's sums (the currents, the collisions, the masses) are
+written against a list (and never write outside the wall, so a second column
+cannot accumulate there), but three things are not, and each is silently wrong
+rather than loudly missing:
 
   - `γ_2nd_electron` is one number, so only column 1 could yield secondary electrons;
   - `Ni_loss` books one total (the per-species entries beside it are not yet what the
     snapshots read);
-  - the ion charge density is `n·Z` from this species, and would have to become
-    `Σ_s n_s Z_s` at every site that builds a current (see
-    `internal/docs/src/notes/TODO/ion-inventory-multi-species.md`).
+  - `plasma.ni` round-trips only column 1.
 
-`plasma.ni` IS this species' density — not a total over species, and not a
-quantity a second field mirrors.
+`plasma.ni` is the first species' density, not a total over species; the total is
+`plasma.ni_sum` ([`update_charge_states!`](@ref)).
 """
 function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}}) where {FT <: AbstractFloat}
     length(species) == 1 || throw(
@@ -803,10 +804,8 @@ function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}})
             "exactly one ion species is supported, got $(length(species)). " *
                 "A second one needs three things that do not exist yet: " *
                 "`γ_2nd_electron` is one number, so only the first could yield secondary " *
-                "electrons; `Ni_loss` does not split by species; and every current builds " *
-                "its charge density as n·Z, which would have to become Σ_s n_s Z_s — as " *
-                "would `ν_ei`, `ν_ii` and `lnΛ_ii`, which take the bulk's charge and mass. " *
-                "`plasma.ni` also round-trips only column 1."
+                "electrons; `Ni_loss` does not split by species; and `plasma.ni` round-trips " *
+                "only column 1."
         )
     )
     tp = RP.transport
@@ -815,6 +814,7 @@ function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}})
     tp.ion_N = zeros(FT, Ng, length(species))
     tp.ion_S = zeros(FT, Ng, length(species))
     empty!(tp.ion_solvers)
+    update_charge_states!(RP)   # the means take the declared species at once
     return RP
 end
 
@@ -831,6 +831,8 @@ charge. That window is what a stored `Z_mean` had, and what it got wrong.
 This is also what the NRL collision rates on p.28 and the logarithms on p.34
 carry. They took `plasma.Zeff` before the two were distinguished, which was
 correct only because a hydrogen plasma makes every charge average equal 1.
+The mixture's stored sums and means close that window by being formed again
+by whatever reads them ([`update_charge_states!`](@ref)).
 """
 bulk_ion_charge(RP::RAPID) =
     isempty(RP.transport.ion_species) ? 1 : RP.transport.ion_species[1].charge
@@ -857,21 +859,66 @@ bulk_ion_mass(RP::RAPID{FT}) where {FT <: AbstractFloat} =
 """
     update_charge_states!(RP) -> RP
 
-Fill `plasma.Zeff` from the declared species.
+Sum the ion species node by node into `plasma.ni_sum`, `Zni_sum`, `Z2ni_sum` and `mni_sum`, and
+form the mean ion mass `mi_mean` and the composition `Zeff = Σ zₛ² nₛ / Σ zₛ nₛ`. The first
+species is `plasma.ni`, any other its transport column.
 
-With one species `Z_eff = Σ n_z Z_z²/Σ n_z Z_z` reduces to that species' charge
-at every node and every density, including the empty and negative ones a
-continuity solve can produce — so this is a `fill!`, not an average. It stays a
-function, and `Zeff` stays a field, because the multi-species form varies in
-space and this is the seam it returns through.
-
-There is deliberately no mean charge `Z̄`. It existed only to let `ni` mean a
-total over species; `ni` is one species now, so `n_i Z` is the ion charge density
-outright and nothing needs to divide by an average to recover it.
+The means weight each species by nₛ/Σn, formed first, so with one species they are its own
+mass and charge exactly; where Σn ≤ 0 they are the first species'. Every function that reads
+these fields calls this first, so they are the sums of the densities as they are when it runs,
+whoever wrote those last.
 """
 function update_charge_states!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    fill!(RP.plasma.Zeff, FT(bulk_ion_charge(RP)))
+    pla = RP.plasma
+    z1, m1 = FT(bulk_ion_charge(RP)), bulk_ion_mass(RP)
+    @. pla.ni_sum = pla.ni
+    @. pla.Zni_sum = z1 * pla.ni
+    @. pla.Z2ni_sum = z1^2 * pla.ni
+    @. pla.mni_sum = m1 * pla.ni
+    foreach_other_ion(RP) do n, z, m
+        @. pla.ni_sum += n
+        @. pla.Zni_sum += z * n
+        @. pla.Z2ni_sum += z^2 * n
+        @. pla.mni_sum += m * n
+    end
+    ion_mean!(pla.mi_mean, RP, (z, m) -> m)
+    @with_pool pool begin
+        Z_mean = acquire!(pool, FT, size(pla.ni)...)
+        ion_mean!(Z_mean, RP, (z, m) -> z)
+        ion_mean!(pla.Zeff, RP, (z, m) -> z^2)
+        @. pla.Zeff /= Z_mean
+    end
     return RP
+end
+
+# f(n, z, m) for every ion species after the first: its transport column on the grid, its
+# charge and its mass
+function foreach_other_ion(f, RP::RAPID{FT}) where {FT <: AbstractFloat}
+    tp = RP.transport
+    for s in 2:length(tp.ion_species)
+        species = tp.ion_species[s]
+        f(reshape(view(tp.ion_N, :, s), size(RP.plasma.ni)), FT(species.charge), species.mass)
+    end
+    return nothing
+end
+
+# Σₛ (nₛ/Σn) f(zₛ, mₛ) node by node into `out`, the first species' value where Σn ≤ 0. The
+# weights are formed first, so with one species `out` is its f exactly. Σn is summed here from
+# the densities, so the mean never mixes them with a stale sum.
+function ion_mean!(out::AbstractMatrix{FT}, RP::RAPID{FT}, f) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    f1 = FT(f(FT(bulk_ion_charge(RP)), bulk_ion_mass(RP)))
+    @with_pool pool begin
+        total = acquire!(pool, FT, size(pla.ni)...)
+        total .= pla.ni
+        foreach_other_ion((n, z, m) -> (total .+= n), RP)
+        @. out = ifelse(total > zero(FT), (pla.ni / total) * f1, f1)
+        foreach_other_ion(RP) do n, z, m
+            fs = FT(f(z, m))
+            @. out += ifelse(total > zero(FT), (n / total) * fs, zero(FT))
+        end
+    end
+    return out
 end
 
 """
@@ -890,5 +937,6 @@ function slave_ions_to_electrons!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     Z = FT(bulk_ion_charge(RP))   # bound outside the broadcast: `@.` would call it per element
     @. pla.ni = pla.ne / Z
+    update_charge_states!(RP)
     return RP
 end

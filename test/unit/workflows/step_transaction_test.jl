@@ -76,11 +76,12 @@ end
     not_written = Dict(
         :rapid => (
             :G, :wall, :fitted_wall, :external_field, :eRRCs, :iRRCs, :config, :flags, :operators,
-            :t_start_s, :t_end_s, :dt, :tElap, :flf, :snap0D_path, :snap2D_path,
+            :t_start_s, :t_end_s, :dt, :tElap, :flf, :snap0D_path, :snap2D_path, :species,
         ),
         :transport => (
             :dims, :Dpara0, :Dperp0, :Dpara_e_coll, :Dpara_i_coll, :Dpara_amb, :Dpara_e_eff, :νi_eff,
-            :νi_neutral, :νi_coulomb, :ion_species, :ion_solvers, :Dpara, :Dperp, :L_mixing, :Dpol_turb,
+            :νi_neutral, :νi_coulomb, :νi_coulomb_mass, :νi_coulomb_Z2, :ion_species, :ion_solvers,
+            :Dpara, :Dperp, :L_mixing, :Dpol_turb,
             :DRR_turb, :DRZ_turb, :DZZ_turb, :DRR, :DRZ, :DZZ, :CTRR, :CTRZ, :CTZZ, :wall_faces,
         ),
         :reactions => (:dims,),

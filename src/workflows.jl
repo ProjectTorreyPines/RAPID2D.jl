@@ -43,16 +43,15 @@ end
 """
     update_Jϕ!(RP)
 
-`Jϕ` of the present state: (qₑ nₑ uₑ∥ + Z e nᵢ uᵢ∥) bϕ, electrons and ions.
+`Jϕ` of the present state: (qₑ nₑ uₑ∥ + e Σ zₛ nₛ uᵢ∥) bϕ, the ions sharing one velocity. The
+ion charge is summed from the densities as they are now ([`update_charge_states!`](@ref)).
 """
 function update_Jϕ!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     F = RP.fields
     @unpack qe, ee = RP.config.constants
-    # `ni·Z` is the ion CHARGE density. One species, so it is a product and not a sum; `Z`
-    # comes from the species itself and cannot lag behind it.
-    Z_i = FT(bulk_ion_charge(RP))
-    @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+    update_charge_states!(RP)
+    @. pla.Jϕ = (pla.ne * qe * pla.ue_para + pla.Zni_sum * ee * pla.ui_para) * F.bϕ
     return RP
 end
 
@@ -245,6 +244,10 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
         if RP.flags.Te_evolve
             update_Te!(RP)
         end
+
+        # The e–i exchange over the step, one exact increment from the temperatures the two
+        # updates left, taken by the ions and given by the electrons
+        apply_ei_exchange!(RP)
 
         # Neutral gas density evolution if enabled
         if RP.flags.Gas_evolve

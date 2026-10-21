@@ -169,6 +169,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
+        record_ei_impulse!(RP)   # before continuity moves nₑ
 
         # the momentum the near-vacuum relaxation took out
         RP.diagnostics.near_vacuum.relax_momentum +=
@@ -182,102 +183,181 @@ end
 """
     update_ui_para!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Update the parallel ion velocity.
+Update the parallel ion velocity from the ions' momentum per volume ρ uᵢ, ρ = Σ mₛ nₛ after this
+step's continuity. In order: the ions born at rest dilute it, the parallel field (on the ions'
+charge per mass) and the neutral drag act on it, and it takes −I_ei, the opposite of the
+impulse the electron momentum equation recorded, so the e–i exchange cancels exactly whatever
+the scheme and the densities.
+
+That friction is explicit in uᵢ, at the rate (mₑnₑ/ρ)ν_ei. With the electrons' friction backward
+Euler or ExpRB the relative drift still decays at any Δt where the ions outweigh the electrons,
+ρ > mₑnₑ (by mᵢ/mₑ ≈ 3700 in a quasineutral hydrogen plasma).
 """
 function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return @timeit RAPID_TIMER "update_ui_para!" begin
-        # Alias
-        cnst = RP.config.constants
+        update_charge_states!(RP)   # ρ and the means of the densities as they are now
         pla = RP.plasma
-        m_i = bulk_ion_mass(RP)   # the ion this equation moves, not the default
-
-        eff_atomic_coll_freq = zeros(FT, size(pla.ui_para))
-        if RP.flags.Atomic_Collision
-            iRRC_elastic = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
-            iRRC_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
-
-            # ½ on elastic: those collisions shed only half the momentum.
-            eff_atomic_coll_freq = @. pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
-
-            # Ions are born at rest, so ionization is a dilution rate: events per
-            # second over the ions already present, n_e·ν_iz/(n_e/Z) = Z·ν_iz. Uses
-            # the step-entry ν_en_iz_tot that continuity and the energy equation share.
-            if RP.flags.src
-                Z_i = FT(bulk_ion_charge(RP))
-                # INTERIM(diz-ion-species): ν_en_iz_tot, not ν_en_iz alone, because every
-                # ion is booked as H₂⁺ and so DI dilutes this population too. Why, and
-                # what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
-                @. eff_atomic_coll_freq += Z_i * pla.ν_en_iz_tot
-            end
-
-            # TODO: convection/pressure are ignored for ions; adding them needs a
-            # Zeff review.
-            replace!(eff_atomic_coll_freq, NaN => 0.0)
-        end
-
-        qi = cnst.ee
-
+        dt = RP.dt
+        ee = RP.config.constants.ee
         one_FT = one(FT)
-        if RP.flags.scheme.decay === ExpRB
-            # Same sink form as `update_ue_para!`, same caveat — see there.
-            #
-            # **The exponent carries the ATOMIC rate ONLY, and that is deliberate.**
-            # Coulomb friction stays the explicit increment below, so a Coulomb-stiff
-            # cell is stepped at forward Euler whatever this says — and with
-            # `Atomic_Collision` off the whole update is, since `bern(0) = 1`. Both look
-            # like gaps next to `update_ue_para!`, which carries `ν_ei_eff` inside its
-            # exponent. Do not "fix" it by folding `(mₑ/mᵢ)ν_ei` in here.
-            #
-            # e-i friction is an INTERNAL force, and this pair conserves the momentum it
-            # moves EXACTLY, at any Δt. `update_ue_para!` runs first and loses
-            # `mₑn·Δt·ν_ei(u_e^{n+1} − u_i^n)`; the increment below is charged with that
-            # already-updated `u_e` and the same old `u_i`, so the ions gain
-            # `mᵢn·Δt·(mₑ/mᵢ)ν_ei(u_e^{n+1} − u_i^n)` — the same number, opposite sign,
-            # and the two telescope to zero. Making this half implicit in `u_i` would
-            # charge the ions at `u_i^{n+1}` while the electrons were charged at `u_i^n`,
-            # and the exchange would stop cancelling: measured, that costs ~3e-4 of the
-            # total momentum over 60 steps. `physics_test.jl`'s "e-i Coulomb friction
-            # conserves momentum and equalises u_e, u_i" is what enforces this.
-            #
-            # The stability the fold would buy is not needed: the ion-side rate is the
-            # electron one times mₑ/mᵢ ≈ 2.7e-4, so a Δt resolving the electron friction
-            # leaves this term four orders from its own stability limit. An exact
-            # conservation law is worth more than stability in a regime the mass ratio
-            # already rules out.
-            #
-            # The cancellation does depend on the electron half being backward Euler,
-            # so `scheme.decay = ExpRB` does NOT conserve — 42 % lost over 60 steps.
-            # `internal/docs/src/notes/issues/`
-            # `ei-momentum-exchange-exact-only-under-backward-euler.md` records that and
-            # the centre-of-mass split that would make conservation structural instead
-            # of a cancellation, for any scheme.
-            decay_exponent = @. exprb_cap_exponent(-eff_atomic_coll_freq * RP.dt)
-            bern_decay = exprb_bern.(decay_exponent)
-            @. pla.ui_para = (
-                (bern_decay + decay_exponent) * pla.ui_para +
-                    RP.dt * qi * RP.fields.E_para_tot / m_i
-            ) / bern_decay
-        else
-            # θ = 1 outright, not `θ_imp.decay`: this equation has never read the
-            # weight store, so wiring it up would silently move anyone who set it.
-            θ = one_FT  # Backward Euler
-            @. pla.ui_para = (
-                pla.ui_para * (one_FT - (one_FT - θ) * RP.dt * eff_atomic_coll_freq) +
-                    RP.dt * qi * RP.fields.E_para_tot / m_i
-            ) /
-                (one_FT + θ * RP.dt * eff_atomic_coll_freq)
+        ρ = pla.mni_sum
+
+        # Births at rest first: ρ u stays as it was, now carried by more mass
+        if RP.flags.src
+            Δρ = born_ion_mass(RP)
+            @. pla.ui_para *= ifelse(ρ > zero(FT), max(zero(FT), one_FT - Δρ / ρ), one_FT)
         end
 
-        # Add electron-ion momentum transfer effect
-        if RP.flags.Coulomb_Collision
-            if RP.flags.Spitzer_Resistivity
-                Rui_ei = @. pla.sptz_fac * (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
-            else
-                Rui_ei = @. (cnst.me / m_i) * pla.ν_ei * (pla.ue_para - pla.ui_para)
-            end
-            pla.ui_para .+= RP.dt * Rui_ei
+        # The neutral drag, one rate for every species (the H₂⁺ surfaces); ½ on elastic: those
+        # collisions shed only half the momentum
+        ν_a = zeros(FT, size(pla.ui_para))
+        if RP.flags.Atomic_Collision
+            K_ela = get_H2_ion_RRC(RP, RP.iRRCs, :Elastic)
+            K_cx = get_H2_ion_RRC(RP, RP.iRRCs, :Charge_Exchange)
+            @. ν_a = pla.n_H2_gas * (FT(0.5) * K_ela + K_cx)
+            replace!(ν_a, NaN => zero(FT))
         end
+
+        # The parallel field on the ions' charge per mass, e Σ zₛ nₛ / Σ mₛ nₛ (the means weight
+        # by density, so one species gives e z/m exactly)
+        @with_pool pool begin
+            Z_mean = ion_mean!(acquire!(pool, FT, size(pla.ni)...), RP, (z, m) -> z)
+            accel = @. dt * ee * Z_mean * RP.fields.E_para_tot / pla.mi_mean
+            if RP.flags.scheme.decay === ExpRB
+                # the exponent carries the drag only: the e–i friction is the recorded impulse below
+                decay_exponent = @. exprb_cap_exponent(-ν_a * dt)
+                bern_decay = exprb_bern.(decay_exponent)
+                @. pla.ui_para = ((bern_decay + decay_exponent) * pla.ui_para + accel) / bern_decay
+            else
+                @. pla.ui_para = (pla.ui_para + accel) / (one_FT + dt * ν_a)   # backward Euler
+            end
+        end
+
+        # The electrons' friction
+        if RP.flags.Coulomb_Collision
+            @. pla.ui_para -= ifelse(ρ > zero(FT), pla.I_ei / ρ, zero(FT))
+        end
+        return RP
     end
+end
+
+# The ion mass this step's reactions created, per volume: Σₛ mₛ ΔNₛ over the species, from the
+# published reaction counts. Creations only: an ion destroyed takes its momentum with it.
+# INTERIM(diz-ion-species): H₂⁺'s count holds DI's ions, so they are born with H₂⁺'s mass. Why,
+# and what reverts when H⁺ becomes transportable: `REACTION_STOICHIOMETRY.diz`.
+function born_ion_mass(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    counts = check_reaction_counts(RP)
+    Δρ = zeros(FT, size(RP.plasma.ni))
+    for species in RP.transport.ion_species
+        Δn = net_ion_count(counts, species.key)
+        isnothing(Δn) && continue
+        @. Δρ += species.mass * max(Δn, zero(FT))
+    end
+    return Δρ
+end
+
+# The electrons' momentum from the ions over the step, per volume, at the density their momentum
+# equation saw; zero without Coulomb collisions. The ions take −I_ei (`update_ui_para!`).
+function record_ei_impulse!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    if RP.flags.Coulomb_Collision
+        @. pla.I_ei = RP.dt * RP.config.constants.me * pla.ne * pla.Rue_ei
+    else
+        fill!(pla.I_ei, zero(FT))
+    end
+    return RP
+end
+
+"""
+    ei_exchange_energy!(RP) -> Matrix
+
+The energy the electrons give the ions by Coulomb collisions over the step, per volume
+[J/m³], into `plasma.ei_exchange_energy`: the exact solution of their linear relaxation
+
+    (3/2) e nₑ dTₑ/dt = −Q,   (3/2) e n_I dTᵢ/dt = +Q,   Q = (3/2) e nₑ a (Tₑ − Tᵢ)
+
+over Δt from the temperatures and densities as they are, with
+a = Σₛ 2mₑmₛ/(mₑ+mₛ)² νₑₛ and νₑₛ = ν_ei zₛ² nₛ/Σz²n ([`ei_relaxation_rate!`](@ref)):
+
+    ΔE = (3/2) e nₑ a (Tₑ − Tᵢ) (1 − e^{−λΔt})/λ,   λ = a [Tₑ evolves] + a nₑ/n_I [Tᵢ evolves]
+
+A temperature that does not evolve is a bath: it does not move and leaves λ. Zero without
+Coulomb collisions and outside the wall. Its mean power over the step, per electron and per ion,
+goes to `ePowers.equi` and `iPowers.equi` [W], the exchange the powers' `tot` leaves out.
+[`apply_ei_exchange!`](@ref) gives it to both temperatures.
+"""
+function ei_exchange_energy!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    ΔE = pla.ei_exchange_energy
+    if !RP.flags.Coulomb_Collision
+        fill!(ΔE, zero(FT))
+        fill!(pla.ePowers.equi, zero(FT))
+        fill!(pla.iPowers.equi, zero(FT))
+        return ΔE
+    end
+    update_charge_states!(RP)
+    ee = RP.config.constants.ee
+    te, ti = RP.flags.Te_evolve, RP.flags.Ti_evolve
+    @with_pool pool begin
+        a = ei_relaxation_rate!(acquire!(pool, FT, size(pla.ni)...), RP)
+        ΔE .= relaxation_energy.(a, pla.ne, pla.ni_sum, pla.Te_eV, pla.Ti_eV, RP.dt, te, ti, ee)
+    end
+    for k in RP.G.nodes.on_out_wall_nids
+        ΔE[k] = zero(FT)
+    end
+    @. pla.ePowers.equi = ifelse(pla.ne > zero(FT), ΔE / (RP.dt * pla.ne), zero(FT))
+    @. pla.iPowers.equi = ifelse(pla.ni_sum > zero(FT), ΔE / (RP.dt * pla.ni_sum), zero(FT))
+    return ΔE
+end
+
+"""
+    apply_ei_exchange!(RP) -> RP
+
+The e–i exchange over the step as a substep of its own, after both temperatures' other terms
+(`solve_timestep!`): [`ei_exchange_energy!`](@ref) from the temperatures those left, taken by the
+ions and given by the electrons, each only if it evolves. The relaxation moves the two toward each
+other without crossing, so it cannot carry a temperature its own terms cooled past the floor.
+"""
+function apply_ei_exchange!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    ΔE = ei_exchange_energy!(RP)
+    RP.flags.Coulomb_Collision || return RP
+    pla = RP.plasma
+    ee = RP.config.constants.ee
+    RP.flags.Te_evolve &&
+        @. pla.Te_eV -= ifelse(pla.ne > zero(FT), ΔE / (FT(1.5) * ee * pla.ne), zero(FT))
+    RP.flags.Ti_evolve &&
+        @. pla.Ti_eV += ifelse(pla.ni_sum > zero(FT), ΔE / (FT(1.5) * ee * pla.ni_sum), zero(FT))
+    return RP
+end
+
+"""
+    ei_relaxation_rate!(a, RP) -> a
+
+Σₛ 2mₑmₛ/(mₑ+mₛ)² νₑₛ node by node, νₑₛ = ν_ei zₛ² nₛ/Σz²n the electrons' collision rate on
+species s: the rate at which the electron temperature relaxes onto the ions'. With one
+species it is 2mₑmᵢ/(mₑ+mᵢ)² ν_ei.
+"""
+function ei_relaxation_rate!(a::AbstractMatrix{FT}, RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    me = RP.config.constants.me
+    reduced(m) = FT(2) * m * me / (m + me)^2
+    z1, m1 = FT(bulk_ion_charge(RP)), bulk_ion_mass(RP)
+    # the weights zₛ² nₛ/Σz²n first, so one species gives its own coefficient exactly
+    @. a = ifelse(pla.Z2ni_sum > zero(FT), (z1^2 * pla.ni / pla.Z2ni_sum) * reduced(m1), reduced(m1))
+    foreach_other_ion(RP) do n, z, m
+        @. a += ifelse(pla.Z2ni_sum > zero(FT), (z^2 * n / pla.Z2ni_sum) * reduced(m), zero(FT))
+    end
+    @. a *= pla.ν_ei
+    return a
+end
+
+# (3/2) e nₑ a (Tₑ − Tᵢ) (1 − e^{−λΔt})/λ, the window → Δt as λ → 0; nothing where either
+# population is absent
+@inline function relaxation_energy(a, ne, nI, Te, Ti, dt, Te_evolves::Bool, Ti_evolves::Bool, ee)
+    (ne > zero(ne) && nI > zero(nI)) || return zero(a)
+    λ = (Te_evolves ? a : zero(a)) + (Ti_evolves ? a * ne / nI : zero(a))
+    window = λ * dt > zero(a) ? -expm1(-λ * dt) / λ : dt
+    return oftype(a, 1.5) * ee * ne * a * (Te - Ti) * window
 end
 
 """
@@ -290,9 +370,12 @@ This function evolves the electron temperature by solving the electron energy eq
 
 where:
 - P_heat includes ohmic heating and other power sources
-- P_loss includes ionization, excitation, radiation, and equilibration losses
+- P_loss includes ionization, excitation and radiation losses
 - κ_e is the thermal conductivity
 - The last term represents convective transport
+
+The e–i exchange is not here: it couples Tₑ and Tᵢ, and `solve_timestep!` takes it as a substep
+of its own after both updates ([`apply_ei_exchange!`](@ref)).
 
 The implementation supports both explicit and implicit time integration schemes.
 """
@@ -415,7 +498,9 @@ Update the ion temperature based on energy balance equation.
 This function evolves the ion temperature by solving the ion energy equation:
 (3/2)*∂Ti/∂t = P_ion_heating
 
-where P_ion_heating includes atomic collision heating and equilibration with electrons.
+where P_ion_heating is the atomic collision heating. The e–i exchange is not here: it couples Tₑ
+and Tᵢ, and `solve_timestep!` takes it as a substep of its own after both updates
+([`apply_ei_exchange!`](@ref)).
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
@@ -518,17 +603,15 @@ Update electron heating power components for electron energy equation.
   - Heat generation from density gradients
   - Ionization, dissociative ionization, excitation, dissociative excitation,
     and dilution powers
-  - Temperature equilibration power with ions
-- All powers stored in the RP.plasma.ePowers struct
+- All powers stored in the RP.plasma.ePowers struct, except the e–i exchange `equi`, which
+  [`ei_exchange_energy!`](@ref) writes
 """
 function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @timeit RAPID_TIMER "update_electron_heating_powers!" begin
         # Extract physical constants + reaction energies (all in RP.config.constants).
         @unpack ee, qe, me, iz_erg_eV, diss_iz_erg_eV = RP.config.constants
-        # `m_i` is the ion mass electrons equilibrate with in the equi term below.
-        # The elastic recoil no longer needs a separate neutral mass here: `P_en_ela`
-        # already carries 2mₑ/M internally (see the ela block).
-        m_i = bulk_ion_mass(RP)
+        # The elastic recoil needs no separate neutral mass here: `P_en_ela` already
+        # carries 2mₑ/M internally (see the ela block).
 
         # Alias common objects for readability
         pla = RP.plasma
@@ -547,7 +630,6 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         ePowers.diss_exc .= zero_FT
         ePowers.diss_iz .= zero_FT
         ePowers.dilution .= zero_FT
-        ePowers.equi .= zero_FT
         ePowers.visc_heat .= zero_FT
 
         # The electron in-wall operators, cached once per step (`operators.A_conv_e`, `A_diffu_e`,
@@ -738,18 +820,12 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             end
         end
 
-
-        # Equilibration power with ions (energy exchange from temperature differences)
-        if RP.flags.Coulomb_Collision
-            # Factor for energy transfer rate between electrons and ions
-            @. ePowers.equi = (FT(2.0) * (m_i * me / (m_i + me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
-        end
-
-        # Calculate total power (sum of all components)
+        # Calculate total power (sum of all components; the e–i exchange is applied on its own,
+        # and `ei_exchange_energy!` writes its power to `equi`)
         @. ePowers.tot = (
             ePowers.drag + ePowers.conv + ePowers.heat + ePowers.diffu + ePowers.visc_heat
                 - ePowers.ela - ePowers.dilution - ePowers.iz - ePowers.diss_iz
-                - ePowers.exc - ePowers.diss_exc - ePowers.equi
+                - ePowers.exc - ePowers.diss_exc
         )
 
         # # Zero out power values outside the wall
@@ -765,7 +841,6 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
             @views ePowers.diss_iz[on_out_wall_nids] .= zero_FT
             @views ePowers.exc[on_out_wall_nids] .= zero_FT
             @views ePowers.diss_exc[on_out_wall_nids] .= zero_FT
-            @views ePowers.equi[on_out_wall_nids] .= zero_FT
             @views ePowers.heat[on_out_wall_nids] .= zero_FT
             @views ePowers.visc_heat[on_out_wall_nids] .= zero_FT
         end
@@ -830,10 +905,11 @@ end
 
 ```
 (3/2)e·dTₑ/dt = A − 𝔅·Tₑ,
-𝔅 = (P_en_ela + P_en_exc)·(9/4)T_gas/Ē²  +  (3/2)e·(ν_iz + ν_diss_iz)  +  2μ·(3/2)e·ν_ei
+𝔅 = (P_en_ela + P_en_exc)·(9/4)T_gas/Ē²  +  (3/2)e·(ν_iz + ν_diss_iz)
 ```
 
-from `P_ela`, `P_exc`, `P_dilution` and `P_equi`. Pre-migration, with
+from `P_ela`, `P_exc` and `P_dilution`; the e–i exchange is not in `ePowers.tot`, and the step
+applies its exact solution on its own ([`ei_exchange_energy!`](@ref)). Pre-migration, with
 `P_ela ∝ (Tₑ − T_gas)` exact and no other explicit `Tₑ`, this rearrangement of
 [`update_electron_heating_powers!`](@ref) was algebraically exact, not a
 linearisation. **That is no longer true.** `P_en_ela` is now
@@ -884,11 +960,7 @@ function _eig_Te_from_known_rates!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         RP.flags.src && @. pla.exprb.eig_Te -= FT(1.5) * ee *
             (pla.ν_en_iz + pla.ν_en_diss_iz)
     end
-    if RP.flags.Coulomb_Collision
-        m_i = bulk_ion_mass(RP)
-        μ_reduced = m_i * me / (m_i + me)^2
-        @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
-    end
+    # (the e–i exchange is not here: the step applies its exact solution on its own)
 
     # Indexed rather than `@views … .= `: the SubArray broadcast builds for that is a
     # heap allocation, small but per step, and this function's contract is that it
@@ -968,34 +1040,19 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
             end
         end
 
-        if RP.flags.Coulomb_Collision
-            # ePowers.tot SUBTRACTS equi, so ∂/∂Tₑ of 2μ(3/2)e(Tₑ−T_i)ν_ei enters
-            # negative. At frozen ν_ei this is pure algebra — no RRC surface — and
-            # it can only damp, which is why leaving it out was an unforced loss
-            # rather than a trade. `update_ion_power_jacobian!` carries the same
-            # term; the two must agree about one piece of physics.
-            #
-            # bulk_ion_mass, not a neutral mass: one is the ion Tₑ equilibrates
-            # with, the other the neutral it recoils off. Equal for H₂/H₂⁺ and
-            # unequal for any other declared ion. Hoisted, because `@.` would
-            # call it once per cell.
-            m_i = bulk_ion_mass(RP)
-            μ_reduced = m_i * me / (m_i + me)^2
-            @. pla.exprb.eig_Te -= (FT(2.0) * μ_reduced) * FT(1.5) * ee * pla.ν_ei
-        end
+        # (the e–i exchange is not here: the step applies its exact solution on its own)
 
         # Gated on the terms being PRESENT, not on the flag. `ePowers.drag`'s
         # Coulomb half is charged unconditionally inside `Atomic_Collision`, using
         # whatever `sptz_fac·ν_ei` initialization left behind — so it survives
-        # `Coulomb_Collision = false`, unlike `ePowers.equi`. A flag-gated warning
+        # `Coulomb_Collision = false`. A flag-gated warning
         # would stay silent in exactly the case where the omission is unannounced.
         # Indexed rather than broadcast: one grid-sized temporary per step is a lot
         # to allocate for a `maxlog = 1` decision.
         if any(i -> !iszero(pla.sptz_fac[i] * pla.ν_ei[i]), eachindex(pla.sptz_fac))
             @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from exprb.eig_Te: ν_ei is Spitzer-like, " *
-                "not an RRC surface, so the Tₑ dependence THROUGH ν_ei — in P_equi and in " *
-                "P_drag's Coulomb half — is left out. P_equi's explicit (Tₑ−T_i) factor " *
-                "is differentiated. This under-damps the transient; the fixed point is " *
+                "not an RRC surface, so the Tₑ dependence THROUGH ν_ei in P_drag's Coulomb half " *
+                "is left out. This under-damps the transient; the fixed point is " *
                 "λ-independent and unaffected." maxlog = 1
         end
 
@@ -1027,8 +1084,9 @@ energy change it multiplies:
   table at all; the first comes from [`ion_rate_jacobian`](@ref).
 - `Z·ν_iz` inside `ν_a` is the ELECTRON ionization rate and carries no `T_i`
   dependence, so it contributes to `ν_a` but not to `∂ν_a/∂T_i`.
-- `P_equi` gives `−2(m_i m_e/(m_i+m_e)²)(3/2)e·ν_ei`, with `∂ν_ei/∂T_i` omitted for
-  the reason its electron counterpart is.
+
+The e–i exchange is not in `iPowers.tot`: the step applies its exact solution on its own
+([`ei_exchange_energy!`](@ref)).
 
 Rate coefficients are re-queried rather than read from `plasma`: unlike the electron
 frequencies the ion ones are never materialized, so evaluating at the same
@@ -1073,9 +1131,7 @@ function update_ion_power_jacobian!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
         end
 
-        if RP.flags.Coulomb_Collision
-            @. pla.exprb.eig_Ti -= (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * pla.ν_ei
-        end
+        # (the e–i exchange is not here: the step applies its exact solution on its own)
 
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
         if !isempty(on_out_wall_nids)
@@ -1095,7 +1151,9 @@ Update ion heating power components for ion energy equation.
 This function calculates the ion power sources and sinks based on the MATLAB
 `Cal_Ion_Heating_Powers` function, including:
 - Atomic collision power (from elastic, charge exchange, and ionization)
-- Equilibration power with electrons (if Coulomb collisions enabled)
+
+The e–i exchange is not here: [`ei_exchange_energy!`](@ref) gives its exact increment over the
+step and writes its power to `iPowers.equi`.
 
 # Arguments
 - `RP::RAPID{FT}`: The RAPID object containing simulation state
@@ -1108,8 +1166,7 @@ The power calculation includes:
 - Energy change from atomic collisions: 0.5*mi*ui_mag_sq - 1.5*(Ti-T_gas)*ee
 - Effective collision frequency: n_H2_gas*(0.5*elastic + charge_exchange + Z*ionization)
 - Atomic power: collision_frequency * energy_change
-- Equilibration power: matches electron equilibration power if Coulomb collisions enabled
-- Total power: atomic + equilibration
+- Total power: atomic
 - Sets power to zero outside wall boundaries
 """
 function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
@@ -1129,7 +1186,6 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         # Reset ion power arrays to zero (precaution against accumulation)
         iPowers.atomic .= zero_FT
-        iPowers.equi .= zero_FT
 
         if RP.flags.Atomic_Collision
             # Get ion reaction rate coefficients
@@ -1165,20 +1221,15 @@ function update_ion_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             @. iPowers.atomic = eff_atomic_coll_freq * avg_erg_change_by_atomic_collision
         end
 
-        # Handle equilibration power with electrons
-        if RP.flags.Coulomb_Collision
-            @. iPowers.equi = (FT(2.0) * (mi * me / (mi + me)^2)) * FT(1.5) * ee * (pla.Te_eV - pla.Ti_eV) * pla.ν_ei
-        end
-
-        # Calculate total ion heating power
-        @. iPowers.tot = iPowers.atomic + iPowers.equi
+        # Calculate total ion heating power (the e–i exchange is applied on its own, and
+        # `ei_exchange_energy!` writes its power to `equi`)
+        @. iPowers.tot = iPowers.atomic
 
         # Set power to zero outside wall boundaries
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
         if !isempty(on_out_wall_nids)
             @views iPowers.tot[on_out_wall_nids] .= zero_FT
             @views iPowers.atomic[on_out_wall_nids] .= zero_FT
-            @views iPowers.equi[on_out_wall_nids] .= zero_FT
         end
 
         return RP
@@ -1220,6 +1271,7 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         robin_e = zeros(FT, Ng)
         returned_e = zeros(FT, Ng)
         if RP.flags.diffu
+            update_charge_states!(RP)   # the Bohm channel's mean ion mass, as it is now
             v_absorb = electron_wall_absorption_speeds(RP, faces_e)
             robin_e .= wall_face_debit(FT, Ng, faces_e, v_absorb)
             v_e .+= v_absorb
@@ -2010,7 +2062,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # Physical constants
         @unpack ee, me, μ0, qe = RP.config.constants
-        Z_i = FT(bulk_ion_charge(RP))   # scalar: `@.` would call it per element
+        update_charge_states!(RP)   # the ion charge density the currents read, as it is now
 
         # u∥'s θ-weights, as in update_ue_para!: θu on the friction and its ledger, θ_op on the
         # nonlocal operators (advection, diffusion), 0 when Implicit = false
@@ -2072,7 +2124,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         flags.Include_ud_diffu_term && add_scaled!(A_u, -dt * θ_op, pops.A_diffu)
 
         # Toroidal current density Jϕ @ t=(n-th step)
-        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.Zni_sum * ee * pla.ui_para) * F.bϕ
 
         # Predicted ψ: the step's mean induced field extrapolated linearly, 2 E(n) − E(n−1). Its
         # boundary values start the outer iteration.
@@ -2110,7 +2162,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         sol = Vector{FT}(undef, sys === nothing ? 2N : size(sys.matrix, 1))
         RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde + ifelse(relax_weight > 0, relax_weight * ue_ref, zero(FT)))   # the same for every iteration
         sys === nothing || (RHS_u[ct.cu] .+= ct.ionization)
-        RHS_ψ_ions = @. -μ0 * G.R2D * pla.ni * ee * Z_i * pla.ui_para * F.bϕ
+        RHS_ψ_ions = @. -μ0 * G.R2D * pla.Zni_sum * ee * pla.ui_para * F.bϕ
         RHS_ψ = similar(RHS_ψ_ions)
 
         # The outer unknowns x = (boundary flux, coil currents), mixed as the docstring says. The
@@ -2150,7 +2202,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             sys === nothing || (Γ_over_B_k .= view(sol, (2N + 1):length(sol)) ./ sys.scale)
 
             # the circuits and the boundary flux of that current
-            @. Jϕ_k = (qe * pla.ne * ue_k + pla.ni * (ee * Z_i) * pla.ui_para) * F.bϕ
+            @. Jϕ_k = (qe * pla.ne * ue_k + pla.Zni_sum * ee * pla.ui_para) * F.bϕ
             if Nc > 0
                 Φ_k .= plasma_flux_at_coils(csys, G, Jϕ_k)
                 I_k .= csys.inv_A_LR_circuit * (circuit_rhs_n .- 2π .* (Φ_k .- ψ_pla_coils_n))
@@ -2221,6 +2273,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
+        record_ei_impulse!(RP)   # before continuity moves nₑ
 
         update_Jϕ!(RP)
 
@@ -2340,13 +2393,13 @@ function update_uMHD_by_global_JxB_force!(RP::RAPID{FT}) where {FT <: AbstractFl
     if !isempty(RP.flf.closed_surface_nids)
 
         @unpack me = RP.config.constants
-        mi = bulk_ion_mass(RP)   # the declared species, as transport uses
         nids = vcat(RP.G.nodes.on_wall_nids, RP.G.nodes.in_wall_nids)
         pla = RP.plasma
         F = RP.fields
+        update_charge_states!(RP)   # the ion mass density as it is now
 
-        # Calculate total plasma mass by integrating over volume
-        sum_plasma_mass = sum(@. (mi * pla.ni[nids] + me * pla.ne[nids]) * RP.G.inVol2D[nids])
+        # Calculate total plasma mass by integrating over volume (the ions' Σ mₛ nₛ)
+        sum_plasma_mass = sum(@. (pla.mni_sum[nids] + me * pla.ne[nids]) * RP.G.inVol2D[nids])
         sum_JxB_R = sum(@. pla.Jϕ[nids] * F.BZ[nids] * RP.G.inVol2D[nids])
         sum_JxB_Z = sum(@. -pla.Jϕ[nids] * F.BR[nids] * RP.G.inVol2D[nids])
 

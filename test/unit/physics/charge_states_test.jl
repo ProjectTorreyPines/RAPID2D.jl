@@ -1,17 +1,14 @@
-# `Zeff` was carrying three different quantities.
+# Charge states. In a single-species plasma the charge state Z, the mean charge and the
+# effective charge are all Z, so one field could stand in for all three. They separate the
+# moment a second species exists, so each consumer takes the sum it needs
+# (`update_charge_states!`), node by node:
 #
-# In a single-species plasma the charge state Z, the mean charge Z̄ and the
-# effective charge Z_eff are all equal to Z, so one field could stand in for all
-# three and nothing complained. They separate the moment a second species exists:
+#   Σ zₛ nₛ              → the ion charge density: the current, quasineutrality
+#   Σ zₛ² nₛ             → what electrons scatter on (ν_ei)
+#   Σ zₛ² nₛ / Σ zₛ nₛ   → Zeff, the composition the single-fluid closure (Spitzer) takes
 #
-#   Z_s   = the charge state of species s        → collision rates (NRL p.28/34)
-#   Z̄     = Σ n_z Z_z / Σ n_z                    → quasineutrality, charge density
-#   Z_eff = Σ n_z Z_z² / n_e                     → single-fluid closures (Spitzer)
-#
-# This branch resolves that by carrying ONE species, so all three collapse onto
-# its declared charge and no derived field is needed to hold them apart. The
-# multi-species forms — and why a stored average was the wrong shape — are in
-# internal/docs/src/notes/TODO/ion-inventory-multi-species.md.
+# With one species each is that species' charge and density; the mixture forms are pinned in
+# ion_mixture_forms_test.jl.
 
 @testsnippet ChargeCase begin
     "A discharge-shaped setup, ions free to evolve."
@@ -41,9 +38,8 @@ end
     @test length(RP.transport.ion_species) == 1
     @test bulk_ion_charge(RP) == 1              # H₂⁺
 
-    # A second species is refused rather than half-supported. γ_2nd is not per
-    # species, `Ni_loss` does not split, and the charge density would need Σ n_z Z_z
-    # instead of n·Z — none of which exist yet.
+    # A second species is refused rather than half-supported: γ_2nd is not per
+    # species, `Ni_loss` does not split, and `plasma.ni` round-trips only column 1.
     mi = RP.config.constants.mi
     err = try
         set_ion_species!(RP, [IonRecord(Particles.H2[1]; mass = mi), IonRecord(:C⁶⁺, 6mi, 6)])
@@ -65,8 +61,8 @@ end
 
     RP = charge_case()
 
-    # `Z_mean` existed only to let `ni` mean "total ion density". With one species
-    # `ni` IS that species, so a per-ion average has nothing to average over.
+    # The ion charge density is the sum Σ zₛ nₛ itself (`Zni_sum`), so nothing divides
+    # by a stored mean charge to recover it.
     @test !hasproperty(RP.plasma, :Z_mean)
 
     # `Z_eff` survives — `sptz_fac` is a genuine consumer — and at one species it
@@ -125,23 +121,19 @@ end
     @test J_C - J_H2 ≈ @. ee * 5 * pla.ni * pla.ui_para
 end
 
-@testitem "Collision rates follow the species charge, not Zeff" setup = [ChargeCase] begin
-    # The NRL rates on p.28 carry the CHARGE STATE of the colliding ion. Reading
-    # them from `Zeff` was only ever right because the two coincided.
+@testitem "Zeff is the species' composition, not a setting" setup = [ChargeCase] begin
+    # Zeff is summed from the species at every refresh, so a value written over it is
+    # gone by the time a collision rate or the Spitzer factor reads it
     RP = charge_case()
     update_coulomb_collision_parameters!(RP)
-    ν_ii, ν_ei, lnΛ = copy(RP.plasma.ν_ii), copy(RP.plasma.ν_ei), copy(RP.plasma.lnΛ)
+    ν_ii, ν_ei, lnΛ, sptz = copy(RP.plasma.ν_ii), copy(RP.plasma.ν_ei), copy(RP.plasma.lnΛ), copy(RP.plasma.sptz_fac)
 
-    # A hand-set Z_eff is a statement about the single-fluid closure, not about
-    # what the bulk ion is. It must not reach a collision rate.
     RP.plasma.Zeff .= 4.0
     update_coulomb_collision_parameters!(RP)
-    @test RP.plasma.ν_ii ≈ ν_ii rtol = 1.0e-14
-    @test RP.plasma.ν_ei ≈ ν_ei rtol = 1.0e-14
-    @test RP.plasma.lnΛ ≈ lnΛ rtol = 1.0e-14
-
-    # …but the Spitzer factor is a genuine Z_eff consumer and MUST follow it
-    @test !all(≈(0.510469472194728), RP.plasma.sptz_fac)
+    @test all(==(1.0), RP.plasma.Zeff)
+    @test RP.plasma.ν_ii == ν_ii && RP.plasma.ν_ei == ν_ei && RP.plasma.lnΛ == lnΛ
+    @test RP.plasma.sptz_fac == sptz
+    @test all(≈(0.510469472194728), RP.plasma.sptz_fac)
 end
 
 @testitem "The new collision field reaches the 2D snapshot" setup = [ChargeCase] begin

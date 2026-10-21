@@ -126,6 +126,14 @@ Contains simulation configuration parameters.
     # Wall geometry
     wall_R::Vector{FT} = Vector{FT}()  # Radial coordinates of wall points
     wall_Z::Vector{FT} = Vector{FT}()  # Vertical coordinates of wall points
+
+    # Species: a list such as `(H2[0], H[0], H2[1], H[1])` (`using RAPID2D.Particles: H, H2`),
+    # assembled by `initialize!` into `RP.species`; `nothing` for none
+    species::Union{Nothing, Tuple} = nothing
+    hydrogen::AbstractHydrogenIsotope = Protium()   # the hydrogen isotope of the species
+    closures::Tuple = (KineticClosure(), MaxwellianClosure())   # rate closures, by preference
+    processes::Tuple = ()                           # reaction and collision processes beyond the catalog
+    rates::Tuple = ()                               # `label => rate model` pairs replacing the catalog's
 end
 
 """
@@ -186,7 +194,8 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
 - `diss_iz`: Lost to dissociative ionization (35 eV/event)
 - `dilution`: Redistribution when newborn electrons enter at rest; not a loss of total
   electron energy
-- `equi`: Temperature equilibration with the ions
+- `equi`: Given to the ions by Coulomb collisions, the step's mean (`ei_exchange_energy!`);
+  applied on its own, not in `tot`
 - `visc_heat`: the viscous heating of u∥ per electron, `mₑ Γ_M(u∥)` = −Π:∇u / nₑ with Π = −mₑ nₑ D ∇u∥; the
   kinetic energy of the parallel flow the diffusion erases (`viscous_heating!`)
 """
@@ -205,7 +214,7 @@ budget of one electron. Multiply by `nₑ` to get a volumetric power density.
     diss_exc::Matrix{FT} = zeros(FT, dims)   # Power lost to dissociative excitation (DISS group)
     diss_iz::Matrix{FT} = zeros(FT, dims)    # Power lost to dissociative ionization (35 eV/event)
     dilution::Matrix{FT} = zeros(FT, dims)   # Power from density dilution
-    equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
+    equi::Matrix{FT} = zeros(FT, dims)       # Given to the ions over the step, not in tot
     # The mixing's own heating: mₑ Γ_M(u∥), the kinetic energy of the parallel flow that the
     # exchange of momentum between parcels erased (electron-diffusive-transport.md §4)
     visc_heat::Matrix{FT} = zeros(FT, dims)
@@ -323,7 +332,8 @@ volumetric power density.
 # Fields
 - `tot`: Total, the sum the temperature update consumes
 - `atomic`: From atomic processes
-- `equi`: Temperature equilibration with the electrons
+- `equi`: Taken from the electrons by Coulomb collisions, the step's mean
+  (`ei_exchange_energy!`); applied on its own, not in `tot`
 """
 @kwdef mutable struct IonHeatingPowers{FT <: AbstractFloat}
     dims::Tuple{Int, Int}  # Grid dimensions (NR, NZ)
@@ -331,7 +341,7 @@ volumetric power density.
     # Power terms - all in W PER ION (see the docstring), not W/m³
     tot::Matrix{FT} = zeros(FT, dims)        # Total
     atomic::Matrix{FT} = zeros(FT, dims)     # Power from atomic processes
-    equi::Matrix{FT} = zeros(FT, dims)       # Power from temperature equilibration
+    equi::Matrix{FT} = zeros(FT, dims)       # Taken from the electrons over the step, not in tot
 end
 
 # Constructor with dimensions
@@ -444,13 +454,25 @@ Contains the plasma state variables including density, temperature, and velocity
     exprb::ExpRBTerms{FT} = ExpRBTerms{FT}(dims)
 
     Rue_ei::Matrix{FT} = zeros(FT, dims) # ue change rate by electron-ion collision
+    # The momentum the electrons took from the ions over the step, per volume [kg m⁻² s⁻¹]:
+    # Δt mₑ nₑ Rue_ei at the density the electron momentum equation saw (before continuity).
+    # The ions take −I_ei (`update_ui_para!`), so the exchange cancels exactly.
+    I_ei::Matrix{FT} = zeros(FT, dims)
+    # The energy the electrons gave the ions by Coulomb collisions over the step, per volume
+    # [J/m³] (`ei_exchange_energy!`): the ions take +, the electrons −.
+    ei_exchange_energy::Matrix{FT} = zeros(FT, dims)
 
-    # Effective charge, written by `update_charge_states!` and read by `sptz_fac`.
-    # With ONE ion species it equals that species' charge state everywhere, so it
-    # carries no information the species does not — it is a field because the
-    # multi-species form Σ n_z Z_z²/n_e genuinely varies in space, and this is the
-    # seam that form returns through. Nothing else may stand in for the charge
-    # state: use `bulk_ion_charge(RP)`, which cannot go stale.
+    # The ion species summed node by node (`update_charge_states!`): Σ nₛ, Σ zₛ nₛ (the
+    # charge the current and quasineutrality see), Σ zₛ² nₛ (what electrons scatter on),
+    # Σ mₛ nₛ [kg/m³], the mean ion mass Σ (nₛ/Σn) mₛ [kg] and the composition
+    # Zeff = Σ zₛ² nₛ / Σ zₛ nₛ (Spitzer). Where there are no ions the means are the first
+    # species' values; with one species every one is that species' density times 1, z, z², m,
+    # its mass and its charge.
+    ni_sum::Matrix{FT} = zeros(FT, dims)
+    Zni_sum::Matrix{FT} = zeros(FT, dims)
+    Z2ni_sum::Matrix{FT} = zeros(FT, dims)
+    mni_sum::Matrix{FT} = zeros(FT, dims)
+    mi_mean::Matrix{FT} = zeros(FT, dims)
     Zeff::Matrix{FT} = ones(FT, dims)
     # Current densities
     Jϕ::Matrix{FT} = zeros(FT, dims)    # Toroidal current density [A/m²]
@@ -603,6 +625,10 @@ Fields include diffusion coefficients in different directions.
     # half carries Z², a charge-exchange or elastic hit on H₂ does not.
     νi_neutral::Matrix{FT} = zeros(FT, dims)  # ion-neutral part of νi_eff [1/s]
     νi_coulomb::Matrix{FT} = zeros(FT, dims)  # ion-ion part of νi_eff [1/s]
+    # the mean ion `νi_coulomb` is the self-collision rate of, as at the refresh: its mass [kg]
+    # and its mean squared charge, which every species' Coulomb channel is scaled against
+    νi_coulomb_mass::Matrix{FT} = zeros(FT, dims)
+    νi_coulomb_Z2::Matrix{FT} = ones(FT, dims)
 
     # Ion transport. The species axis is present from the start so that H⁺, H₃⁺ and
     # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as
@@ -1654,6 +1680,8 @@ mutable struct RAPID{FT <: AbstractFloat}
 
     vertical_field_control::VerticalFieldControlState{FT}  # the vertical-field control's coefficients and ledger
 
+    species::Union{Nothing, SpeciesSystem}  # the species of `config.species` and their reactions; `nothing` without
+
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT <: AbstractFloat}
         # Get grid dimensions
@@ -1707,6 +1735,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             snap0D_path, snap2D_path,
             coil_system,
             VerticalFieldControlState{FT}(),
+            nothing,  # species, assembled by initialize!
         )
     end
 end
