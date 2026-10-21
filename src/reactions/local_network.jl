@@ -22,16 +22,70 @@ struct NetworkRow{FT <: AbstractFloat}
 end
 
 """
-    NetworkBlock
+    BlockSolver
 
-Ion columns the network couples both ways (a strongly connected component of its production
-graph), solved together: by Thomas when every transfer joins neighbours in `columns`, else by
-pivoted LU. `rows` are the rows whose implicit column is in the block, `inflow` the rows of
-earlier blocks that produce one of its columns.
+How one block's linear system (I − Σⱼ νⱼ transferⱼ e_i(j)ᵀ) n⁺ = n + Δn + inflow is solved.
+[`block_solver`](@ref) picks one from the block's structure; a new kind is a type and a method of
+`block_solve!`.
 """
-struct NetworkBlock
+abstract type BlockSolver end
+
+"A block of one column: a division."
+struct ScalarSolve <: BlockSolver end
+
+"A block whose transfers join neighbouring columns only, as along a charge ladder: Thomas, O(S)."
+struct ThomasSolve <: BlockSolver end
+
+"""
+    EliminationSolve()
+
+Any other block: Gaussian elimination without pivoting. The plan admits only M-matrices, which
+need no pivoting, and elimination without it adds terms of one sign only, so a nonnegative right
+side gives nonnegative densities in floating point too.
+"""
+struct EliminationSolve <: BlockSolver end
+
+"Gaussian elimination with partial pivoting, by choice only: it may mix the rows' signs."
+struct PivotedLUSolve <: BlockSolver end
+
+"""
+    BlockStructure
+
+The block structure [`local_network_plan`](@ref) gives each cell's linear system: which ion columns
+are solved together, and in what order. Each block is then solved by its [`BlockSolver`](@ref).
+"""
+abstract type BlockStructure end
+
+"""
+    ProductionBlocks()
+
+The default: one block per strongly connected component of the production graph, in topological
+order. The cell's system is then block lower triangular, and the blocks are solved in turn, each
+taking the earlier ones' new densities. A species nothing downstream turns back into is a block of
+one, a division; a cycle, such as an element's charge ladder, is one block.
+"""
+struct ProductionBlocks <: BlockStructure end
+
+"""
+    SingleBlock(; solver = EliminationSolve())
+
+Every ion column in one block: the cell's whole system solved at once. The reference
+[`ProductionBlocks`](@ref) is checked against, and the fallback should reverse channels make the
+production graph dense.
+"""
+Base.@kwdef struct SingleBlock{S <: BlockSolver} <: BlockStructure
+    solver::S = EliminationSolve()
+end
+
+"""
+    NetworkBlock{S}
+
+Ion columns solved together by the [`BlockSolver`](@ref) `solver`. `rows` are the rows whose
+implicit column is in the block, `inflow` the rows of earlier blocks that produce one of its columns.
+"""
+struct NetworkBlock{S <: BlockSolver}
     columns::Vector{Int}
-    tridiagonal::Bool
+    solver::S
     rows::Vector{Int}
     inflow::Vector{Int}
 end
@@ -41,24 +95,27 @@ end
 
 The local network of a species system, built once by [`local_network_plan`](@ref): its rows, the
 active reactions they come from (whose rates and energies are evaluated outside the cell loop),
-and the blocks of ion columns in the order production flows.
+and the blocks of ion columns in the order they are solved, a tuple so the cell loop dispatches on
+each block's solver at compile time.
 """
-struct LocalNetworkPlan{FT <: AbstractFloat, RX <: Tuple}
+struct LocalNetworkPlan{FT <: AbstractFloat, RX <: Tuple, BX <: Tuple}
     rows::Vector{NetworkRow{FT}}
     reactions::RX
-    blocks::Vector{NetworkBlock}
+    blocks::BX
     n_ion::Int
     n_neutral::Int
 end
 
 """
-    local_network_plan(system::SpeciesSystem) -> LocalNetworkPlan
+    local_network_plan(system::SpeciesSystem; block_structure = ProductionBlocks()) -> LocalNetworkPlan
 
-The rows of the system's network reactions on its registry's columns, and their blocks: the
-strongly connected components of the production graph `implicit → product ion` (Tarjan), in
-topological order, so that a block's inflow comes from blocks already solved.
+The rows of the system's network reactions on its registry's columns, and their blocks in the
+[`BlockStructure`](@ref) `block_structure`. The strongly connected components of the production graph
+`implicit → product ion` (Tarjan), in topological order, decide both: a cycle that multiplies its
+ions is refused whatever the structure, and [`ProductionBlocks`](@ref) solves the components in turn,
+a block's inflow coming from blocks already solved.
 """
-function local_network_plan(sys::SpeciesSystem{<:SpeciesRegistry{FT}}) where {FT <: AbstractFloat}
+function local_network_plan(sys::SpeciesSystem{<:SpeciesRegistry{FT}}; block_structure::BlockStructure = ProductionBlocks()) where {FT <: AbstractFloat}
     reg = sys.registry
     reactions = filter(a -> a.reaction.producer isa LocalNetwork, sys.reactions)
     rows = NetworkRow{FT}[map(a -> network_row(a.reaction, reg), reactions)...]
@@ -68,12 +125,39 @@ function local_network_plan(sys::SpeciesSystem{<:SpeciesRegistry{FT}}) where {FT
     for row in rows, (s, ν) in row.ion_change
         (s != row.implicit && ν > 0 && !(s in successors[row.implicit])) && push!(successors[row.implicit], s)
     end
-    components = strongly_connected_components(successors)
-    blocks = map(components) do component
-        columns = sort(component; by = s -> (reg.ions[s].charge, s))
-        network_block(columns, rows)
-    end
+    components = [sort(c; by = s -> (reg.ions[s].charge, s)) for c in strongly_connected_components(successors)]
+    foreach(c -> check_cycle(c, rows), components)
+    blocks = Tuple(network_blocks(block_structure, components, rows))
     return LocalNetworkPlan(rows, reactions, blocks, n_ion, length(reg.neutrals))
+end
+
+network_blocks(::ProductionBlocks, components, rows) = [network_block(c, rows) for c in components]
+network_blocks(b::SingleBlock, components, rows) = [network_block(reduce(vcat, components; init = Int[]), rows, b.solver)]
+
+"""
+    block_solver(columns, rows) -> BlockSolver
+
+The solver a block of `columns` takes: [`ScalarSolve`](@ref) for one column, [`ThomasSolve`](@ref)
+when every transfer joins neighbours in `columns`, else [`EliminationSolve`](@ref).
+"""
+function block_solver(columns::Vector{Int}, rows::Vector{<:NetworkRow})
+    length(columns) == 1 && return ScalarSolve()
+    inside(s) = s in columns
+    position(s) = findfirst(==(s), columns)
+    tridiagonal = all(abs(position(s) - position(row.implicit)) <= 1 for row in rows if inside(row.implicit) for (s, _) in row.ion_change if inside(s))
+    return tridiagonal ? ThomasSolve() : EliminationSolve()
+end
+
+# In a cycle no event may add to the cycle's ions: its matrix is then diagonally dominant by
+# columns, an M-matrix, and the ions stay nonnegative. Blocks that join components in production
+# order are block triangular in them, M-matrices as well.
+function check_cycle(component::Vector{Int}, rows::Vector{<:NetworkRow})
+    length(component) == 1 && return nothing
+    inside(s) = s in component
+    cycle_rows = [row for row in rows if inside(row.implicit)]
+    all(sum(ν for (s, ν) in row.ion_change if inside(s)) <= 0 for row in cycle_rows) ||
+        throw(ArgumentError("the reactions $(join((row.label for row in cycle_rows), ", ")) form a cycle that multiplies its ions"))
+    return nothing
 end
 
 function network_row(r::Reaction, reg::SpeciesRegistry{FT}) where {FT <: AbstractFloat}
@@ -103,20 +187,11 @@ function network_row(r::Reaction, reg::SpeciesRegistry{FT}) where {FT <: Abstrac
     )
 end
 
-function network_block(columns::Vector{Int}, rows::Vector{<:NetworkRow})
+function network_block(columns::Vector{Int}, rows::Vector{<:NetworkRow}, solver::BlockSolver = block_solver(columns, rows))
     inside(s) = s in columns
     block_rows = [j for (j, row) in enumerate(rows) if inside(row.implicit)]
     inflow = [j for (j, row) in enumerate(rows) if !inside(row.implicit) && any(entry -> inside(first(entry)) && last(entry) > 0, row.ion_change)]
-    position(s) = findfirst(==(s), columns)
-    tridiagonal = all(
-        abs(position(s) - position(rows[j].implicit)) <= 1 for j in block_rows for (s, _) in rows[j].ion_change if inside(s)
-    )
-    # in a cycle no event may add to the block's ions: its matrix is then diagonally dominant by
-    # columns, an M-matrix, and the ions stay nonnegative
-    length(columns) == 1 || all(sum(ν for (s, ν) in rows[j].ion_change if inside(s)) <= 0 for j in block_rows) || throw(
-        ArgumentError("the reactions $(join((rows[j].label for j in block_rows), ", ")) form a cycle that multiplies its ions")
-    )
-    return NetworkBlock(columns, tridiagonal, block_rows, inflow)
+    return NetworkBlock(columns, solver, block_rows, inflow)
 end
 
 # The strongly connected components of the graph `successors` (Tarjan), sources first: Tarjan
@@ -233,9 +308,7 @@ function solve_local_network!(
                 catalyst = row.frozen == 0 ? inp.ne[k] : n_neutral[row.frozen][k]
                 transfer[j] = Δt * inp.K[j][k] * catalyst
             end
-            for block in plan.blocks
-                solve_block!(n_new, cell, k, block, plan.rows, transfer, n_ion, inp.ion_increment, block_matrix, block_rhs)
-            end
+            solve_blocks!(plan.blocks, n_new, cell, k, plan.rows, transfer, n_ion, inp.ion_increment, block_matrix, block_rhs)
             cell_verdict = cell_events!(acc, n_new, cell, k, plan, transfer, inp, n_neutral)
             cell_verdict isa Accept || break
         end
@@ -254,22 +327,32 @@ end
 
 stoichiometric(changes::Vector{Pair{Int, Int}}, col::Int) = (i = findfirst(p -> first(p) == col, changes); isnothing(i) ? 0 : last(changes[i]))
 
-# One block in cell k: (I − Σⱼ νⱼ transferⱼ e_i(j)ᵀ) n⁺ = n + Δn + inflow
-function solve_block!(n_new, cell, k, block::NetworkBlock, rows, transfer, n_ion, ion_increment, block_matrix, block_rhs)
+# The blocks in turn, unrolled over the tuple so each dispatches on its solver at compile time
+solve_blocks!(::Tuple{}, args...) = nothing
+function solve_blocks!(blocks::Tuple, args...)
+    solve_block!(first(blocks), args...)
+    return solve_blocks!(Base.tail(blocks), args...)
+end
+
+# One block in cell k: (I − Σⱼ νⱼ transferⱼ e_i(j)ᵀ) n⁺ = n + Δn + inflow. A block of one column is
+# a division; any other is assembled and handed to its solver.
+function solve_block!(block::NetworkBlock{ScalarSolve}, n_new, cell, k, rows, transfer, n_ion, ion_increment, block_matrix, block_rhs)
+    FT = eltype(n_new)
+    s = only(block.columns)
+    diag, rhs = one(FT), n_ion[s][k] + ion_increment[s][k]
+    for j in block.rows
+        diag -= stoichiometric(rows[j].ion_change, s) * transfer[j]
+    end
+    for j in block.inflow
+        rhs += stoichiometric(rows[j].ion_change, s) * transfer[j] * n_new[cell, rows[j].implicit]
+    end
+    n_new[cell, s] = rhs / diag
+    return nothing
+end
+
+function solve_block!(block::NetworkBlock, n_new, cell, k, rows, transfer, n_ion, ion_increment, block_matrix, block_rhs)
     FT = eltype(n_new)
     columns = block.columns
-    if length(columns) == 1
-        s = only(columns)
-        diag, rhs = one(FT), n_ion[s][k] + ion_increment[s][k]
-        for j in block.rows
-            diag -= stoichiometric(rows[j].ion_change, s) * transfer[j]
-        end
-        for j in block.inflow
-            rhs += stoichiometric(rows[j].ion_change, s) * transfer[j] * n_new[cell, rows[j].implicit]
-        end
-        n_new[cell, s] = rhs / diag
-        return nothing
-    end
     n = length(columns)
     position(s) = findfirst(==(s), columns)
     fill!(view(block_matrix, 1:n, 1:n), zero(FT))
@@ -288,12 +371,17 @@ function solve_block!(n_new, cell, k, block::NetworkBlock, rows, transfer, n_ion
         q = position(s)
         isnothing(q) || (block_rhs[q] += ν * transfer[j] * n_new[cell, rows[j].implicit])
     end
-    block.tridiagonal ? thomas!(block_matrix, block_rhs, n) : gepp!(block_matrix, block_rhs, n)
+    block_solve!(block.solver, block_matrix, block_rhs, n)
     for q in 1:n
         n_new[cell, columns[q]] = block_rhs[q]
     end
     return nothing
 end
+
+# The system in the first n rows of `matrix`, in place; the right side becomes the solution
+block_solve!(::ThomasSolve, matrix, rhs, n) = thomas!(matrix, rhs, n)
+block_solve!(::EliminationSolve, matrix, rhs, n) = elimination!(matrix, rhs, n)
+block_solve!(::PivotedLUSolve, matrix, rhs, n) = gepp!(matrix, rhs, n)
 
 # A tridiagonal system in its first n rows by elimination without pivoting (an M-matrix needs
 # none); the right side becomes the solution
@@ -306,6 +394,27 @@ function thomas!(matrix, rhs, n)
     rhs[n] /= matrix[n, n]
     for q in (n - 1):-1:1
         rhs[q] = (rhs[q] - matrix[q, q + 1] * rhs[q + 1]) / matrix[q, q]
+    end
+    return rhs
+end
+
+# A system in its first n rows by Gaussian elimination without pivoting, in place; the right side
+# becomes the solution. For an M-matrix every update adds terms of one sign.
+function elimination!(matrix, rhs, n)
+    for col in 1:n, i in (col + 1):n
+        f = matrix[i, col] / matrix[col, col]
+        iszero(f) && continue
+        for q in col:n
+            matrix[i, q] -= f * matrix[col, q]
+        end
+        rhs[i] -= f * rhs[col]
+    end
+    for i in n:-1:1
+        s = rhs[i]
+        for q in (i + 1):n
+            s -= matrix[i, q] * rhs[q]
+        end
+        rhs[i] = s / matrix[i, i]
     end
     return rhs
 end

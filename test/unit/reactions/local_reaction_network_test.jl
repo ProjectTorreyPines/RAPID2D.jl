@@ -145,7 +145,8 @@ end
 end
 
 @testitem "Blocks follow the flow of production, a ladder's cycle solved as one" setup = [LocalNetworkCase] begin
-    using RAPID2D: LadderRates, ConstantRate, NetworkBlock, LocalNetworkPlan, Accept
+    using RAPID2D: LadderRates, ConstantRate, NetworkBlock, LocalNetworkPlan, Accept, ThomasSolve, PivotedLUSolve,
+        EliminationSolve, SingleBlock
     using RAPID2D.Particles: H, H2, H3
 
     # hydrogen with H3[1]: no cycle, H2[1] before H3[1] before H[1]
@@ -167,21 +168,62 @@ end
     X = Ladder3()
     ladder = network_case((H2[0], H2[1], X[0], X[1], X[2], X[3]))
     block = only(filter(b -> length(b.columns) > 1, ladder.plan.blocks))
-    @test block.columns == [ion_column(ladder, X[z]) for z in 1:3] && block.tridiagonal
+    @test block.columns == [ion_column(ladder, X[z]) for z in 1:3] && block.solver isa ThomasSolve
 
-    # Thomas, pivoted LU and a dense solve of the whole matrix agree
+    # Thomas, elimination, pivoted LU, the whole cell as one block and a dense solve agree
     Δt = 1.0e-5
     dense = ladder.plan.n_ion
     expected = [network_matrix(ladder, k, Δt) \ [ladder.n_ion[s][k] for s in 1:dense] for k in 1:3]
-    as_lu = LocalNetworkPlan(
+    with(solver) = LocalNetworkPlan(
         ladder.plan.rows, ladder.plan.reactions,
-        [NetworkBlock(b.columns, false, b.rows, b.inflow) for b in ladder.plan.blocks], ladder.plan.n_ion, ladder.plan.n_neutral,
+        Tuple(NetworkBlock(b.columns, solver, b.rows, b.inflow) for b in ladder.plan.blocks), ladder.plan.n_ion, ladder.plan.n_neutral,
     )
-    for plan in (ladder.plan, as_lu)
+    coupled = local_network_plan(ladder.sys; block_structure = SingleBlock())
+    for plan in (ladder.plan, with(EliminationSolve()), with(PivotedLUSolve()), coupled)
         n_ion = deepcopy(ladder.n_ion)
         @test solve_local_network!(ladder.acc, n_ion, deepcopy(ladder.n_neutral), plan, ladder.inputs, Δt) === Accept()
         @test all([n_ion[s][k] for s in 1:dense] ≈ expected[k] for k in 1:3)
     end
+end
+
+@testitem "The hydrogen ions in production order are the whole cell's system, solved by substitution" setup = [LocalNetworkCase] begin
+    using RAPID2D: Accept, ScalarSolve, EliminationSolve, SingleBlock
+    using RAPID2D.Particles: H, H2, H3
+
+    # No reaction turns H3[1] or H[1] back into an upstream ion, so the cell's 3×3 system is lower
+    # triangular in the order H2[1], H3[1], H[1]: three divisions in turn solve it exactly
+    case = network_case((H2[0], H[0], H2[1], H[1], H3[1]))
+    order = [ion_column(case, sp) for sp in (H2[1], H3[1], H[1])]
+    @test [only(b.columns) for b in case.plan.blocks] == order
+    @test all(b -> b.solver isa ScalarSolve, case.plan.blocks)
+    coupled = local_network_plan(case.sys; block_structure = SingleBlock())
+    @test only(coupled.blocks).columns == order && only(coupled.blocks).solver isa EliminationSolve
+    for k in 1:3
+        matrix = network_matrix(case, k, 1.0e-6)
+        @test all(iszero, matrix[i, j] for (a, i) in enumerate(order), (b, j) in enumerate(order) if b > a)
+    end
+
+    for Δt in (1.0e-6, 1.0e-3)                  # a step short, and one far beyond the H2[1] lifetime
+        expected = [network_matrix(case, k, Δt) \ [case.n_ion[s][k] for s in 1:case.plan.n_ion] for k in 1:3]
+        results = map((case.plan, coupled)) do plan
+            n_ion, acc = deepcopy(case.n_ion), NetworkAccumulator{Float64}(plan, (3,))
+            @test solve_local_network!(acc, n_ion, deepcopy(case.n_neutral), plan, case.inputs, Δt) === Accept()
+            @test all([n_ion[s][k] for s in 1:case.plan.n_ion] ≈ expected[k] for k in 1:3)
+            @test all(all(>=(0), n) for n in n_ion)
+            (n_ion, acc.events)
+        end
+        @test all(isapprox.(results[1][1], results[2][1]; rtol = 1.0e-12))
+        @test all(isapprox.(results[1][2], results[2][2]; rtol = 1.0e-12))
+    end
+
+    # neither way allocates in the cell loop
+    function allocated(plan, inputs, n_ion0, n_neutral0)
+        acc, n_ion, n_neutral = NetworkAccumulator{Float64}(plan, (3,)), deepcopy(n_ion0), deepcopy(n_neutral0)
+        solve_local_network!(acc, n_ion, n_neutral, plan, inputs, 1.0e-6)
+        return @allocated solve_local_network!(acc, n_ion, n_neutral, plan, inputs, 1.0e-6)
+    end
+    @test allocated(case.plan, case.inputs, case.n_ion, case.n_neutral) == 0
+    @test allocated(coupled, case.inputs, case.n_ion, case.n_neutral) == 0
 end
 
 @testitem "The electron solve's use of a neutral and the network's share one budget; a refused step changes nothing" setup = [LocalNetworkCase] begin
