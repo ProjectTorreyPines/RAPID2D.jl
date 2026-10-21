@@ -40,8 +40,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.Ke_eV = sum(@. (1.5 * pla.Te_eV + (0.5 * me * pla.ue_para^2) / ee) * Ne2D) / total_Ne
 
     # Ion quantities
-    snap0D.ni = total_Ni / RP.G.device_inVolume
-    snap0D.ni_max = maximum(pla.ni_tot)
+    snap0D.ni_tot = total_Ni / RP.G.device_inVolume
+    snap0D.ni_tot_max = maximum(pla.ni_tot)
     snap0D.ui_para = sum(@. pla.ui_para * Ni2D) / total_Ni
     snap0D.Ti_eV = sum(@. pla.Ti_eV * Ni2D) / total_Ni
     snap0D.Ki_eV = sum(@. (1.5 * pla.Ti_eV + (0.5 * pla.mi_mean * pla.ui_para^2) / ee) * Ni2D) / total_Ni
@@ -97,8 +97,13 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * F.Bpol / F.Btot * Ne2D) / total_Ne
     snap0D.D_RZ = sum(@. sqrt(RP.transport.DRR^2 + RP.transport.DZZ^2) * Ne2D) / total_Ne
 
-    # Gas quantities
-    snap0D.n_H2_gas = sum(@. pla.n_H2_gas * inVol2D) / RP.G.device_inVolume
+    # Each parent's species, volume-averaged: its ions by charge state, its neutral gas (the H₂
+    # gas among them)
+    layout = RP.store_layout
+    snap0D.ion_parents = copy(layout.ion_parents)
+    snap0D.ni_parents = [[sum(view(A, :, :, z) .* inVol2D) / RP.G.device_inVolume for z in axes(A, 3)] for A in pla.n_ions]
+    snap0D.gas_parents = copy(layout.gas_parents)
+    snap0D.ng_parents = [sum(@. n * inVol2D) / RP.G.device_inVolume for n in pla.n_gas]
     snap0D.n_H2_gas_min = minimum(pla.n_H2_gas)
 
     # Electron collision frequencies
@@ -430,7 +435,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.γ_shape_fac .= pla.γ_shape_fac
 
     # Ion quantities (all species: their sum, sharing one velocity and temperature)
-    snap2D.ni .= pla.ni_tot
+    snap2D.ni_tot .= pla.ni_tot
     snap2D.ui_para .= pla.ui_para
     snap2D.uiR .= pla.uiR
     snap2D.uiϕ .= pla.uiϕ
@@ -447,8 +452,11 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.lnΛ .= pla.lnΛ
     snap2D.lnΛ_ii .= pla.lnΛ_ii
 
-    # Neutral gas
-    snap2D.n_H2_gas .= pla.n_H2_gas
+    # Each parent's species: its ions by charge state, its neutral gas
+    snap2D.ion_parents = copy(RP.store_layout.ion_parents)
+    snap2D.ni_parents = [copy(A) for A in pla.n_ions]
+    snap2D.gas_parents = copy(RP.store_layout.gas_parents)
+    snap2D.ng_parents = [copy(n) for n in pla.n_gas]
 
     # Calculate mean energies
     @. snap2D.Ke_eV = 1.5 * pla.Te_eV + 0.5 * me * pla.ue_para^2 / ee
@@ -497,10 +505,13 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     # plasma. Fields, fluxes and rates are not plasma state and stay as they are.
     band = RP.G.nodes.on_out_wall_nids
     for field in (
-            snap2D.ne, snap2D.ni, snap2D.Te_eV, snap2D.Ti_eV, snap2D.ue_para, snap2D.ui_para,
+            snap2D.ne, snap2D.ni_tot, snap2D.Te_eV, snap2D.Ti_eV, snap2D.ue_para, snap2D.ui_para,
             snap2D.Ke_eV, snap2D.Ki_eV,
         )
         field[band] .= FT(NaN)
+    end
+    for A in snap2D.ni_parents, z in axes(A, 3)          # every ion species, plane by plane
+        view(A, :, :, z)[band] .= FT(NaN)
     end
 
     return RP

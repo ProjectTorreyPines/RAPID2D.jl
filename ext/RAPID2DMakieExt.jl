@@ -63,7 +63,7 @@ module RAPID2DMakieExt
             field = :ne, colormap = :turbo, kwargs...
         )
 
-        field_data = getfield(snap2D, field)
+        field_data = RAPID2D.snapshot_matrix(snap2D, field)
 
         fig = Figure(size = (600, 500), figure_padding = 5)
         ax = Axis(
@@ -96,7 +96,7 @@ module RAPID2DMakieExt
 
         # Observable for animation
         frame_idx = Observable(1)
-        field_data = @lift(getfield(snaps2D[$frame_idx], field))
+        field_data = @lift(RAPID2D.snapshot_matrix(snaps2D[$frame_idx], field))
 
         # Create axis with static title
         ax = Axis(fig[1, 1], xlabel = "R (m)", ylabel = "Z (m)", aspect = DataAspect())
@@ -128,7 +128,7 @@ module RAPID2DMakieExt
     function get_makie_field_label(field::Symbol)
         labels = Dict(
             :ne => "ne (m⁻³)",
-            :ni => "ni (m⁻³)",
+            :ni_tot => "ni_tot (m⁻³)",
             :Te_eV => "Te (eV)",
             :Ti_eV => "Ti (eV)",
             :B_pol => "Bpol (T)",

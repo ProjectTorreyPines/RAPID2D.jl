@@ -212,7 +212,7 @@ module RAPID2DPlotsExt
     function RAPID2D.plot_snaps2D(snap2D, R1D, Z1D, field; colorscale = :auto, streamlines = true, wall = nothing, kwargs...)
 
         # Get field data
-        field_data = getfield(snap2D, field)
+        field_data = RAPID2D.snapshot_matrix(snap2D, field)
         R2D = R1D' .* ones(length(Z1D))
         Z2D = ones(length(R1D))' .* Z1D
 
@@ -284,7 +284,7 @@ module RAPID2DPlotsExt
     function get_field_label(field::Symbol)
         labels = Dict(
             :ne => "ne (m⁻³)",
-            :ni => "ni (m⁻³)",
+            :ni_tot => "ni_tot (m⁻³)",
             :Te_eV => "Te (eV)",
             :Ti_eV => "Ti (eV)",
             :B_pol => "Bpol (T)",
@@ -325,11 +325,11 @@ module RAPID2DPlotsExt
 
         try
             # Determine global color limits for consistency
-            all_data = [getfield(snap, field) for snap in snaps2D]
+            all_data = [RAPID2D.snapshot_matrix(snap, field) for snap in snaps2D]
             # the plasma-state fields are NaN on the band outside the wall
             global_min, global_max = RAPID2D.finite_extrema(all_data)
 
-            if field in [:ne, :ni] && global_min > 0
+            if RAPID2D.is_density_field(field) && global_min > 0
                 clims = (global_max * 1.0e-3, global_max)
                 colorscale = :log10
             else
