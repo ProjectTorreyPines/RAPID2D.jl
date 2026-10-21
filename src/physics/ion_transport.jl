@@ -788,7 +788,7 @@ buffers to match.
 **Exactly one species, for now.** Grouping, assembly, the batch solve, the
 face ledger and the mixture's sums (the currents, the collisions, the masses) are
 written against a list (and never write outside the wall, so a second column
-cannot accumulate there), but three things are not, and each is silently wrong
+cannot accumulate there), but two things are not, and each is silently wrong
 rather than loudly missing:
 
   - `γ_2nd_electron` is one number, so only column 1 could yield secondary electrons;

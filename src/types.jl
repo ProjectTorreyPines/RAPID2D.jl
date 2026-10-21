@@ -504,8 +504,9 @@ Base.propertynames(pla::PlasmaState, ::Bool = false) = (fieldnames(typeof(pla)).
 "The density plane of the stored ion in slot `(k, z)`: parent k in charge state z."
 ion_plane(pla::PlasmaState, (k, z)::Tuple{Int, Int}) = view(getfield(pla, :n_ions)[k], :, :, z)
 
-# The species store is written in place (`.=`) and laid out only by `build_species_store!`: a
-# rebound entry would leave the solvers reading the arrays it replaced
+# The species store is written in place (`.=`) and laid out only by `build_species_store!` (the
+# step transaction copies a store of the same layout back, its slots included): a rebound entry
+# would leave the solvers reading the arrays it replaced
 const SPECIES_STORE_FIELDS = (:ni, :n_H2_gas, :n_ions, :n_gas, :ni_slot, :h2_slot)
 
 function Base.setproperty!(pla::PlasmaState, name::Symbol, x)

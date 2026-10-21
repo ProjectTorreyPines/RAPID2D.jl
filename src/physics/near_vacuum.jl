@@ -157,9 +157,10 @@ are not evolved independently.
   `min(0.1·|n|, 0.01·mean|n_neighbours|)`, and the particles that creates, `(n_new − n_old)·V`,
   are taken OFF `Ne_loss`. (They used to be added to it, which double-counted them.) The
   floorings and the particles they create are also counted in `RP.diagnostics.near_vacuum`.
-- Ions, when independent: a negative cell of any species the transport moves is set to zero
-  and `n_old·V` (negative) is added to `Ni_loss` and to that species' entry — the same sign
-  convention.
+- Ions, when independent: a negative cell of any stored ion species is set to zero and
+  `n_old·V` (negative) is added to `Ni_loss` — the same sign convention — and to the species'
+  own entry if the transport moves it. A species the transport does not move has no entry, so
+  its flooring is in the total alone.
 
 Nothing outside the wall is touched. No transport operator has rows there, and the
 ionization rates are zero there, so the band keeps the value the initial condition gave it;

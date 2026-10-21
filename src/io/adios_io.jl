@@ -464,7 +464,7 @@ function read_snapshot_species!(snaps::AbstractVector{<:AnySnapshot}, Adict::Dic
         names(key) = String.(split(String(reshape(UInt8.(Adict[key]), :, Nt)[:, 1]), ','; keepempty = false))
         ions, gases = names("ion_parents"), names("gas_parents")
         for (tt, s) in enumerate(snaps)
-            s.ion_parents, s.gas_parents = ions, gases
+            s.ion_parents, s.gas_parents = copy(ions), copy(gases)     # each its own, as measured
             s.ni_parents = [species_slice(s, Adict["ni_" * p], tt, Nt; charge_axis = true) for p in ions]
             s.ng_parents = [species_slice(s, Adict["ng_" * p], tt, Nt) for p in gases]
         end

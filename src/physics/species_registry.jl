@@ -161,10 +161,15 @@ function legacy_store_layout(transport::AbstractVector{IonRecord{FT}}, constants
     return species_store_layout(transport, (h2_gas_record(FT, constants),), transport)
 end
 
+# The ion a run starts with, and the one the transport moves without a species list: H₂⁺ at
+# `constants.mi`
+default_ion_record(::Type{FT}, constants::PlasmaConstants) where {FT <: AbstractFloat} =
+    IonRecord(Particles.H2[1]; mass = FT(constants.mi))
+
 # The layout a run starts with, before `initialize!` declares the transport's species: the
 # default H₂⁺, and the H₂ gas
 default_store_layout(constants::PlasmaConstants{FT}) where {FT <: AbstractFloat} =
-    species_store_layout([IonRecord(Particles.H2[1]; mass = FT(constants.mi))], (h2_gas_record(FT, constants),), IonRecord{FT}[])
+    species_store_layout([default_ion_record(FT, constants)], (h2_gas_record(FT, constants),), IonRecord{FT}[])
 
 function h2_gas_record(::Type{FT}, constants::PlasmaConstants) where {FT <: AbstractFloat}
     h2 = Particles.H2[0]

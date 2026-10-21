@@ -215,7 +215,7 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFl
     # to the transport solve. The species list, if any, is assembled later
     # (`initialize_species!`), which lays the species store out for it.
     RP.species = nothing
-    set_ion_species!(RP, [IonRecord(Particles.H2[1]; mass = FT(RP.config.constants.mi))])
+    set_ion_species!(RP, [default_ion_record(FT, RP.config.constants)])
 
     # Set initial gas density
     RP.plasma.n_H2_gas .= RP.config.prefilled_gas_pressure ./
@@ -735,12 +735,7 @@ function initialize_species!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     if isempty(RP.transport.ion_species)      # not declared yet (initialize! declares H₂⁺ first)
         build_species_store!(RP)
     else
-        listed = map(RP.transport.ion_species) do sp
-            col = get(reg.ion_column, sp.key, nothing)
-            isnothing(col) && throw(ArgumentError("the step moves $(sp.label), which config.species leaves out"))
-            reg.ions[col]
-        end
-        set_ion_species!(RP, listed)
+        set_ion_species!(RP, map(sp -> listed_ion(reg, sp), RP.transport.ion_species))
     end
     path = joinpath(abspath(config.Output_path), config.Output_prefix) * "species.txt"
     mkpath(dirname(path))
@@ -756,9 +751,7 @@ end
 # H₂⁺ keeps `constants.mi`, 2 × 1.00797 u, which the list's 2mₚ + mₑ would change by 4e-4.
 function check_transport_species(reg::SpeciesRegistry, transport_species)
     for sp in transport_species
-        col = get(reg.ion_column, sp.key, nothing)
-        isnothing(col) && throw(ArgumentError("the step moves $(sp.label), which config.species leaves out"))
-        listed = reg.ions[col]
+        listed = listed_ion(reg, sp)
         listed === sp || throw(
             ArgumentError(
                 "the step moves $(sp.label) at $(sp.mass) kg, and config.species has $(listed.label) at " *
@@ -767,6 +760,13 @@ function check_transport_species(reg::SpeciesRegistry, transport_species)
         )
     end
     return nothing
+end
+
+# The list's record of the ion `sp` the step moves, found by its key
+function listed_ion(reg::SpeciesRegistry, sp::IonRecord)
+    col = get(reg.ion_column, sp.key, nothing)
+    isnothing(col) && throw(ArgumentError("the step moves $(sp.label), which config.species leaves out"))
+    return reg.ions[col]
 end
 
 """

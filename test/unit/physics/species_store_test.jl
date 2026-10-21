@@ -105,6 +105,39 @@ end
     @test_throws ArgumentError store_case(species = (H[0], H[1], H2[1]))
 end
 
+@testitem "A new layout carries each density to its species' new place, and the bulk's to the new bulk" setup = [StoreCase] begin
+    using RAPID2D: IonRecord, initialize_species!, set_ion_species!
+
+    # every plane and every gas its own values
+    RP = store_case(species = (H2[0], H2[1], X[0], X[1], X[2], X[3]))
+    pla = RP.plasma
+    ramp = reshape(1.0:81.0, 9, 9)
+    for (k, A) in enumerate(pla.n_ions), z in axes(A, 3)
+        A[:, :, z] .= (10k + z) .* ramp
+    end
+    for (j, g) in enumerate(pla.n_gas)
+        g .= 100j .* ramp
+    end
+    ions_H2, ions_X, gas_H2, gas_X = copy(pla.ni), copy(pla.n_ions[2]), copy(pla.n_gas[1]), copy(pla.n_gas[2])
+
+    # the same species in another order, H besides: every parent moves, and the densities with it
+    RP.config.species = (X[0], X[1], X[2], X[3], H2[0], H2[1], H[0], H[1])
+    initialize_species!(RP)
+    pla, layout = RP.plasma, RP.store_layout
+    @test layout.ion_parents == ["X", "H2", "H"] && layout.gas_parents == ["X", "H2", "H"]
+    @test pla.n_ions[1] == ions_X && pla.ni == ions_H2 && parent(pla.ni) === pla.n_ions[2]
+    @test pla.n_gas[1] == gas_X && pla.n_H2_gas == gas_H2 && pla.n_H2_gas === pla.n_gas[2]
+    @test all(iszero, pla.n_ions[3]) && all(iszero, pla.n_gas[3])            # H, new
+
+    # without a list the transport's ion declared another one: the bulk density goes over to it
+    RP = store_case()
+    RP.plasma.ni .= ramp
+    gas = copy(RP.plasma.n_H2_gas)
+    set_ion_species!(RP, [IonRecord(:C6, 6 * RP.transport.ion_species[1].mass, 6)])
+    pla = RP.plasma
+    @test pla.ni == ramp && parent(pla.ni) === pla.n_ions[1] && pla.n_H2_gas == gas
+end
+
 @testitem "The mixture's sums take every stored ion, moved by the transport or not" setup = [StoreCase] begin
     RP = store_case(species = (H2[0], H2[1], X[0], X[1], X[2], X[3]))
     pla = RP.plasma
