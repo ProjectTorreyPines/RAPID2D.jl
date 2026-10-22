@@ -237,6 +237,27 @@ end
 # ── the production ion equation ─────────────────────────────────────────────
 
 """
+    ion_friction_rate(n_t, Z_s, Z_t, m_s, m_t, T_eV, λ, eps0)
+
+The friction rate of ion species s drifting slowly through a Maxwellian species t at the ions'
+temperature, R_s = −m_s n_s ν_st (u_s − u_t):
+
+    ν_st = (4√(2π)/3) n_t (Z_s Z_t e²/4πε₀)² λ √m_st / (m_s T^{3/2}),   m_st = m_s m_t/(m_s + m_t)
+
+the momentum average of NRL's p.31 slowing-down rate over the Maxwellian of s. It satisfies
+m_s n_s ν_st = m_t n_t ν_ts, is Braginskii's 1/τ_e as m_s → mₑ and NRL's p.28 ion rate 1/τ_i at
+s = t. SI, T in eV; zero where either T or n_t is not positive.
+"""
+function ion_friction_rate(
+        n_t::FT, Z_s::Integer, Z_t::Integer, m_s::FT, m_t::FT, T_eV::FT, λ::FT, eps0::FT
+    ) where {FT <: AbstractFloat}
+    (T_eV > zero(FT) && n_t > zero(FT)) || return zero(FT)
+    coupling = (FT(Z_s * Z_t) * FT(EE)^2 / (4 * FT(π) * eps0))^2
+    return FT(4 * sqrt(2π) / 3) * n_t * coupling * λ * sqrt(m_s * m_t / (m_s + m_t)) /
+        (m_s * (FT(EE) * T_eV)^FT(1.5))
+end
+
+"""
     ion_transport_channels(RP, species) -> Vector{DiffusionChannel}
 
 The transport mechanisms `species` participates in, in the order
@@ -254,9 +275,9 @@ policy at all:
 The ExB channel is therefore built once and handed to every species as the same
 object, which is what lets the mixture return it untouched.
 
-`ν` is the bulk ion collision frequency for every species. Species-resolved
-`ν_ss'` is a refinement the per-species policy could use; it is not what
-separates the two policies today.
+`ν` is the species' own: the neutral rate, its Coulomb friction on every other
+ion pair by pair, and its share of the mean ion's self-collision rate (the
+collisional channel below says why that share is still there).
 """
 function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_turb) where {FT <: AbstractFloat}
     pla, tp, F = RP.plasma, RP.transport, RP.fields
@@ -286,34 +307,54 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # temperature and one ion drift, and density is the only per-species state, so
     # everything separating two ion species arrives through m and Z.
     #
-    # `νi_coulomb` is the SELF-collision rate (NRL Plasma Formulary p.28,
-    # ν_i ∝ Z⁴μ^-½ n λ T^-3/2), which `update_coulomb_collision_parameters!` computes
-    # for the mixture's mean ion (mean mass `mi_mean`, mean squared charge). A species
-    # collides with that mean ion, and NRL's ion–ion test-particle rate (p.33) is
+    # The Coulomb half of ν is the species' friction on the OTHER ions, pair by pair:
+    # the friction between two drifting Maxwellians at the ions' one temperature
+    # (`ion_friction_rate`, with the pair's charges, reduced mass and Coulomb
+    # logarithm). A species does not rub on itself — like collisions keep its
+    # momentum — so the sum runs over the other species, and a probe the store does
+    # not hold feels every one of them. The composition is the one the last refresh
+    # saw (`update_transport_quantities!`): one step's rates come from one state, as
+    # `νi_coulomb` does, not from densities moving within the step.
     #
-    #     ν_s^{z|i} ∝ n_i Z_z²Z_i² λ (μ_i^½/μ_z)(1 + μ_i/μ_z) T^-3/2
+    # The mean ion's self-collision rate `νi_coulomb` (NRL p.28, ν_i ∝ Z⁴μ^-½ n λ T^-3/2,
+    # from `update_coulomb_collision_parameters!`) is kept on top, carried by each
+    # species in proportion to its share of the ion fluid: with one species it is the
+    # whole Coulomb rate, as it has been, and a dilute species feels only its friction.
+    # It is not friction. It stands in for the damping of the ion fluid's common
+    # parallel motion, which no internal collision supplies — the common mode's
+    # DEFECT item in coulomb_relaxation_test.jl — until that motion has a closure of
+    # its own, and it leaves with it.
     #
-    # Dividing that by the same expression at z = i gives `coulomb_scale` below,
-    # which is exactly 1 for a lone species.
-    #
-    # Only the Coulomb half of ν is scaled this way. An ion–neutral collision rate
+    # Only the Coulomb half carries the pair's charges. An ion–neutral collision rate
     # goes as n₀σ√(T/m) (NRL p.39), so its contribution is species-independent
     # outright, and scaling it by Z² would overstate an impurity's collisionality
     # through the whole gas-dominated early discharge.
     #
-    # Einstein is now written directly, so a heavy impurity's mass no longer
-    # cancels out of D∥ the way the previous v/λ split made it: D∥_z/D∥_bulk picks
-    # up a √μ. That is the honest test-particle answer — a strongly coupled species
-    # diffuses LESS, and "carried along by the bulk" is convection (shared u_i) plus
-    # the pinch term, not a shared D. See
-    # `internal/docs/src/details/impurity-transport-basics.md` §4. No present result
-    # moves: at z = bulk, μ = 1 and the two forms are identical.
-    # the mean ion `ν_ii` was built with, node by node, at the refresh; μ is a ratio TO it
-    Z_ratio2 = @. FT(species.charge^2) / tp.νi_coulomb_Z2
-    mass_ratio = @. tp.νi_coulomb_mass / species.mass
-    coulomb_scale = @. Z_ratio2 * sqrt(mass_ratio) * (1 + mass_ratio) / 2
+    # Einstein against that friction, D∥ = T/(m_s ν_s), gives a heavy trace a floor
+    # rather than nothing: the bath sets m_s ν_st, so a Brownian ion still diffuses.
+    # "Carried along by the bulk" is convection (the shared u_i) plus the pinch term,
+    # not a shared D. See `internal/docs/src/details/impurity-transport-basics.md` §4.
+    eps0, mp = RP.config.constants.eps0, RP.config.constants.mp
+    own = store_identity(species)
+    n_s = zeros(FT, size(pla.ni))                        # the species' own density, none for a probe
+    n_I = zeros(FT, size(pla.ni))                        # the ions' total, both as the refresh saw them
+    for (r, n) in zip(tp.ion_refresh_records, tp.ion_n_refresh)
+        store_identity(r) == own && (n_s .= n)
+        n_I .+= n
+    end
+    μ_s = species.mass / mp
+    ν_s = @. tp.νi_neutral + ifelse(n_I > zero(FT), n_s / n_I, zero(FT)) * tp.νi_coulomb
+    if RP.flags.Coulomb_Collision
+        for (r, n_t) in zip(tp.ion_refresh_records, tp.ion_n_refresh)
+            store_identity(r) == own && continue
+            μ_t = r.mass / mp
+            @. ν_s += ion_friction_rate(
+                n_t, species.charge, r.charge, species.mass, r.mass, pla.Ti_eV,
+                ion_ion_coulomb_log(n_s, pla.Ti_eV, species.charge, μ_s, n_t, pla.Ti_eV, r.charge, μ_t), eps0,
+            )
+        end
+    end
     vm_s = maxwellian_mean_speed.(pla.Ti_eV, species.mass)
-    ν_s = @. tp.νi_neutral + coulomb_scale * tp.νi_coulomb
     # `&`, not `&&`: inside `@.` the comparisons are elementwise masks, and `&&` is
     # control flow rather than a call, so it never becomes a broadcast.
     # `EE`, not `config.constants.ee`: `vm_s` on the line above already converts

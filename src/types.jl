@@ -652,11 +652,11 @@ Fields include diffusion coefficients in different directions.
     # Kept apart because they scale differently with the ion's charge: the Coulomb
     # half carries Z², a charge-exchange or elastic hit on H₂ does not.
     νi_neutral::Matrix{FT} = zeros(FT, dims)  # ion-neutral part of νi_eff [1/s]
-    νi_coulomb::Matrix{FT} = zeros(FT, dims)  # ion-ion part of νi_eff [1/s]
-    # the mean ion `νi_coulomb` is the self-collision rate of, as at the refresh: its mass [kg]
-    # and its mean squared charge, which every species' Coulomb channel is scaled against
-    νi_coulomb_mass::Matrix{FT} = zeros(FT, dims)
-    νi_coulomb_Z2::Matrix{FT} = ones(FT, dims)
+    νi_coulomb::Matrix{FT} = zeros(FT, dims)  # ion-ion part of νi_eff [1/s]: the mean ion's self-collision rate
+    # the ion composition the refresh saw, record by record with a copy of its density: what the
+    # species' Coulomb friction on each other is built from, not the densities as they move in a step
+    ion_refresh_records::Vector{IonRecord{FT}} = IonRecord{FT}[]
+    ion_n_refresh::Vector{Matrix{FT}} = Matrix{FT}[]
 
     # Ion transport. The species axis is present from the start so that H⁺, H₃⁺ and
     # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as

@@ -87,8 +87,8 @@ end
 
 @testitem "A lone species of any charge is its own Coulomb reference" setup = [IonRun] begin
     using RAPID2D: IonRecord, set_ion_species!, ion_transport_channels, shared_turbulent_channel, channel_D_para
-    # the channel's rate is ν_ii scaled by the test-particle ratio against the mean ion: 1 for
-    # a lone species, its charge included, so D∥ is Einstein against ν_ii itself
+    # a lone species rubs on no other ion, so its Coulomb rate is its share — all — of the mean
+    # ion's ν_ii, its charge included, and D∥ is Einstein against ν_ii itself
     RP = ion_case()
     RP.flags.Atomic_Collision = false
     mi, ee = RP.config.constants.mi, RP.config.constants.ee

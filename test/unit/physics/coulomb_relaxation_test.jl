@@ -1,9 +1,9 @@
 # Coulomb collisions in 0D: a uniform box without transport. The code's temperature exchange and its
 # collision rates are held against a reference that gives every species its own temperature (NRL 2023
 # p.34 energy-exchange rates, per-pair Coulomb logarithms) and against the slowing-down rate of a trace
-# species on the bulk (NRL p.31). The DEFECT items pin what the 0D audit found
-# (internal/docs/src/notes/coulomb-collision-0d-audit.md): the trace species' friction is not the
-# pairwise rate, and the common mode's diffusivities carry the internal friction.
+# species on the other ions (the friction between drifting Maxwellians). The DEFECT item pins what the
+# 0D audit found (internal/docs/src/notes/coulomb-collision-0d-audit.md): the common mode's
+# diffusivities take internal friction for drag.
 
 @testsnippet CoulombReference begin
     using RAPID2D
@@ -325,42 +325,30 @@ end
     end
 end
 
-@testitem "DEFECT: a trace species' Coulomb friction is not the pairwise friction on the other species" setup = [CoulombReference] tags = [:physics] begin
+@testitem "A trace species' Coulomb friction is its friction on the other species, pair by pair" setup = [CoulombReference] tags = [:physics] begin
     # the reference's closed form is the Maxwellian average of NRL's slowing-down rate
     for (m_s, Z_s, m_t, Z_t) in ((MH, 1, MH2, 1), (MC, 6, MH, 1), (MD, 1, MH, 1))
         @test friction_rate(m_s, Z_s, 1.0e18, m_t, Z_t, 1.0, 8.0) ≈ friction_rate_averaged(m_s, Z_s, 1.0e18, m_t, Z_t, 1.0, 8.0) rtol = 1.0e-3
     end
-    # The channel scales the mean ion's self-collision rate ν_ii by (Z_s²/⟨Z²⟩)·√μ(1+μ)/2, μ = m̄/m_s
-    # (`ion_transport_channels`), where the friction between two drifting Maxwellians scales it by
-    # (Z_s²/Z_t²)·μ√(2/(1+μ)). The two agree only at equal masses: for a trace of the bulk's charge the
-    # code's rate over the reference tends to (1+μ)^{3/2}/(2√(2μ)), to the 4 % between the mean ion's
-    # self logarithm and the pair's …
+    # The channel's Coulomb rate is the species' friction on every other ion, the friction between two
+    # drifting Maxwellians with the pair's charges, reduced mass and logarithm (`ion_transport_channels`),
+    # on top of its share n_s/n_I of the mean ion's self-collision rate that stands in for the common
+    # mode's damping. A dilute species (≤ 1 %) therefore feels its friction alone, to 2 % …
     code_over_reference(ions) = code_trace_friction(ions, 2; Ti = 1.0) / trace_friction_reference(ions, 2; Ti = 1.0)
-    law(μ) = (1 + μ)^1.5 / (2 * sqrt(2μ))
-    @test code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e15)]) ≈ law(MH2 / MH) rtol = 0.06
-    @test code_over_reference([("H", MH, 1, 1.0e18), ("D", MD, 1, 1.0e15)]) ≈ law(MH / MD) rtol = 0.06
-    # … so a dilute H⁺ in H₂⁺ runs 1.3× its friction, a heavy trace twice it (its charge weighted by the
-    # mixture's ⟨Z²⟩ on top) and an isotope trace 0.94× it (internal/docs/src/notes/coulomb-collision-0d-audit.md
-    # §2.2). The rate a species diffuses with has to be its friction on the other species, pair by pair:
-    h_in_h2 = code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e16)])
-    @test_broken h_in_h2 ≈ 1 rtol = 0.02
-    @test 1.25 < h_in_h2 < 1.4                # the size of the defect, so a partial fix is noticed
-    heavy = code_over_reference([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e16)])
-    @test_broken heavy ≈ 1 rtol = 0.02
-    @test 2.0 < heavy < 2.4
-    isotope = code_over_reference([("H", MH, 1, 1.0e18), ("D", MD, 1, 5.0e16)])
-    @test_broken isotope ≈ 1 rtol = 0.02
-    @test 0.9 < isotope < 0.98
-    # the avalanche mixture itself, H⁺ a tenth of H₂⁺, to a tenth
-    @test_broken code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e17)]) ≈ 1 rtol = 0.1
-    # Two fingerprints of the single anchor. A species' friction on the others does not depend on its own
-    # density, but through ⟨Z²⟩ and n_I the carbon's does, by a third from 0.1 % to 1 % …
-    @test_broken code_trace_friction([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e15)], 2; Ti = 1.0) ≈
+    @test code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e16)]) ≈ 1 rtol = 0.02
+    @test code_over_reference([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e16)]) ≈ 1 rtol = 0.02
+    @test code_over_reference([("H", MH, 1, 1.0e18), ("D", MD, 1, 5.0e15)]) ≈ 1 rtol = 0.02
+    # … and the avalanche mixture itself, H⁺ a tenth of H₂⁺, to a tenth: the share's residue is
+    # (n_s/n_I)·ν_ii/ν_st, 6 % here and 8 % for a 5 % isotope trace
+    @test code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e17)]) ≈ 1 rtol = 0.1
+    @test code_over_reference([("H", MH, 1, 1.0e18), ("D", MD, 1, 5.0e16)]) ≈ 1 rtol = 0.1
+    # A species' friction on the others does not depend on its own density (the pair's logarithm aside) …
+    @test code_trace_friction([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e15)], 2; Ti = 1.0) ≈
         code_trace_friction([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e16)], 2; Ti = 1.0) rtol = 0.03
     # … and a heavy trace in a light bulk is a Brownian particle: the bath sets its friction coefficient
-    # m_s ν, so its D∥ = T/(m_s ν) tends to a floor, where the anchor's √μ sends it to zero as 1/√m_s
+    # m_s ν, so its D∥ = T/(m_s ν) tends to a floor instead of falling as 1/√m_s
     mν(m) = m * code_probe_friction([("H", MH, 1, 1.0e18)], IonRecord(:probe, m, 1); Ti = 1.0)
-    @test_broken mν(200MP) ≈ mν(50MP) rtol = 0.02
+    @test mν(200MP) ≈ mν(50MP) rtol = 0.02
 end
 
 @testitem "DEFECT: the common mode's parallel diffusivities take internal friction for drag" setup = [CoulombReference] tags = [:physics] begin
