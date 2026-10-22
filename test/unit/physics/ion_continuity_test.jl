@@ -236,19 +236,19 @@ end
     # everything separating two ion species arrives through m and Z.
     #
     # `transport.νi_coulomb` is the SELF-collision rate (NRL Plasma Formulary
-    # p.28, ν_i ∝ Z⁴μ^-1/2 n λ T^-3/2), which is what `initialization.jl` computes
-    # for the bulk. A trace species does not collide with itself — it collides
-    # with the bulk, and NRL's ion–ion test-particle rate (p.33) scales as
+    # p.28, ν_i ∝ Z⁴μ^-1/2 n λ T^-3/2) of the bulk. A trace species does not rub on
+    # itself — like collisions keep its momentum — it rubs on the bulk, with the
+    # friction between two drifting Maxwellians at one temperature,
     #
-    #     ν_z ∝ Z_z²Z_i² n_i (μ_i^½/μ_z)(1 + μ_i/μ_z)
+    #     ν_z = (4√(2π)/3) n_i (Z_z Z_i e²/4πε₀)² λ_zi √m_zi / (m_z T^{3/2}),   m_zi = m_z m_i/(m_z + m_i)
     #
-    # With D∥ built by Einstein, D = T/(m_z ν_z), that gives
+    # which is 1/τ_i itself at z = i. With D∥ built by Einstein, D = T/(m_z ν_z),
     #
-    #     D∥_z / D∥_bulk = 2√(μ_i/μ_z) / [ (Z_z/Z_i)² (1 + μ_i/μ_z) ]
+    #     D∥_z / D∥_bulk = (Z_i/Z_z)² √((1 + μ_i/μ_z)/2) · λ_ii/λ_zi
     #
-    # A strongly coupled species diffuses LESS, and being carried along by the bulk
-    # is convection (the shared u_i) plus the pinch term — not a shared D. See
-    # internal/docs/src/details/impurity-transport-basics.md §4.
+    # A heavy species keeps a floor rather than stopping: the bath sets m_z ν_z.
+    # Being carried along by the bulk is convection (the shared u_i) plus the pinch
+    # term — not a shared D. See internal/docs/src/details/impurity-transport-basics.md §4.
     RP = ion_case()
     RP.flags.Atomic_Collision = false          # Coulomb-only, so the ratio is clean
     update_transport_quantities!(RP)
@@ -262,7 +262,10 @@ end
     inw = RP.G.nodes.in_wall_nids
     at(x) = x[inw]
     ref = coll(2m_p, 1)
-    D_ratio(μ_z, Z_z) = 2 * sqrt(μ_i / μ_z) / ((Z_z / Z_i)^2 * (1 + μ_i / μ_z))
+    Ti, ni = RP.plasma.Ti_eV, RP.plasma.ni
+    # the pair's Coulomb logarithm: a probe has no density of its own
+    λ(μ_z, Z_z) = RAPID2D.ion_ion_coulomb_log.(0.0, Ti, Z_z, μ_z, ni, Ti, Z_i, μ_i)
+    D_ratio(μ_z, Z_z) = @. (Z_i / Z_z)^2 * sqrt((1 + μ_i / μ_z) / 2) * $(λ(μ_i, Z_i)) / $(λ(μ_z, Z_z))
 
     # the channel's own speed is now the mean speed, so it sees mass alone…
     @test at(coll(12m_p, 1).v_para) ≈ at(ref.v_para) ./ sqrt(6) rtol = 1.0e-12
@@ -273,36 +276,39 @@ end
     # …but D∥ follows the ion–ion scaling, which is NOT separable in m and Z
     for (μ_z, Z_z) in ((12, 1), (2, 6), (12, 6), (16, 8), (1, 1))
         got = at(channel_D_para(coll(μ_z * m_p, Z_z))) ./ at(channel_D_para(ref))
-        @test got ≈ fill(D_ratio(μ_z, Z_z), length(got)) rtol = 1.0e-9
+        @test got ≈ at(D_ratio(μ_z, Z_z)) rtol = 1.0e-9
     end
 
     # the bulk reproduces itself exactly, so nothing about H₂⁺ moves
     @test at(channel_D_para(coll(2m_p, 1))) == at(channel_D_para(ref))
 
     # Absolute, not a ratio: D∥ must BE Einstein at the species' own mass against
-    # the species' own rate. Two independent things — NRL's test-particle
-    # conversion and D = T/(mν) — have to compose, and a ratio test would pass if
-    # both were wrong by the same factor.
+    # the species' own friction. Two independent things — the Maxwellian friction
+    # and D = T/(mν) — have to compose, and a ratio test would pass if both were
+    # wrong by the same factor.
+    eps0 = RP.config.constants.eps0
     for (μ_z, Z_z) in ((12, 1), (2, 6), (12, 6), (16, 8))
         m_z = μ_z * m_p
-        μ = 2m_p / m_z
-        C_z = (Z_z / Z_i)^2 * sqrt(μ) * (1 + μ) / 2
-        want = @. RP.plasma.Ti_eV * ee / (m_z * C_z * RP.transport.νi_coulomb)
+        m_zi = m_z * 2m_p / (m_z + 2m_p)
+        ν_z = @. 4 * sqrt(2π) / 3 * ni * (Z_z * Z_i * ee^2 / (4π * eps0))^2 * $(λ(μ_z, Z_z)) * sqrt(m_zi) /
+            (m_z * (ee * Ti)^1.5)
+        want = @. Ti * ee / (m_z * ν_z)
         @test at(channel_D_para(coll(m_z, Z_z))) ≈ at(want) rtol = 1.0e-12
     end
 
     # Structural consequences of that form, read off the CODE and not off a local
     # formula. Charge and mass enter through different routes, so each is pinned on
-    # its own: ν ∝ Z² at fixed mass, and D ∝ 1/√m once the impurity is heavy enough
-    # that (1 + μ) → 1 — an infinitely heavy species stops diffusing rather than
-    # settling at a mass-free floor.
-    @test at(channel_D_para(coll(2m_p, 6))) ≈ at(channel_D_para(coll(2m_p, 3))) ./ 4 rtol = 1.0e-9
-    # deliberately unphysical masses: the 1/√m asymptote needs μ ≪ 1 to separate
-    # from the (1 + μ) factor, which is still worth 0.15 % at C⁶⁺
-    @test at(channel_D_para(coll(4.0e4 * m_p, 6))) ≈
-        at(channel_D_para(coll(1.0e4 * m_p, 6))) ./ 2 rtol = 1.0e-3
-    @test only(unique(at(channel_D_para(coll(1.0e6 * m_p, 6))))) <
-        only(unique(at(channel_D_para(coll(12m_p, 6))))) / 100
+    # its own: ν ∝ Z² at fixed mass, to the pair's Coulomb logarithm, and D settles
+    # at a mass-free floor once the impurity is heavy — a Brownian ion's friction
+    # coefficient m ν is the bath's, so an infinitely heavy species still diffuses.
+    @test at(channel_D_para(coll(2m_p, 6))) ≈
+        at(channel_D_para(coll(2m_p, 3))) ./ 4 .* at(λ(2, 3)) ./ at(λ(2, 6)) rtol = 1.0e-9
+    # deliberately unphysical masses: the floor needs μ ≪ 1 to separate from the
+    # √(1 + μ) factor, which is still worth 8 % at C⁶⁺ — but not so heavy that the
+    # species' mean speed lets the wall ceiling bind first (it does above ~10⁴ m_p here)
+    @test at(channel_D_para(coll(4.0e3 * m_p, 6))) ≈ at(channel_D_para(coll(1.0e3 * m_p, 6))) rtol = 1.0e-3
+    @test at(channel_D_para(coll(1.0e4 * m_p, 6))) ≈
+        at(channel_D_para(coll(12m_p, 6))) .* sqrt(1 / (1 + 2 / 12)) rtol = 1.0e-3
 
     # Bohm is mass-free but NOT charge-free: ρ_s²ω_ci = Te/(ZeB)
     @test at(channel_D_perp(bohm(12m_p, 1))) ≈ at(channel_D_perp(bohm(2m_p, 1))) rtol = 1.0e-12
@@ -425,6 +431,7 @@ end
     RP = ion_case()
     update_transport_quantities!(RP)
     RP.transport.Dpara0 = 0.0                  # no additive floor riding along
+    RP.flags.Coulomb_Collision = false         # ν is prescribed below: no friction on the stored bulk on top
 
     mi = RP.config.constants.mi
     ee = RP.config.constants.ee

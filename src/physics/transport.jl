@@ -68,10 +68,12 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     else
         fill!(tp.νi_coulomb, zero(FT))
     end
-    # the mean ion that rate is built for, kept with it: the species' Coulomb channels are
-    # scaled against this, not against a composition that moves during the step
-    tp.νi_coulomb_mass .= pla.mi_mean
-    ion_mean!(tp.νi_coulomb_Z2, RP, (z, m) -> z^2)
+    # the ion composition this refresh saw: the species' friction on each other (`ion_transport_channels`)
+    # reads it, so that one step's rates come from one state, not from densities moving within the step
+    tp.ion_refresh_records = [r for records in RP.store_layout.ion_records for r in records]
+    tp.ion_n_refresh = [
+        copy(ion_plane(pla, (k, z))) for (k, records) in enumerate(RP.store_layout.ion_records) for (z, _) in enumerate(records)
+    ]
 
     # `vp = √(2T/m)` is the moment that makes the line below come out at D∥ = T/(mν):
     # ½vp² = T/m exactly. Any other Maxwellian speed would need a different
