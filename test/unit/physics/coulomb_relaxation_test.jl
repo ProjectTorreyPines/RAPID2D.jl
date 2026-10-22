@@ -87,7 +87,7 @@
     ion_mean_temperature(ions, hist) =
         [sum(ions[k][4] * hist[i, k + 1] for k in eachindex(ions)) / sum(s[4] for s in ions) for i in axes(hist, 1)]
 
-    "Every flag of the step but the Coulomb exchange off."
+    "Only the Coulomb exchange acts over the step: both temperatures evolve, the ions keep their own densities, everything else is off."
     exchange_only_flags() = SimulationFlags{Float64}(;
         src = false, diffu = false, convec = false, ud_evolve = false, Gas_evolve = false,
         Atomic_Collision = false, Coulomb_Collision = true, Te_evolve = true, Ti_evolve = true,
@@ -120,8 +120,8 @@
         return RP
     end
     "The exchange substep alone, as the step calls it: the collision parameters at the step's temperatures, then the exchange."
-    function substep_temperatures(ions; ne, Te0, Ti0, dt, t_end)
-        RP = uniform_box(ions; ne, Te = Te0, Ti = Ti0, dt)
+    function substep_temperatures(ions; ne, Te0, Ti0, dt, t_end, flags = nothing)
+        RP = uniform_box(ions; ne, Te = Te0, Ti = Ti0, dt, flags)
         nsteps = round(Int, t_end / dt)
         ts, Te, Ti = zeros(nsteps + 1), zeros(nsteps + 1), zeros(nsteps + 1)
         Te[1], Ti[1] = Te0, Ti0
@@ -179,7 +179,7 @@
         ν0 = 4π * (Z_s * Z_t * EE^2 / (4π * EPS0))^2 * λ * n_t / (m_s^2 * v^3)
         return (1 + m_s / m_t) * ψ(m_t / m_s) * ν0
     end
-    "The friction of trace species `k` on the other ions, the bath held fixed: what D_z = T/(m ν) stands for."
+    "The friction of trace species `k` on the other ions, the bath held fixed: what D∥ = T/(m ν) stands for."
     function trace_friction_reference(ions, k; Ti)
         m_s, Z_s, n_s = ions[k][2], ions[k][3], ions[k][4]
         ν = 0.0
@@ -208,17 +208,19 @@ end
 @testitem "Coulomb exchange: one ion relaxes as the per-species reference, from no difference to a thousandfold" setup = [CoulombReference] tags = [:physics] begin
     ions = [("H2", MH2, 1, 1.0e18)]
     # no temperature difference: the exchange is exactly zero, and both temperatures stay bit for bit
-    tc, Te, Ti = substep_temperatures(ions; ne = 1.0e18, Te0 = 1.0, Ti0 = 1.0, dt = 2.0e-6, t_end = 2.0e-4)
-    @test all(==(1.0), Te) && all(==(1.0), Ti)
-    for r in (10.0, 1000.0)
-        tc, Te, Ti = substep_temperatures(ions; ne = 1.0e18, Te0 = r, Ti0 = 1.0, dt = 2.0e-6, t_end = 4.0e-3)
-        tr, hist = reference_temperatures([("e", ME, -1, 1.0e18, r), ("H2", MH2, 1, 1.0e18, 1.0)], 4.0e-3, 2.0e-6)
+    _, Te_same, Ti_same = substep_temperatures(ions; ne = 1.0e18, Te0 = 1.0, Ti0 = 1.0, dt = 2.0e-6, t_end = 2.0e-4)
+    @test all(==(1.0), Te_same) && all(==(1.0), Ti_same)
+    # the electrons tenfold and a thousandfold hotter than the ions, and tenfold colder: cold electrons
+    # exchange faster (ν_ei ∝ Tₑ^{-3/2}), so that case takes half the step over the same 4 ms
+    for (Te0, Ti0, dt) in ((10.0, 1.0, 2.0e-6), (1000.0, 1.0, 2.0e-6), (1.0, 10.0, 1.0e-6))
+        tc, Te, Ti = substep_temperatures(ions; ne = 1.0e18, Te0, Ti0, dt, t_end = 4.0e-3)
+        tr, hist = reference_temperatures([("e", ME, -1, 1.0e18, Te0), ("H2", MH2, 1, 1.0e18, Ti0)], 4.0e-3, dt)
         err = exchange_errors(ions, tr, hist, tc, Te, Ti)
         @test err.rel_e < 0.02
         @test err.rel_i < 0.03
         @test !err.overshoot
         # the exchange conserves the thermal energy exactly, whatever it moves
-        @test all(≈(1.0e18 * r + 1.0e18 * 1.0; rtol = 1.0e-12), 1.0e18 .* Te .+ 1.0e18 .* Ti)
+        @test all(≈(1.0e18 * (Te0 + Ti0); rtol = 1.0e-12), 1.0e18 .* Te .+ 1.0e18 .* Ti)
     end
 end
 
@@ -248,23 +250,37 @@ end
 end
 
 @testitem "Coulomb exchange: the substep is stable and exact at equilibrium however stiff" setup = [CoulombReference] tags = [:physics] begin
-    ions = [("H2", MH2, 1, 1.0e21)]
-    # cold dense plasma and a long step: the exchange rate × step is in the thousands
-    RP = uniform_box(ions; ne = 1.0e21, Te = 2.0, Ti = 0.1, dt = 2.0e-4)
-    update_coulomb_collision_parameters!(RP)
-    a0 = RAPID2D.ei_relaxation_rate!(similar(RP.plasma.ni), RP)[4, 4]
-    @test a0 * 2 * 2.0e-4 > 1000
-    tc, Te, Ti = substep_temperatures(ions; ne = 1.0e21, Te0 = 2.0, Ti0 = 0.1, dt = 2.0e-4, t_end = 20 * 2.0e-4)
-    T_eq = (2.0 + 0.1) / 2
-    @test Te[2] ≈ T_eq rtol = 1.0e-12
-    @test Ti[2] ≈ T_eq rtol = 1.0e-12
-    @test all(≈(T_eq; rtol = 1.0e-12), Te[2:end]) && all(≈(T_eq; rtol = 1.0e-12), Ti[2:end])
-    @test minimum(Te) >= T_eq * (1 - 1.0e-12) && maximum(Ti) <= T_eq * (1 + 1.0e-12)
+    h2_ions(n) = [("H2", MH2, 1, n)]
+    # cold dense plasma and a long step: the exchange rate × step is in the thousands, from either side
+    for (Te0, Ti0) in ((2.0, 0.1), (0.1, 2.0))
+        RP = uniform_box(h2_ions(1.0e21); ne = 1.0e21, Te = Te0, Ti = Ti0, dt = 2.0e-4)
+        update_coulomb_collision_parameters!(RP)
+        a0 = RAPID2D.ei_relaxation_rate!(similar(RP.plasma.ni), RP)[4, 4]
+        @test a0 * 2 * 2.0e-4 > 1000
+        tc, Te, Ti = substep_temperatures(h2_ions(1.0e21); ne = 1.0e21, Te0, Ti0, dt = 2.0e-4, t_end = 20 * 2.0e-4)
+        T_eq = (Te0 + Ti0) / 2
+        @test Te[2] ≈ T_eq rtol = 1.0e-12
+        @test Ti[2] ≈ T_eq rtol = 1.0e-12
+        @test all(≈(T_eq; rtol = 1.0e-12), Te[2:end]) && all(≈(T_eq; rtol = 1.0e-12), Ti[2:end])
+        # the hot one never falls below the equilibrium, the cold one never rises above it
+        hot, cold = Te0 > Ti0 ? (Te, Ti) : (Ti, Te)
+        @test minimum(hot) >= T_eq * (1 - 1.0e-12) && maximum(cold) <= T_eq * (1 + 1.0e-12)
+    end
+    # one temperature a bath (its flag off): it stays bit for bit, and the other lands on it, never past it
+    for (Te_evolve, Ti_evolve) in ((true, false), (false, true))
+        _, Te_b, Ti_b = substep_temperatures(
+            h2_ions(1.0e21); ne = 1.0e21, Te0 = 2.0, Ti0 = 0.1, dt = 2.0e-4, t_end = 20 * 2.0e-4,
+            flags = SimulationFlags{Float64}(; Te_evolve, Ti_evolve),
+        )
+        bath, mover = Te_evolve ? (Ti_b, Te_b) : (Te_b, Ti_b)
+        @test all(==(bath[1]), bath)
+        @test all(≈(bath[1]; rtol = 1.0e-12), mover[2:end])
+        @test Te_evolve ? minimum(mover) >= bath[1] * (1 - 1.0e-12) : maximum(mover) <= bath[1] * (1 + 1.0e-12)
+    end
     # and the resolved regime is accurate: the same plasma at 1e18 and 2 µs
-    ions = [("H2", MH2, 1, 1.0e18)]
-    tc, Te, Ti = substep_temperatures(ions; ne = 1.0e18, Te0 = 2.0, Ti0 = 0.1, dt = 2.0e-6, t_end = 4.0e-5)
+    tc_r, Te_r, Ti_r = substep_temperatures(h2_ions(1.0e18); ne = 1.0e18, Te0 = 2.0, Ti0 = 0.1, dt = 2.0e-6, t_end = 4.0e-5)
     tr, hist = reference_temperatures([("e", ME, -1, 1.0e18, 2.0), ("H2", MH2, 1, 1.0e18, 0.1)], 4.0e-5, 2.0e-6)
-    err = exchange_errors(ions, tr, hist, tc, Te, Ti)
+    err = exchange_errors(h2_ions(1.0e18), tr, hist, tc_r, Te_r, Ti_r)
     @test err.rel_e < 0.01 && err.rel_i < 0.03 && !err.overshoot
 end
 
@@ -285,14 +301,16 @@ end
 @testitem "DEFECT: a trace species' Coulomb friction is not the pairwise slowing-down rate on the other species" setup = [CoulombReference] tags = [:physics] begin
     # The channel's rate is the mean ion's ν_ii scaled by a test-particle ratio with a √ mass factor
     # (`ion_transport_channels`). It is right where the species are alike …
-    ions = [("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e17)]
-    @test code_trace_friction(ions, 2; Ti = 1.0) ≈ trace_friction_reference(ions, 2; Ti = 1.0) rtol = 0.1
-    # … and off by about two for a heavy trace and by a third for an isotope trace: a single anchor
-    # cannot follow the pairwise rates (internal/docs/src/notes/coulomb-collision-0d-audit.md §2.2)
-    ions = [("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e16)]
-    @test_broken code_trace_friction(ions, 2; Ti = 1.0) ≈ trace_friction_reference(ions, 2; Ti = 1.0) rtol = 0.2
-    ions = [("H", MH, 1, 1.0e18), ("D", MD, 1, 5.0e16)]
-    @test_broken code_trace_friction(ions, 2; Ti = 1.0) ≈ trace_friction_reference(ions, 2; Ti = 1.0) rtol = 0.2
+    code_over_reference(ions) = code_trace_friction(ions, 2; Ti = 1.0) / trace_friction_reference(ions, 2; Ti = 1.0)
+    @test code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e17)]) ≈ 1 rtol = 0.1
+    # … and about twice the rate for a heavy trace, two thirds of it for an isotope trace: a single
+    # anchor cannot follow the pairwise rates (internal/docs/src/notes/coulomb-collision-0d-audit.md §2.2)
+    heavy = code_over_reference([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e16)])
+    @test_broken heavy ≈ 1 rtol = 0.2
+    @test 1.9 < heavy < 2.2                   # the size of the defect, so a partial fix is noticed
+    isotope = code_over_reference([("H", MH, 1, 1.0e18), ("D", MD, 1, 5.0e16)])
+    @test_broken isotope ≈ 1 rtol = 0.2
+    @test 0.6 < isotope < 0.75
 end
 
 @testitem "DEFECT: the common mode's parallel diffusivities carry the internal friction" setup = [CoulombReference] tags = [:physics] begin
@@ -309,23 +327,26 @@ end
     RAPID2D.update_ui_para!(RP)
     @test (1.0e3 / pla.ui_para[4, 4] - 1) / RP.dt ≈ ν_in rtol = 1.0e-9
     # … but D_a and the bulk ion channel are written with ν_ei and ν_ii in their denominators.
-    # Where the plasma is tenuous the Coulomb rates are negligible and the two agree …
-    mi = MH2
-    common(RP) = (
-        P = RP.plasma; T = RP.transport; (
-            Da = T.Dpara_amb[4, 4], Di = T.Dpara_i_coll[4, 4],
-            Da_drag = EE * (P.Te_eV[4, 4] + P.Ti_eV[4, 4]) / (ME * (P.ν_en_mom_tot[4, 4] + P.ν_en_iz_tot[4, 4]) + mi * T.νi_neutral[4, 4]),
-            Di_drag = EE * P.Ti_eV[4, 4] / (mi * T.νi_neutral[4, 4]),
+    # D_a and the bulk ion channel's D∥ at density n, beside what the neutral drag alone gives
+    function common_mode(n)
+        box = uniform_box([("H2", MH2, 1, n)]; ne = n, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+        update_transport_quantities!(box)
+        Te, Ti = box.plasma.Te_eV[4, 4], box.plasma.Ti_eV[4, 4]
+        drag_e = ME * (box.plasma.ν_en_mom_tot[4, 4] + box.plasma.ν_en_iz_tot[4, 4])   # m ν on the neutrals, per particle
+        drag_i = MH2 * box.transport.νi_neutral[4, 4]
+        return (
+            Da = box.transport.Dpara_amb[4, 4], Di = box.transport.Dpara_i_coll[4, 4],
+            Da_drag = EE * (Te + Ti) / (drag_e + drag_i), Di_drag = EE * Ti / drag_i,
         )
-    )
-    box(n) = (R = uniform_box([("H2", MH2, 1, n)]; ne = n, Te = 5.0, Ti = 1.0, dt = 1.0e-6); update_transport_quantities!(R); R)
-    c = common(box(1.0e12))
-    @test c.Da ≈ c.Da_drag rtol = 0.02
-    @test c.Di ≈ c.Di_drag rtol = 0.02
-    # … and once ionized they are three orders of magnitude below the neutral-drag values
+    end
+    # Where the plasma is tenuous the Coulomb rates are negligible and the two agree …
+    tenuous = common_mode(1.0e12)
+    @test tenuous.Da ≈ tenuous.Da_drag rtol = 0.02
+    @test tenuous.Di ≈ tenuous.Di_drag rtol = 0.02
+    # … and once ionized they fall far below the neutral-drag values, a thousandfold at 1e18
     # (internal/docs/src/notes/coulomb-collision-0d-audit.md §3)
-    c = common(box(1.0e18))
-    @test_broken c.Da ≈ c.Da_drag rtol = 0.1
-    @test_broken c.Di ≈ c.Di_drag rtol = 0.1
-    @test c.Da < 1.0e-2 * c.Da_drag          # the size of the defect, so a partial fix is noticed
+    ionized = common_mode(1.0e18)
+    @test_broken ionized.Da ≈ ionized.Da_drag rtol = 0.1
+    @test_broken ionized.Di ≈ ionized.Di_drag rtol = 0.1
+    @test ionized.Da < 1.0e-2 * ionized.Da_drag   # a hundredfold at least: the size of the defect, so a partial fix is noticed
 end
