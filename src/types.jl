@@ -365,13 +365,16 @@ Contains the plasma state variables including density, temperature, and velocity
 
     # Densities
     ne::Matrix{FT} = zeros(FT, dims)    # Electron density [m^-3]
-    # The density OF THE ION SPECIES — `transport.ion_species[1]`, H₂⁺ by default —
-    # and not a total over species. There is only ever one (see `set_ion_species!`),
-    # so the two readings coincide today; naming which one it is now is what keeps a
-    # second species from having to guess later. Its charge density is `ni·Z` with
-    # `Z = bulk_ion_charge(RP)`; nothing stores a charge average to recover it from.
-    ni::Matrix{FT} = zeros(FT, dims)    # Ion density [m^-3]
-    n_H2_gas::Matrix{FT} = zeros(FT, dims)  # H2 gas density [m^-3]
+    # The species store [m⁻³] (`build_species_store!`): each ion parent's charge states z = 1…Z
+    # as `n_ions[k][:, :, z]`, each parent's neutral gas as `n_gas[j]`. Two of its entries go by
+    # their old names, computed and written in place: `ni`, the ion the transport moves first
+    # (H₂⁺ by default, not a total over species: that is `ni_tot`), in the slot `ni_slot`, and
+    # `n_H2_gas`, the H₂ gas, `n_gas[h2_slot]`
+    n_ions::Vector{Array{FT, 3}} = [zeros(FT, dims..., 1)]
+    n_gas::Vector{Matrix{FT}} = [zeros(FT, dims)]
+    ni_slot::Tuple{Int, Int} = (1, 1)
+    h2_slot::Int = 1
+    store_generation::Int = 0           # how many layouts the store has had: a new one changes it
 
     # Temperatures
     Te_eV::Matrix{FT} = zeros(FT, dims) # Electron temperature [eV]
@@ -468,10 +471,10 @@ Contains the plasma state variables including density, temperature, and velocity
     # Zeff = Σ zₛ² nₛ / Σ zₛ nₛ (Spitzer). Where there are no ions the means are the first
     # species' values; with one species every one is that species' density times 1, z, z², m,
     # its mass and its charge.
-    ni_sum::Matrix{FT} = zeros(FT, dims)
-    Zni_sum::Matrix{FT} = zeros(FT, dims)
-    Z2ni_sum::Matrix{FT} = zeros(FT, dims)
-    mni_sum::Matrix{FT} = zeros(FT, dims)
+    ni_tot::Matrix{FT} = zeros(FT, dims)
+    Zni_tot::Matrix{FT} = zeros(FT, dims)
+    Z2ni_tot::Matrix{FT} = zeros(FT, dims)
+    mni_tot::Matrix{FT} = zeros(FT, dims)
     mi_mean::Matrix{FT} = zeros(FT, dims)
     Zeff::Matrix{FT} = ones(FT, dims)
     # Current densities
@@ -487,6 +490,31 @@ function PlasmaState{FT}(dimensions::Tuple{Int, Int}) where {FT <: AbstractFloat
 end
 function PlasmaState{FT}(NR::Int, NZ::Int; kwargs...) where {FT <: AbstractFloat}
     return PlasmaState{FT}(dims = (NR, NZ); kwargs...)
+end
+
+# `ni` and `n_H2_gas` are entries of the species store, read where they lie: the plane of the bulk
+# ion and the H₂ gas matrix
+@inline function Base.getproperty(pla::PlasmaState, name::Symbol)
+    name === :ni && return ion_plane(pla, getfield(pla, :ni_slot))
+    name === :n_H2_gas && return getfield(pla, :n_gas)[getfield(pla, :h2_slot)]
+    return getfield(pla, name)
+end
+
+Base.propertynames(pla::PlasmaState, ::Bool = false) = (fieldnames(typeof(pla))..., :ni, :n_H2_gas)
+
+"The density plane of the stored ion in slot `(k, z)`: parent k in charge state z."
+ion_plane(pla::PlasmaState, (k, z)::Tuple{Int, Int}) = view(getfield(pla, :n_ions)[k], :, :, z)
+
+# The species store is written in place (`.=`) and laid out only by `build_species_store!` (the
+# step transaction copies a store of the same layout back, its slots included): a rebound entry
+# would leave the solvers reading the arrays it replaced
+const SPECIES_STORE_FIELDS = (:ni, :n_H2_gas, :n_ions, :n_gas, :ni_slot, :h2_slot, :store_generation)
+
+function Base.setproperty!(pla::PlasmaState, name::Symbol, x)
+    name in SPECIES_STORE_FIELDS && throw(
+        ArgumentError("plasma.$name belongs to the species store: write into it (`.=`) instead of rebinding it")
+    )
+    return setfield!(pla, name, convert(fieldtype(typeof(pla), name), x))
 end
 
 
@@ -634,6 +662,8 @@ Fields include diffusion coefficients in different directions.
     # Cᶻ⁺ append rather than force a rewrite; `ion_N` and `ion_S` carry species as
     # COLUMNS, which is exactly the multi-RHS layout the batch solve wants. Exactly
     # one column is filled for now — `set_ion_species!` says what a second needs.
+    # `ion_N` is gathered from the species store and scattered back around the solve, by the
+    # transport's slots in it (`RP.store_layout.transport_slots`).
     ion_species::Vector{IonRecord{FT}} = IonRecord{FT}[]
     ion_N::Matrix{FT} = zeros(FT, prod(dims), 1)   # working densities [m⁻³]
     ion_S::Matrix{FT} = zeros(FT, prod(dims), 1)   # working sources [m⁻³s⁻¹]
@@ -1681,6 +1711,7 @@ mutable struct RAPID{FT <: AbstractFloat}
     vertical_field_control::VerticalFieldControlState{FT}  # the vertical-field control's coefficients and ledger
 
     species::Union{Nothing, SpeciesSystem}  # the species of `config.species` and their reactions; `nothing` without
+    store_layout::SpeciesStoreLayout{FT}    # what the species store (`plasma.n_ions`, `n_gas`) holds, and where
 
     # Primary constructor - from config
     function RAPID{FT}(config::SimulationConfig{FT}) where {FT <: AbstractFloat}
@@ -1736,6 +1767,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             coil_system,
             VerticalFieldControlState{FT}(),
             nothing,  # species, assembled by initialize!
+            default_store_layout(config.constants),
         )
     end
 end

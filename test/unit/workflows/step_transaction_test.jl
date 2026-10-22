@@ -76,12 +76,12 @@ end
     not_written = Dict(
         :rapid => (
             :G, :wall, :fitted_wall, :external_field, :eRRCs, :iRRCs, :config, :flags, :operators,
-            :t_start_s, :t_end_s, :dt, :tElap, :flf, :snap0D_path, :snap2D_path, :species,
+            :t_start_s, :t_end_s, :dt, :tElap, :flf, :snap0D_path, :snap2D_path, :species, :store_layout,
         ),
         :transport => (
             :dims, :Dpara0, :Dperp0, :Dpara_e_coll, :Dpara_i_coll, :Dpara_amb, :Dpara_e_eff, :νi_eff,
             :νi_neutral, :νi_coulomb, :νi_coulomb_mass, :νi_coulomb_Z2, :ion_species, :ion_solvers,
-            :Dpara, :Dperp, :L_mixing, :Dpol_turb,
+            :ion_N, :ion_S, :Dpara, :Dperp, :L_mixing, :Dpol_turb,
             :DRR_turb, :DRZ_turb, :DZZ_turb, :DRR, :DRZ, :DZZ, :CTRR, :CTRZ, :CTZZ, :wall_faces,
         ),
         :reactions => (:dims,),
@@ -112,7 +112,12 @@ end
         v = getfield(obj, name)
         # a coil voltage changes kind both ways, a number for a function and back
         name === :voltage_applied && return setfield!(obj, name, v isa Function ? 1.0 : sin)
-        if v isa Vector{<:Real}
+        # the species store's slots and generation are its layout, fixed over a run (the transaction
+        # refuses a change)
+        name in (:ni_slot, :h2_slot, :store_generation) && return obj
+        if v isa Array{<:Array{<:Real}}            # the species store: every density in it
+            foreach(a -> a .= a .* 2 .+ 1, v)
+        elseif v isa Vector{<:Real}
             push!(v, 7.0)
         elseif v isa Array{<:Real}
             v .= v .* 2 .+ 1
@@ -146,12 +151,14 @@ end
     RP.plasma.mean_ExB_R = RP.plasma.mean_ExB_R .- 1
     RP.closed_surface.solve = deepcopy(RP.closed_surface.solve)
     RP.diagnostics.near_vacuum = deepcopy(RP.diagnostics.near_vacuum)
-    RP.transport.ion_N = zeros(size(RP.transport.ion_N, 1), 2)   # another shape: replaced back
+    RP.plasma.uMHD_R = zeros(2, 2)                                # another shape: replaced back
     rebound = RP.fields.Bϕ
     @test !same(StepState(RP), before)
     restore_step_state!(RP, ck)
     @test same(StepState(RP), before)
     @test RP.fields.Bϕ === rebound      # written into, not replaced
+    # the species store is put back into its own arrays: `ni` and `n_H2_gas` still read them
+    @test parent(RP.plasma.ni) === RP.plasma.n_ions[1] && RP.plasma.n_H2_gas === RP.plasma.n_gas[1]
     # the checkpoint holds no reference into RP: changing RP after the save leaves it whole
     save_step_state!(ck, RP)
     RP.plasma.ne .= -1.0
@@ -238,7 +245,7 @@ end
     ref.dt = dt
     a, b = step_state(RP), step_state(ref)
     for name in (:ne, :ni, :Te_eV, :Ti_eV, :ue_para, :ui_para, :n_H2_gas)
-        @test getfield(a.plasma, name) ≈ getfield(b.plasma, name) rtol = 1.0e-12
+        @test getproperty(a.plasma, name) ≈ getproperty(b.plasma, name) rtol = 1.0e-12
     end
     @test a.diagnostics.Ntracker.cum0D_Ne_src ≈ b.diagnostics.Ntracker.cum0D_Ne_src rtol = 1.0e-12
     @test a.coil_system.ΔI_step ≈ b.coil_system.ΔI_step rtol = 1.0e-12

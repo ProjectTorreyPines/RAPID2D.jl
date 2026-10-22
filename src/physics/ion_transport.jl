@@ -470,12 +470,12 @@ the ledger to round-off and the band outside the wall stays identically zero.
 """
 function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return @timeit RAPID_TIMER "solve_ion_continuity_equation!" begin
-        tp, pla = RP.transport, RP.plasma
+        tp = RP.transport
         dt = RP.dt
         θ = RP.flags.Implicit ? RP.flags.θ_imp.transport : zero(FT)
 
         N, S = tp.ion_N, tp.ion_S
-        N[:, 1] .= vec(pla.ni)
+        gather_ion_densities!(N, RP)
         fill!(S, zero(FT))
         if RP.flags.src
             # Read the event counts the electron solve published; do not rebuild
@@ -511,7 +511,7 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
             end
         end
 
-        vec(pla.ni) .= view(N, :, 1)
+        scatter_ion_densities!(RP, N)
         update_charge_states!(RP)
         return RP
     end
@@ -562,7 +562,7 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     turb = shared_turbulent_channel(RP)
     per_species = [ion_transport_channels(RP, sp, turb) for sp in tp.ion_species]
     dirs = ion_channel_directions(RP)
-    weights = [reshape(view(tp.ion_N, :, s), G.NR, G.NZ) for s in 1:ns]
+    weights = [ion_plane(pla, slot) for slot in RP.store_layout.transport_slots]   # the densities, from the store
 
     ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
         A, v_absorb = ion_transport_operator(G, group, dirs; faces = faces, albedo = albedo)
@@ -611,14 +611,15 @@ function ion_pinch_velocity(
     # operator. It must not read the empty band outside the wall — a central
     # difference there saw the drop to zero and pointed 𝐖 inward at every
     # wall-adjacent cell, so no pinch flux could ever reach a wall face.
-    ∇n_R, ∇n_Z = wall_gradient(G, pla.ni)
+    ni = pla.ni   # a view of the store: bound once, read in the loop
+    ∇n_R, ∇n_Z = wall_gradient(G, ni)
 
     cap_R = one(FT) / G.dR
     cap_Z = one(FT) / G.dZ
     g_R = similar(∇n_R)
     g_Z = similar(∇n_Z)
     @inbounds for k in eachindex(g_R)
-        n = pla.ni[k]
+        n = ni[k]
         if n > zero(FT)
             g_R[k] = clamp(∇n_R[k] / n, -cap_R, cap_R)
             g_Z[k] = clamp(∇n_Z[k] / n, -cap_Z, cap_Z)
@@ -769,8 +770,8 @@ function book_ion_wall_loss!(
     return RP
 end
 
-# The per-species ledger entries follow the species list, including a list written
-# straight into the transport buffers (a test path that bypasses `set_ion_species!`).
+# The per-species ledger entries follow the species list, including one laid out past the
+# one-species guard of `set_ion_species!` (`layout_ion_species!`).
 function grow_species_entries!(Ntracker, ns::Integer)
     for v in (Ntracker.cum0D_Ni_src_s, Ntracker.cum0D_Ni_loss_s)
         length(v) < ns && append!(v, zeros(eltype(v), ns - length(v)))
@@ -787,33 +788,40 @@ buffers to match.
 **Exactly one species, for now.** Grouping, assembly, the batch solve, the
 face ledger and the mixture's sums (the currents, the collisions, the masses) are
 written against a list (and never write outside the wall, so a second column
-cannot accumulate there), but three things are not, and each is silently wrong
+cannot accumulate there), but two things are not, and each is silently wrong
 rather than loudly missing:
 
   - `γ_2nd_electron` is one number, so only column 1 could yield secondary electrons;
   - `Ni_loss` books one total (the per-species entries beside it are not yet what the
-    snapshots read);
-  - `plasma.ni` round-trips only column 1.
+    snapshots read).
 
 `plasma.ni` is the first species' density, not a total over species; the total is
-`plasma.ni_sum` ([`update_charge_states!`](@ref)).
+`plasma.ni_tot` ([`update_charge_states!`](@ref)). Each species' density is its plane of the
+species store, `plasma.n_ions` ([`build_species_store!`](@ref)).
 """
 function set_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}}) where {FT <: AbstractFloat}
     length(species) == 1 || throw(
         ArgumentError(
             "exactly one ion species is supported, got $(length(species)). " *
-                "A second one needs three things that do not exist yet: " *
+                "A second one needs two things that do not exist yet: " *
                 "`γ_2nd_electron` is one number, so only the first could yield secondary " *
-                "electrons; `Ni_loss` does not split by species; and `plasma.ni` round-trips " *
-                "only column 1."
+                "electrons; and `Ni_loss` does not split by species."
         )
     )
+    return layout_ion_species!(RP, species)
+end
+
+# The transport's species, its work buffers and the species store laid out for them, with no
+# limit on their number: the step's own path goes through `set_ion_species!`
+function layout_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT}}) where {FT <: AbstractFloat}
+    isnothing(RP.species) || check_transport_species(RP.species.registry, species)
     tp = RP.transport
     tp.ion_species = collect(species)
     Ng = RP.G.NR * RP.G.NZ
     tp.ion_N = zeros(FT, Ng, length(species))
     tp.ion_S = zeros(FT, Ng, length(species))
     empty!(tp.ion_solvers)
+    build_species_store!(RP)
     update_charge_states!(RP)   # the means take the declared species at once
     return RP
 end
@@ -859,9 +867,9 @@ bulk_ion_mass(RP::RAPID{FT}) where {FT <: AbstractFloat} =
 """
     update_charge_states!(RP) -> RP
 
-Sum the ion species node by node into `plasma.ni_sum`, `Zni_sum`, `Z2ni_sum` and `mni_sum`, and
+Sum the ion species node by node into `plasma.ni_tot`, `Zni_tot`, `Z2ni_tot` and `mni_tot`, and
 form the mean ion mass `mi_mean` and the composition `Zeff = Σ zₛ² nₛ / Σ zₛ nₛ`. The first
-species is `plasma.ni`, any other its transport column.
+species is `plasma.ni`, every other the store holds (`plasma.n_ions`), moved by the transport or not.
 
 The means weight each species by nₛ/Σn, formed first, so with one species they are its own
 mass and charge exactly; where Σn ≤ 0 they are the first species'. Every function that reads
@@ -871,15 +879,15 @@ whoever wrote those last.
 function update_charge_states!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     z1, m1 = FT(bulk_ion_charge(RP)), bulk_ion_mass(RP)
-    @. pla.ni_sum = pla.ni
-    @. pla.Zni_sum = z1 * pla.ni
-    @. pla.Z2ni_sum = z1^2 * pla.ni
-    @. pla.mni_sum = m1 * pla.ni
+    @. pla.ni_tot = pla.ni
+    @. pla.Zni_tot = z1 * pla.ni
+    @. pla.Z2ni_tot = z1^2 * pla.ni
+    @. pla.mni_tot = m1 * pla.ni
     foreach_other_ion(RP) do n, z, m
-        @. pla.ni_sum += n
-        @. pla.Zni_sum += z * n
-        @. pla.Z2ni_sum += z^2 * n
-        @. pla.mni_sum += m * n
+        @. pla.ni_tot += n
+        @. pla.Zni_tot += z * n
+        @. pla.Z2ni_tot += z^2 * n
+        @. pla.mni_tot += m * n
     end
     ion_mean!(pla.mi_mean, RP, (z, m) -> m)
     @with_pool pool begin
@@ -891,16 +899,6 @@ function update_charge_states!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return RP
 end
 
-# f(n, z, m) for every ion species after the first: its transport column on the grid, its
-# charge and its mass
-function foreach_other_ion(f, RP::RAPID{FT}) where {FT <: AbstractFloat}
-    tp = RP.transport
-    for s in 2:length(tp.ion_species)
-        species = tp.ion_species[s]
-        f(reshape(view(tp.ion_N, :, s), size(RP.plasma.ni)), FT(species.charge), species.mass)
-    end
-    return nothing
-end
 
 # Σₛ (nₛ/Σn) f(zₛ, mₛ) node by node into `out`, the first species' value where Σn ≤ 0. The
 # weights are formed first, so with one species `out` is its f exactly. Σn is summed here from
@@ -932,9 +930,17 @@ the step wrote `ni .= ne ./ Zeff` and the boundary pass then overwrote it with
 one was right depended on what `Zeff` meant. `Z` here is the species' own charge
 state, and with one hydrogen species that is 1, so the two former writers agree
 exactly and no existing result moves.
+
+Slaved ions are one species: another stored ion with density would carry charge that
+`n_e/Z` leaves out, so it is refused rather than left to break quasineutrality.
 """
 function slave_ions_to_electrons!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
+    foreach_other_ion(RP) do n, _, _
+        all(iszero, n) || throw(
+            ArgumentError("slaved ions (`update_ni_independently = false`) are one species, and another stored ion has density")
+        )
+    end
     Z = FT(bulk_ion_charge(RP))   # bound outside the broadcast: `@.` would call it per element
     @. pla.ni = pla.ne / Z
     update_charge_states!(RP)

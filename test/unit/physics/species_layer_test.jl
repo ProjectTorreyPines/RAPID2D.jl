@@ -87,7 +87,7 @@ end
 
 @testitem "Per-species ion ledger entries sum to the totals" begin
     using RAPID2D: IonRecord, solve_ion_continuity_equation!, update_transport_quantities!,
-        PerSpeciesTransport
+        PerSpeciesTransport, layout_ion_species!
 
     config = SimulationConfig{Float64}(;
         device_Name = "manual", NR = 21, NZ = 21, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
@@ -113,25 +113,19 @@ end
     # one species: the entry is the total (the entries follow the species list)
     tracker.cum0D_Ni_loss = 0.0
     fill!(tracker.cum0D_Ni_loss_s, 0.0)
-    RP.transport.ion_N[:, 1] .= vec(pla.ni)
     solve_ion_continuity_equation!(RP)
     @test length(tracker.cum0D_Ni_loss_s) == 1
     @test tracker.cum0D_Ni_loss > 0
     @test tracker.cum0D_Ni_loss_s[1] == tracker.cum0D_Ni_loss
 
-    # two species written into the buffers: the entries grow with the list and sum to the
-    # total to round-off (their own reductions)
+    # two species, laid out past the one-species guard: the entries grow with the list and
+    # sum to the total to round-off (their own reductions)
     tp = RP.transport
-    Ng = G.NR * G.NZ
-    tp.ion_species = [tp.ion_species[1], IonRecord(:C6, 6 * tp.ion_species[1].mass, 6)]
-    tp.ion_N = zeros(Ng, 2)
-    tp.ion_S = zeros(Ng, 2)
-    tp.ion_N[G.nodes.in_wall_nids, 2] .= 1.0e15
-    empty!(tp.ion_solvers)
+    layout_ion_species!(RP, [tp.ion_species[1], IonRecord(:C6, 6 * tp.ion_species[1].mass, 6)])
+    vec(pla.n_ions[2])[G.nodes.in_wall_nids] .= 1.0e15
     tracker.cum0D_Ni_loss = 0.0
     fill!(tracker.cum0D_Ni_loss_s, 0.0)
     for _ in 1:5
-        tp.ion_N[:, 1] .= vec(pla.ni)
         solve_ion_continuity_equation!(RP)
     end
     @test length(tracker.cum0D_Ni_loss_s) == 2

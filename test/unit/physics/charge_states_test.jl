@@ -61,7 +61,7 @@ end
 
     RP = charge_case()
 
-    # The ion charge density is the sum Σ zₛ nₛ itself (`Zni_sum`), so nothing divides
+    # The ion charge density is the sum Σ zₛ nₛ itself (`Zni_tot`), so nothing divides
     # by a stored mean charge to recover it.
     @test !hasproperty(RP.plasma, :Z_mean)
 

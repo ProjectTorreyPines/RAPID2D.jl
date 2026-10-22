@@ -1,6 +1,10 @@
 # Struct-based Diagnostics Architecture for RAPID2D.jl
 # Using @kwdef for automatic initialization with dimension-based array creation
 
+# The snapshot layout: 1, one ion density `ni` and the H₂ gas `n_H2_gas`; 2, the total ion density
+# `ni_tot` and each parent's species (`ni_<parent>`, `ng_<parent>`)
+const SNAPSHOT_SCHEMA = 2
+
 """
 0D diagnostic snapshot
 Contains volume-averaged quantities
@@ -20,8 +24,8 @@ Contains volume-averaged quantities
     Ke_eV::FT = zero(FT)           # Average electron kinetic energy
 
     # Ion quantities
-    ni::FT = zero(FT)              # Average ion density
-    ni_max::FT = zero(FT)          # Maximum ion density
+    ni_tot::FT = zero(FT)          # Average ion density, every species
+    ni_tot_max::FT = zero(FT)      # Maximum ion density, every species
     ui_para::FT = zero(FT)         # Average ion parallel velocity
     Ti_eV::FT = zero(FT)           # Average ion temperature
     Ki_eV::FT = zero(FT)           # Average ion kinetic energy
@@ -40,8 +44,7 @@ Contains volume-averaged quantities
     abs_ue_para_RZ::FT = zero(FT)     # Average parallel velocity
     D_RZ::FT = zero(FT)         # Average diffusion coefficient
 
-    # Neutral gas
-    n_H2_gas::FT = zero(FT)     # Average H2 density
+    # Neutral gas (its average is the species' `ng_H2`, also read as `n_H2_gas`)
     n_H2_gas_min::FT = zero(FT)     # Minimum H2 density
 
     # Collision frequencies
@@ -194,6 +197,14 @@ Contains volume-averaged quantities
     tot_P_input_coils::FT = zero(FT)  # Input power by coils [W]
     tot_P_ohm_plasma::FT = zero(FT) # Ohmic dissipation by plasma [W]
     tot_P_ohm_coils::FT = zero(FT)   # Ohmic dissipation by coils [W]
+
+    # Each parent's species, read by name: `ni_<parent>`, the volume-averaged density of its ions
+    # by charge state z = 1…Z, and `ng_<parent>`, that of its neutral gas [m⁻³]
+    ion_parents::Vector{String} = String[]
+    ni_parents::Vector{Vector{FT}} = Vector{FT}[]
+    gas_parents::Vector{String} = String[]
+    ng_parents::Vector{FT} = FT[]
+    schema::Int = SNAPSHOT_SCHEMA
 end
 
 """
@@ -278,7 +289,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Z_axis::FT = zero(FT)
 
     # Ion properties
-    ni::Matrix{FT} = zeros(FT, dims_RZ)             # Ion density
+    ni_tot::Matrix{FT} = zeros(FT, dims_RZ)         # Ion density, every species
     ui_para::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel ion velocity
     uiR::Matrix{FT} = zeros(FT, dims_RZ)            # Ion velocity R component
     uiϕ::Matrix{FT} = zeros(FT, dims_RZ)            # Ion velocity ϕ component
@@ -308,9 +319,6 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     nc_perp::Matrix{FT} = zeros(FT, dims_RZ)        # Perpendicular critical density
     γ_shape_fac::Matrix{FT} = zeros(FT, dims_RZ)    # Gamma coefficient
 
-    # Neutral gas
-    n_H2_gas::Matrix{FT} = zeros(FT, dims_RZ)       # H2 neutral density
-
     # Collision frequencies
     ν_en_iz::Matrix{FT} = zeros(FT, dims_RZ)        # Average ionization frequency [1/s]
     ν_en_mom_tot::Matrix{FT} = zeros(FT, dims_RZ)       # Average drift-friction frequency (v_z-weighted) [1/s]
@@ -337,7 +345,77 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Pi_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total ion power
 
     η_resistivity::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel resistivity
+
+    # Each parent's species, read by name: `ni_<parent>[:, :, z]`, the density of its ions in
+    # charge state z = 1…Z, and `ng_<parent>`, that of its neutral gas [m⁻³] (the H₂ gas is also
+    # read as `n_H2_gas`)
+    ion_parents::Vector{String} = String[]
+    ni_parents::Vector{Array{FT, 3}} = Array{FT, 3}[]
+    gas_parents::Vector{String} = String[]
+    ng_parents::Vector{Matrix{FT}} = Matrix{FT}[]
+    schema::Int = SNAPSHOT_SCHEMA
 end
+
+# ── a snapshot's species, by name ───────────────────────────────────────────────────────
+
+const AnySnapshot = Union{Snapshot0D, Snapshot2D}
+
+# The hydrogen molecule's gas parent in each isotope (H2, D2, T2): the one `n_H2_gas` names, in a
+# snapshot as in the plasma
+const HYDROGEN_GAS_PARENTS = Tuple(parent_display_name(species_label(Particles.H2[0], iso)) for iso in (Protium(), Deuterium(), Tritium()))
+
+# A field, or a species: `ni_<parent>`, `ng_<parent>`, and the hydrogen molecule's gas by its old
+# name `n_H2_gas`
+@inline function Base.getproperty(s::AnySnapshot, name::Symbol)
+    hasfield(typeof(s), name) && return getfield(s, name)
+    return species_property(s, name)
+end
+
+function species_property(s::AnySnapshot, name::Symbol)
+    if name === :n_H2_gas
+        j = findfirst(in(HYDROGEN_GAS_PARENTS), getfield(s, :gas_parents))
+        isnothing(j) || return getfield(s, :ng_parents)[j]
+    end
+    str = String(name)
+    if startswith(str, "ni_")
+        k = findfirst(==(chopprefix(str, "ni_")), getfield(s, :ion_parents))
+        isnothing(k) || return getfield(s, :ni_parents)[k]
+    elseif startswith(str, "ng_")
+        j = findfirst(==(chopprefix(str, "ng_")), getfield(s, :gas_parents))
+        isnothing(j) || return getfield(s, :ng_parents)[j]
+    end
+    throw(ArgumentError("$(nameof(typeof(s))) has no property $name; its species are $(join(species_names(s), ", "))"))
+end
+
+species_names(s::AnySnapshot) = (
+    (Symbol("ni_", p) for p in getfield(s, :ion_parents))...,
+    (Symbol("ng_", p) for p in getfield(s, :gas_parents))...,
+)
+
+function Base.propertynames(s::AnySnapshot, ::Bool = false)
+    h2 = any(in(HYDROGEN_GAS_PARENTS), getfield(s, :gas_parents)) ? (:n_H2_gas,) : ()
+    return (fieldnames(typeof(s))..., species_names(s)..., h2...)
+end
+
+"""
+    snapshot_matrix(snap2D, field[, z]) -> AbstractMatrix
+
+A field or a species of a 2D snapshot as one NR × NZ matrix, the way a plot takes it. An ion
+parent's species (`ni_<parent>`) holds its charge states, and `z` picks one.
+"""
+function snapshot_matrix(snap::Snapshot2D, field::Symbol)
+    data = getproperty(snap, field)
+    data isa AbstractMatrix && return data
+    ndims(data) == 3 && throw(
+        ArgumentError("$field holds the charge states z = 1…$(size(data, 3)); pick one: snapshot_matrix(snap, :$field, z)")
+    )
+    throw(ArgumentError("$field is not a 2D field of the snapshot"))
+end
+
+snapshot_matrix(snap::Snapshot2D, field::Symbol, z::Integer) = view(getproperty(snap, field), :, :, z)
+
+"Whether a snapshot field is a density (shown on a log scale): the electrons', an ion or gas species'."
+is_density_field(field::Symbol) = field in (:ne, :n_H2_gas) || startswith(String(field), "ni_") || startswith(String(field), "ng_")
 
 """
 Source and Loss Tracker
@@ -594,6 +672,9 @@ function Base.isequal(snap1::Snapshot2D{FT}, snap2::Snapshot2D{FT}) where {FT <:
     return true
 end
 
+# Two lists of per-species arrays, parent by parent
+species_isapprox(a, b; kwargs...) = length(a) == length(b) && all(((x, y),) -> isapprox(x, y; kwargs...), zip(a, b))
+
 """
     isapprox(snap1::Snapshot0D, snap2::Snapshot0D; kwargs...) -> Bool
 
@@ -626,6 +707,10 @@ function Base.isapprox(snap1::Snapshot0D{<:AbstractFloat}, snap2::Snapshot0D{<:A
                     return false
                 end
             end
+        elseif val1 isa AbstractVector{<:AbstractString} && val2 isa AbstractVector{<:AbstractString}
+            val1 == val2 || return false            # the species' parents, by name
+        elseif val1 isa AbstractVector{<:AbstractArray} && val2 isa AbstractVector{<:AbstractArray}
+            species_isapprox(val1, val2; kwargs...) || return false
         elseif val1 isa Union{Nothing, AbstractArray} && val2 isa Union{Nothing, AbstractArray}
             # Compare optional arrays
             if (val1 === nothing) != (val2 === nothing)
@@ -686,6 +771,8 @@ function Base.isapprox(snap1::Snapshot2D{<:AbstractFloat}, snap2::Snapshot2D{<:A
             if !isapprox(val1, val2; kwargs...)
                 return false
             end
+        elseif val1 isa AbstractVector{<:AbstractArray} && val2 isa AbstractVector{<:AbstractArray}
+            species_isapprox(val1, val2; kwargs...) || return false
         else
             # Compare other values exactly (Int, Tuple, etc.)
             if val1 != val2
@@ -729,8 +816,10 @@ function Base.getproperty(sv::Vector{<:Snapshot0D{<:AbstractFloat}}, sym::Symbol
         return [getfield(s, sym) for s in sv]
     end
 
-    # If not a snapshot field, throw error
-    throw(ArgumentError("Vector{Snapshot0D} has no property $sym"))
+    # a species (throws for a name that is none): a value per snapshot, or its ions' densities by
+    # charge state, a column per snapshot
+    values = [getproperty(s, sym) for s in sv]
+    return first(values) isa AbstractVector ? reduce(hcat, values) : values
 end
 
 """
@@ -771,31 +860,20 @@ function Base.getproperty(sv::Vector{<:Snapshot2D{FT}}, sym::Symbol) where {FT <
         throw(BoundsError("Cannot access property of empty snapshot vector"))
     end
 
-    # Check if it's a valid Snapshot2D field
-    if hasfield(Snapshot2D, sym)
-        if fieldtype(Snapshot2D, sym) <: AbstractArray
-            Ntt = length(sv)
-            result_shape = (sv[1].dims_RZ..., Ntt)
-
-            D = length(result_shape)
-            result = Array{FT, D}(undef, result_shape)
-            if Ntt == 1
-                @views result .= getfield(sv[1], sym)
-            else
-                # Copy data from each step into the result array
-                for i in 1:Ntt
-                    selectdim(result, D, i) .= getfield(sv[i], sym)
-                end
-            end
-
-            return result
-        else
-            return [getfield(s, sym) for s in sv]
-        end
+    # an array of numbers, a field or a species (`ni_<parent>`, `ng_<parent>`), gains a time axis;
+    # anything else is listed per snapshot. A name that is neither throws
+    if hasfield(Snapshot2D, sym) && !(fieldtype(Snapshot2D{FT}, sym) <: AbstractArray{<:Number})
+        return [getfield(s, sym) for s in sv]
     end
-
-    # If not a snapshot field, throw error
-    throw(ArgumentError("Vector{Snapshot2D} has no property $sym"))
+    first_value = getproperty(sv[1], sym)
+    first_value isa AbstractArray || return [getproperty(s, sym) for s in sv]
+    Ntt = length(sv)
+    result = Array{FT}(undef, size(first_value)..., Ntt)
+    D = ndims(result)
+    for i in 1:Ntt
+        selectdim(result, D, i) .= getproperty(sv[i], sym)
+    end
+    return result
 end
 
 """

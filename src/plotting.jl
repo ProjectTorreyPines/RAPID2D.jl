@@ -67,7 +67,8 @@ Plot 2D field distribution from RAPID2D simulation.
 
 # Available fields
 - `:ne` - Electron density [m⁻³]
-- `:ni` - Ion density [m⁻³]
+- `:ni_tot` - Ion density, every species [m⁻³]
+- `:ni_<parent>` - A parent's ions in one charge state (pick it: `snapshot_matrix(snap, :ni_C, z)`), `:ng_<parent>` its neutral gas [m⁻³]
 - `:Te_eV` - Electron temperature [eV]
 - `:Ti_eV` - Ion temperature [eV]
 - `:B_pol` - Poloidal magnetic field [T]

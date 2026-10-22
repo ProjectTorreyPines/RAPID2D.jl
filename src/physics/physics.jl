@@ -200,7 +200,7 @@ function update_ui_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         dt = RP.dt
         ee = RP.config.constants.ee
         one_FT = one(FT)
-        ρ = pla.mni_sum
+        ρ = pla.mni_tot
 
         # Births at rest first: ρ u stays as it was, now carried by more mass
         if RP.flags.src
@@ -300,13 +300,13 @@ function ei_exchange_energy!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     te, ti = RP.flags.Te_evolve, RP.flags.Ti_evolve
     @with_pool pool begin
         a = ei_relaxation_rate!(acquire!(pool, FT, size(pla.ni)...), RP)
-        ΔE .= relaxation_energy.(a, pla.ne, pla.ni_sum, pla.Te_eV, pla.Ti_eV, RP.dt, te, ti, ee)
+        ΔE .= relaxation_energy.(a, pla.ne, pla.ni_tot, pla.Te_eV, pla.Ti_eV, RP.dt, te, ti, ee)
     end
     for k in RP.G.nodes.on_out_wall_nids
         ΔE[k] = zero(FT)
     end
     @. pla.ePowers.equi = ifelse(pla.ne > zero(FT), ΔE / (RP.dt * pla.ne), zero(FT))
-    @. pla.iPowers.equi = ifelse(pla.ni_sum > zero(FT), ΔE / (RP.dt * pla.ni_sum), zero(FT))
+    @. pla.iPowers.equi = ifelse(pla.ni_tot > zero(FT), ΔE / (RP.dt * pla.ni_tot), zero(FT))
     return ΔE
 end
 
@@ -326,7 +326,7 @@ function apply_ei_exchange!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.flags.Te_evolve &&
         @. pla.Te_eV -= ifelse(pla.ne > zero(FT), ΔE / (FT(1.5) * ee * pla.ne), zero(FT))
     RP.flags.Ti_evolve &&
-        @. pla.Ti_eV += ifelse(pla.ni_sum > zero(FT), ΔE / (FT(1.5) * ee * pla.ni_sum), zero(FT))
+        @. pla.Ti_eV += ifelse(pla.ni_tot > zero(FT), ΔE / (FT(1.5) * ee * pla.ni_tot), zero(FT))
     return RP
 end
 
@@ -343,9 +343,9 @@ function ei_relaxation_rate!(a::AbstractMatrix{FT}, RP::RAPID{FT}) where {FT <: 
     reduced(m) = FT(2) * m * me / (m + me)^2
     z1, m1 = FT(bulk_ion_charge(RP)), bulk_ion_mass(RP)
     # the weights zₛ² nₛ/Σz²n first, so one species gives its own coefficient exactly
-    @. a = ifelse(pla.Z2ni_sum > zero(FT), (z1^2 * pla.ni / pla.Z2ni_sum) * reduced(m1), reduced(m1))
+    @. a = ifelse(pla.Z2ni_tot > zero(FT), (z1^2 * pla.ni / pla.Z2ni_tot) * reduced(m1), reduced(m1))
     foreach_other_ion(RP) do n, z, m
-        @. a += ifelse(pla.Z2ni_sum > zero(FT), (z^2 * n / pla.Z2ni_sum) * reduced(m), zero(FT))
+        @. a += ifelse(pla.Z2ni_tot > zero(FT), (z^2 * n / pla.Z2ni_tot) * reduced(m), zero(FT))
     end
     @. a *= pla.ν_ei
     return a
@@ -2124,7 +2124,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         flags.Include_ud_diffu_term && add_scaled!(A_u, -dt * θ_op, pops.A_diffu)
 
         # Toroidal current density Jϕ @ t=(n-th step)
-        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.Zni_sum * ee * pla.ui_para) * F.bϕ
+        Jϕ_pla_0 = @. (qe * pla.ne * pla.ue_para + pla.Zni_tot * ee * pla.ui_para) * F.bϕ
 
         # Predicted ψ: the step's mean induced field extrapolated linearly, 2 E(n) − E(n−1). Its
         # boundary values start the outer iteration.
@@ -2162,7 +2162,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         sol = Vector{FT}(undef, sys === nothing ? 2N : size(sys.matrix, 1))
         RHS_u = vec(@. pla.ue_para + dt * accel_para_tilde + ifelse(relax_weight > 0, relax_weight * ue_ref, zero(FT)))   # the same for every iteration
         sys === nothing || (RHS_u[ct.cu] .+= ct.ionization)
-        RHS_ψ_ions = @. -μ0 * G.R2D * pla.Zni_sum * ee * pla.ui_para * F.bϕ
+        RHS_ψ_ions = @. -μ0 * G.R2D * pla.Zni_tot * ee * pla.ui_para * F.bϕ
         RHS_ψ = similar(RHS_ψ_ions)
 
         # The outer unknowns x = (boundary flux, coil currents), mixed as the docstring says. The
@@ -2202,7 +2202,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             sys === nothing || (Γ_over_B_k .= view(sol, (2N + 1):length(sol)) ./ sys.scale)
 
             # the circuits and the boundary flux of that current
-            @. Jϕ_k = (qe * pla.ne * ue_k + pla.Zni_sum * ee * pla.ui_para) * F.bϕ
+            @. Jϕ_k = (qe * pla.ne * ue_k + pla.Zni_tot * ee * pla.ui_para) * F.bϕ
             if Nc > 0
                 Φ_k .= plasma_flux_at_coils(csys, G, Jϕ_k)
                 I_k .= csys.inv_A_LR_circuit * (circuit_rhs_n .- 2π .* (Φ_k .- ψ_pla_coils_n))
@@ -2399,7 +2399,7 @@ function update_uMHD_by_global_JxB_force!(RP::RAPID{FT}) where {FT <: AbstractFl
         update_charge_states!(RP)   # the ion mass density as it is now
 
         # Calculate total plasma mass by integrating over volume (the ions' Σ mₛ nₛ)
-        sum_plasma_mass = sum(@. (pla.mni_sum[nids] + me * pla.ne[nids]) * RP.G.inVol2D[nids])
+        sum_plasma_mass = sum(@. (pla.mni_tot[nids] + me * pla.ne[nids]) * RP.G.inVol2D[nids])
         sum_JxB_R = sum(@. pla.Jϕ[nids] * F.BZ[nids] * RP.G.inVol2D[nids])
         sum_JxB_Z = sum(@. -pla.Jϕ[nids] * F.BR[nids] * RP.G.inVol2D[nids])
 

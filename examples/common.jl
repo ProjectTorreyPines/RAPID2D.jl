@@ -126,8 +126,8 @@ plot_dashboard(RP::RAPID; file) = savefig(plot(RP.diagnostics.snaps0D), file)
 # ── 2D snapshots ───────────────────────────────────────────────────────────────────
 # Color range of one field over the whole run; log10 for densities.
 function field_clims(RP::RAPID, field::Symbol)
-    vals = [getfield(s, field) for s in RP.diagnostics.snaps2D]
-    if field in (:ne, :ni)
+    vals = [RAPID2D.snapshot_matrix(s, field) for s in RP.diagnostics.snaps2D]
+    if RAPID2D.is_density_field(field)
         top = log10(max(maximum(maximum, vals), 10.0))
         return (max(top - 8, 0.0), top)
     end
@@ -138,8 +138,8 @@ end
 # One field of one snapshot: heatmap, wall outline, ψ contours (= field lines) when ψ varies.
 function panel2D(RP::RAPID, snap, field::Symbol; clims, title = string(field))
     G = RP.G
-    v = getfield(snap, field)
-    if field in (:ne, :ni)
+    v = RAPID2D.snapshot_matrix(snap, field)
+    if RAPID2D.is_density_field(field)
         v = log10.(max.(v, 1.0))
         title = "log10 " * title
     end

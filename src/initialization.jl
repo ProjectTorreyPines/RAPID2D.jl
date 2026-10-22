@@ -195,6 +195,7 @@ Initialize all physical field variables.
 function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Create properly sized field objects
     RP.plasma = PlasmaState{FT}(RP.G.NR, RP.G.NZ)
+    RP.store_layout = default_store_layout(RP.config.constants)   # what the fresh plasma's store holds
     # RP.fields = Fields{FT}(RP.G.NR, RP.G.NZ)
     RP.transport = Transport{FT}(RP.G.NR, RP.G.NZ)
     # The wall faces are geometry: built once here, on the object every wall-aware operator
@@ -211,8 +212,10 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFl
 
     # H₂⁺ is the only ion species the reaction set produces, but the machinery
     # behind it is written for a list: appending H⁺ or Cᶻ⁺ here is what adds them
-    # to the transport solve.
-    set_ion_species!(RP, [IonRecord(Particles.H2[1]; mass = FT(RP.config.constants.mi))])
+    # to the transport solve. The species list, if any, is assembled later
+    # (`initialize_species!`), which lays the species store out for it.
+    RP.species = nothing
+    set_ion_species!(RP, [default_ion_record(FT, RP.config.constants)])
 
     # Set initial gas density
     RP.plasma.n_H2_gas .= RP.config.prefilled_gas_pressure ./
@@ -718,46 +721,52 @@ function initialize_species!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     config = RP.config
     if isnothing(config.species)
         RP.species = nothing
+        build_species_store!(RP)
         return RP
     end
     sys = assemble_species_system(
         config.species, config.hydrogen, config.constants, RP.eRRCs, RP.iRRCs;
         closures = config.closures, processes = config.processes, rates = config.rates,
     )
-    check_transport_species(sys.registry, RP.transport.ion_species)
     RP.species = sys
+    # the step moves its species as the list has them (masses, labels, isotope), and the store
+    # is laid out for the list
+    reg = sys.registry
+    if isempty(RP.transport.ion_species)      # not declared yet (initialize! declares H₂⁺ first)
+        build_species_store!(RP)
+    else
+        set_ion_species!(RP, map(sp -> listed_ion(reg, sp), RP.transport.ion_species))
+    end
     path = joinpath(abspath(config.Output_path), config.Output_prefix) * "species.txt"
     mkpath(dirname(path))
     write(path, species_report(sys))
-    reg = sys.registry
     @info "Species: $(length(reg.ions)) ions, $(length(reg.neutrals)) neutrals, " *
         "$(length(sys.reactions)) reactions, $(length(sys.collisions)) collisions" report = path
     foreach(w -> @warn("Species: $w"), sys.report.warnings)
     return RP
 end
 
-# The step moves the transport's ion species (`set_ion_species!`), not yet the list's: each must be
-# in the list, at its mass. The transport's H₂⁺ takes `constants.mi`, 2 × 1.00797 u from hydrogen's
-# standard atomic weight, and the list 2mₚ + mₑ = 2.01510 u, 4e-4 below it; the tolerance admits
-# that difference and refuses another isotope or species.
+# With a list the transport moves its species as the list has them: each one in the list, the
+# list's record exactly (its mass and label, in the run's isotope). Without a list the transport's
+# H₂⁺ keeps `constants.mi`, 2 × 1.00797 u, which the list's 2mₚ + mₑ would change by 4e-4.
 function check_transport_species(reg::SpeciesRegistry, transport_species)
     for sp in transport_species
-        col = get(reg.ion_column, sp.key, nothing)
-        isnothing(col) && throw(
-            ArgumentError(
-                "the step moves $(sp.label), which config.species leaves out: the transport does not " *
-                    "take its species from the list yet"
-            )
-        )
-        listed = reg.ions[col]
-        isapprox(listed.mass, sp.mass; rtol = 1.0e-3) || throw(
+        listed = listed_ion(reg, sp)
+        listed === sp || throw(
             ArgumentError(
                 "the step moves $(sp.label) at $(sp.mass) kg, and config.species has $(listed.label) at " *
-                    "$(listed.mass) kg: the transport does not take its species, or their isotope, from the list yet"
+                    "$(listed.mass) kg: with a list the transport takes its species as the list has them"
             )
         )
     end
     return nothing
+end
+
+# The list's record of the ion `sp` the step moves, found by its key
+function listed_ion(reg::SpeciesRegistry, sp::IonRecord)
+    col = get(reg.ion_column, sp.key, nothing)
+    isnothing(col) && throw(ArgumentError("the step moves $(sp.label), which config.species leaves out"))
+    return reg.ions[col]
 end
 
 """
@@ -845,7 +854,7 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # took down a whole run.
     # (one species' Z² √nᵢ is Z·√(Z² nᵢ): the charge scattered on, times the screening density)
     @. pla.lnΛ[idx1] = 16.0 - log(
-        sqrt(max(zero(FT), pla.Z2ni_sum[idx1] * 1.0e-6)) *
+        sqrt(max(zero(FT), pla.Z2ni_tot[idx1] * 1.0e-6)) *
             (pla.Ti_eV[idx1])^(-1.5) *
             pla.Zeff[idx1] * μ[idx1]
     )
@@ -870,7 +879,7 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # Update collision frequency
     # ν_ei = n_e e^4 lnΛ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)
     ν_factor_Maxwellian = FT(1.863033936542749e-40)  # sqrt(2)*ee^4/(12π^(1.5)*ϵ0^2*sqrt(me))
-    @. pla.ν_ei = ν_factor_Maxwellian * pla.Z2ni_sum *
+    @. pla.ν_ei = ν_factor_Maxwellian * pla.Z2ni_tot *
         pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
 
     # Another way (NRL formula):
@@ -882,8 +891,8 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # inside a log, worth tens of percent whenever the electrons run hot. Every
     # per-species ion diffusivity is scaled from this one rate
     # (`ion_transport_channels`), so the error propagated to all of them.
-    pla.lnΛ_ii .= ion_ion_coulomb_log.(pla.ni_sum, pla.Ti_eV, sqrt.(Z2_mean), μ)
-    @. pla.ν_ii = 4.8e-8 * Z2_mean^2 * (pla.mi_mean / mp)^(-0.5) * pla.ni_sum * 1.0e-6 * pla.lnΛ_ii * pla.Ti_eV^(-1.5)
+    pla.lnΛ_ii .= ion_ion_coulomb_log.(pla.ni_tot, pla.Ti_eV, sqrt.(Z2_mean), μ)
+    @. pla.ν_ii = 4.8e-8 * Z2_mean^2 * (pla.mi_mean / mp)^(-0.5) * pla.ni_tot * 1.0e-6 * pla.lnΛ_ii * pla.Ti_eV^(-1.5)
 
     # # From lecture note (CH2_Fundamentals) of Prof. Hong
     # τ_ei = @.  (6.0 * sqrt(3.0)*π * eps0^2/ ee^4) * (sqrt(me)* (ee*pla.Te_eV)^(1.5)) / (pla.Zeff^4 * pla.ni * pla.lnΛ)

@@ -173,8 +173,8 @@ function column_force_balance(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # centroid's midplane in the direction of the net radial force, and the time to close it at
     # constant force, inertial (√(2Mℓ/|F|)) and drag-limited (ℓ M ν / |F|). Limits, not dynamics
     # the mass of every ion species, Σ (Σₛ mₛ nₛ) V; one ion–neutral rate serves every species
-    column_mass = sum(pla.mni_sum[inside] .* V_in)
-    ni_V_in = pla.ni_sum[inside] .* V_in
+    column_mass = sum(pla.mni_tot[inside] .* V_in)
+    ni_V_in = pla.ni_tot[inside] .* V_in
     nu_in_column = sum(ni_V_in) > 0 ? sum(RP.transport.νi_neutral[inside] .* ni_V_in) / sum(ni_V_in) : FT(NaN)
     wall_gap_R = _wall_gap_R(G, R_cen_by_Jϕ, Z_cen_by_Jϕ, force_R_net)
     t_wall_inertial = sqrt(2 * column_mass * wall_gap_R / abs(force_R_net))
@@ -225,7 +225,7 @@ function _column_forces(RP::RAPID{FT}, BR_pla, BZ_pla, BR_coils, BZ_coils) where
     kappa_by_Jϕ = σ_RR > 0 ? sqrt(σ_ZZ / σ_RR) : FT(NaN)
     inside, half_width_minor_by_Jϕ, half_width_major_by_Jϕ = _moment_ellipse(x, z, σ_RR, σ_RZ, σ_ZZ, one_cell)
 
-    p = @. ee * (pla.ne * pla.Te_eV + pla.ni_sum * pla.Ti_eV)
+    p = @. ee * (pla.ne * pla.Te_eV + pla.ni_tot * pla.Ti_eV)
     beta_p = 4 * sum(p[inside] .* V[inside]) / (μ0 * I^2 * R_cen_by_Jϕ)
     p_area = p .* V ./ G.R2D                                  # 2π p dA
 

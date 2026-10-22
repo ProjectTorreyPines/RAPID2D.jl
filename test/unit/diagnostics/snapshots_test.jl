@@ -476,7 +476,7 @@ end
     RP.plasma.ne[inw] .= 1.0e15
     RP.plasma.Te_eV .= 5.0
     snap = RAPID2D.measure_snap2D(RP)
-    for f in (snap.ne, snap.ni, snap.Te_eV, snap.Ti_eV, snap.ue_para, snap.ui_para, snap.Ke_eV, snap.Ki_eV)
+    for f in (snap.ne, snap.ni_tot, snap.Te_eV, snap.Ti_eV, snap.ue_para, snap.ui_para, snap.Ke_eV, snap.Ki_eV)
         @test all(isnan, f[band])
         @test all(isfinite, f[inw])
     end

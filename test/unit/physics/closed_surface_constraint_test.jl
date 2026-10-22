@@ -100,7 +100,7 @@ end
         G, pla, F = RP.G, RP.plasma, RP.fields
         ee, μ0 = RP.config.constants.ee, RP.config.constants.μ0
         _, c_ψu = uψ_coupling_terms(RP)
-        ions = vec(@. -μ0 * G.R2D * pla.Zni_sum * ee * pla.ui_para * F.bϕ)
+        ions = vec(@. -μ0 * G.R2D * pla.Zni_tot * ee * pla.ui_para * F.bϕ)
         res = RP.operators.ΔGS.matrix * vec(F.ψ_coils_pla) .+ c_ψu .* vec(pla.ue_para) .- ions
         res[G.BDY_idx] .= 0
         return maximum(abs, res) / maximum(abs, c_ψu .* vec(pla.ue_para))

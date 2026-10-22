@@ -157,8 +157,10 @@ are not evolved independently.
   `min(0.1·|n|, 0.01·mean|n_neighbours|)`, and the particles that creates, `(n_new − n_old)·V`,
   are taken OFF `Ne_loss`. (They used to be added to it, which double-counted them.) The
   floorings and the particles they create are also counted in `RP.diagnostics.near_vacuum`.
-- Ions, when independent: a negative cell is set to zero and `n_old·V` (negative) is added
-  to `Ni_loss` — the same sign convention.
+- Ions, when independent: a negative cell of any stored ion species is set to zero and
+  `n_old·V` (negative) is added to `Ni_loss` — the same sign convention — and to the species'
+  own entry if the transport moves it. A species the transport does not move has no entry, so
+  its flooring is in the total alone.
 
 Nothing outside the wall is touched. No transport operator has rows there, and the
 ionization rates are zero there, so the band keeps the value the initial condition gave it;
@@ -191,17 +193,22 @@ function correct_negative_densities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
 
             if RP.flags.update_ni_independently
-                ni = RP.plasma.ni
-                removed_total = zero(FT)
-                @inbounds for nid in findall(<(zero(FT)), ni)
-                    removed = ni[nid] * cell_volume(nid)                  # < 0: a negative loss
-                    Ntracker.cum0D_Ni_loss += removed
-                    Ntracker.cum2D_Ni_loss[nid] += removed
-                    removed_total += removed
-                    ni[nid] = zero(FT)
+                # every stored ion species, plane by plane; one the transport moves is booked to
+                # its own entry as well
+                layout = RP.store_layout
+                for (k, records) in enumerate(layout.ion_records), z in eachindex(records)
+                    n = ion_plane(RP.plasma, (k, z))
+                    s = something(findfirst(==((k, z)), layout.transport_slots), 0)
+                    removed_total = zero(FT)
+                    @inbounds for nid in findall(<(zero(FT)), n)
+                        removed = n[nid] * cell_volume(nid)                  # < 0: a negative loss
+                        Ntracker.cum0D_Ni_loss += removed
+                        Ntracker.cum2D_Ni_loss[nid] += removed
+                        removed_total += removed
+                        n[nid] = zero(FT)
+                    end
+                    (1 <= s <= length(Ntracker.cum0D_Ni_loss_s)) && (Ntracker.cum0D_Ni_loss_s[s] += removed_total)
                 end
-                # `ni` is the first species' density
-                isempty(Ntracker.cum0D_Ni_loss_s) || (Ntracker.cum0D_Ni_loss_s[1] += removed_total)
                 update_charge_states!(RP)
             end
         end

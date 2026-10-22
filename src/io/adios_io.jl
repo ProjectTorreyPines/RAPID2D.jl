@@ -187,8 +187,9 @@ function _adios_put_recursive!(Afile::AdiosFile, data, data_name::AbstractString
         return
     end
 
-    # Traverse all fields of the struct
+    # Traverse all fields of the struct (a snapshot's species are written by name, below)
     for fname in fieldnames(obj_type)
+        data isa AnySnapshot && fname in SNAPSHOT_SPECIES_FIELDS && continue
         field_value = getfield(data, fname)
         field_type = typeof(field_value)
 
@@ -208,7 +209,26 @@ function _adios_put_recursive!(Afile::AdiosFile, data, data_name::AbstractString
         end
         # Skip other types (functions, modules, etc.)
     end
+    data isa AnySnapshot && put_snapshot_species!(Afile, data, data_name)
     return
+end
+
+# A snapshot's species: each parent's densities under its own name, `ni_<parent>` and
+# `ng_<parent>`, and the parents in order as the bytes of "H2,H,": a string variable written
+# over steps hangs adios_load, and the trailing comma keeps the bytes from a length-1 axis
+const SNAPSHOT_SPECIES_FIELDS = (:ion_parents, :ni_parents, :gas_parents, :ng_parents)
+
+function put_snapshot_species!(Afile::AdiosFile, s::AnySnapshot, data_name::AbstractString)
+    path(name) = isempty(data_name) ? name : data_name * "/" * name
+    adios_put!(Afile, path("ion_parents"), Vector{UInt8}(join(s.ion_parents .* ",")))
+    adios_put!(Afile, path("gas_parents"), Vector{UInt8}(join(s.gas_parents .* ",")))
+    for (p, n) in zip(s.ion_parents, s.ni_parents)
+        adios_put!(Afile, path("ni_" * p), n)
+    end
+    for (p, n) in zip(s.gas_parents, s.ng_parents)
+        n isa Number ? adios_put!(Afile, path("ng_" * p), n; global_value = true) : adios_put!(Afile, path("ng_" * p), n)
+    end
+    return nothing
 end
 
 
@@ -255,6 +275,7 @@ function adiosBP_to_snap0D(bpPath::AbstractString)
 
     # Ultra-efficient main loop using common helper function
     process_symbol_based_snapshots!(snaps0D, Adict, symbol_paths, dim_tt)
+    read_snapshot_species!(snaps0D, Adict)
 
     return snaps0D
 end
@@ -306,6 +327,7 @@ function adiosBP_to_snap2D(bpPath::AbstractString)
     end
 
     process_symbol_based_snapshots!(snaps2D, Adict, symbol_paths, dim_tt)
+    read_snapshot_species!(snaps2D, Adict)
 
     return snaps2D
 end
@@ -361,7 +383,7 @@ const RENAMED_SNAPSHOT_FIELDS = Dict(
     "ψ_ext" => "ψ_presc", "LV_ext" => "LV_presc", "E_para_ext" => "E_para_presc",
     "Epara_ext" => "Epara_presc", "force_R_ext" => "force_R_presc", "force_Z_ext" => "force_Z_presc",
     "BZ_ext_at_cen_by_Jϕ" => "BZ_presc_at_cen_by_Jϕ", "BR_ext_at_cen_by_Jϕ" => "BR_presc_at_cen_by_Jϕ",
-    "coils_V_ext" => "coils_V_applied",
+    "coils_V_ext" => "coils_V_applied", "ni" => "ni_tot", "ni_max" => "ni_tot_max",
 )
 
 """
@@ -403,6 +425,8 @@ function create_symbol_path_mapping(obj_type, Adict::Dict)
         # into its new name, unless the file also has the new one
         name = get(RENAMED_SNAPSHOT_FIELDS, key, key)
         name != key && haskey(Adict, name) && continue
+        # a snapshot's species are read by `read_snapshot_species!`, as is an older file's H₂ gas
+        is_species_key(obj_type, name) && continue
         if contains(name, "/")
             symbols = Symbol.(split(name, '/'))
         else
@@ -419,6 +443,48 @@ function create_symbol_path_mapping(obj_type, Adict::Dict)
 
     return symbol_paths
 end
+
+# The keys of a snapshot's species (`ni_<parent>`, `ng_<parent>` that are no field, and the parent
+# lists), and an older file's `n_H2_gas`
+is_species_key(obj_type, key::AbstractString) =
+    key in ("ion_parents", "gas_parents", "n_H2_gas") ||
+    ((startswith(key, "ni_") || startswith(key, "ng_")) && !hasfield(obj_type, Symbol(key)))
+
+"""
+    read_snapshot_species!(snaps, Adict) -> snaps
+
+Read each parent's species into the snapshots: the parents from their lists and the densities
+from `ni_<parent>`, `ng_<parent>`. A file of the first layout (`schema` 1) has one ion density,
+read as `ni_tot`, and the H₂ gas `n_H2_gas`, read as the H2 parent's; the ion species cannot be
+told from it and are left empty.
+"""
+function read_snapshot_species!(snaps::AbstractVector{<:AnySnapshot}, Adict::Dict)
+    Nt = length(snaps)
+    if haskey(Adict, "ion_parents")
+        names(key) = String.(split(String(reshape(UInt8.(Adict[key]), :, Nt)[:, 1]), ','; keepempty = false))
+        ions, gases = names("ion_parents"), names("gas_parents")
+        for (tt, s) in enumerate(snaps)
+            s.ion_parents, s.gas_parents = copy(ions), copy(gases)     # each its own, as measured
+            s.ni_parents = [species_slice(s, Adict["ni_" * p], tt, Nt; charge_axis = true) for p in ions]
+            s.ng_parents = [species_slice(s, Adict["ng_" * p], tt, Nt) for p in gases]
+        end
+    elseif haskey(Adict, "n_H2_gas")
+        for (tt, s) in enumerate(snaps)
+            s.schema = 1
+            s.gas_parents = ["H2"]
+            s.ng_parents = [species_slice(s, Adict["n_H2_gas"], tt, Nt)]
+        end
+    end
+    return snaps
+end
+
+# Step tt of Nt of a species variable: a scalar, or the ions' charge states (0D); a matrix, or the
+# ions' planes NR × NZ × Z (2D). adios_load folds a length-1 axis away ((1, Nt) to a vector: one
+# charge state), so the step is cut from the values' count, not from the array's shape
+species_slice(::Snapshot0D, A, tt, Nt; charge_axis = false) =
+    charge_axis ? reshape(collect(A), :, Nt)[:, tt] : (A isa Number ? A : reshape(collect(A), Nt)[tt])
+species_slice(s::Snapshot2D, A, tt, Nt; charge_axis = false) =
+    charge_axis ? reshape(collect(A), s.dims_RZ..., :, Nt)[:, :, :, tt] : reshape(collect(A), s.dims_RZ..., Nt)[:, :, tt]
 
 """
     validate_symbol_path(obj_type, symbols::Vector{Symbol})
