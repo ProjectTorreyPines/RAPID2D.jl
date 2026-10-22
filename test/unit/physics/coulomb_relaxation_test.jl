@@ -173,13 +173,33 @@
         end
         return 2 / sqrt(π) * s * h / 3
     end
-    "NRL p.31: the slowing-down rate of species s at its most probable speed on a Maxwellian field t at the same T [eV]."
-    function slowing_rate(m_s, Z_s, n_t, m_t, Z_t, T, λ)
-        v = sqrt(2 * EE * T / m_s)
+    "NRL p.31: the slowing-down rate of a test particle s at speed v on a Maxwellian field t at T [eV]."
+    function slowing_rate(v, m_s, Z_s, n_t, m_t, Z_t, T, λ)
         ν0 = 4π * (Z_s * Z_t * EE^2 / (4π * EPS0))^2 * λ * n_t / (m_s^2 * v^3)
-        return (1 + m_s / m_t) * ψ(m_t / m_s) * ν0
+        return (1 + m_s / m_t) * ψ(m_t * v^2 / (2 * EE * T)) * ν0
     end
-    "The friction of trace species `k` on the other ions, the bath held fixed: what D∥ = T/(m ν) stands for."
+    """
+    The friction rate of species s drifting slowly through a Maxwellian species t at the same T [eV], the
+    bath held fixed: R_s = −m_s n_s ν u. Linearizing the drifting Maxwellian gives ν = (m_s/3T)⟨ν_s(v) v²⟩,
+    which closes to (4√(2π)/3) n_t (Z_s Z_t e²/4πε₀)² λ √m_st/(m_s T^{3/2}) with m_st the reduced mass:
+    Braginskii's 1/τ_e as m_s → m_e, NRL's p.28 ion rate 1/τ_i for s = t.
+    """
+    friction_rate(m_s, Z_s, n_t, m_t, Z_t, T, λ) = (4 * sqrt(2π) / 3) * n_t * (Z_s * Z_t * EE^2 / (4π * EPS0))^2 * λ *
+        sqrt(m_s * m_t / (m_s + m_t)) / (m_s * (EE * T)^1.5)
+    "(m_s/3T)⟨ν_s(v) v²⟩ over the Maxwellian of s by Simpson on y = v/v_p: the closed form's check."
+    function friction_rate_averaged(m_s, Z_s, n_t, m_t, Z_t, T, λ)
+        vp = sqrt(2 * EE * T / m_s)
+        N, ymax = 4000, 6.0
+        h = ymax / N
+        g(y) = y == 0 ? 0.0 :
+            slowing_rate(y * vp, m_s, Z_s, n_t, m_t, Z_t, T, λ) * (y * vp)^2 * (4 / sqrt(π)) * y^2 * exp(-y^2)
+        s = g(0.0) + g(ymax)
+        for k in 1:(N - 1)
+            s += (isodd(k) ? 4 : 2) * g(k * h)
+        end
+        return m_s / (3 * EE * T) * s * h / 3
+    end
+    "The friction of trace species `k` on the other ions, pair by pair: what its D∥ = T/(m ν) stands for."
     function trace_friction_reference(ions, k; Ti)
         m_s, Z_s, n_s = ions[k][2], ions[k][3], ions[k][4]
         ν = 0.0
@@ -187,22 +207,29 @@
             t == k && continue
             m_t, Z_t, n_t = sp[2], sp[3], sp[4]
             λ = ion_ion_coulomb_log(n_s, Ti, Z_s, m_s / MP, n_t, Ti, Z_t, m_t / MP)
-            # the slow-test-particle form holds for the heavier species; the lighter one's rate follows
-            # from momentum conservation, m_s n_s ν_st = m_t n_t ν_ts
-            ν += m_s >= m_t ? slowing_rate(m_s, Z_s, n_t, m_t, Z_t, Ti, λ) :
-                slowing_rate(m_t, Z_t, n_s, m_s, Z_s, Ti, λ) * (m_t * n_t) / (m_s * n_s)
+            ν += friction_rate(m_s, Z_s, n_t, m_t, Z_t, Ti, λ)
         end
         return ν
     end
-    "The friction rate the code's collisional channel of species `k` implies, read back from its D∥ = T/(m ν)."
-    function code_trace_friction(ions, k; Ti)
+    "The box of `ions` with the Coulomb rates alone (no gas collisions), its transport rates refreshed."
+    function coulomb_box(ions; Ti)
         RP = uniform_box(ions; ne = sum(s[3] * s[4] for s in ions), Te = 10.0, Ti, dt = 1.0e-6)
         RP.flags.Atomic_Collision = false
         update_transport_quantities!(RP)
-        rec = RP.transport.ion_species[k]
+        return RP
+    end
+    "The friction rate the code's collisional channel implies for the species `rec`, read back from its D∥ = T/(m ν)."
+    function channel_friction(RP, rec; Ti)
         ch = ion_transport_channels(RP, rec, shared_turbulent_channel(RP))[1]
         return Ti * EE / (rec.mass * channel_D_para(ch)[4, 4])
     end
+    "… for the stored species `k`,"
+    function code_trace_friction(ions, k; Ti)
+        RP = coulomb_box(ions; Ti)
+        return channel_friction(RP, RP.transport.ion_species[k]; Ti)
+    end
+    "… and for a probe species the store does not hold (no density of its own)."
+    code_probe_friction(ions, rec; Ti) = channel_friction(coulomb_box(ions; Ti), rec; Ti)
 end
 
 @testitem "Coulomb exchange: one ion relaxes as the per-species reference, from no difference to a thousandfold" setup = [CoulombReference] tags = [:physics] begin
@@ -298,55 +325,105 @@ end
     end
 end
 
-@testitem "DEFECT: a trace species' Coulomb friction is not the pairwise slowing-down rate on the other species" setup = [CoulombReference] tags = [:physics] begin
-    # The channel's rate is the mean ion's ν_ii scaled by a test-particle ratio with a √ mass factor
-    # (`ion_transport_channels`). It is right where the species are alike …
+@testitem "DEFECT: a trace species' Coulomb friction is not the pairwise friction on the other species" setup = [CoulombReference] tags = [:physics] begin
+    # the reference's closed form is the Maxwellian average of NRL's slowing-down rate
+    for (m_s, Z_s, m_t, Z_t) in ((MH, 1, MH2, 1), (MC, 6, MH, 1), (MD, 1, MH, 1))
+        @test friction_rate(m_s, Z_s, 1.0e18, m_t, Z_t, 1.0, 8.0) ≈ friction_rate_averaged(m_s, Z_s, 1.0e18, m_t, Z_t, 1.0, 8.0) rtol = 1.0e-3
+    end
+    # The channel scales the mean ion's self-collision rate ν_ii by (Z_s²/⟨Z²⟩)·√μ(1+μ)/2, μ = m̄/m_s
+    # (`ion_transport_channels`), where the friction between two drifting Maxwellians scales it by
+    # (Z_s²/Z_t²)·μ√(2/(1+μ)). The two agree only at equal masses: for a trace of the bulk's charge the
+    # code's rate over the reference tends to (1+μ)^{3/2}/(2√(2μ)), to the 4 % between the mean ion's
+    # self logarithm and the pair's …
     code_over_reference(ions) = code_trace_friction(ions, 2; Ti = 1.0) / trace_friction_reference(ions, 2; Ti = 1.0)
-    @test code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e17)]) ≈ 1 rtol = 0.1
-    # … and about twice the rate for a heavy trace, two thirds of it for an isotope trace: a single
-    # anchor cannot follow the pairwise rates (internal/docs/src/notes/coulomb-collision-0d-audit.md §2.2)
+    law(μ) = (1 + μ)^1.5 / (2 * sqrt(2μ))
+    @test code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e15)]) ≈ law(MH2 / MH) rtol = 0.06
+    @test code_over_reference([("H", MH, 1, 1.0e18), ("D", MD, 1, 1.0e15)]) ≈ law(MH / MD) rtol = 0.06
+    # … so a dilute H⁺ in H₂⁺ runs 1.3× its friction, a heavy trace twice it (its charge weighted by the
+    # mixture's ⟨Z²⟩ on top) and an isotope trace 0.94× it (internal/docs/src/notes/coulomb-collision-0d-audit.md
+    # §2.2). The rate a species diffuses with has to be its friction on the other species, pair by pair:
+    h_in_h2 = code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e16)])
+    @test_broken h_in_h2 ≈ 1 rtol = 0.02
+    @test 1.25 < h_in_h2 < 1.4                # the size of the defect, so a partial fix is noticed
     heavy = code_over_reference([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e16)])
-    @test_broken heavy ≈ 1 rtol = 0.2
-    @test 1.9 < heavy < 2.2                   # the size of the defect, so a partial fix is noticed
+    @test_broken heavy ≈ 1 rtol = 0.02
+    @test 2.0 < heavy < 2.4
     isotope = code_over_reference([("H", MH, 1, 1.0e18), ("D", MD, 1, 5.0e16)])
-    @test_broken isotope ≈ 1 rtol = 0.2
-    @test 0.6 < isotope < 0.75
+    @test_broken isotope ≈ 1 rtol = 0.02
+    @test 0.9 < isotope < 0.98
+    # the avalanche mixture itself, H⁺ a tenth of H₂⁺, to a tenth
+    @test_broken code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e17)]) ≈ 1 rtol = 0.1
+    # Two fingerprints of the single anchor. A species' friction on the others does not depend on its own
+    # density, but through ⟨Z²⟩ and n_I the carbon's does, by a third from 0.1 % to 1 % …
+    @test_broken code_trace_friction([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e15)], 2; Ti = 1.0) ≈
+        code_trace_friction([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e16)], 2; Ti = 1.0) rtol = 0.03
+    # … and a heavy trace in a light bulk is a Brownian particle: the bath sets its friction coefficient
+    # m_s ν, so its D∥ = T/(m_s ν) tends to a floor, where the anchor's √μ sends it to zero as 1/√m_s
+    mν(m) = m * code_probe_friction([("H", MH, 1, 1.0e18)], IonRecord(:probe, m, 1); Ti = 1.0)
+    @test_broken mν(200MP) ≈ mν(50MP) rtol = 0.02
 end
 
-@testitem "DEFECT: the common mode's parallel diffusivities carry the internal friction" setup = [CoulombReference] tags = [:physics] begin
-    # Electrons and ions moving together feel no e–i friction, and ion–ion collisions cannot slow the
-    # ion fluid: only the neutrals drag the common motion. The ion momentum equation drags at that rate …
-    ions = [("H2", MH2, 1, 1.0e18)]
-    RP = uniform_box(ions; ne = 1.0e18, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
-    RP.flags.src = false                      # no births to dilute the drift: the drag alone acts
-    pla, tp = RP.plasma, RP.transport
-    fill!(pla.ui_para, 1.0e3)                 # the common drift, set before the rates are evaluated:
-    fill!(pla.ue_para, 1.0e3)                 # the ion–neutral rate reads the ions' drift energy
-    update_transport_quantities!(RP)
-    ν_in = tp.νi_neutral[4, 4]
-    RAPID2D.update_ui_para!(RP)
-    @test (1.0e3 / pla.ui_para[4, 4] - 1) / RP.dt ≈ ν_in rtol = 1.0e-9
-    # … but D_a and the bulk ion channel are written with ν_ei and ν_ii in their denominators.
-    # D_a and the bulk ion channel's D∥ at density n, beside what the neutral drag alone gives
-    function common_mode(n)
-        box = uniform_box([("H2", MH2, 1, n)]; ne = n, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
-        update_transport_quantities!(box)
-        Te, Ti = box.plasma.Te_eV[4, 4], box.plasma.Ti_eV[4, 4]
-        drag_e = ME * (box.plasma.ν_en_mom_tot[4, 4] + box.plasma.ν_en_iz_tot[4, 4])   # m ν on the neutrals, per particle
-        drag_i = MH2 * box.transport.νi_neutral[4, 4]
-        return (
-            Da = box.transport.Dpara_amb[4, 4], Di = box.transport.Dpara_i_coll[4, 4],
-            Da_drag = EE * (Te + Ti) / (drag_e + drag_i), Di_drag = EE * Ti / drag_i,
+@testitem "DEFECT: the common mode's parallel diffusivities take internal friction for drag" setup = [CoulombReference] tags = [:physics] begin
+    # Electrons and ions moving together feel no e–i friction, and ion–ion collisions cannot slow the ion
+    # fluid: internal forces leave the plasma's momentum alone, only the neutrals drag the common motion.
+    # Its damping rate is ν_cm = (mₑν_en' + mᵢν_in)/(mₑ+mᵢ) and its diffusivity D_a = c_s²/ν_cm with
+    # c_s² = e(Tₑ+Tᵢ)/(mₑ+mᵢ): both set by the gas, neither by the plasma density.
+    "A uniform H₂⁺ box at density n with a common drift, the rates refreshed on it, no parallel field, no births."
+    function box_at(n; gas = true)
+        RP = uniform_box(
+            [("H2", MH2, 1, n)]; ne = n, Te = 5.0, Ti = 1.0, dt = 1.0e-6,
+            flags = SimulationFlags{Float64}(;
+                src = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false, diffu = false, convec = false,
+                E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+                Include_ud_convec_term = false, Include_ud_pressure_term = false, Include_ud_diffu_term = false,
+            ),
         )
+        gas || (RP.plasma.n_H2_gas .= 0.0)
+        fill!(RP.plasma.ue_para, 1.0e3)       # set before the rates: the ion–neutral rate reads the drift energy
+        fill!(RP.plasma.ui_para, 1.0e3)
+        update_transport_quantities!(RP)
+        RP.fields.E_para_tot .= 0.0
+        return RP
     end
-    # Where the plasma is tenuous the Coulomb rates are negligible and the two agree …
-    tenuous = common_mode(1.0e12)
-    @test tenuous.Da ≈ tenuous.Da_drag rtol = 0.02
-    @test tenuous.Di ≈ tenuous.Di_drag rtol = 0.02
-    # … and once ionized they fall far below the neutral-drag values, a thousandfold at 1e18
-    # (internal/docs/src/notes/coulomb-collision-0d-audit.md §3)
-    ionized = common_mode(1.0e18)
-    @test_broken ionized.Da ≈ ionized.Da_drag rtol = 0.1
-    @test_broken ionized.Di ≈ ionized.Di_drag rtol = 0.1
-    @test ionized.Da < 1.0e-2 * ionized.Da_drag   # a hundredfold at least: the size of the defect, so a partial fix is noticed
+    "The decay rate of the common drift under both momentum updates, read after the e–i locking transient."
+    function common_decay(RP; steps = 200, skip = 100)
+        pla = RP.plasma
+        ui = zeros(steps)
+        for k in 1:steps
+            RAPID2D.update_ue_para!(RP)
+            RAPID2D.update_ui_para!(RP)
+            ui[k] = pla.ui_para[4, 4]
+        end
+        return (rate = log(ui[skip] / ui[steps]) / ((steps - skip) * RP.dt), locked = pla.ue_para[4, 4] / pla.ui_para[4, 4])
+    end
+    ν_cm(RP) = (ME * (RP.plasma.ν_en_mom_tot[4, 4] + RP.plasma.ν_en_iz_tot[4, 4]) + MH2 * RP.transport.νi_neutral[4, 4]) / (ME + MH2)
+    cs2(RP) = EE * (RP.plasma.Te_eV[4, 4] + RP.plasma.Ti_eV[4, 4]) / (ME + MH2)
+    Da(RP) = RP.transport.Dpara_amb[4, 4]
+    Di(RP) = RP.transport.Dpara_i_coll[4, 4]
+
+    # (1) The momentum path knows it. Ionized, the e–i friction locks the electrons to the ions within a
+    #     few steps and the pair decays at ν_cm; without gas the common drift does not decay at all
+    dense = box_at(1.0e18)
+    wet = common_decay(dense)
+    @test wet.rate ≈ ν_cm(dense) rtol = 0.01
+    @test wet.locked ≈ 1 rtol = 0.1
+    dry = common_decay(box_at(1.0e18; gas = false))
+    @test abs(dry.rate) < 1.0e-6 * ν_cm(dense)
+    # (2) The diffusion path does not: D_a and the bulk ion channel are written with ν_ei and ν_ii in
+    #     their denominators (`update_transport_quantities!`). Tenuous, the Coulomb rates are negligible
+    #     and D_a is c_s²/ν_cm, Dᵢ the ions' mobility on the gas …
+    tenuous = box_at(1.0e12)
+    @test Da(tenuous) ≈ cs2(tenuous) / ν_cm(tenuous) rtol = 0.02
+    @test Di(tenuous) ≈ EE * 1.0 / (MH2 * tenuous.transport.νi_neutral[4, 4]) rtol = 0.02
+    # … but ionized they fall with the plasma density at fixed gas, a thousandfold at 1e18 …
+    @test_broken Da(dense) ≈ Da(tenuous) rtol = 0.02
+    @test_broken Di(dense) ≈ Di(tenuous) rtol = 0.02
+    @test Da(dense) < 1.0e-2 * Da(tenuous)   # a hundredfold at least: the size of the defect, so a partial fix is noticed
+    # … and stay finite without any gas, where nothing drags the common motion
+    dry_box = box_at(1.0e18; gas = false)
+    @test_broken isinf(Da(dry_box))
+    @test_broken isinf(Di(dry_box))
+    # (3) So the two paths of one code disagree about one rate: the damping D_a implies, c_s²/D_a,
+    #     against the damping the momentum path shows
+    @test_broken cs2(dense) / Da(dense) ≈ wet.rate rtol = 0.02
 end
