@@ -304,28 +304,60 @@ function robust_top(vals)
 end
 range_title(name, unit, top, hi) = top < hi ? @sprintf("%s [0, %.3g] %s, max %.3g", name, top, unit, hi) : @sprintf("%s [0, %.3g] %s", name, top, unit)
 
-# One panel of one 2D snapshot, with the flux surfaces, the LCFS and its centre, the X-points
-# and the 0D snapshot's centroid.
-function flux_panel(
-        RP::RAPID, snap, snap0, kind::Symbol; inside, ne_range, prefix = "",
-        xpoints = find_x_points(RP, snap.ψ; inside), lcfs = snapshot_lcfs(RP, snap; inside),
-    )
-    R, Z = RP.G.R1D, RP.G.Z1D
+# The values, colour range, colour map and titles of one panel of a 2D snapshot: `full`
+# names the range, `short` only the quantity in units of its colour bar (nₑ and u∥ scaled by
+# their range's power of ten, `factor`) and the maximum when a spike is clipped.
+superscript(n::Integer) = map(c -> c == '-' ? '⁻' : "⁰¹²³⁴⁵⁶⁷⁸⁹"[nextind("⁰¹²³⁴⁵⁶⁷⁸⁹", 0, c - '0' + 1)], string(n))
+decade(x) = x > 0 ? floor(Int, log10(x)) : 0
+function panel_scale(snap, kind::Symbol; inside, ne_range)
     ne = snap.ne
     plasma = inside .& isfinite.(ne) .& (ne .> 1.0e-3 * maximum(ne[inside .& isfinite.(ne)]))
     if kind === :log_ne
-        v, cl, cm, ttl = log10.(max.(ne, 1.0)), ne_range, :inferno, @sprintf("log10 nₑ [%.0f, %.0f]", ne_range...)
+        v, cl, cm, factor = log10.(max.(ne, 1.0)), ne_range, :inferno, 1.0
+        full, short = @sprintf("log10 nₑ [%.0f, %.0f]", ne_range...), "log10 nₑ [m⁻³]"
     elseif kind in (:ne, :Te)
         v = Float64.(kind === :ne ? ne : snap.Te_eV)
+        hi = maximum(v[plasma])
         top = max(robust_top(v[plasma]), kind === :ne ? 1.0 : 1.0e-3)
         v, cl, cm = v, (0.0, top), :inferno
-        ttl = kind === :ne ? range_title("nₑ", "m⁻³", top, maximum(v[plasma])) : range_title("Tₑ", "eV", top, maximum(v[plasma]))
+        e = kind === :ne ? decade(top) : 0
+        factor = 10.0^e
+        name, unit = kind === :ne ? ("nₑ", "10" * superscript(e) * " m⁻³") : ("Tₑ", "eV")
+        full = range_title(name, kind === :ne ? "m⁻³" : "eV", top, hi)
+        short = top < hi ? @sprintf("%s [%s], max %.3g", name, unit, hi / factor) : @sprintf("%s [%s]", name, unit)
     else
         v = Float64.(kind === :J ? snap.Jϕ : snap.ue_para)
-        s = max(maximum(abs, v[plasma]), kind === :J ? 1.0e-3 : 1.0)
-        cl, cm = (-s, s), :RdBu
-        ttl = kind === :J ? @sprintf("Jϕ [±%.2g kA/m²]", 1.0e-3s) : @sprintf("u∥ [±%.2g m/s]", s)
+        sm = max(maximum(abs, v[plasma]), kind === :J ? 1.0e-3 : 1.0)
+        cl, cm = (-sm, sm), :RdBu
+        e = kind === :J && 3 <= decade(sm) <= 5 ? 3 : decade(sm)      # Jϕ in kA/m² in its usual range
+        factor = 10.0^e
+        full = kind === :J ? @sprintf("Jϕ [±%.2g kA/m²]", 1.0e-3sm) : @sprintf("u∥ [±%.2g m/s]", sm)
+        short = kind === :J ? (e == 3 ? "Jϕ [kA/m²]" : "Jϕ [10" * superscript(e) * " A/m²]") : "u∥ [10" * superscript(e) * " m/s]"
     end
+    return (; v, cl, cm, full, short, factor)
+end
+
+# A thin horizontal colour bar for a panel's scale, three ticks in the units of its short title.
+function colorbar_strip(sc, kind::Symbol)
+    x = range(sc.cl...; length = 256)
+    ticks = kind === :log_ne ? collect(ceil(sc.cl[1]):3:sc.cl[2]) : collect(range(sc.cl...; length = 3))
+    label(t) = kind === :log_ne ? @sprintf("%.0f", t) : @sprintf("%.3g", t / sc.factor)
+    return heatmap(
+        x, [0.0, 1.0], repeat(collect(x)', 2); c = sc.cm, clims = sc.cl, colorbar = false, xlims = sc.cl,
+        yticks = false, xticks = (ticks, label.(ticks)), tickfontsize = 7, framestyle = :box,
+    )
+end
+
+# One panel of one 2D snapshot, with the flux surfaces, the LCFS and its centre, the X-points
+# and the 0D snapshot's centroid; titled with its range, or (`short`) for a colour bar below it.
+function flux_panel(
+        RP::RAPID, snap, snap0, kind::Symbol; inside, ne_range, prefix = "", short = false,
+        scale = panel_scale(snap, kind; inside, ne_range),
+        xpoints = find_x_points(RP, snap.ψ; inside), lcfs = snapshot_lcfs(RP, snap; inside),
+    )
+    R, Z = RP.G.R1D, RP.G.Z1D
+    v, cl, cm = copy(scale.v), scale.cl, scale.cm
+    ttl = short ? scale.short : scale.full
     v[.!inside] .= NaN
     BOX = (extrema(RP.wall.R), extrema(RP.wall.Z))
     p = heatmap(
@@ -375,7 +407,8 @@ function frame_ne_range(RP::RAPID)
 end
 nearest_snap0D(RP::RAPID, t) = (s0 = RP.diagnostics.snaps0D; s0[argmin(abs.(s0.time_s .- t))])
 
-# One frame: the panels of 2D snapshot k under a two-line heading (title; currents).
+# One frame: the panels of 2D snapshot k under a two-line heading (title; currents), each
+# above its colour bar.
 function fields_frame(RP::RAPID, k::Integer; title, inside = in_wall_mask(RP), ne_range = frame_ne_range(RP))
     snap = RP.diagnostics.snaps2D[k]
     snap0 = nearest_snap0D(RP, snap.time_s)
@@ -386,9 +419,12 @@ function fields_frame(RP::RAPID, k::Integer; title, inside = in_wall_mask(RP), n
     annotate!(head, 0.5, 0.68, text(@sprintf("%s, t = %.2f ms", title, 1.0e3snap.time_s), 11))
     annotate!(head, 0.5, 0.2, text(info * "   " * MARKER_KEY, 10))
     xpoints, lcfs = find_x_points(RP, snap.ψ; inside), snapshot_lcfs(RP, snap; inside)
-    panels = [flux_panel(RP, snap, snap0, kind; inside, ne_range, xpoints, lcfs) for kind in FRAME_PANELS]
+    scales = [panel_scale(snap, kind; inside, ne_range) for kind in FRAME_PANELS]
+    panels = [flux_panel(RP, snap, snap0, kind; inside, ne_range, xpoints, lcfs, scale, short = true) for (kind, scale) in zip(FRAME_PANELS, scales)]
+    bars = [colorbar_strip(scale, kind) for (kind, scale) in zip(FRAME_PANELS, scales)]
     n = length(FRAME_PANELS)
-    return plot(head, panels...; layout = @layout([a{0.07h}; grid(1, n)]), size = (300n, 760))
+    # panels and bars in one grid, so that each bar spans its panel's plot area
+    return plot(head, panels..., bars...; layout = @layout([a{0.08h}; grid(2, n, heights = [0.955, 0.045])]), size = (300n, 720))
 end
 
 # mp4 of every 2D snapshot as a `fields_frame`.
