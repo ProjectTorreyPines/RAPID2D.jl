@@ -394,17 +394,17 @@ function flux_panel(
         xticks = round.(range(BOX[1]...; length = 4)[2:3]; digits = 1),
     )
     light = kind in (:log_ne, :ne, :Te)
-    faint, dense = light ? (RGBA(1, 1, 1, 0.3), RGBA(1, 1, 1, 0.75)) : (RGBA(0, 0, 0, 0.3), RGBA(0, 0, 0, 0.75))
+    faint, dense = light ? (RGBA(1, 1, 1, 0.45), RGBA(1, 1, 1, 0.85)) : (RGBA(0, 0, 0, 0.4), RGBA(0, 0, 0, 0.8))
     ψ = snap.ψ
     lo, hi = extrema(ψ[inside])
     if hi > lo
         for c in range(lo, hi; length = 18)[2:(end - 1)]
-            plot!(p, isoline(R, Z, ψ, c)...; color = faint, lw = 0.5, label = "")
+            plot!(p, isoline(R, Z, ψ, c)...; color = faint, lw = 1.0, label = "")
         end
     end
     if lcfs.basis !== nothing
         b = lcfs.basis
-        plot!(p, vcat(b.R, b.R[1]), vcat(b.Z, b.Z[1]); color = :orange, lw = 1.5, ls = :dash, label = "")
+        plot!(p, vcat(b.R, b.R[1]), vcat(b.Z, b.Z[1]); color = :orange, lw = 2.0, ls = :dash, label = "")
     end
     if lcfs.magnetic !== nothing
         m = lcfs.magnetic
@@ -412,9 +412,9 @@ function flux_panel(
         h = 2 * run.G.dR
         box = (extrema(m.R) .+ (-h, h), extrema(m.Z) .+ (-h, h))
         for ψN in 0.2:0.2:0.8
-            plot!(p, clip_to_box!(isoline(R, Z, ψ, ψa + ψN * (ψl - ψa))..., box...)...; color = dense, lw = 0.6, label = "")
+            plot!(p, clip_to_box!(isoline(R, Z, ψ, ψa + ψN * (ψl - ψa))..., box...)...; color = dense, lw = 1.2, label = "")
         end
-        plot!(p, vcat(m.R, m.R[1]), vcat(m.Z, m.Z[1]); color = :cyan, lw = 2.0, label = "")
+        plot!(p, vcat(m.R, m.R[1]), vcat(m.Z, m.Z[1]); color = :cyan, lw = 2.5, label = "")
         scatter!(p, [m.R_geo], [m.Z_geo]; marker = :diamond, ms = 6, color = :cyan, msc = :black, msw = 1, label = "")
     end
     if !isnan(snap.ψ_lcfs)
