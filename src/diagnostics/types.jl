@@ -288,6 +288,22 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     R_axis::FT = zero(FT)
     Z_axis::FT = zero(FT)
 
+    # The magnetic LCFS around that axis (`magnetic_lcfs`, from the field and the wall alone; NaN,
+    # and code 0, without one): its flux; its configuration, 0 none or the index in
+    # `LCFS_CONFIGURATIONS` (1 limited, 2 single null, 3 double null); its geometric centre
+    # ((R_max + R_min)/2, (Z_max + Z_min)/2); the X-points on it (the second only in a double null);
+    # and the wall node a limited one touches
+    ψ_lcfs_magnetic::FT = zero(FT)
+    lcfs_configuration::Int = 0
+    R_geo::FT = zero(FT)
+    Z_geo::FT = zero(FT)
+    R_xpoint1::FT = zero(FT)
+    Z_xpoint1::FT = zero(FT)
+    R_xpoint2::FT = zero(FT)
+    Z_xpoint2::FT = zero(FT)
+    R_contact::FT = zero(FT)
+    Z_contact::FT = zero(FT)
+
     # Ion properties
     ni_tot::Matrix{FT} = zeros(FT, dims_RZ)         # Ion density, every species
     ui_para::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel ion velocity

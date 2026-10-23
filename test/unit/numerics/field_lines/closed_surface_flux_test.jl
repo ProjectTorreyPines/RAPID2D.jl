@@ -122,6 +122,8 @@ end
     end
     @test m.ψ_lcfs ≈ d^2 / 2 rtol = 1.0e-3
     @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed
+    # symmetric, so its geometric centre is the axis
+    @test abs(m.geometric_centre.R - Rc) < 0.05 * G.dR && abs(m.geometric_centre.Z - Zc) < 0.05 * G.dZ
     # tilted by ε: the lower X-point is a few per cent closer in flux and alone bounds the LCFS
     ε = 0.04
     up, low = dn_xpoints(; ε)
@@ -133,6 +135,17 @@ end
     x = only(m.xpoints)
     @test abs(x.R - low.R) < 1.0e-2 * G.dR && abs(x.Z - low.Z) < 1.0e-2 * G.dZ
     @test m.ψ_lcfs ≈ low.ψ rtol = 1.0e-3
+    # it spans the lower X-point to its top on x = 0, where ψ climbs to the X-point's level
+    f(z) = z^2 - z^4 / (2d^2) + ε * z^3
+    z_top = let lo = 0.0, hi = up.Z - Zc
+        for _ in 1:60
+            mid = (lo + hi) / 2
+            f(mid) < low.ψ ? (lo = mid) : (hi = mid)
+        end
+        lo
+    end
+    @test abs(m.geometric_centre.Z - (Zc + (z_top + low.Z - Zc) / 2)) < 0.05 * G.dZ
+    @test abs(m.geometric_centre.R - Rc) < 0.05 * G.dR
     # a tolerance wider than the gap takes both
     m = magnetic_lcfs(G, ψ, o, in_wall; g, double_null_tolerance = 0.2)
     @test m.configuration === :double_null && length(m.xpoints) == 2
@@ -219,6 +232,7 @@ end
     m = magnetic_lcfs(G, ψ, o, in_wall; g)
     @test m.configuration === :limited && isempty(m.xpoints)
     @test abs(m.contact.R - R_wall) < 1.5 * G.dR
+    @test abs(m.geometric_centre.R - R0) < 0.05 * G.dR && abs(m.geometric_centre.Z - Z0) < 0.05 * G.dZ
     # the contour reaches the wall: its outboard midplane radius is the wall's, to a cell
     @test abs(sqrt(m.ψ_lcfs / c) - (R_wall - R0)) < 1.5 * G.dR
     @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed

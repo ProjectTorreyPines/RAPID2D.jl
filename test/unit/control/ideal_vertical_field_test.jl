@@ -419,6 +419,17 @@ end
     @test closed > 0 && count(==(1.0), snap2.closed_lines) == closed
     @test isfinite(snap2.ψ_lcfs) && snap2.ψ_lcfs != snap2.ψ_axis
     @test snap2.R_axis ≈ column_force_balance(RP).R_axis atol = 1.0e-9
+    # the magnetic LCFS around the same axis, from the field and the wall alone: the snapshot holds
+    # what `magnetic_lcfs` gives, at or beyond the closed region's LCFS
+    in_wall = falses(RP.G.NR, RP.G.NZ)
+    in_wall[RP.G.nodes.in_wall_nids] .= true
+    g = RAPID2D.FieldLineGeometry(RP.G, RP.fields.ψ; inside = RP.G.cell_state .>= 0)
+    m = RAPID2D.magnetic_lcfs(RP.G, RP.fields.ψ, (; R = snap2.R_axis, Z = snap2.Z_axis, ψ = snap2.ψ_axis), in_wall; g)
+    @test snap2.lcfs_configuration == findfirst(==(m.configuration), RAPID2D.LCFS_CONFIGURATIONS)
+    @test snap2.ψ_lcfs_magnetic == m.ψ_lcfs
+    @test (snap2.R_geo, snap2.Z_geo) == (m.geometric_centre.R, m.geometric_centre.Z)
+    @test abs(snap2.ψ_lcfs_magnetic - snap2.ψ_axis) >= abs(snap2.ψ_lcfs - snap2.ψ_axis)
+    @test isfinite(snap2.R_geo) && isfinite(snap2.Z_geo)
     # the wall polygon is written next to the grid
     @test ispath(joinpath(RP.config.Output_path, RP.config.Output_prefix * "wall.bp"))
 end

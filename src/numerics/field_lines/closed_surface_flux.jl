@@ -138,9 +138,27 @@ function lcfs_level(g::FieldLineGeometry{FT}, o, s, Δψ0) where {FT}
     return lo
 end
 
+# The configurations `magnetic_lcfs` names, in the order of their codes in the 2D snapshots
+# (`lcfs_configuration`: 0 none, else the index here).
+const LCFS_CONFIGURATIONS = (:limited, :single_null, :double_null)
+
+# A visitor that keeps the extent of a traced contour: its smallest and largest R and Z.
+mutable struct ContourExtent{FT <: AbstractFloat}
+    R_min::FT
+    R_max::FT
+    Z_min::FT
+    Z_max::FT
+end
+ContourExtent{FT}() where {FT} = ContourExtent{FT}(FT(Inf), FT(-Inf), FT(Inf), FT(-Inf))
+function visit!(e::ContourExtent, R, Z, Bpol, Bϕ)
+    e.R_min, e.R_max = min(e.R_min, R), max(e.R_max, R)
+    e.Z_min, e.Z_max = min(e.Z_min, Z), max(e.Z_max, Z)
+    return e
+end
+
 """
     magnetic_lcfs(G, ψ, o, in_wall; g = FieldLineGeometry(G, ψ), double_null_tolerance = 0.01)
-        -> (; ψ_lcfs, ψ_trace, configuration, xpoints, contact) or nothing
+        -> (; ψ_lcfs, ψ_trace, configuration, xpoints, contact, geometric_centre) or nothing
 
 The last closed flux surface around the O-point `o` (`(; R, Z, ψ)`) as the field and the wall set
 it, with no density or field-line following behind it (the closed-surface basis's LCFS stops at its
@@ -160,6 +178,9 @@ admissible region instead). Computed on request; the step does not call it.
 - `ψ_trace`: a level at or just inside `ψ_lcfs` that the tracer closes around `o` (a separatrix
   runs through a null): within 10⁻⁴ … 10⁻¹ of the separatrix's flux from the axis, the closest
   that closes.
+- `geometric_centre`: `(; R, Z)` = ((R_max + R_min)/2, (Z_max + Z_min)/2) of the LCFS, the
+  reference of the Shafranov shift: the extent of the contour traced at `ψ_trace` and of the
+  X-points on the LCFS, which the separatrix runs through.
 
 `nothing` when `o` is not an extremum of the interpolant, or no level closes.
 """
@@ -180,7 +201,8 @@ function magnetic_lcfs(
         Δψ_lcfs === nothing && return nothing
         ψ_lcfs = ψ_axis + s * Δψ_lcfs
         xpoints = NamedTuple{(:R, :Z, :ψ), NTuple{3, FT}}[]
-        return (; ψ_lcfs, ψ_trace = ψ_lcfs, configuration = :limited, xpoints, contact = (; R = G.R2D[k], Z = G.Z2D[k]))
+        geometric_centre = lcfs_geometric_centre(g, o, ψ_lcfs, xpoints)
+        return (; ψ_lcfs, ψ_trace = ψ_lcfs, configuration = :limited, xpoints, contact = (; R = G.R2D[k], Z = G.Z2D[k]), geometric_centre)
     end
     xpoints = saddle_xpoints(G, ψ, g, sweep.saddles)
     Δψ_of(p) = s * (p.ψ - ψ_axis)
@@ -192,7 +214,20 @@ function magnetic_lcfs(
     Δψ_trace === nothing && return nothing
     configuration = length(xpoints) >= 2 ? :double_null : :single_null
     contact = (; R = FT(NaN), Z = FT(NaN))
-    return (; ψ_lcfs = ψ_axis + s * Δψ_x, ψ_trace = ψ_axis + s * Δψ_trace, configuration, xpoints, contact)
+    ψ_trace = ψ_axis + s * Δψ_trace
+    geometric_centre = lcfs_geometric_centre(g, o, ψ_trace, xpoints)
+    return (; ψ_lcfs = ψ_axis + s * Δψ_x, ψ_trace, configuration, xpoints, contact, geometric_centre)
+end
+
+# ((R_max + R_min)/2, (Z_max + Z_min)/2) of the contour the tracer follows around `o` at `ψ_trace`
+# and of `xpoints`; NaN if the trace does not close.
+function lcfs_geometric_centre(g::FieldLineGeometry{FT}, o, ψ_trace, xpoints) where {FT}
+    e = ContourExtent{FT}()
+    trace_around!(e, CubicTracer(), g, ψ_trace, o).termination === :closed || return (; R = FT(NaN), Z = FT(NaN))
+    for x in xpoints
+        visit!(e, x.R, x.Z, zero(FT), zero(FT))
+    end
+    return (; R = (e.R_min + e.R_max) / 2, Z = (e.Z_min + e.Z_max) / 2)
 end
 
 """
