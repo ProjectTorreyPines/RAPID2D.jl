@@ -11,6 +11,14 @@ julia --project=examples -e 'using Pkg; Pkg.instantiate()'   # once
 julia --project=examples examples/townsend_avalanche.jl
 ```
 
+To draw a finished run's figures again without running it, from its output folder alone:
+
+```
+julia --project=examples examples/plot_run.jl examples/output/kstar_reference
+```
+
+It reads the folder's grid, wall and snapshot files, so the run's input files are not needed.
+
 The examples environment develops RAPID2D from the parent directory (the `[sources]` entry
 of `Project.toml`, which needs Julia 1.11 or later). It also adds `Plots`, which activates
 the plotting extension; the mp4 uses the FFMPEG that ships with it. Outputs go to
@@ -147,7 +155,9 @@ The examples use three forms:
   `force_balance_control.jl`.
 - `run!`: runs to the end, or reports a failure mid-run and keeps the snapshots taken so far.
 - The plots: `plot_traces`, `plot_dashboard`, `plot_snapshots2D`, `animate2D`.
-- The flux-surface frames: nₑ, Tₑ, u∥ and Jϕ side by side, with the closed region's LCFS,
-  the O-point and the current centroid (`fields_frame`, `animate_fields`,
-  `plot_fields_snapshots`).
+- A run's files read back (`load_run`) and every figure drawn from them (`plot_run_figures`,
+  as `plot_run.jl` does): the flux-surface frames (log nₑ, nₑ, Tₑ, u∥ and Jϕ side by side, each
+  over its colour bar, with the basis's and the magnetic LCFS, the O- and X-points, the current
+  centroid and the LCFS's geometric centre; `fields_frame`, `animate_fields`,
+  `plot_fields_snapshots`), the column table and figure, the 0D traces and dashboard.
 - `StepRecord` and `recorder`, a per-step record for `callback_after_step`.
