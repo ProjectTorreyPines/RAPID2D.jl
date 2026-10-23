@@ -60,6 +60,45 @@ end
     end
 end
 
+@testitem "Magnetic LCFS: a separatrix through the X-point between two O-points" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: magnetic_lcfs, find_critical_points, OPoint, FieldLineGeometry, trace_around!, CubicTracer, PathLengths
+    # ψ = c (((R − R0)² − a²)² + (Z − Z0)²): O-points at R0 ± a, the X-point at R0 on ψ = c a⁴
+    a = 0.2
+    G = grid(61)
+    ψ = @. c * (((G.R2D - R0)^2 - a^2)^2 + (G.Z2D - Z0)^2)
+    in_wall = trues(G.NR, G.NZ)
+    g = FieldLineGeometry(G, ψ)
+    for o in find_critical_points(G, ψ; kind = OPoint())
+        m = magnetic_lcfs(G, ψ, o, in_wall; g)
+        @test m.limited_by === :xpoint
+        @test abs(m.R - R0) < 1.0e-2 * G.dR && abs(m.Z - Z0) < 1.0e-2 * G.dZ
+        @test m.ψ_lcfs ≈ c * a^4 rtol = 1.0e-3
+        # the level to trace is inside the separatrix and closes around this O-point alone
+        @test abs(m.ψ_trace - o.ψ) < abs(m.ψ_lcfs - o.ψ)
+        @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed
+    end
+end
+
+@testitem "Magnetic LCFS: the wall limits it, beyond the density's region" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: magnetic_lcfs, closed_surface_basis, find_o_point, FieldLineGeometry, trace_around!, CubicTracer, PathLengths
+    G = grid(61)
+    ψ = ellipse(G)
+    R_wall = 1.75
+    cells = cells_left_of(G, R_wall)
+    in_wall = Matrix{Bool}(G.R2D .< R_wall)
+    g = FieldLineGeometry(G, ψ; inside = cells)
+    o = find_o_point(G, ψ, findall(vec(admissible_ellipse(G; a = 0.1))); itp = g.itp)
+    m = magnetic_lcfs(G, ψ, o, in_wall; g)
+    @test m.limited_by === :wall
+    @test abs(m.R - R_wall) < 1.5 * G.dR
+    # the contour reaches the wall: its outboard midplane radius is the wall's, to a cell
+    @test abs(sqrt(m.ψ_lcfs / c) - (R_wall - R0)) < 1.5 * G.dR
+    @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed
+    # the closed-surface basis on a smaller density region stops inside it
+    b = closed_surface_basis(G, ψ, admissible_ellipse(G; a = 0.15); inside = cells)
+    @test b.ψ_lcfs < m.ψ_lcfs
+end
+
 @testitem "Closed-surface flux: the stream-function flux telescopes and matches (n u∥/B) B_pol" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis, stream_function_fluxes, face_outflow
     using RAPID2D.Statistics: median

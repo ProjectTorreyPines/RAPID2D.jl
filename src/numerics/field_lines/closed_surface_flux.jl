@@ -134,6 +134,91 @@ function lcfs_level(g::FieldLineGeometry{FT}, o, s, L0) where {FT}
     return lo
 end
 
+"""
+    magnetic_lcfs(G, ψ, o, in_wall; g = FieldLineGeometry(G, ψ)) -> (; ψ_lcfs, ψ_trace, limited_by, R, Z) or nothing
+
+The last closed flux surface around the O-point `o` (`(; R, Z, ψ)`) as the field and the wall set
+it, with no density or field-line following behind it (the closed-surface basis's LCFS stops at
+its admissible region instead): the surfaces nested around `o` grow until they meet an X-point
+(`limited_by = :xpoint`, a separatrix) or touch the wall (`:wall`), at `(R, Z)`. Computed on
+request; the step does not call it.
+
+- On the grid: the nodes in the wall (`in_wall`, NR × NZ) join their neighbours' sublevel sets in
+  increasing flux from the axis, L = s(ψ − ψ_axis). The first node that joins the set of `o` to a
+  set whose lowest node is more than two cells from `o` passes a saddle; the first wall node (a
+  neighbour out of the wall, or on the grid's edge) the set of `o` takes is the contact.
+- On the bicubic interpolant: a saddle's level is that of the X-point beside it
+  ([`find_critical_points`](@ref)); a contact's is the outermost level the tracer of `g` closes
+  around `o` below the node's, as for the basis's LCFS.
+- `ψ_trace` is a level at or just inside `ψ_lcfs` that the tracer closes around `o`: the
+  separatrix itself runs through a null.
+
+`nothing` when `o` is not an extremum of the interpolant or no level closes.
+"""
+function magnetic_lcfs(
+        G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, o, in_wall::AbstractMatrix{Bool};
+        g::FieldLineGeometry{FT} = FieldLineGeometry(G, ψ),
+    ) where {FT <: AbstractFloat}
+    NR, NZ = size(ψ)
+    H = hessian(g.itp, (o.R, o.Z))
+    H[1, 1] * H[2, 2] - H[1, 2] * H[2, 1] > 0 || return nothing
+    s = sign(H[1, 1] + H[2, 2])                       # +1 about a minimum of ψ, −1 about a maximum
+    ψ_axis = FT(o.ψ)
+    L = s .* (ψ .- ψ_axis)
+    lin = LinearIndices((NR, NZ))
+    near_o(k) = abs(G.R2D[k] - o.R) <= 2 * G.dR && abs(G.Z2D[k] - o.Z) <= 2 * G.dZ
+    on_wall(i, j) = i in (1, NR) || j in (1, NZ) || !(in_wall[i - 1, j] && in_wall[i + 1, j] && in_wall[i, j - 1] && in_wall[i, j + 1])
+    neighbours(i, j) = ((a, b) for (a, b) in ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)) if 1 <= a <= NR && 1 <= b <= NZ)
+    parent = zeros(Int, NR * NZ)                      # 0: not in a sublevel set yet
+    lowest = zeros(Int, NR * NZ)                      # a set's lowest node, kept at its root
+    function root(k)
+        while parent[k] != k
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        end
+        return k
+    end
+    event = nothing
+    for k in sort!(findall(vec(in_wall)); by = k -> L[k])
+        i, j = mod1(k, NR), cld(k, NR)
+        mine, other = near_o(k), false
+        for (a, b) in neighbours(i, j)
+            parent[lin[a, b]] == 0 && continue
+            near_o(lowest[root(lin[a, b])]) ? (mine = true) : (other = true)
+        end
+        if mine && (other || on_wall(i, j))
+            event = (; limited_by = other ? :xpoint : :wall, k)
+            break
+        end
+        parent[k], lowest[k] = k, k
+        for (a, b) in neighbours(i, j)
+            parent[lin[a, b]] == 0 && continue
+            r = root(lin[a, b])
+            r == k && continue
+            parent[r] = k
+            L[lowest[r]] < L[lowest[k]] && (lowest[k] = lowest[r])
+        end
+    end
+    event === nothing && return nothing
+    k = event.k
+    if event.limited_by === :xpoint
+        xs = find_critical_points(G, ψ; kind = XPoint(), itp = g.itp)
+        cells_from(p) = hypot((p.R - G.R2D[k]) / G.dR, (p.Z - G.Z2D[k]) / G.dZ)
+        if !isempty(xs)
+            x = xs[argmin(cells_from.(xs))]
+            Lx = s * (x.ψ - ψ_axis)
+            if cells_from(x) <= 2 && Lx > 0
+                Lt = lcfs_level(g, o, s, Lx * (1 - FT(1.0e-4)))
+                Lt === nothing || return (; ψ_lcfs = ψ_axis + s * Lx, ψ_trace = ψ_axis + s * Lt, limited_by = :xpoint, R = FT(x.R), Z = FT(x.Z))
+            end
+        end
+    end
+    # a contact with the wall, or a saddle with no X-point of the interpolant beside it
+    Lt = lcfs_level(g, o, s, L[k])
+    Lt === nothing && return nothing
+    return (; ψ_lcfs = ψ_axis + s * Lt, ψ_trace = ψ_axis + s * Lt, event.limited_by, R = G.R2D[k], Z = G.Z2D[k])
+end
+
 # The knot weights at x: the values of the basis functions of `knots` (row: point, column: knot);
 # beyond the last knot zero (`:zero`) or the last basis function's 1 (`:constant`).
 # A single knot is one constant function on [0, 1].
