@@ -280,7 +280,8 @@ end
 # The two LCFS of a 2D snapshot, as traced contours: `basis`, the closed-surface basis's (the
 # snapshot's `ψ_lcfs`, which stops at the admissible region of closed lines and density), and
 # `magnetic`, set by the field and the wall alone (`RAPID2D.magnetic_lcfs`: through an X-point or
-# touching the wall, `limited_by`). Each `nothing` when there is none.
+# touching the wall, its `configuration`: limited, single or double null). Each `nothing` when
+# there is none.
 function snapshot_lcfs(RP::RAPID, snap; inside = in_wall_mask(RP))
     isnan(snap.ψ_lcfs) && return (; basis = nothing, magnetic = nothing)
     g = RAPID2D.FieldLineGeometry(RP.G, snap.ψ; inside = RP.G.cell_state .>= 0)
@@ -288,7 +289,10 @@ function snapshot_lcfs(RP::RAPID, snap; inside = in_wall_mask(RP))
     basis = trace_closed_contour(g, snap.ψ_lcfs, o)
     m = RAPID2D.magnetic_lcfs(RP.G, snap.ψ, o, inside; g)
     c = m === nothing ? nothing : trace_closed_contour(g, m.ψ_trace, o)
-    magnetic = c === nothing ? nothing : (; c..., m.ψ_lcfs, m.limited_by, R_limit = m.R, Z_limit = m.Z)
+    c === nothing && return (; basis, magnetic = nothing)
+    # a separatrix runs through its X-points: they bound the extent, not the contour traced inside it
+    (r1, r2), (z1, z2) = extrema(vcat(c.R, [x.R for x in m.xpoints])), extrema(vcat(c.Z, [x.Z for x in m.xpoints]))
+    magnetic = (; c..., R_geo = (r1 + r2) / 2, Z_geo = (z1 + z2) / 2, m.ψ_lcfs, m.configuration, m.xpoints, m.contact)
     return (; basis, magnetic)
 end
 
