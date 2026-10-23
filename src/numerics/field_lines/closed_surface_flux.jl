@@ -4,6 +4,11 @@
 # a control-volume face is 2π (H(ψ_end) − H(ψ_start)) at the face's two corners (the dual vertices),
 # and the divergence of every control volume telescopes to zero. The constraint domain is the
 # support of H on the admissible nodes, which leaves every face between it and the rest at one H.
+#
+# Levels are the flux from the axis, Δψ = s (ψ − ψ_axis), signed to grow outward: zero on the axis
+# and positive on every surface around it, s = +1 about a minimum of ψ and −1 about a maximum. The
+# LCFS bisection, the sublevel sweep's order and the double-null tolerance are all in Δψ, so none of
+# them depends on the sign of the current.
 
 """
     closed_surface_basis(G, ψ, admissible; inside = nothing, gram_weights = nothing, nknots = default)
@@ -42,7 +47,7 @@ function closed_surface_basis(
     ψ_axis = FT(o.ψ)
     s = sign(sum(ψ[region]) - length(region) * ψ_axis)
     s == 0 && return nothing
-    # flux from the axis, growing outward, at the dual corners
+    # Δψ at the dual corners: zero on the axis, growing outward
     dc = [s * ((ψ[i, j] + ψ[i + 1, j] + ψ[i, j + 1] + ψ[i + 1, j + 1]) / 4 - ψ_axis) for i in 1:(NR - 1), j in 1:(NZ - 1)]
     Δψ_lcfs = lcfs_level(g, o, s, first_boundary_corner(A, dc))
     Δψ_lcfs === nothing && return nothing
@@ -147,8 +152,8 @@ admissible region instead). Computed on request; the step does not call it.
   (relative) of the first's. `xpoints` holds the X-points on the LCFS, `(; R, Z, ψ)`, nearest the
   axis in flux first.
 - On the grid ([`sublevel_sweep`](@ref)): the nodes in the wall (`in_wall`, NR × NZ) join their
-  neighbours' sublevel sets in increasing flux from the axis, Δψ = s(ψ − ψ_axis), s = +1 about a
-  minimum of ψ. The set of `o` passes a saddle where a node joins it to a set whose lowest node is
+  neighbours' sublevel sets in increasing flux from the axis, Δψ = s(ψ − ψ_axis) ≥ 0, which grows
+  outward (s = +1 about a minimum of ψ, −1 about a maximum). The set of `o` passes a saddle where a node joins it to a set whose lowest node is
   more than two cells from `o`, and touches the wall where it takes a wall node.
 - On the bicubic interpolant: each saddle is the X-point Newton reaches from its node; a contact's
   level is the outermost the tracer of `g` closes around `o` below the node's, as for the basis.
