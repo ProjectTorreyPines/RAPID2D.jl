@@ -44,28 +44,27 @@ function closed_surface_basis(
     s == 0 && return nothing
     # flux from the axis, growing outward, at the dual corners
     dc = [s * ((ψ[i, j] + ψ[i + 1, j] + ψ[i, j + 1] + ψ[i + 1, j + 1]) / 4 - ψ_axis) for i in 1:(NR - 1), j in 1:(NZ - 1)]
-    L = first_boundary_corner(A, dc)
-    L = lcfs_level(g, o, s, L)
-    L === nothing && return nothing
+    Δψ_lcfs = lcfs_level(g, o, s, first_boundary_corner(A, dc))
+    Δψ_lcfs === nothing && return nothing
     lin = LinearIndices((NR, NZ))
-    nodes = [lin[i, j] for j in 2:(NZ - 1), i in 2:(NR - 1) if A[i, j] && corner_min(dc, i, j) < L]
+    nodes = [lin[i, j] for j in 2:(NZ - 1), i in 2:(NR - 1) if A[i, j] && corner_min(dc, i, j) < Δψ_lcfs]
     sort!(nodes)
     isempty(nodes) && return nothing
     active = falses(NR - 1, NZ - 1)
     for k in nodes
         i, j = mod1(k, NR), cld(k, NR)
         for (a, c) in ((i - 1, j - 1), (i, j - 1), (i - 1, j), (i, j))
-            dc[a, c] < L && (active[a, c] = true)
+            dc[a, c] < Δψ_lcfs && (active[a, c] = true)
         end
     end
-    ψN = [s * (ψ[k] - ψ_axis) / L for k in nodes]
+    ψN = [s * (ψ[k] - ψ_axis) / Δψ_lcfs for k in nodes]
     V = [FT(2π) * G.R2D[k] * G.dR * G.dZ for k in nodes]
     gram_w = gram_weights === nothing ? ones(FT, length(nodes)) : FT.(vec(gram_weights)[nodes])
     n0 = nknots === nothing ? default_surface_count(nodes) + 1 : nknots
     knots = merge_knots(collect(range(zero(FT), one(FT); length = max(n0, 2))), ψN, gram_w)
     axis = (; R = FT(o.R), Z = FT(o.Z), ψ = ψ_axis)
     return ClosedSurfaceBasis{FT}(
-        nodes, V, axis, ψ_axis + s * L, ψN, dc ./ L, active, knots,
+        nodes, V, axis, ψ_axis + s * Δψ_lcfs, ψN, dc ./ Δψ_lcfs, active, knots,
         basis_matrix(knots, ψN; beyond = :zero), basis_matrix(knots, ψN; beyond = :constant), (NR, NZ),
     )
 end
@@ -100,33 +99,33 @@ end
 # it, H changes only across faces whose two sides are admissible.
 function first_boundary_corner(A::AbstractMatrix{Bool}, dc::AbstractMatrix{FT}) where {FT}
     NR, NZ = size(A)
-    L = FT(Inf)
+    Δψ = FT(Inf)
     for j in 2:(NZ - 1), i in 1:(NR - 1)          # R faces (i, j)–(i + 1, j): corners (i, j − 1), (i, j)
         A[i, j] == A[i + 1, j] && continue
-        L = min(L, dc[i, j - 1], dc[i, j])
+        Δψ = min(Δψ, dc[i, j - 1], dc[i, j])
     end
     for j in 1:(NZ - 1), i in 2:(NR - 1)          # Z faces (i, j)–(i, j + 1): corners (i − 1, j), (i, j)
         A[i, j] == A[i, j + 1] && continue
-        L = min(L, dc[i - 1, j], dc[i, j])
+        Δψ = min(Δψ, dc[i - 1, j], dc[i, j])
     end
-    return L
+    return Δψ
 end
 
-# The LCFS L (flux from the axis) at or below `L0` whose contour the bicubic tracer closes around `o`
-# inside the wall: L0 itself, or the outermost closed level between the axis and L0, found from a
-# level confirmed closed by bisection. A trace that hits the wall, runs out of budget, meets a null
-# or is not seeded counts as not closed. `nothing` when no level closes.
-function lcfs_level(g::FieldLineGeometry{FT}, o, s, L0) where {FT}
-    isfinite(L0) && L0 > 0 || return nothing
-    closes(L) = trace_around!(PathLengths{FT}(), CubicTracer(), g, FT(o.ψ) + s * L, o).termination === :closed
-    closes(L0) && return L0
-    lo = L0
+# The LCFS's flux from the axis, Δψ = s(ψ − ψ_axis), at or below `Δψ0`, whose contour the bicubic
+# tracer closes around `o` inside the wall: Δψ0 itself, or the outermost closed level between the
+# axis and Δψ0, found from a level confirmed closed by bisection. A trace that hits the wall, runs
+# out of budget, meets a null or is not seeded counts as not closed. `nothing` when no level closes.
+function lcfs_level(g::FieldLineGeometry{FT}, o, s, Δψ0) where {FT}
+    isfinite(Δψ0) && Δψ0 > 0 || return nothing
+    closes(Δψ) = trace_around!(PathLengths{FT}(), CubicTracer(), g, FT(o.ψ) + s * Δψ, o).termination === :closed
+    closes(Δψ0) && return Δψ0
+    lo = Δψ0
     for _ in 1:8
         lo /= 2
         closes(lo) && break
     end
     closes(lo) || return nothing
-    hi = L0
+    hi = Δψ0
     for _ in 1:40
         mid = (lo + hi) / 2
         closes(mid) ? (lo = mid) : (hi = mid)
@@ -135,88 +134,168 @@ function lcfs_level(g::FieldLineGeometry{FT}, o, s, L0) where {FT}
 end
 
 """
-    magnetic_lcfs(G, ψ, o, in_wall; g = FieldLineGeometry(G, ψ)) -> (; ψ_lcfs, ψ_trace, limited_by, R, Z) or nothing
+    magnetic_lcfs(G, ψ, o, in_wall; g = FieldLineGeometry(G, ψ), double_null_tolerance = 0.01)
+        -> (; ψ_lcfs, ψ_trace, configuration, xpoints, contact) or nothing
 
 The last closed flux surface around the O-point `o` (`(; R, Z, ψ)`) as the field and the wall set
-it, with no density or field-line following behind it (the closed-surface basis's LCFS stops at
-its admissible region instead): the surfaces nested around `o` grow until they meet an X-point
-(`limited_by = :xpoint`, a separatrix) or touch the wall (`:wall`), at `(R, Z)`. Computed on
-request; the step does not call it.
+it, with no density or field-line following behind it (the closed-surface basis's LCFS stops at its
+admissible region instead). Computed on request; the step does not call it.
 
-- On the grid: the nodes in the wall (`in_wall`, NR × NZ) join their neighbours' sublevel sets in
-  increasing flux from the axis, L = s(ψ − ψ_axis). The first node that joins the set of `o` to a
-  set whose lowest node is more than two cells from `o` passes a saddle; the first wall node (a
-  neighbour out of the wall, or on the grid's edge) the set of `o` takes is the contact.
-- On the bicubic interpolant: a saddle's level is that of the X-point beside it
-  ([`find_critical_points`](@ref)); a contact's is the outermost level the tracer of `g` closes
-  around `o` below the node's, as for the basis's LCFS.
-- `ψ_trace` is a level at or just inside `ψ_lcfs` that the tracer closes around `o`: the
-  separatrix itself runs through a null.
+- `configuration`: `:limited` when the surfaces nested around `o` touch the wall first, at the wall
+  node `contact` (`(; R, Z)`, NaN otherwise); `:single_null` when they meet an X-point first;
+  `:double_null` when a second X-point's flux from the axis is within `double_null_tolerance`
+  (relative) of the first's. `xpoints` holds the X-points on the LCFS, `(; R, Z, ψ)`, nearest the
+  axis in flux first.
+- On the grid ([`sublevel_sweep`](@ref)): the nodes in the wall (`in_wall`, NR × NZ) join their
+  neighbours' sublevel sets in increasing flux from the axis, Δψ = s(ψ − ψ_axis), s = +1 about a
+  minimum of ψ. The set of `o` passes a saddle where a node joins it to a set whose lowest node is
+  more than two cells from `o`, and touches the wall where it takes a wall node.
+- On the bicubic interpolant: each saddle is the X-point Newton reaches from its node; a contact's
+  level is the outermost the tracer of `g` closes around `o` below the node's, as for the basis.
+- `ψ_trace`: a level at or just inside `ψ_lcfs` that the tracer closes around `o` (a separatrix
+  runs through a null): within 10⁻⁴ … 10⁻¹ of the separatrix's flux from the axis, the closest
+  that closes.
 
-`nothing` when `o` is not an extremum of the interpolant or no level closes.
+`nothing` when `o` is not an extremum of the interpolant, or no level closes.
 """
 function magnetic_lcfs(
         G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, o, in_wall::AbstractMatrix{Bool};
-        g::FieldLineGeometry{FT} = FieldLineGeometry(G, ψ),
+        g::FieldLineGeometry{FT} = FieldLineGeometry(G, ψ), double_null_tolerance::Real = 0.01,
     ) where {FT <: AbstractFloat}
-    NR, NZ = size(ψ)
     H = hessian(g.itp, (o.R, o.Z))
     H[1, 1] * H[2, 2] - H[1, 2] * H[2, 1] > 0 || return nothing
     s = sign(H[1, 1] + H[2, 2])                       # +1 about a minimum of ψ, −1 about a maximum
     ψ_axis = FT(o.ψ)
-    L = s .* (ψ .- ψ_axis)
-    lin = LinearIndices((NR, NZ))
+    tol = FT(double_null_tolerance)
+    sweep = sublevel_sweep(G, ψ, o, in_wall, s, tol)
+    sweep === nothing && return nothing
+    if isempty(sweep.saddles)                         # the wall first: a limited plasma
+        k = sweep.contact
+        Δψ_lcfs = lcfs_level(g, o, s, s * (ψ[k] - ψ_axis))
+        Δψ_lcfs === nothing && return nothing
+        ψ_lcfs = ψ_axis + s * Δψ_lcfs
+        xpoints = NamedTuple{(:R, :Z, :ψ), NTuple{3, FT}}[]
+        return (; ψ_lcfs, ψ_trace = ψ_lcfs, configuration = :limited, xpoints, contact = (; R = G.R2D[k], Z = G.Z2D[k]))
+    end
+    xpoints = saddle_xpoints(G, ψ, g, sweep.saddles)
+    Δψ_of(p) = s * (p.ψ - ψ_axis)
+    sort!(xpoints; by = Δψ_of)
+    Δψ_x = Δψ_of(xpoints[1])
+    Δψ_x > 0 || return nothing
+    filter!(p -> Δψ_of(p) <= Δψ_x * (1 + tol), xpoints)
+    Δψ_trace = level_inside(g, o, s, Δψ_x)
+    Δψ_trace === nothing && return nothing
+    configuration = length(xpoints) >= 2 ? :double_null : :single_null
+    contact = (; R = FT(NaN), Z = FT(NaN))
+    return (; ψ_lcfs = ψ_axis + s * Δψ_x, ψ_trace = ψ_axis + s * Δψ_trace, configuration, xpoints, contact)
+end
+
+"""
+    sublevel_sweep(G, ψ, o, in_wall, s, tol) -> (; saddles, contact) or nothing
+
+The sublevel sets of Δψ = s(ψ − ψ_axis) on the nodes in the wall, grown in increasing Δψ by
+union–find: each node joins its neighbours' sets, and each set keeps its lowest node. Where a node
+would join the set of `o` (lowest node within two cells of `o`) to another set, the set of `o` has
+reached a saddle: the node is recorded and the two sets are kept apart, so that the sweep goes on
+to (1 + `tol`) times the first saddle's level for a second one. The first wall node (a neighbour
+out of the wall, or on the grid's edge) the set of `o` takes ends the sweep as `contact` (0: none).
+`saddles` (node indices) is empty when the wall came first; `nothing` when neither happens. The
+scratch is from the pool.
+"""
+function sublevel_sweep(G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, o, in_wall::AbstractMatrix{Bool}, s, tol::FT) where {FT}
+    NR, NZ = size(ψ)
+    ψ_axis = FT(o.ψ)
     near_o(k) = abs(G.R2D[k] - o.R) <= 2 * G.dR && abs(G.Z2D[k] - o.Z) <= 2 * G.dZ
     on_wall(i, j) = i in (1, NR) || j in (1, NZ) || !(in_wall[i - 1, j] && in_wall[i + 1, j] && in_wall[i, j - 1] && in_wall[i, j + 1])
-    neighbours(i, j) = ((a, b) for (a, b) in ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)) if 1 <= a <= NR && 1 <= b <= NZ)
-    parent = zeros(Int, NR * NZ)                      # 0: not in a sublevel set yet
-    lowest = zeros(Int, NR * NZ)                      # a set's lowest node, kept at its root
-    function root(k)
-        while parent[k] != k
-            parent[k] = parent[parent[k]]
-            k = parent[k]
+    contact = Ref(0)            # outside the pool block: an index read from a pooled array is still an index
+    saddles = @with_pool pool begin
+        Δψ = acquire!(pool, FT, NR * NZ)
+        for k in eachindex(Δψ)
+            Δψ[k] = s * (ψ[k] - ψ_axis)
         end
-        return k
-    end
-    event = nothing
-    for k in sort!(findall(vec(in_wall)); by = k -> L[k])
-        i, j = mod1(k, NR), cld(k, NR)
-        mine, other = near_o(k), false
-        for (a, b) in neighbours(i, j)
-            parent[lin[a, b]] == 0 && continue
-            near_o(lowest[root(lin[a, b])]) ? (mine = true) : (other = true)
+        n = count(in_wall)
+        order = acquire!(pool, Int, n)
+        m = 0
+        for k in eachindex(in_wall)
+            in_wall[k] || continue
+            m += 1
+            order[m] = k
         end
-        if mine && (other || on_wall(i, j))
-            event = (; limited_by = other ? :xpoint : :wall, k)
-            break
-        end
-        parent[k], lowest[k] = k, k
-        for (a, b) in neighbours(i, j)
-            parent[lin[a, b]] == 0 && continue
-            r = root(lin[a, b])
-            r == k && continue
-            parent[r] = k
-            L[lowest[r]] < L[lowest[k]] && (lowest[k] = lowest[r])
-        end
-    end
-    event === nothing && return nothing
-    k = event.k
-    if event.limited_by === :xpoint
-        xs = find_critical_points(G, ψ; kind = XPoint(), itp = g.itp)
-        cells_from(p) = hypot((p.R - G.R2D[k]) / G.dR, (p.Z - G.Z2D[k]) / G.dZ)
-        if !isempty(xs)
-            x = xs[argmin(cells_from.(xs))]
-            Lx = s * (x.ψ - ψ_axis)
-            if cells_from(x) <= 2 && Lx > 0
-                Lt = lcfs_level(g, o, s, Lx * (1 - FT(1.0e-4)))
-                Lt === nothing || return (; ψ_lcfs = ψ_axis + s * Lx, ψ_trace = ψ_axis + s * Lt, limited_by = :xpoint, R = FT(x.R), Z = FT(x.Z))
+        sort!(order; by = k -> Δψ[k], alg = QuickSort)
+        parent = zeros!(pool, Int, NR * NZ)           # 0: not in a set yet
+        lowest = acquire!(pool, Int, NR * NZ)          # a set's lowest node, kept at its root
+        saddle_nodes = acquire!(pool, Int, n)
+        n_saddle, first_level = 0, FT(Inf)
+        for k in order
+            Δψ[k] > first_level * (1 + tol) && break
+            i, j = mod1(k, NR), cld(k, NR)
+            mine, other = near_o(k), false
+            for (a, b) in ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1))
+                (1 <= a <= NR && 1 <= b <= NZ) || continue
+                nb = (b - 1) * NR + a
+                parent[nb] == 0 && continue
+                near_o(lowest[set_root!(parent, nb)]) ? (mine = true) : (other = true)
+            end
+            if mine && other
+                n_saddle += 1
+                saddle_nodes[n_saddle] = k
+                first_level = min(first_level, Δψ[k])
+            elseif mine && on_wall(i, j)
+                contact[] = k
+                break
+            end
+            parent[k], lowest[k] = k, k
+            for (a, b) in ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1))
+                (1 <= a <= NR && 1 <= b <= NZ) || continue
+                nb = (b - 1) * NR + a
+                parent[nb] == 0 && continue
+                r = set_root!(parent, nb)
+                (r == k || (mine && !near_o(lowest[r]))) && continue     # the set of `o` stays apart
+                parent[r] = k
+                Δψ[lowest[r]] < Δψ[lowest[k]] && (lowest[k] = lowest[r])
             end
         end
+        Int[saddle_nodes[i] for i in 1:n_saddle]       # a fresh vector leaves the block, never a pooled one
     end
-    # a contact with the wall, or a saddle with no X-point of the interpolant beside it
-    Lt = lcfs_level(g, o, s, L[k])
-    Lt === nothing && return nothing
-    return (; ψ_lcfs = ψ_axis + s * Lt, ψ_trace = ψ_axis + s * Lt, event.limited_by, R = G.R2D[k], Z = G.Z2D[k])
+    isempty(saddles) && contact[] == 0 && return nothing
+    return (; saddles, contact = contact[])
+end
+
+# A level the tracer closes around `o` just inside the separatrix at flux `Δψ_x` from the axis: the
+# first of 10⁻⁴, 10⁻³, 10⁻², 10⁻¹ below it that closes (beside a null the nearest can fail), else
+# the outermost closed level by bisection.
+function level_inside(g::FieldLineGeometry{FT}, o, s, Δψ_x) where {FT}
+    for gap in (FT(1.0e-4), FT(1.0e-3), FT(1.0e-2), FT(1.0e-1))
+        Δψ = Δψ_x * (1 - gap)
+        trace_around!(PathLengths{FT}(), CubicTracer(), g, FT(o.ψ) + s * Δψ, o).termination === :closed && return Δψ
+    end
+    return lcfs_level(g, o, s, Δψ_x * (1 - FT(1.0e-1)))
+end
+
+# The root of node k's set, halving the path on the way.
+function set_root!(parent, k)
+    while parent[k] != k
+        parent[k] = parent[parent[k]]
+        k = parent[k]
+    end
+    return k
+end
+
+# The X-points Newton reaches from the saddle nodes of a sweep, each kept once (within two cells):
+# a converged root within two cells of its node, with a negative Hessian determinant. When no
+# search converges, the first node stands for its X-point.
+function saddle_xpoints(G::GridGeometry{FT}, ψ::AbstractMatrix{FT}, g, saddles) where {FT}
+    xpoints = NamedTuple{(:R, :Z, :ψ), NTuple{3, FT}}[]
+    tol, h = max(FT(1.0e-10), 64 * eps(FT)), min(G.dR, G.dZ)
+    for k in saddles
+        x0 = (G.R2D[k], G.Z2D[k])
+        x, converged, det = newton_critical_point(g.itp, x0, h; tol, maxit = 50)
+        (converged && det < 0 && abs(x[1] - x0[1]) <= 2 * G.dR && abs(x[2] - x0[2]) <= 2 * G.dZ) || continue
+        any(p -> hypot((x[1] - p.R) / G.dR, (x[2] - p.Z) / G.dZ) < 2, xpoints) && continue
+        push!(xpoints, (; R = FT(x[1]), Z = FT(x[2]), ψ = FT(g.itp(x))))
+    end
+    isempty(xpoints) && push!(xpoints, (; R = G.R2D[saddles[1]], Z = G.Z2D[saddles[1]], ψ = ψ[saddles[1]]))
+    return xpoints
 end
 
 # The knot weights at x: the values of the basis functions of `knots` (row: point, column: knot);
