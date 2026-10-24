@@ -32,12 +32,13 @@ function find_o_point(
     return (; R = x[1], Z = x[2], ψ = itp(x), converged = converged && in_region_cell(G, region, x))
 end
 
-# Damped Newton on ∇ψ = 0 from x, h the grid spacing: the point reached, and whether a full Newton
-# correction fell below `tol` h there with a definite Hessian (an extremum, not an X-point). A line
-# search that cannot lower |∇ψ| stops it unconverged.
-function newton_extremum(itp, x, h; tol, maxit)
+# Damped Newton on ∇ψ = 0 from x, h the grid spacing: the point reached, whether a full Newton
+# correction fell below `tol` h there, and the Hessian determinant it saw (> 0 an extremum, < 0 a
+# saddle). A line search that cannot lower |∇ψ| stops it unconverged.
+function newton_critical_point(itp, x, h; tol, maxit)
     FT = typeof(h)
     converged = false
+    det = zero(FT)
     for _ in 1:maxit
         g = gradient(itp, x)
         H = hessian(itp, x)
@@ -46,7 +47,7 @@ function newton_extremum(itp, x, h; tol, maxit)
         δ = ((H[2, 2] * g[1] - H[1, 2] * g[2]) / det, (H[1, 1] * g[2] - H[2, 1] * g[1]) / det)
         if hypot(δ[1], δ[2]) < tol * h          # the full correction is already negligible
             x = (x[1] - δ[1], x[2] - δ[2])
-            converged = det > 0
+            converged = true
             break
         end
         # Backtrack until |∇ψ| decreases: a full Newton step can overshoot on a coarse grid.
@@ -63,7 +64,13 @@ function newton_extremum(itp, x, h; tol, maxit)
         decreased || break
         x = xn
     end
-    return x, converged
+    return x, converged, det
+end
+
+# The same search kept to extrema: converged only with a definite Hessian, not at an X-point.
+function newton_extremum(itp, x, h; tol, maxit)
+    x, converged, det = newton_critical_point(itp, x, h; tol, maxit)
+    return x, converged && det > 0
 end
 
 # Whether the cell containing `x` has a corner in `region`.
@@ -94,6 +101,66 @@ function o_point_seed(G::GridGeometry, ψ::AbstractMatrix, region::AbstractVecto
     ψ_edge = edge_count > 0 ? edge_sum / edge_count : sum(ψ[region]) / length(region)
     return region[argmax(abs.(ψ[region] .- ψ_edge))]
 end
+
+# ── critical points of ψ, on request ──────────────────────────────────────────────
+
+"""
+Which critical points of ψ (∇ψ = 0) [`find_critical_points`](@ref) returns: `AnyCriticalPoint()`
+both kinds, `OPoint()` the extrema (a definite Hessian: the axis of nested surfaces), `XPoint()` the
+saddles (an indefinite Hessian: where surfaces cross). A point found carries `OPoint()` or `XPoint()`.
+"""
+abstract type CriticalPointKind end
+struct AnyCriticalPoint <: CriticalPointKind end
+struct OPoint <: CriticalPointKind end
+struct XPoint <: CriticalPointKind end
+
+selects(::AnyCriticalPoint, ::CriticalPointKind) = true
+selects(kind::CriticalPointKind, found::CriticalPointKind) = kind === found
+
+"""
+    find_critical_points(G, ψ; kind = AnyCriticalPoint(), inside = nothing, itp = psi_interpolant(G, ψ), tol, maxit = 50)
+        -> Vector of (; R, Z, ψ, kind)
+
+The critical points of the bicubic interpolant of `ψ`, on request (the step never calls it):
+O-points, X-points or both, by `kind`. Every cell whose corners see both centred differences
+∂ψ/∂R and ∂ψ/∂Z change sign (zero included) seeds the Newton search of [`find_o_point`](@ref); a
+converged root within a cell of its seed is kept once, as `OPoint()` or `XPoint()` by the sign of
+its Hessian determinant. `inside` (an NR × NZ mask, such as the wall's) keeps the points in cells
+with a corner in it. A cell needs centred differences at its four corners, so a point within one
+spacing of the grid's edge is not searched.
+"""
+function find_critical_points(
+        G::GridGeometry{FT}, ψ::AbstractMatrix{FT}; kind::CriticalPointKind = AnyCriticalPoint(),
+        inside::Union{Nothing, AbstractMatrix{Bool}} = nothing, itp = nothing,
+        tol::Real = max(1.0e-10, 64 * eps(FT)), maxit::Int = 50,
+    ) where {FT <: AbstractFloat}
+    itp === nothing && (itp = psi_interpolant(G, ψ))
+    h = min(G.dR, G.dZ)
+    found = NamedTuple{(:R, :Z, :ψ, :kind), Tuple{FT, FT, FT, Union{OPoint, XPoint}}}[]
+    ∂R(i, j) = ψ[i + 1, j] - ψ[i - 1, j]
+    ∂Z(i, j) = ψ[i, j + 1] - ψ[i, j - 1]
+    straddles(f, i, j) = (c = (f(i, j), f(i + 1, j), f(i, j + 1), f(i + 1, j + 1)); minimum(c) <= 0 <= maximum(c))
+    for j in 2:(G.NZ - 2), i in 2:(G.NR - 2)              # the cell of nodes i..i+1 × j..j+1
+        inside === nothing || in_mask_cell(inside, i, j) || continue
+        (straddles(∂R, i, j) && straddles(∂Z, i, j)) || continue
+        x0 = (G.R1D[i] + G.dR / 2, G.Z1D[j] + G.dZ / 2)
+        x, converged, det = newton_critical_point(itp, x0, h; tol, maxit)
+        (converged && abs(x[1] - x0[1]) <= 1.5 * G.dR && abs(x[2] - x0[2]) <= 1.5 * G.dZ) || continue
+        inside === nothing || in_mask_cell(inside, cell_of(G, x)...) || continue
+        p_kind = det > 0 ? OPoint() : XPoint()
+        selects(kind, p_kind) || continue
+        any(p -> hypot((x[1] - p.R) / G.dR, (x[2] - p.Z) / G.dZ) < 0.5, found) && continue
+        push!(found, (; R = x[1], Z = x[2], ψ = FT(itp(x)), kind = p_kind))
+    end
+    return found
+end
+
+# The cell (lower-left node i, j) that holds `x`, and whether a cell has a corner in `mask`.
+cell_of(G::GridGeometry, x) = (
+    clamp(floor(Int, (x[1] - G.R1D[1]) / G.dR) + 1, 1, G.NR - 1),
+    clamp(floor(Int, (x[2] - G.Z1D[1]) / G.dZ) + 1, 1, G.NZ - 1),
+)
+in_mask_cell(mask, i, j) = mask[i, j] || mask[i + 1, j] || mask[i, j + 1] || mask[i + 1, j + 1]
 
 """
     surface_levels(o, ψ, region; nsurf = default) -> (; ψ_axis, ψ_edge, ψN, ψ)

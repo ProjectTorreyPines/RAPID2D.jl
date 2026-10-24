@@ -59,6 +59,59 @@ end
     end
 end
 
+@testitem "Critical points: a saddle and an extremum off the grid nodes" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: find_critical_points, OPoint, XPoint, AnyCriticalPoint
+    # quadratics, which the bicubic interpolant reproduces: the point is found to round-off
+    for N in (31, 61), κ in (1.0, 1.6)
+        G = test_grid(N)
+        for (ψ, kind) in ((ellipse_ψ(G; κ), OPoint()), (@.((G.R2D - R0)^2 - ((G.Z2D - Z0) / κ)^2), XPoint()))
+            pts = find_critical_points(G, ψ)
+            @test length(pts) == 1
+            p = only(pts)
+            @test p.kind === kind
+            @test abs(p.R - R0) < 1.0e-6 * G.dR
+            @test abs(p.Z - Z0) < 1.0e-6 * G.dZ
+            @test abs(p.ψ) < 1.0e-10
+        end
+    end
+    # on a grid node, where its centred differences vanish: found once, from the cells around it
+    G = test_grid(31)
+    for (ψ, kind) in ((@.((G.R2D - 1.5)^2 + G.Z2D^2), OPoint()), (@.((G.R2D - 1.5)^2 - G.Z2D^2), XPoint()))
+        p = only(find_critical_points(G, ψ))
+        @test p.kind === kind
+        @test abs(p.R - 1.5) < 1.0e-6 * G.dR && abs(p.Z) < 1.0e-6 * G.dZ
+    end
+end
+
+@testitem "Critical points: two O-points and the X-point between them, chosen by kind" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: find_critical_points, OPoint, XPoint, AnyCriticalPoint
+    # ψ = ((R − R0)² − a²)² + (Z − Z0)²: minima at R0 ± a, a saddle at R0 between them
+    a = 0.2
+    G = test_grid(61)
+    ψ = @. ((G.R2D - R0)^2 - a^2)^2 + (G.Z2D - Z0)^2
+    all_pts = find_critical_points(G, ψ)
+    @test find_critical_points(G, ψ; kind = AnyCriticalPoint()) == all_pts
+    @test length(all_pts) == 3
+    os = sort(find_critical_points(G, ψ; kind = OPoint()); by = p -> p.R)
+    xs = find_critical_points(G, ψ; kind = XPoint())
+    @test length(os) == 2 && all(p -> p.kind === OPoint(), os)
+    @test length(xs) == 1 && only(xs).kind === XPoint()
+    @test all(abs(p.Z - Z0) < 1.0e-2 * G.dZ for p in all_pts)
+    @test abs(os[1].R - (R0 - a)) < 1.0e-2 * G.dR && abs(os[2].R - (R0 + a)) < 1.0e-2 * G.dR
+    @test abs(only(xs).R - R0) < 1.0e-2 * G.dR
+    # a mask keeps the cells with a corner in it: here only the right-hand O-point
+    right = G.R2D .> R0 + a / 2
+    r = find_critical_points(G, ψ; inside = right)
+    @test length(r) == 1 && abs(only(r).R - os[2].R) < 1.0e-8 * G.dR
+    @test isempty(find_critical_points(G, ψ; kind = XPoint(), inside = right))
+end
+
+@testitem "Critical points: none in a field without one" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: find_critical_points
+    G = test_grid(31)
+    @test isempty(find_critical_points(G, @.(G.R2D^2 + 0.3 * G.Z2D)))
+end
+
 @testitem "Flux surfaces: levels from the axis to the region's edge" setup = [FluxSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: find_o_point, surface_levels
     G = test_grid(61)

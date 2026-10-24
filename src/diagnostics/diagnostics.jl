@@ -420,6 +420,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     lcfs = closed_region_lcfs(RP)
     snap2D.ψ_axis, snap2D.ψ_lcfs, snap2D.R_axis, snap2D.Z_axis = lcfs === nothing ? (FT(NaN), FT(NaN), FT(NaN), FT(NaN)) :
         (lcfs.ψ_axis, lcfs.ψ_lcfs, lcfs.R, lcfs.Z)
+    measure_magnetic_lcfs!(snap2D, RP, lcfs)
 
     # Electron velocity components
     snap2D.ueR .= pla.ueR
@@ -515,6 +516,29 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     end
 
     return RP
+end
+
+# The magnetic LCFS around the closed region's axis (`lcfs`, from `closed_region_lcfs`), as the
+# 2D snapshot records it: NaN and configuration 0 without an axis or without a closed level.
+function measure_magnetic_lcfs!(snap2D::Snapshot2D{FT}, RP::RAPID{FT}, lcfs) where {FT <: AbstractFloat}
+    nan = FT(NaN)
+    snap2D.ψ_lcfs_magnetic, snap2D.lcfs_configuration = nan, 0
+    snap2D.R_geo, snap2D.Z_geo, snap2D.R_contact, snap2D.Z_contact = nan, nan, nan, nan
+    snap2D.R_xpoint1, snap2D.Z_xpoint1, snap2D.R_xpoint2, snap2D.Z_xpoint2 = nan, nan, nan, nan
+    lcfs === nothing && return snap2D
+    G, ψ = RP.G, RP.fields.ψ
+    in_wall = falses(G.NR, G.NZ)
+    in_wall[G.nodes.in_wall_nids] .= true
+    g = FieldLineGeometry(G, ψ; inside = G.cell_state .>= 0)
+    m = magnetic_lcfs(G, ψ, (; R = lcfs.R, Z = lcfs.Z, ψ = lcfs.ψ_axis), in_wall; g)
+    m === nothing && return snap2D
+    snap2D.ψ_lcfs_magnetic = m.ψ_lcfs
+    snap2D.lcfs_configuration = findfirst(==(m.configuration), LCFS_CONFIGURATIONS)
+    snap2D.R_geo, snap2D.Z_geo = m.geometric_centre.R, m.geometric_centre.Z
+    snap2D.R_contact, snap2D.Z_contact = m.contact.R, m.contact.Z
+    length(m.xpoints) >= 1 && ((snap2D.R_xpoint1, snap2D.Z_xpoint1) = (m.xpoints[1].R, m.xpoints[1].Z))
+    length(m.xpoints) >= 2 && ((snap2D.R_xpoint2, snap2D.Z_xpoint2) = (m.xpoints[2].R, m.xpoints[2].Z))
+    return snap2D
 end
 
 """

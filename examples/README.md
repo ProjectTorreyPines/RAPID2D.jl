@@ -11,6 +11,14 @@ julia --project=examples -e 'using Pkg; Pkg.instantiate()'   # once
 julia --project=examples examples/townsend_avalanche.jl
 ```
 
+To draw a finished run's figures again without running it, from its output folder alone:
+
+```
+julia --project=examples examples/plot_run.jl examples/output/kstar_reference
+```
+
+It reads the folder's grid, wall and snapshot files, so the run's input files are not needed.
+
 The examples environment develops RAPID2D from the parent directory (the `[sources]` entry
 of `Project.toml`, which needs Julia 1.11 or later). It also adds `Plots`, which activates
 the plotting extension; the mp4 uses the FFMPEG that ships with it. Outputs go to
@@ -39,7 +47,7 @@ Known failures, and the work each belongs to:
 | `force_balance_control.jl` | pure toroidal field | J×B hoop force; curved vertical-field PID position control | 2 × 2 ms | the controller holds the current centroid within 5 cm of 1.5 m after 1 ms |
 | `full_startup.jl` | single-quadrupole null, box wall | every module except the global J×B force | 10 ms | scenario, no verdict |
 | `xpoint_mixing.jl` | straight vertical lines, then an analytic X-point written as the external field; box wall | mixing of u∥ and Tₑ along the lines alone: a frozen field-aligned tensor, no field, no collisions, reflective wall; then a blob beside the null | 6 crossing times; 0.25 ms | a column settles within 1 % of its particle-weighted mean and energy-conserving temperature; on the X-point the particle momentum and energy are kept within 1 % |
-| `kstar_reference.jl` | KSTAR, time-varying external field | self-E model, Ampère off | 40 ms | scenario, no verdict |
+| `kstar_reference.jl` | KSTAR, time-varying external field | every module at its default, plus Ampère, the closed-surface constraint and an ideal vertical field from 40 ms | 59 ms | scenario, no verdict |
 
 ## Coupled-step verification (`coupled_step/`)
 
@@ -147,4 +155,9 @@ The examples use three forms:
   `force_balance_control.jl`.
 - `run!`: runs to the end, or reports a failure mid-run and keeps the snapshots taken so far.
 - The plots: `plot_traces`, `plot_dashboard`, `plot_snapshots2D`, `animate2D`.
+- A run's files read back (`load_run`) and every figure drawn from them (`plot_run_figures`,
+  as `plot_run.jl` does): the flux-surface frames (log nₑ, nₑ, Tₑ, u∥ and Jϕ side by side, each
+  over its colour bar, with the basis's and the magnetic LCFS, the O- and X-points, the current
+  centroid and the LCFS's geometric centre; `fields_frame`, `animate_fields`,
+  `plot_fields_snapshots`), the column table and figure, the 0D traces and dashboard.
 - `StepRecord` and `recorder`, a per-step record for `callback_after_step`.

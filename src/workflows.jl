@@ -282,6 +282,53 @@ function check_step_argument(RP::RAPID{FT}, dt::FT) where {FT <: AbstractFloat}
     return nothing
 end
 
+# ── progress line ──────────────────────────────────────────────────────────────────
+# A header, then one row every `PROGRESS_NSTEP` steps: the step and the simulated time; the
+# peak nₑ, the electron-weighted ⟨Tₑ⟩ (as the 0D snapshots) and |I_tor|; then the wall time
+# per step since the last row, the elapsed and remaining wall time (remaining at that recent
+# rate, since the cost of a step changes from phase to phase) and the fraction done. A
+# closing line gives the totals.
+const PROGRESS_NSTEP = 100
+
+format_hms(s) = (s = max(0, round(Int, s)); @sprintf("%d:%02d:%02d", s ÷ 3600, (s % 3600) ÷ 60, s % 60))
+
+mutable struct ProgressLine
+    const wall_start::Float64
+    const step_start::Int
+    wall_last::Float64
+    step_last::Int
+end
+ProgressLine(RP::RAPID) = (w = time(); ProgressLine(w, RP.step, w, RP.step))
+
+function print_progress_header()
+    @printf("%8s %10s %14s %10s %11s %9s %9s %9s %6s\n", "step", "t [ms]", "max nₑ [m⁻³]", "⟨Tₑ⟩ [eV]", "|I_tor| [A]", "ms/step", "elapsed", "ETA", "%")
+    println("─"^93)
+    return nothing
+end
+
+function print_progress!(p::ProgressLine, RP::RAPID)
+    wall = time()
+    per_step = (wall - p.wall_last) / max(RP.step - p.step_last, 1)
+    remaining = max(RP.t_end_s - RP.time_s, 0.0) / RP.dt
+    I_tor = abs(sum(RP.plasma.Jϕ) * RP.G.dR * RP.G.dZ)
+    ne, Te, vol = RP.plasma.ne, RP.plasma.Te_eV, RP.G.inVol2D
+    Te_mean = sum(i -> Te[i] * ne[i] * vol[i], eachindex(vol)) / sum(i -> ne[i] * vol[i], eachindex(vol))
+    # the first row's steps carry the compilation, so it gives no ETA
+    eta = p.step_last == p.step_start ? "–" : format_hms(per_step * remaining)
+    @printf(
+        "%8d %10.2f %14.2e %10.2f %11.3g %9.1f %9s %9s %6.1f\n", RP.step, 1.0e3RP.time_s, maximum(ne), Te_mean, I_tor,
+        1.0e3per_step, format_hms(wall - p.wall_start), eta, 100RP.time_s / RP.t_end_s
+    )
+    p.wall_last, p.step_last = wall, RP.step
+    return nothing
+end
+
+function print_progress_done(p::ProgressLine, RP::RAPID)
+    wall, nsteps = time() - p.wall_start, RP.step - p.step_start
+    @printf("done: t = %.2f ms, %d steps in %s (%.1f ms/step)\n", 1.0e3RP.time_s, nsteps, format_hms(wall), 1.0e3wall / max(nsteps, 1))
+    return nothing
+end
+
 """
     run_simulation!(RP::RAPID{FT}) where FT<:AbstractFloat
 
@@ -360,6 +407,8 @@ function run_simulation!(
         # Main time loop
         @timeit RAPID_TIMER "main_time_loop" begin
             tx = StepTransaction(RP)
+            progress = ProgressLine(RP)
+            print_progress_header()
             while RP.time_s < t_end - 0.1 * dt
 
                 # One time step as a transaction: set its inputs from the state at tⁿ, let the
@@ -393,10 +442,7 @@ function run_simulation!(
                     update_transport_quantities!(RP)
                 end
 
-                # Print progress
-                if RP.step % 100 == 0
-                    @printf("Time: %.6e s, Step: %d\n", RP.time_s, RP.step)
-                end
+                RP.step % PROGRESS_NSTEP == 0 && print_progress!(progress, RP)
 
                 # Handle snapshots and file outputs if needed
                 if is_snap0D_time(RP)
@@ -422,9 +468,8 @@ function run_simulation!(
                     callback_after_step(RP)
                 end
             end
+            print_progress_done(progress, RP)
         end
-
-        println("Simulation completed")
 
         return RP
     end

@@ -60,6 +60,187 @@ end
     end
 end
 
+@testsnippet MagneticLCFSFixtures begin
+    using RAPID2D: initialize_grid_geometry
+
+    # the axis off the nodes; the double null's X-points at Z = Zc ± d
+    const Rc, Zc, d = 1.5113, 0.0071, 0.3
+
+    "A uniform N × N grid on R ∈ [1, 2], Z ∈ [−0.5, 0.5]."
+    square_grid(N) = initialize_grid_geometry(N, N, (1.0, 2.0), (-0.5, 0.5))
+
+    """
+    ψ = x² + z² − z⁴/(2d²) + ε z³ with x = R − Rc, z = Z − Zc: a minimum on the axis and two X-points
+    on x = 0, at the roots of 2 − 2z²/d² + 3εz = 0. At ε = 0, a double null at z = ±d on ψ = d²/2.
+    The gradient is exact, and with it B = (−ψ_Z, ψ_R)/R.
+    """
+    dn_ψ(R, Z; ε = 0.0) = (x = R - Rc; z = Z - Zc; x^2 + z^2 - z^4 / (2d^2) + ε * z^3)
+    dn_grad(R, Z; ε = 0.0) = (x = R - Rc; z = Z - Zc; (2x, 2z - 2z^3 / d^2 + 3ε * z^2))
+
+    "The X-points of `dn_ψ`, `(; R, Z, ψ)`, the upper first."
+    function dn_xpoints(; ε = 0.0)
+        r = sqrt(9ε^2 + 16 / d^2)
+        return [(; R = Rc, Z = Zc + z, ψ = z^2 - z^4 / (2d^2) + ε * z^3) for z in ((3ε + r) * d^2 / 4, (3ε - r) * d^2 / 4)]
+    end
+
+    "Even–odd point in polygon."
+    function in_polygon(x, y, px, py)
+        c = false
+        for i in eachindex(px)
+            j = i == 1 ? lastindex(px) : i - 1
+            ((py[i] > y) != (py[j] > y)) && (x < (px[j] - px[i]) * (y - py[i]) / (py[j] - py[i]) + px[i]) && (c = !c)
+        end
+        return c
+    end
+
+    "A polygon wall: the nodes inside it, and the cells with four corners inside for the tracer."
+    function polygon_wall(G, px, py)
+        nodes = [in_polygon(G.R1D[i], G.Z1D[j], px, py) for i in 1:G.NR, j in 1:G.NZ]
+        cells = [i < G.NR && j < G.NZ && nodes[i, j] && nodes[i + 1, j] && nodes[i, j + 1] && nodes[i + 1, j + 1] for i in 1:G.NR, j in 1:G.NZ]
+        return (; nodes, cells)
+    end
+
+    # a KSTAR-like wall: flat inboard, top and bottom, slanted shoulders, flat outboard
+    const POLY_R = [1.1, 1.6, 1.9, 1.9, 1.6, 1.1]
+    const POLY_Z = [-0.45, -0.45, -0.15, 0.15, 0.45, 0.45]
+end
+
+@testitem "Magnetic LCFS: a double null, and the X-point that bounds a near double null" setup = [MagneticLCFSFixtures] tags = [:numerics] begin
+    using RAPID2D: magnetic_lcfs, FieldLineGeometry, trace_around!, CubicTracer, PathLengths
+    G = square_grid(61)
+    in_wall = trues(G.NR, G.NZ)
+    o = (; R = Rc, Z = Zc, ψ = 0.0)
+    # symmetric: both X-points on the LCFS, where the exact field vanishes
+    ψ = dn_ψ.(G.R2D, G.Z2D)
+    g = FieldLineGeometry(G, ψ)
+    m = magnetic_lcfs(G, ψ, o, in_wall; g)
+    @test m.configuration === :double_null
+    @test length(m.xpoints) == 2
+    for (x, exact) in zip(sort(m.xpoints; by = p -> -p.Z), dn_xpoints())
+        @test abs(x.R - exact.R) < 1.0e-2 * G.dR && abs(x.Z - exact.Z) < 1.0e-2 * G.dZ
+        @test hypot(dn_grad(x.R, x.Z)...) < 1.0e-2 * hypot(dn_grad(Rc + d / sqrt(2), Zc)...)
+    end
+    @test m.ψ_lcfs ≈ d^2 / 2 rtol = 1.0e-3
+    @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed
+    # symmetric, so its geometric centre is the axis
+    @test abs(m.geometric_centre.R - Rc) < 0.05 * G.dR && abs(m.geometric_centre.Z - Zc) < 0.05 * G.dZ
+    # tilted by ε: the lower X-point is a few per cent closer in flux and alone bounds the LCFS
+    ε = 0.04
+    up, low = dn_xpoints(; ε)
+    @test 0.03 < up.ψ / low.ψ - 1 < 0.1
+    ψ = dn_ψ.(G.R2D, G.Z2D; ε)
+    g = FieldLineGeometry(G, ψ)
+    m = magnetic_lcfs(G, ψ, o, in_wall; g)
+    @test m.configuration === :single_null
+    x = only(m.xpoints)
+    @test abs(x.R - low.R) < 1.0e-2 * G.dR && abs(x.Z - low.Z) < 1.0e-2 * G.dZ
+    @test m.ψ_lcfs ≈ low.ψ rtol = 1.0e-3
+    # it spans the lower X-point to its top on x = 0, where ψ climbs to the X-point's level
+    f(z) = z^2 - z^4 / (2d^2) + ε * z^3
+    z_top = let lo = 0.0, hi = up.Z - Zc
+        for _ in 1:60
+            mid = (lo + hi) / 2
+            f(mid) < low.ψ ? (lo = mid) : (hi = mid)
+        end
+        lo
+    end
+    @test abs(m.geometric_centre.Z - (Zc + (z_top + low.Z - Zc) / 2)) < 0.05 * G.dZ
+    @test abs(m.geometric_centre.R - Rc) < 0.05 * G.dR
+    # a tolerance wider than the gap takes both
+    m = magnetic_lcfs(G, ψ, o, in_wall; g, double_null_tolerance = 0.2)
+    @test m.configuration === :double_null && length(m.xpoints) == 2
+    @test m.ψ_lcfs ≈ low.ψ rtol = 1.0e-3
+end
+
+@testitem "Magnetic LCFS: X-points just inside or just outside a rectangular wall" setup = [MagneticLCFSFixtures] tags = [:numerics] begin
+    using RAPID2D: magnetic_lcfs, FieldLineGeometry, trace_around!, CubicTracer, PathLengths
+    G = square_grid(81)
+    o = (; R = Rc, Z = Zc, ψ = 0.0)
+    ψ = dn_ψ.(G.R2D, G.Z2D)
+    f(z) = z^2 - z^4 / (2d^2)                 # ψ on x = 0
+    for (w, inside) in ((d + 3 * G.dZ, true), (d - 3 * G.dZ, false))
+        wall = polygon_wall(G, [Rc - 0.35, Rc + 0.35, Rc + 0.35, Rc - 0.35], [Zc - w, Zc - w, Zc + w, Zc + w])
+        g = FieldLineGeometry(G, ψ; inside = wall.cells)
+        m = magnetic_lcfs(G, ψ, o, wall.nodes; g)
+        @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed
+        if inside                              # the separatrix closes inside the wall
+            @test m.configuration === :double_null
+            @test m.ψ_lcfs ≈ d^2 / 2 rtol = 1.0e-3
+        else                                   # the top or bottom wall first, on the axis's vertical
+            @test m.configuration === :limited && isempty(m.xpoints)
+            @test abs(m.contact.R - Rc) < 1.5 * G.dR && abs(abs(m.contact.Z - Zc) - w) < 1.5 * G.dZ
+            @test f(w - 2 * G.dZ) <= m.ψ_lcfs <= f(w) && m.ψ_lcfs < d^2 / 2
+        end
+    end
+end
+
+@testitem "Magnetic LCFS: a slanted wall limits a circle at its nearest point, not a double null inside it" setup = [MagneticLCFSFixtures] tags = [:numerics] begin
+    using RAPID2D: magnetic_lcfs, FieldLineGeometry, trace_around!, CubicTracer, PathLengths
+    G = square_grid(81)
+    wall = polygon_wall(G, POLY_R, POLY_Z)
+    h = hypot(G.dR, G.dZ)
+    # circles about (1.55, 0.06): the upper shoulder R + Z = 2.05 is the nearest side, at its foot
+    Ra, Za = 1.55, 0.06
+    ψ = @. (G.R2D - Ra)^2 + (G.Z2D - Za)^2
+    dist = (2.05 - Ra - Za) / sqrt(2)
+    foot = (Ra + dist / sqrt(2), Za + dist / sqrt(2))
+    @test dist < minimum((1.9 - Ra, 0.45 - Za, Ra - 1.1, (Ra - Za - 2.05) / -sqrt(2)))   # nearer than any other side
+    g = FieldLineGeometry(G, ψ; inside = wall.cells)
+    o = (; R = Ra, Z = Za, ψ = 0.0)
+    m = magnetic_lcfs(G, ψ, o, wall.nodes; g)
+    @test m.configuration === :limited
+    @test hypot(m.contact.R - foot[1], m.contact.Z - foot[2]) < 2 * h
+    @test dist - 1.5 * h <= sqrt(m.ψ_lcfs) <= dist + 0.1 * h
+    @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed
+    # the double null fits inside the same wall: its separatrix, not the shoulders, bounds it
+    ψ = dn_ψ.(G.R2D, G.Z2D)
+    g = FieldLineGeometry(G, ψ; inside = wall.cells)
+    m = magnetic_lcfs(G, ψ, (; R = Rc, Z = Zc, ψ = 0.0), wall.nodes; g)
+    @test m.configuration === :double_null
+    @test m.ψ_lcfs ≈ d^2 / 2 rtol = 1.0e-3
+end
+
+@testitem "Magnetic LCFS: a separatrix through the X-point between two O-points" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: magnetic_lcfs, find_critical_points, OPoint, FieldLineGeometry, trace_around!, CubicTracer, PathLengths
+    # ψ = c (((R − R0)² − a²)² + (Z − Z0)²): O-points at R0 ± a, the X-point at R0 on ψ = c a⁴
+    a = 0.2
+    G = grid(61)
+    ψ = @. c * (((G.R2D - R0)^2 - a^2)^2 + (G.Z2D - Z0)^2)
+    in_wall = trues(G.NR, G.NZ)
+    g = FieldLineGeometry(G, ψ)
+    for o in find_critical_points(G, ψ; kind = OPoint())
+        m = magnetic_lcfs(G, ψ, o, in_wall; g)
+        @test m.configuration === :single_null
+        x = only(m.xpoints)
+        @test abs(x.R - R0) < 1.0e-2 * G.dR && abs(x.Z - Z0) < 1.0e-2 * G.dZ
+        @test m.ψ_lcfs ≈ c * a^4 rtol = 1.0e-3
+        # the level to trace is inside the separatrix and closes around this O-point alone
+        @test abs(m.ψ_trace - o.ψ) < abs(m.ψ_lcfs - o.ψ)
+        @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed
+    end
+end
+
+@testitem "Magnetic LCFS: the wall limits it, beyond the density's region" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
+    using RAPID2D: magnetic_lcfs, closed_surface_basis, find_o_point, FieldLineGeometry, trace_around!, CubicTracer, PathLengths
+    G = grid(61)
+    ψ = ellipse(G)
+    R_wall = 1.75
+    cells = cells_left_of(G, R_wall)
+    in_wall = Matrix{Bool}(G.R2D .< R_wall)
+    g = FieldLineGeometry(G, ψ; inside = cells)
+    o = find_o_point(G, ψ, findall(vec(admissible_ellipse(G; a = 0.1))); itp = g.itp)
+    m = magnetic_lcfs(G, ψ, o, in_wall; g)
+    @test m.configuration === :limited && isempty(m.xpoints)
+    @test abs(m.contact.R - R_wall) < 1.5 * G.dR
+    @test abs(m.geometric_centre.R - R0) < 0.05 * G.dR && abs(m.geometric_centre.Z - Z0) < 0.05 * G.dZ
+    # the contour reaches the wall: its outboard midplane radius is the wall's, to a cell
+    @test abs(sqrt(m.ψ_lcfs / c) - (R_wall - R0)) < 1.5 * G.dR
+    @test trace_around!(PathLengths{Float64}(), CubicTracer(), g, m.ψ_trace, o).termination === :closed
+    # the closed-surface basis on a smaller density region stops inside it
+    b = closed_surface_basis(G, ψ, admissible_ellipse(G; a = 0.15); inside = cells)
+    @test b.ψ_lcfs < m.ψ_lcfs
+end
+
 @testitem "Closed-surface flux: the stream-function flux telescopes and matches (n u∥/B) B_pol" setup = [ClosedSurfaceFixtures] tags = [:numerics] begin
     using RAPID2D: closed_surface_basis, stream_function_fluxes, face_outflow
     using RAPID2D.Statistics: median
