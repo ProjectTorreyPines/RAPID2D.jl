@@ -12,8 +12,11 @@
 # `ion_transport_solve_test.jl`.
 
 @testsnippet IonRun begin
-    "A discharge-shaped setup with a box wall and ions free to evolve."
-    function ion_case(; NR = 25, NZ = 25, ne = 1.0e15, Te = 5.0, kw...)
+    """
+    A discharge-shaped setup with a box wall and ions free to evolve. `coupled = false` reads the
+    species' own coefficients: the common mode uncoupled, nothing of it mixed in.
+    """
+    function ion_case(; NR = 25, NZ = 25, ne = 1.0e15, Te = 5.0, coupled = true, kw...)
         config = SimulationConfig{Float64}(
             device_Name = "manual", NR = NR, NZ = NZ,
             R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
@@ -24,6 +27,10 @@
         )
         RP = RAPID{Float64}(config)
         initialize!(RP)
+        if !coupled
+            RP.flags.ambipolar_coupling = false
+            fill!(RP.plasma.ambipolar_weight, 0.0)
+        end
         RP.flags.update_ni_independently = true
         RP.plasma.ne .= ne
         RP.plasma.ni .= ne
@@ -249,7 +256,7 @@ end
     # A heavy species keeps a floor rather than stopping: the bath sets m_z ν_z.
     # Being carried along by the bulk is convection (the shared u_i) plus the pinch
     # term — not a shared D. See internal/docs/src/details/impurity-transport-basics.md §4.
-    RP = ion_case()
+    RP = ion_case(; coupled = false)
     RP.flags.Atomic_Collision = false          # Coulomb-only, so the ratio is clean
     update_transport_quantities!(RP)
     turb = shared_turbulent_channel(RP)
@@ -390,7 +397,7 @@ end
     # v̄ from it makes the wall depend on that choice: the collisional channel
     # declares vp = √(2T/m) while the gas channel declares vth = √(T/m), and one
     # global v̄/v ratio cannot be right for both.
-    RP = ion_case()
+    RP = ion_case(; coupled = false)
     update_transport_quantities!(RP)
     turb = shared_turbulent_channel(RP)
     mi = RP.config.constants.mi
@@ -428,7 +435,7 @@ end
     # field) — and it now serves the turbulent ExB channel alone.
     #
     # See internal/docs/src/notes/design/random-step-ceiling.md.
-    RP = ion_case()
+    RP = ion_case(; coupled = false)
     update_transport_quantities!(RP)
     RP.transport.Dpara0 = 0.0                  # no additive floor riding along
     RP.flags.Coulomb_Collision = false         # ν is prescribed below: no friction on the stored bulk on top

@@ -85,18 +85,22 @@ end
     @test all(≈(4.8e-8 * Z2_mean^2 * (m_mean / mp)^(-0.5) * 1.1e18 * 1.0e-6 * lnΛ_ii), pla.ν_ii)
 end
 
-@testitem "A lone species of any charge is its own Coulomb reference" setup = [IonRun] begin
-    using RAPID2D: IonRecord, set_ion_species!, ion_transport_channels, shared_turbulent_channel, channel_D_para
-    # a lone species rubs on no other ion, so its Coulomb rate is its share — all — of the mean
-    # ion's ν_ii, its charge included, and D∥ is Einstein against ν_ii itself
-    RP = ion_case()
+@testitem "A lone species of any charge rubs on no ion: without gas its own D∥ is the free-streaming ceiling" setup = [IonRun] begin
+    using RAPID2D: IonRecord, set_ion_species!, ion_transport_channels, shared_turbulent_channel, channel_D_para,
+        maxwellian_mean_speed, wall_step_ceiling
+    # a lone species rubs on no other ion, and its own collisions cannot slow its parallel
+    # motion: with no gas nothing drags it, whatever its charge, and its own D∥ is the ceiling
+    # of its mean speed over the connection lengths
+    RP = ion_case(; coupled = false)
     RP.flags.Atomic_Collision = false
-    mi, ee = RP.config.constants.mi, RP.config.constants.ee
+    mi = RP.config.constants.mi
     set_ion_species!(RP, [IonRecord(:C6, 6mi, 6)])
     update_transport_quantities!(RP)
     ch = ion_transport_channels(RP, RP.transport.ion_species[1], shared_turbulent_channel(RP))[1]
     inw = RP.G.nodes.in_wall_nids
-    want = @. RP.plasma.Ti_eV * ee / (6mi * RP.transport.νi_coulomb)
+    vm = maxwellian_mean_speed.(RP.plasma.Ti_eV, 6mi)
+    want = wall_step_ceiling.(vm, RP.flf.Lc_forward, RP.flf.Lc_backward)
+    @test all(isfinite, want[inw])
     @test channel_D_para(ch)[inw] ≈ want[inw] rtol = 1.0e-12
 end
 

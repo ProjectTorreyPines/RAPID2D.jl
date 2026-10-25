@@ -648,9 +648,9 @@ Fields include diffusion coefficients in different directions.
 
     # Parallel diffusion coefficients
     Dpara_e_coll::Matrix{FT} = zeros(FT, dims)  # Electron parallel diffusion coefficient due to collisions [m²/s]
-    Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # Ion parallel diffusion coefficient due to collisions [m²/s]
-    Dpara_amb::Matrix{FT} = zeros(FT, dims)  # Ambipolar diffusion coefficient [m²/s]
-    Dpara_e_eff::Matrix{FT} = zeros(FT, dims)  # Effective electron parallel diffusion coefficient [m²/s]
+    Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # the bulk ions' on the gas, Tᵢ/(mᵢν_in) [m²/s]
+    Dpara_amb::Matrix{FT} = zeros(FT, dims)  # ambipolar, on the gas's drag: e(Tₑ+Tᵢ)/(mₑν_en' + mᵢν_in) [m²/s]
+    Dpara_common::Matrix{FT} = zeros(FT, dims)  # the common mode's, both species alike: D_a under the sound speed's ceilings [m²/s]
     νi_eff::Matrix{FT} = zeros(FT, dims)  # Ion momentum-randomizing collision frequency [1/s]
     # Kept apart because they scale differently with the ion's charge: the Coulomb
     # half carries Z², a charge-exchange or elastic hit on H₂ does not.

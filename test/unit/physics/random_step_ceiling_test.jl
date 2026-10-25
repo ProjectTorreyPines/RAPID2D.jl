@@ -213,8 +213,9 @@ end
         )
         config.Output_path = mktempdir(; cleanup = false)   # the writer outlives an auto-cleaned dir
         RP = RAPID{Float64}(config)
+        # the species' and the electrons' own coefficients: the common mode uncoupled
         RP.flags = SimulationFlags{Float64}(
-            Ampere = false, Gas_evolve = false,
+            Ampere = false, Gas_evolve = false, ambipolar_coupling = false,
             limit_flux = (state = limit_flux, factor = 0.25),
         )
         initialize!(RP)
@@ -240,7 +241,6 @@ end
     # Collisionless, but WARM. This is the case the whole ceiling exists for, and the
     # arithmetic it used to run through mapped it to D = 0 — the opposite answer.
     tp.νi_neutral .= 0.0
-    tp.νi_coulomb .= 0.0
 
     vm_s = maxwellian_mean_speed.(pla.Ti_eV, species.mass)
     D_wall = @. wall_step_ceiling(vm_s, RP.flf.Lc_forward, RP.flf.Lc_backward)
@@ -261,7 +261,6 @@ end
     # is what `0/0` in the Einstein form used to do.
     RP.plasma.Ti_eV .= 0.0
     RP.transport.νi_neutral .= 0.0
-    RP.transport.νi_coulomb .= 0.0
     D = ion_Dpara(RP, species)
     @test all(n -> D[n] === 0.0, inw)
     @test !any(isnan, D)
@@ -306,14 +305,14 @@ end
     @. RP.flf.Lc_backward = 2 * S / vm_e
     update_transport_quantities!(RP)
 
-    D0 = @. tp.Dpara0 + tp.Dpara_e_eff
+    D0 = @. tp.Dpara0 + tp.Dpara_e_coll
     D_geom = @. min(D0, wall_step_ceiling(vm_e, RP.flf.Lc_forward, RP.flf.Lc_backward))
     D_flux = @. flux_limited_diffusivity(D0, ∇para_ne, pla.ne, vm_e, 0.25)
 
     adopted = @. min(D_geom, D_flux)
     sequential = @. flux_limited_diffusivity(D_geom, ∇para_ne, pla.ne, vm_e, 0.25)
 
-    @test all(n -> isapprox(tp.Dpara[n], adopted[n]; rtol = 1.0e-12), inw)
+    @test all(n -> isapprox(tp.Dpara_cond[n], adopted[n]; rtol = 1.0e-12), inw)
     # Both guards below exist so the assertion above cannot pass vacuously.
     @test any(n -> D_geom[n] < D0[n] * (1 - 1.0e-9), inw)
     @test any(n -> !isapprox(sequential[n], adopted[n]; rtol = 1.0e-6), inw)
@@ -329,7 +328,7 @@ end
     inw = RP.G.nodes.in_wall_nids
 
     update_transport_quantities!(RP)
-    with_geometry = copy(tp.Dpara)
+    with_geometry = copy(tp.Dpara_cond)
 
     # Same state, but with no wall in either direction: the geometric ceiling is absent
     # by construction. At ordinary breakdown parameters the two must agree exactly —
@@ -339,8 +338,8 @@ end
     RP.flf.Lc_backward .= Inf
     update_transport_quantities!(RP)
 
-    @test all(n -> with_geometry[n] === tp.Dpara[n], inw)
-    @test all(n -> isfinite(tp.Dpara[n]), inw)
+    @test all(n -> with_geometry[n] === tp.Dpara_cond[n], inw)
+    @test all(n -> isfinite(tp.Dpara_cond[n]), inw)
 end
 
 @testitem "Ion channel gate: the diagnostic names the nodes, whichever field diverges" setup = [CeilingRP] begin

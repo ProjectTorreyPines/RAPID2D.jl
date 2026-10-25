@@ -98,9 +98,9 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             accel_para_tilde .+= (one_FT - θ_op) * (-(pops.A_adv * pla.ue_para))
         end
 
-        # #3: Pressure term [-∇∥(ne*Te)/(me*ne)]
+        # #3: Pressure term [-∇∥(ne*Te)/(me*ne)], the share u∥ carries
         if RP.flags.Include_ud_pressure_term
-            accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
+            accel_para_tilde .+= ue_pressure_acceleration(RP)
         end
 
         # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]. Under
@@ -1716,6 +1716,18 @@ end
 
 
 """
+    ue_pressure_acceleration(RP) -> Matrix
+
+The share of the electron pressure acceleration that u∥ carries, `(1 − w_amb)` of
+[`calculate_electron_acceleration_by_pressure`](@ref) (after its limiter), `w_amb` being
+`ambipolar_weight`. The rest is the common mode's: both species diffuse it with
+`transport.Dpara_common`, so the drive is carried once.
+"""
+function ue_pressure_acceleration(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    return (one(FT) .- RP.plasma.ambipolar_weight) .* calculate_electron_acceleration_by_pressure(RP)
+end
+
+"""
     solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT}=RP.fields; plasma::Bool=true, coils::Bool=true, update_Eϕ_coils_pla::Bool=true) where {FT<:AbstractFloat}
 
 Solve Ampère's equation (Grad-Shafranov equation) for the field of the coils and the plasma (`ψ_coils_pla`, `BR/BZ_coils_pla`).
@@ -2078,7 +2090,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
 
         # pressure gradient contribution: [-∇∥(ne*Te)/(me*ne)]
         if RP.flags.Include_ud_pressure_term
-            accel_para_tilde .+= calculate_electron_acceleration_by_pressure(RP)
+            accel_para_tilde .+= ue_pressure_acceleration(RP)
         end
 
         # convection -(𝐮⋅∇)u∥ and diffusion ∇⋅(D∇u∥), from the in-wall operators

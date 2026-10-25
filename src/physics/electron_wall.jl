@@ -8,18 +8,28 @@
     electron_wall_channels(RP) -> [(channel, bR, bZ), ...]
 
 The three channels the electron transport tensor is a sum of, in the channel basis, so
-`wall_absorption_speeds` can take their kinetic ceilings. `parallel_collisional_channel`
-with `D∥ = tp.Dpara` reproduces the tensor's parallel diffusivity exactly (λ = 2D/vp);
-`bohm_channel` reproduces `Te/(16B)`; the turbulent channel is species-independent.
-`Dperp0` (a bare base diffusivity) has no kinetic ceiling and is not a channel.
+`wall_absorption_speeds` can take their kinetic ceilings. The parallel channel carries
+`D∥ = tp.Dpara`, the tensor's parallel diffusivity, at the wall speed the ambipolar coupling
+mixes, `(1 − w) v̄ₑ + w c_s` ([`coupled_parallel_channel`](@ref)); the Bohm channel moves at the
+ions' Bohm speeds, averaged over the species by the electrons each brings (`Z n`), so the
+coupled pairs leave at one speed; the turbulent channel is species-independent. `Dperp0` (a
+bare base diffusivity) has no kinetic ceiling and is not a channel.
 """
 function electron_wall_channels(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, tp, F = RP.plasma, RP.transport, RP.fields
     me = RP.config.constants.me
-    vp_e = maxwellian_most_probable_speed.(pla.Te_eV, me)
+    vm_e = maxwellian_mean_speed.(pla.Te_eV, me)
+    c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean)
+    species = tp.ion_species
+    bohm = if length(species) == 1
+        bohm_channel(pla.Te_eV, F.Bϕ, only(species).mass, 1)
+    else
+        weights = [s.charge .* ion_plane(pla, slot) for (s, slot) in zip(species, RP.store_layout.transport_slots)]
+        mixture_channel([bohm_channel(pla.Te_eV, F.Bϕ, s.mass, 1) for s in species], weights)
+    end
     chans = Any[
-        (parallel_collisional_channel(vp_e, tp.Dpara), F.bR, F.bZ),
-        (bohm_channel(pla.Te_eV, F.Bϕ, pla.mi_mean, 1), F.bR, F.bZ),   # the mean ion mass
+        (coupled_parallel_channel(vm_e, c_s, tp.Dpara, pla.ambipolar_weight), F.bR, F.bZ),
+        (bohm, F.bR, F.bZ),
     ]
     turb = shared_turbulent_channel(RP)
     isnothing(turb) || push!(chans, (turb, F.bpol_R, F.bpol_Z))

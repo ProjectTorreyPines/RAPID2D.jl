@@ -93,63 +93,51 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # the H₂⁺ diffusivity this line happens to produce.
     tp.νi_eff .= νi_eff
 
-    tp.Dpara_i_coll = @. ifelse(vp_i > 0, FT(0.5) * vp_i^2 / νi_eff, zero(FT))
+    # The common motion of the electrons and ions is dragged by the gas alone: e–i friction
+    # vanishes when they move together and ion–ion collisions cannot slow the ion fluid, so
+    # neither ν_ei nor ν_ii enters what drags it (coulomb-collision-0d-audit.md).
+    ν_en_drag = RP.flags.Atomic_Collision ? (@. pla.ν_en_mom_tot + pla.ν_en_iz_tot) : zeros(FT, size(pla.ne))
 
-    # Ambipolar diffusivity. The textbook form is a mobility-weighted harmonic mean,
-    #
-    #     D_a = (Te+Ti)·De·Di/(Ti·De + Te·Di) = (Te+Ti) / (Ti/Di + Te/De)
-    #
-    # and BOTH limbs of that denominator lose their temperature exactly, because this
-    # code builds D from a known rate rather than measuring it: `De = Te·e/(mₑνₑ)`
-    # makes `Te/De ≡ mₑνₑ/e`, and likewise `Ti/Di ≡ mᵢνᵢ/e`. So the whole coefficient
-    # is a ratio of thermal drive to collisional friction, with no cancelling
-    # temperature anywhere:
-    # The numerator is tested, not the quotient: `0/0` is reachable when both T's and
-    # both ν's vanish, and zero thermal drive means zero diffusion, not undefined.
+    # The bulk ion channel on the gas: ½vp²/ν_in = Tᵢ/(mᵢν_in), Inf without gas.
+    tp.Dpara_i_coll = @. ifelse(vp_i > 0, FT(0.5) * vp_i^2 / tp.νi_neutral, zero(FT))
+
+    # Ambipolar diffusivity of the pair on that drag, D_a = c_s²/ν_cm = e(Tₑ+Tᵢ)/(mₑν_en' + mᵢν_in):
+    # the mobility-weighted harmonic mean of the two drag-only limbs, written as one ratio
+    # because each limb's temperature cancels (`Te/De ≡ mₑν/e`). The numerator is tested, not
+    # the quotient: zero thermal drive means zero diffusion, not 0/0; no drag at all is Inf.
     tp.Dpara_amb = @. ifelse(
         pla.Te_eV + pla.Ti_eV > 0,
-        EE * (pla.Te_eV + pla.Ti_eV) / (me * ν_sum_mom_iz_ei + mi * νi_eff),
+        EE * (pla.Te_eV + pla.Ti_eV) / (me * ν_en_drag + mi * tp.νi_neutral),
         zero(FT)
     )
-    #
-    # Identical to the product form to 4e-16 relative wherever that form is finite,
-    # and finite where it is not. The 0/0 this removes was not hypothetical:
-    # the old band pass set `Te = 0` on every out-wall node, at which
-    # point the product form is `(Ti·0·Di)/(Ti·0 + 0·Di)` and the `NaN → typemax(FT)`
-    # patch that used to follow turned "cold electrons, so no electron diffusion"
-    # into `D_a = Inf`. That is the same inverted sign the flux limiter's old `Lₙ`
-    # guard had, and it made the diffusion operator singular one step later.
 
     # ── how D∥ᵉ is assembled ──────────────────────────────────────────────────
     #
-    #   1  1/D_ch = Σ_p 1/D_p            competing termination events
-    #   2  D0 = D_ch + Dpara0            independent arrival paths
-    #   3a D_geom = min(D0, ¼v̄(Lf+Lb))   what the GEOMETRY allows, from D0
-    #   3b D_flux = F₂(D0, ¼v̄Lₙ)         what the FLUX closure allows, from D0
-    #   4  D∥ = min(D_geom, D_flux)      the tighter answer wins
+    # The pressure-driven parallel flow is carried once (space-charge-layers-v4.md §5): by u∥
+    # for the share 1 − w, w = `ambipolar_weight` (`ue_pressure_acceleration`), and for the
+    # share w by the common mode, which both species take alike:
     #
-    # Both ceilings bound the SUM (capping inside it would let `Dpara0` escape), and
-    # both read the SAME D0: they are one free-streaming limit at two lengths, so
-    # feeding D_geom into F₂ double-counts it — 29 % low at the crossover. Derived in
-    # internal/docs/src/notes/design/random-step-ceiling.md.
-
-    # Stage 1. Harmonic mean of the collisional and ambipolar limbs, written in
-    # inverse space — the same move the flux ceiling makes, for the same reason.
-    # `inv(0) === Inf` and `inv(Inf) === 0.0` exactly, so a dead limb (`D = 0`, cold
-    # electrons) shuts the channel and a frictionless one (`D = Inf`, ν → 0) drops
-    # out of it, both without a branch. The product form needed a NaN patch for
-    # precisely those two cases and answered `Inf` to both.
-    tp.Dpara_e_eff = @. inv(inv(tp.Dpara_e_coll) + inv(tp.Dpara_amb))
-
-    # Stage 2. A base diffusivity is an independent arrival path, so it ADDS rather
-    # than joining the harmonic sum — the same rule the ion channel states.
-    D0 = @. tp.Dpara0 + tp.Dpara_e_eff
+    #   D∥ᵉ = (1 − w)·D_base + w·D_common
+    #
+    # D_base is the bare base `Dpara0`: the electrons' own pressure-driven motion is u∥'s.
+    # Each coefficient is bounded by the two ceilings of its own speed, from its own D0
+    # (internal/docs/src/notes/design/random-step-ceiling.md):
+    #
+    #   3a D_geom = min(D0, ¼v(Lf+Lb))   what the GEOMETRY allows
+    #   3b D_flux = F₂(D0, ¼vLₙ)         what the FLUX closure allows
+    #   4  D = min(D_geom, D_flux)       the tighter answer wins
+    #
+    # Both bound the SUM (capping inside it would let `Dpara0` escape) and both read the SAME
+    # D0: they are one free-streaming limit at two lengths, so feeding D_geom into F₂
+    # double-counts it — 29 % low at the crossover. The electrons' speed is v̄ₑ, the common
+    # mode's the sound speed c_s.
 
     # `vm_e`, not the `vp_e` above: both ceilings are ONE-WAY fluxes across a surface,
     # ⟨v_n θ(v_n)⟩ = ¼v̄, and only the mean speed has that meaning. The pair (½, vp) two
     # dozen lines up is a different derivation and must not be copied here — see the
     # speed contract at the top of `transport_channels.jl`.
     vm_e = maxwellian_mean_speed.(pla.Te_eV, me)
+    c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, mi)
 
     # Stage 3a. The geometric ceiling: a random step cannot be longer than the
     # distance at which the geometry stops being new — wall distance, circuit, or 2πR
@@ -157,8 +145,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # than switching off. Forward/backward bound disjoint halves of velocity space and
     # enter as an arithmetic mean (`wall_step_ceiling`). Only a failed trace carries
     # `Inf`, and the FLF validator never lets one reach this line.
-    step_ceiling = @. wall_step_ceiling(vm_e, RP.flf.Lc_forward, RP.flf.Lc_backward)
-    D_geom = @. min(D0, step_ceiling)
+    step_ceiling(v) = @. wall_step_ceiling(v, RP.flf.Lc_forward, RP.flf.Lc_backward)
 
     # Stage 3b. The flux ceiling, from the SAME `D0` — never from `D_geom`.
     # `upwind = false`, overriding `flags.upwind`: this gradient describes the PROFILE, not a
@@ -171,19 +158,22 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # actually transports. The old `n_raw / |∇∥(n_SM)|` mixed two different fields and ran ~5×
     # tighter on the low-density flank of a front.
     ∇para_ne = RP.flags.limit_flux.state ? calculate_para_grad_of_scalar_F(RP, pla.ne; upwind = false) : nothing
-    flux_ceiling(D) = isnothing(∇para_ne) ? D :
-        @. flux_limited_diffusivity(D, ∇para_ne, pla.ne, vm_e, RP.flags.limit_flux.factor)
-    D_flux = flux_ceiling(D0)
+    flux_ceiling(D0, v) = isnothing(∇para_ne) ? D0 :
+        @. flux_limited_diffusivity(D0, ∇para_ne, pla.ne, v, RP.flags.limit_flux.factor)
 
-    # Stage 4. Whichever ceiling is tighter.
-    @. tp.Dpara = min(D_geom, D_flux)
+    # Stage 4, for a D0 and the speed of what it carries
+    bounded(D0, v) = (D_flux = flux_ceiling(D0, v); @. min(min(D0, $(step_ceiling(v))), D_flux))
 
-    # What u∥ and Te conduct with: the electrons' own collisional limb under the same two
+    # The common mode: the drag-only D_a, plus the base path, under the sound speed's ceilings
+    tp.Dpara_common .= bounded((@. tp.Dpara0 + tp.Dpara_amb), c_s)
+    D_base = bounded(fill(tp.Dpara0, size(pla.ne)), vm_e)
+    w = pla.ambipolar_weight
+    @. tp.Dpara = (one(FT) - w) * D_base + w * tp.Dpara_common
+
+    # What u∥ and Te conduct with: the electrons' own collisional limb under their own
     # ceilings. The ions' friction holds back the electrons' particle flux, through the
     # ambipolar field, not the heat and momentum they pass along B.
-    D0_own = @. tp.Dpara0 + tp.Dpara_e_coll
-    D_own_flux = flux_ceiling(D0_own)
-    D_own = @. min(min(D0_own, step_ceiling), D_own_flux)
+    D_own = bounded((@. tp.Dpara0 + tp.Dpara_e_coll), vm_e)
 
     # Ions carry no gradient ceiling yet — they have only stage 3a. It is NOT the one
     # line it looks like: an ion ceiling has to bound the total non-convective species

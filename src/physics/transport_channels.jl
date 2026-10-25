@@ -107,6 +107,15 @@ through the projection `|b̂·n̂|` in [`channel_ceiling`](@ref).
 """
 maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE / (π * m))
 
+"""
+    sound_speed(Te_eV, Ti_eV, m_i) -> Float
+
+`c_s = √(e(Tₑ + Tᵢ)/mᵢ)` [m/s]: the speed of the electrons and ions moving together, held by
+the ambipolar field. It stands in for `vm` wherever the common mode crosses a surface: its
+geometric and flux ceilings and its wall speed.
+"""
+sound_speed(Te_eV, Ti_eV, m_i) = sqrt(max(zero(Te_eV), Te_eV + Ti_eV) * EE / m_i)
+
 # ─── The random-step vocabulary ──────────────────────────────────────────────
 #
 # Every geometric bound on a diffusivity here is `D = v̄·L/d`; only `d` differs, so
@@ -568,6 +577,22 @@ function turbulent_ExB_channel(ERZ, B_tot, L_mixing, f_para, f_perp)
         v_E, (@. f_para * L_mixing), v_E, (@. f_perp * L_mixing);
         vm_para = vm_E, vm_perp = vm_E
     )
+end
+
+"""
+    coupled_parallel_channel(vm_own, c_s, D_para, w)
+
+The parallel channel of a species that the ambipolar field couples to the others by the weight
+`w` (`ambipolar_weight`): the coefficient `D_para` (its own share and the common mode's, mixed
+by the caller) and the wall speed mixed alike, `(1 − w) v̄_own + w c_s`, with `λ∥ = 2D∥/v`. At
+`w = 1` every species' parallel channel is the common mode's, so the wall takes their pairs at
+one speed. `v_perp = 0`: streaming along the field reaches no wall across it.
+"""
+function coupled_parallel_channel(vm_own, c_s, D_para, w)
+    vm = @. (1 - w) * vm_own + w * c_s
+    FT = eltype(vm)
+    λ = @. ifelse(vm > 0, 2 * D_para / vm, zero(FT))
+    return DiffusionChannel(vm, λ, zero.(vm), zero.(vm); vm_para = vm, vm_perp = zero.(vm))
 end
 
 """

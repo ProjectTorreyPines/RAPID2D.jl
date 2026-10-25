@@ -186,6 +186,10 @@ end
             RP.fields.bZ .= bZ
             RP.fields.bϕ .= bϕ
         end
+        # the electrons' own coefficient, what u∥ and Te conduct with (`Dpara_cond`): the common
+        # mode uncoupled, so nothing of it is mixed in
+        RP.flags.ambipolar_coupling = false
+        fill!(RP.plasma.ambipolar_weight, 0.0)
         update_transport_quantities!(RP)
         return RP
     end
@@ -210,9 +214,9 @@ end
     # One aggregate assertion, not one @test per node: same check, ~843 fewer
     # assertions, and the per-node loop this replaces was 69 % of the file's runtime
     # (measured 72.4s of 104.2s).
-    @test all(k -> vec(tp.Dpara)[k] * vec(g)[k] <= 0.25 * vec(pla.ne)[k] * vec(vm)[k] * (1 + 1.0e-9), live)
+    @test all(k -> vec(tp.Dpara_cond)[k] * vec(g)[k] <= 0.25 * vec(pla.ne)[k] * vec(vm)[k] * (1 + 1.0e-9), live)
     # and the floor is genuinely being cut down, i.e. the test is not vacuous
-    @test minimum(vec(tp.Dpara)[live]) < 1.0e12
+    @test minimum(vec(tp.Dpara_cond)[live]) < 1.0e12
 end
 
 @testitem "Limiter wiring: a uniform profile is untouched" setup = [LimiterRun] begin
@@ -234,9 +238,9 @@ end
     # solve before it is deleted and booked as wall loss.
     on = limiter_case(; ne = 1.0e15, limit = true)
     off = limiter_case(; ne = 1.0e15, limit = false)
-    @test on.transport.Dpara == off.transport.Dpara
+    @test on.transport.Dpara_cond == off.transport.Dpara_cond
     # not vacuous: the field being compared is substantial, not zero on both sides
-    @test maximum(on.transport.Dpara) > 1.0e3
+    @test maximum(on.transport.Dpara_cond) > 1.0e3
 end
 
 @testitem "Limiter wiring: D never depends on the sign of the flow" setup = [LimiterRun] begin
@@ -260,7 +264,7 @@ end
         return RP
     end
     fwd, rev = with_flow(+1), with_flow(-1)
-    @test fwd.transport.Dpara ≈ rev.transport.Dpara rtol = 1.0e-14
+    @test fwd.transport.Dpara_cond ≈ rev.transport.Dpara_cond rtol = 1.0e-14
 
     # and prove the fixture can tell the difference — under the upwind stencil the two
     # gradients genuinely differ, so the assertion above is doing real work rather than
@@ -282,11 +286,11 @@ end
     tp, pla = RP.transport, RP.plasma
     vm = maxwellian_mean_speed.(pla.Te_eV, RP.config.constants.me)
     g = calculate_para_grad_of_scalar_F(RP, pla.ne; upwind = false)
-    expected = @. flux_limited_diffusivity(tp.Dpara0 + tp.Dpara_e_eff, g, pla.ne, vm, 0.25)
+    expected = @. flux_limited_diffusivity(tp.Dpara0 + tp.Dpara_e_coll, g, pla.ne, vm, 0.25)
     # compare in-wall only: outside, the damping function and the boundary
     # extrapolation both rewrite Dpara afterwards
     inw = RP.G.nodes.in_wall_nids
-    @test vec(tp.Dpara)[inw] ≈ vec(expected)[inw] rtol = 1.0e-12
+    @test vec(tp.Dpara_cond)[inw] ≈ vec(expected)[inw] rtol = 1.0e-12
 end
 
 @testitem "Limiter wiring: the empty exterior gets D = 0 from the supply rule, and stays finite" setup = [LimiterRun] begin
@@ -311,12 +315,12 @@ end
     # The old guard forced D = 0 there, which was the wrong reason for the right
     # number and was also masking `Dpara_amb`'s 0/0 (see
     # notes/TODO/guard-bug-was-holding-the-momentum-solve-up.md).
-    @test all(isfinite, vec(on.transport.Dpara)[out])
+    @test all(isfinite, vec(on.transport.Dpara_cond)[out])
 
     # Not vacuous: the near-wall exterior still carries a substantial diffusivity,
     # because `extrapolate_field_to_boundary_nodes!` (transport.jl) writes in-wall
     # values outward AFTER the ceiling has run.
-    @test maximum(vec(on.transport.Dpara)[out]) > 1.0e3
+    @test maximum(vec(on.transport.Dpara_cond)[out]) > 1.0e3
 
     # Deep exterior — far enough out to have no on-wall neighbour, so extrapolation
     # never reaches it. Empty of particles, so the ceiling returns exactly 0 at every
@@ -325,7 +329,7 @@ end
     # not let an unbounded D through in a region with nothing to transport.
     deep = [k for k in out if isempty(on.G.nodes.ngh_on_wall_nids[k])]
     @test !isempty(deep)
-    @test all(iszero, vec(on.transport.Dpara)[deep])
+    @test all(iszero, vec(on.transport.Dpara_cond)[deep])
 
     # Turning the FLUX ceiling off no longer restores them, and that is not a
     # regression — there are two ceilings on `Dpara` now and the deep exterior fails
@@ -333,14 +337,14 @@ end
     # already at a wall), so `wall_step_ceiling` returns exactly 0 and the geometric
     # ceiling zeroes the region on its own, through the same formula that bounds the
     # interior rather than through a special case.
-    @test all(iszero, vec(off.transport.Dpara)[deep])
+    @test all(iszero, vec(off.transport.Dpara_cond)[deep])
     @test all(iszero, vec(off.flf.Lc_forward)[deep])
     @test all(iszero, vec(off.flf.Lc_backward)[deep])
     # Not vacuous about WHICH ceiling: in-wall, where the geometry does supply a
     # length, the two runs still differ — so `limit = false` really did disable
     # something.
     inw = on.G.nodes.in_wall_nids
-    @test any(n -> on.transport.Dpara[n] != off.transport.Dpara[n], inw)
+    @test any(n -> on.transport.Dpara_cond[n] != off.transport.Dpara_cond[n], inw)
 end
 
 # ── behavioural, 1-D ────────────────────────────────────────────────────────
@@ -559,9 +563,9 @@ end
     # `extrapolate_field_to_boundary_nodes!`, and it passes bit-exactly only because
     # neither rewrite depends on the limiter flag. If that ever changes, this test
     # fails for a reason that has nothing to do with the limiter — check there first.
-    @test on.transport.Dpara == off.transport.Dpara
+    @test on.transport.Dpara_cond == off.transport.Dpara_cond
     # not vacuous: the field being compared is substantial, not zero on both sides
-    @test maximum(on.transport.Dpara) > 1.0e3
+    @test maximum(on.transport.Dpara_cond) > 1.0e3
 end
 
 @testitem "Limiter 2-D: the oblique field genuinely exercises the cross term" setup = [LimiterRun] begin
@@ -574,39 +578,37 @@ end
 
     # Dropping the density smoothing (flux-limiter-review.md §6, decided 2 vs 1) was
     # conditional: "the 2-D test must therefore report the grid-scale variation of D,
-    # not only inventory and positivity." Measure it as the largest relative jump in
-    # Dpara between cardinal-adjacent in-wall nodes.
+    # not only inventory and positivity." Measured as the largest jump of D between
+    # cardinal-adjacent in-wall nodes, in decades.
     NR, NZ = oblique.G.NR, oblique.G.NZ
     inwall = falses(NR, NZ)
     inwall[inw] .= true
-    Dp = oblique.transport.Dpara
+    Dp = oblique.transport.Dpara_cond
 
     # A local function, not a bare top-level loop: mutating an accumulator across
     # `for j, i in ...` iterations at a testitem's top level hits Julia's ambiguous
     # soft-scope rule and throws `UndefVarError` — a function body scopes normally.
-    function grid_roughness(D, inwall, NR, NZ)
+    function grid_jump(D, inwall, NR, NZ)
         worst = 0.0
         for j in 1:NZ, i in 1:(NR - 1)
-            if inwall[i, j] && inwall[i + 1, j]
-                m = max(abs(D[i, j]), abs(D[i + 1, j]))
-                m > 0 && (worst = max(worst, abs(D[i, j] - D[i + 1, j]) / m))
+            if inwall[i, j] && inwall[i + 1, j] && D[i, j] > 0 && D[i + 1, j] > 0
+                worst = max(worst, abs(log10(D[i, j] / D[i + 1, j])))
             end
         end
         for j in 1:(NZ - 1), i in 1:NR
-            if inwall[i, j] && inwall[i, j + 1]
-                m = max(abs(D[i, j]), abs(D[i, j + 1]))
-                m > 0 && (worst = max(worst, abs(D[i, j] - D[i, j + 1]) / m))
+            if inwall[i, j] && inwall[i, j + 1] && D[i, j] > 0 && D[i, j + 1] > 0
+                worst = max(worst, abs(log10(D[i, j] / D[i, j + 1])))
             end
         end
         return worst
     end
-    roughness = grid_roughness(Dp, inwall, NR, NZ)
-    # Measured 0.489: dropping the smoothing leaves real grid-scale structure in D —
-    # adjacent in-wall nodes can differ by close to half their own magnitude — not
-    # numerical noise at the last few bits. Pinned with margin, not inflated to hide
-    # it: if this grows substantially past where it sits today, that is the evidence
-    # the design record asked for that dropping the smoothing needs revisiting.
-    @test roughness < 0.55
+    jump = grid_jump(Dp, inwall, NR, NZ)
+    # Measured 1.40 decades (a relative jump of 0.96) on the electrons' own coefficient; the
+    # harmonic D∥ it replaced, its ambipolar limb holding D0 near the flux scale, jumped 0.49 of
+    # its value. Far above the ceiling, D0 leaves the limited nodes next to unlimited ones in this
+    # unresolved blob (two cells wide in Z). Real grid-scale structure, not noise; pinned with
+    # margin: growth past it is the evidence that dropping the smoothing needs revisiting.
+    @test 1.0 < jump < 1.6
 
     # and the axis-aligned case that the design originally proposed does not
     axis = limiter_case(; oblique = false)

@@ -1,9 +1,9 @@
 # Coulomb collisions in 0D: a uniform box without transport. The code's temperature exchange and its
 # collision rates are held against a reference that gives every species its own temperature (NRL 2023
 # p.34 energy-exchange rates, per-pair Coulomb logarithms) and against the slowing-down rate of a trace
-# species on the other ions (the friction between drifting Maxwellians). The DEFECT item pins what the
-# 0D audit found (internal/docs/src/notes/coulomb-collision-0d-audit.md): the common mode's
-# diffusivities take internal friction for drag.
+# species on the other ions (the friction between drifting Maxwellians). The common-mode item holds
+# what the 0D audit found (internal/docs/src/notes/coulomb-collision-0d-audit.md): the common mode's
+# diffusivities take the gas's drag, not the plasma's internal friction.
 
 @testsnippet CoulombReference begin
     using RAPID2D
@@ -215,6 +215,10 @@
     function coulomb_box(ions; Ti)
         RP = uniform_box(ions; ne = sum(s[3] * s[4] for s in ions), Te = 10.0, Ti, dt = 1.0e-6)
         RP.flags.Atomic_Collision = false
+        # the species' own coefficients: the common mode uncoupled (with no drive to cancel the
+        # ambipolar weight is 1, and every species would read the common mode's)
+        RP.flags.ambipolar_coupling = false
+        fill!(RP.plasma.ambipolar_weight, 0.0)
         update_transport_quantities!(RP)
         return RP
     end
@@ -351,7 +355,7 @@ end
     @test mν(200MP) ≈ mν(50MP) rtol = 0.02
 end
 
-@testitem "DEFECT: the common mode's parallel diffusivities take internal friction for drag" setup = [CoulombReference] tags = [:physics] begin
+@testitem "The common mode's parallel diffusivities take the gas's drag, not the plasma's internal friction" setup = [CoulombReference] tags = [:physics] begin
     # Electrons and ions moving together feel no e–i friction, and ion–ion collisions cannot slow the ion
     # fluid: internal forces leave the plasma's momentum alone, only the neutrals drag the common motion.
     # Its damping rate is ν_cm = (mₑν_en' + mᵢν_in)/(mₑ+mᵢ) and its diffusivity D_a = c_s²/ν_cm with
@@ -397,21 +401,20 @@ end
     @test wet.locked ≈ 1 rtol = 0.1
     dry = common_decay(box_at(1.0e18; gas = false))
     @test abs(dry.rate) < 1.0e-6 * ν_cm(dense)
-    # (2) The diffusion path does not: D_a and the bulk ion channel are written with ν_ei and ν_ii in
-    #     their denominators (`update_transport_quantities!`). Tenuous, the Coulomb rates are negligible
-    #     and D_a is c_s²/ν_cm, Dᵢ the ions' mobility on the gas …
+    # (2) So does the diffusion path: D_a and the bulk ion channel take the gas's drag in their
+    #     denominators (`update_transport_quantities!`), not ν_ei and ν_ii. Tenuous, D_a is c_s²/ν_cm,
+    #     Dᵢ the ions' mobility on the gas …
     tenuous = box_at(1.0e12)
     @test Da(tenuous) ≈ cs2(tenuous) / ν_cm(tenuous) rtol = 0.02
     @test Di(tenuous) ≈ EE * 1.0 / (MH2 * tenuous.transport.νi_neutral[4, 4]) rtol = 0.02
-    # … but ionized they fall with the plasma density at fixed gas, a thousandfold at 1e18 …
-    @test_broken Da(dense) ≈ Da(tenuous) rtol = 0.02
-    @test_broken Di(dense) ≈ Di(tenuous) rtol = 0.02
-    @test Da(dense) < 1.0e-2 * Da(tenuous)   # a hundredfold at least: the size of the defect, so a partial fix is noticed
-    # … and stay finite without any gas, where nothing drags the common motion
+    # … and ionized they stay put at fixed gas: the plasma's own density does not enter …
+    @test Da(dense) ≈ Da(tenuous) rtol = 0.02
+    @test Di(dense) ≈ Di(tenuous) rtol = 0.02
+    # … and without any gas nothing drags the common motion
     dry_box = box_at(1.0e18; gas = false)
-    @test_broken isinf(Da(dry_box))
-    @test_broken isinf(Di(dry_box))
-    # (3) So the two paths of one code disagree about one rate: the damping D_a implies, c_s²/D_a,
-    #     against the damping the momentum path shows
-    @test_broken cs2(dense) / Da(dense) ≈ wet.rate rtol = 0.02
+    @test isinf(Da(dry_box))
+    @test isinf(Di(dry_box))
+    # (3) So the two paths of one code agree about one rate: the damping D_a implies, c_s²/D_a,
+    #     is the damping the momentum path shows
+    @test cs2(dense) / Da(dense) ≈ wet.rate rtol = 0.02
 end
