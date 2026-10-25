@@ -674,6 +674,7 @@ Fields include diffusion coefficients in different directions.
 
     # Spatially-varying diffusion coefficients
     Dpara::Matrix{FT} = zeros(FT, dims)  # Parallel diffusion coefficient [m²/s]
+    Dpara_cond::Matrix{FT} = zeros(FT, dims)  # what u∥ and Te conduct with along B, ≥ Dpara [m²/s]
     Dperp::Matrix{FT} = zeros(FT, dims)  # Perpendicular diffusion coefficient [m²/s]
 
     # turbulent diffusion coefficients
@@ -744,6 +745,12 @@ Fields include various matrices for solving different parts of the model.
     # (conduction for Te), (1/n)∇·(nD∇f), plus advection by the diffusive drift, −v_D·∇f with
     # v_D = −D∇n/n. `A_diffu_e`, ∇·(D∇f), equals the sum only at uniform ne.
     A_visc_drift_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    # The reflective ∇·D∇ with the parallel coefficient u∥ and Te conduct with
+    # (`transport.Dpara_cond`), limited like `A_diffu_e`; built only where it differs from it
+    # (`A_cond_e_active`), when `ue_Te_operators` adds the difference to `A_visc_drift_e`
+    # (`add_conduction_correction!`).
+    A_cond_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    A_cond_e_active::Bool = false
     div_ue::Matrix{FT} = zeros(FT, dims)
 
     # Basic differential operators (2nd-order central difference)

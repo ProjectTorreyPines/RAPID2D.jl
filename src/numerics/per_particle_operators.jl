@@ -72,6 +72,60 @@ function per_particle_operator!(
 end
 
 """
+    add_conduction_correction!(M, A_part, A_cond, n, G; n_floor) -> M
+
+Add to `M`, the per-particle operator of the particle diffusion `A_part`, the correction `C` that
+makes the carried variable conduct (and diffuse momentum) with `A_cond` instead:
+
+    S_kl = ½ (R_k ΔA_kl + R_l ΔA_lk),   ΔA = A_cond − A_part,
+    (C f)_k = Σ_l S_kl (n_k + n_l)/2 (f_l − f_k) / (R_k n_k),
+
+with `R_k = G.Jacob[k]`. The pair transfers are symmetric, so `Σ R n f` is kept and constants
+stay in the kernel (the cross terms make `R A` asymmetric, so a split of `M` by face densities
+would not keep it). A negative transfer is dropped, so `C` only adds dissipation, and a pair
+with a node at or below `n_floor` is skipped, its row being frozen. In a uniform plasma with
+`R ΔA` symmetric (no cross terms) `M + C` is `A_cond`; `A_cond = A_part` leaves `M` bit for bit.
+All three on the wall pattern of `G`, `M` aliasing neither; nothing is allocated.
+"""
+function add_conduction_correction!(
+        M::DiscretizedOperator{FT}, A_part::DiscretizedOperator{FT}, A_cond::DiscretizedOperator{FT},
+        n::AbstractVecOrMat{FT}, G::GridGeometry{FT}; n_floor::FT,
+    ) where {FT <: AbstractFloat}
+    foreach(check_wall_pattern, (M, A_part, A_cond))
+    P, Q, U = A_part.matrix, A_cond.matrix, M.matrix
+    (P.colptr == Q.colptr == U.colptr && P.rowval == Q.rowval == U.rowval) ||
+        throw(ArgumentError("add_conduction_correction!: M, A_part and A_cond do not share a pattern"))
+    (nonzeros(U) !== nonzeros(P) && nonzeros(U) !== nonzeros(Q)) ||
+        throw(ArgumentError("add_conduction_correction!: M must not alias A_part or A_cond"))
+    (M.dims_rz == (G.NR, G.NZ) && length(n) == size(U, 1)) ||
+        throw(DimensionMismatch("add_conduction_correction!: M and n must be on the grid of G"))
+    nzU, nzP, nzQ, k2c = nonzeros(U), nonzeros(P), nonzeros(Q), M.k2csc
+    NR, R = G.NR, G.Jacob
+    half = FT(0.5)
+    @inbounds for k in 1:size(U, 1), (slot, slot_back) in PAIR_SLOTS
+        p_kl = slot_position(k2c, k, slot)
+        p_kl == 0 && continue
+        di, dj = STENCIL_OFFSETS[slot]
+        l = k + di + dj * NR
+        (n[k] > n_floor && n[l] > n_floor) || continue
+        p_lk = slot_position(k2c, l, slot_back)     # the pattern is structurally symmetric
+        S = half * (R[k] * (nzQ[p_kl] - nzP[p_kl]) + R[l] * (nzQ[p_lk] - nzP[p_lk]))
+        S > zero(FT) || continue
+        n_mean = half * (n[k] + n[l])
+        _add_pair_transfer!(nzU, p_kl, slot_position(k2c, k, SLOT_C), S * n_mean / (R[k] * n[k]))
+        _add_pair_transfer!(nzU, p_lk, slot_position(k2c, l, SLOT_C), S * n_mean / (R[l] * n[l]))
+    end
+    return M
+end
+
+# add `value` to the off-diagonal at `p_offdiag`, and keep the row sum through the diagonal at `p_diag`
+@inline function _add_pair_transfer!(nz, p_offdiag, p_diag, value)
+    @inbounds nz[p_offdiag] += value
+    @inbounds nz[p_diag] -= value
+    return nothing
+end
+
+"""
     dissipation_rate!(Γ, M, u) -> Γ
 
 `Γ_k = ½ Σ_l M_kl (u_l − u_k)²`, which for an `M` that annihilates constants equals

@@ -304,3 +304,111 @@ end
         @test U.matrix.nzval == former_assembly(C, n; n_floor = 1.0)
     end
 end
+
+# The conduction correction: u∥ and Te ride the particles the density diffusion A_part moves, but
+# conduct (and diffuse momentum) with their own A_cond. C adds the difference as symmetric pair
+# transfers S_kl = ½(R_k ΔA_kl + R_l ΔA_lk), ΔA = A_cond − A_part, weighted by the pair's mean
+# density: (C f)_k = Σ_l S_kl (n_k + n_l)/2 (f_l − f_k) / (R_k n_k). The production matrices are
+# not volume-symmetric (the cross terms), so this, not a split of M by face densities, is what
+# keeps Σ V n f. internal/docs/src/notes/design/ambipolar-gate-criterion-v3.md §3.5.
+
+@testsnippet ConductionCases begin
+    using RAPID2D: limit_antidiffusive_pairs!
+
+    """
+    A_part and A_cond along the same tilted or X-point field, A_cond with a larger parallel
+    coefficient, both limited at a density with floor nodes (so the pair limiter acts).
+    """
+    function conduction_cases()
+        box, stair = walled_RP(:box), walled_RP(:lshape)
+        specs = (
+            ("tilted tensor, box", box, G -> tilted_tensor(G; Dpara = 100.0), G -> tilted_tensor(G; Dpara = 400.0)),
+            ("X-point tensor, box", box, G -> xpoint_tensor(G; Dpara = 100.0), G -> xpoint_tensor(G; Dpara = 250.0)),
+            ("tilted tensor, staircase", stair, G -> tilted_tensor(G; θ = 0.9, Dpara = 100.0), G -> tilted_tensor(G; θ = 0.9, Dpara = 300.0)),
+        )
+        return map(specs) do (name, RP, part, cond)
+            G = RP.G
+            n = plasma_density(G; floor_nodes = 6)
+            A_part, A_cond = diffusion_operator(G, part(G)), diffusion_operator(G, cond(G))
+            limited = limit_antidiffusive_pairs!(A_part, G, n; max_ratio = 4.0)
+            limit_antidiffusive_pairs!(A_cond, G, n; max_ratio = 4.0)
+            (; name, G, A_part, A_cond, n, V = cell_volume(G), limited)
+        end
+    end
+
+    "The per-particle operator of A_part, and the same with the conduction correction."
+    function with_correction(c; n = c.n)
+        M_part = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
+        M = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
+        add_conduction_correction!(M, c.A_part, c.A_cond, n, c.G; n_floor = 1.0)
+        return M_part, M
+    end
+end
+
+@testitem "conduction correction: keeps Σ V n f and constants; no difference leaves M bit for bit" setup = [PerParticleFixtures, ConductionCases] begin
+    using RAPID2D: per_particle_operator!, add_conduction_correction!
+    for c in conduction_cases()
+        @test c.limited > 0
+        M_part, M = with_correction(c)
+        C = M.matrix - M_part.matrix
+        @test maximum(abs, C) > 0
+        # constants stay in the kernel
+        @test maximum(abs, M * ones(length(c.n))) <= 1.0e-12 * maximum(abs, M.matrix.nzval)
+        # what the correction moves between particles adds up to nothing
+        f = smooth_field(c.G)
+        Cf = C * f
+        @test abs(sum(c.V .* c.n .* Cf)) <= 1.0e-12 * sum(c.V .* c.n .* abs.(Cf))
+        # A_cond = A_part: nothing added, bit for bit
+        M_same = per_particle_operator!(similar(c.A_part), c.A_part, c.n; n_floor = 1.0)
+        add_conduction_correction!(M_same, c.A_part, deepcopy(c.A_part), c.n, c.G; n_floor = 1.0)
+        @test M_same.matrix.nzval == M_part.matrix.nzval
+    end
+end
+
+@testitem "conduction correction: only adds dissipation, and the heating identity holds for the whole operator" setup = [PerParticleFixtures, ConductionCases] begin
+    using RAPID2D: per_particle_operator!, add_conduction_correction!, dissipation_rate!
+    using RAPID2D.SparseArrays: findnz
+    for c in conduction_cases()
+        M_part, M = with_correction(c)
+        # every pair transfer it adds is non-negative: negative ones are dropped, both ways
+        C = M.matrix - M_part.matrix
+        off = [C[k, l] for (k, l, _) in zip(findnz(C)...) if k != l]
+        @test all(>=(0), off) && any(>(0), off)
+        u = smooth_field(c.G; a = 2.0e5, k = (2, 3))
+        Γ, Γ_part = dissipation_rate!(similar(u), M, u), dissipation_rate!(similar(u), M_part, u)
+        # the heating it adds is what it takes from Σ V ½ n u², and positive
+        heat = sum(c.V .* c.n .* (Γ .- Γ_part))
+        @test heat > 0
+        @test heat ≈ -sum(c.V .* c.n .* u .* (C * u)) rtol = 1.0e-10
+        # above the floor everywhere, what Σ V ½ n u² loses under dn/dt = A_part n, du/dt = M u is
+        # what the heating of the whole operator gains (floor rows break it for M_part alone)
+        n = plasma_density(c.G)
+        _, M = with_correction(c; n)
+        dK = sum(c.V .* (0.5 .* u .^ 2 .* (c.A_part * n) .+ n .* u .* (M * u)))
+        @test sum(c.V .* n .* dissipation_rate!(similar(u), M, u)) ≈ -dK rtol = 1.0e-10
+    end
+end
+
+@testitem "conduction correction: a pair with a node on the floor is skipped, both ways" setup = [PerParticleFixtures, ConductionCases] begin
+    using RAPID2D: per_particle_operator!, add_conduction_correction!
+    for c in conduction_cases()
+        M_part, M = with_correction(c)
+        C = M.matrix - M_part.matrix
+        floor = findall(<=(1.0), c.n)
+        @test count(in(floor), c.G.nodes.in_wall_nids) == 6
+        @test all(iszero, C[floor, :]) && all(iszero, C[:, floor])
+    end
+end
+
+@testitem "conduction correction: in a uniform plasma with no cross terms, the variable conducts with A_cond" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!, add_conduction_correction!
+    RP = walled_RP(:box)
+    G = RP.G
+    A_part = diffusion_operator(G, (fill(5.0, G.NR, G.NZ), zeros(G.NR, G.NZ), fill(50.0, G.NR, G.NZ)))
+    A_cond = diffusion_operator(G, (fill(5.0, G.NR, G.NZ), zeros(G.NR, G.NZ), fill(80.0, G.NR, G.NZ)))
+    n = zeros(G.NR * G.NZ)
+    n[G.nodes.in_wall_nids] .= 3.0e13
+    M = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
+    add_conduction_correction!(M, A_part, A_cond, n, G; n_floor = 1.0)
+    @test M.matrix.nzval ≈ A_cond.matrix.nzval rtol = 1.0e-12
+end

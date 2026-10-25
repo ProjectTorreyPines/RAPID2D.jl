@@ -194,6 +194,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dperp)
+    # what u∥ and Te conduct with along B: what the particles diffuse with
+    tp.Dpara_cond .= tp.Dpara
 
     # Project the parallel speeds onto (R, ϕ, Z). `"upara"` is the only representation
     # implemented: a `"uRphiZ"` mode would evolve the components directly and skip this.
