@@ -157,27 +157,33 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # than switching off. Forward/backward bound disjoint halves of velocity space and
     # enter as an arithmetic mean (`wall_step_ceiling`). Only a failed trace carries
     # `Inf`, and the FLF validator never lets one reach this line.
-    D_geom = @. min(D0, wall_step_ceiling(vm_e, RP.flf.Lc_forward, RP.flf.Lc_backward))
+    step_ceiling = @. wall_step_ceiling(vm_e, RP.flf.Lc_forward, RP.flf.Lc_backward)
+    D_geom = @. min(D0, step_ceiling)
 
     # Stage 3b. The flux ceiling, from the SAME `D0` — never from `D_geom`.
-    D_flux = if RP.flags.limit_flux.state
-        # `upwind = false`, overriding `flags.upwind`: this gradient describes the
-        # PROFILE, not a flow. The upwind stencil picks its side from sign(ueR)/
-        # sign(ueZ) — components this function refreshes further down, so the limiter
-        # would respond to a flow reversal one update late — and the diffusion
-        # operator it is bounding uses centred face gradients regardless.
-        #
-        # Raw `pla.ne`, not a smoothed copy: the bound has to apply to the field the
-        # solve actually transports. The old `n_raw / |∇∥(n_SM)|` mixed two different
-        # fields and ran ~5× tighter on the low-density flank of a front.
-        ∇para_ne = calculate_para_grad_of_scalar_F(RP, pla.ne; upwind = false)
-        @. flux_limited_diffusivity(D0, ∇para_ne, pla.ne, vm_e, RP.flags.limit_flux.factor)
-    else
-        D0
-    end
+    # `upwind = false`, overriding `flags.upwind`: this gradient describes the PROFILE, not a
+    # flow. The upwind stencil picks its side from sign(ueR)/sign(ueZ) — components this
+    # function refreshes further down, so the limiter would respond to a flow reversal one
+    # update late — and the diffusion operator it is bounding uses centred face gradients
+    # regardless.
+    #
+    # Raw `pla.ne`, not a smoothed copy: the bound has to apply to the field the solve
+    # actually transports. The old `n_raw / |∇∥(n_SM)|` mixed two different fields and ran ~5×
+    # tighter on the low-density flank of a front.
+    ∇para_ne = RP.flags.limit_flux.state ? calculate_para_grad_of_scalar_F(RP, pla.ne; upwind = false) : nothing
+    flux_ceiling(D) = isnothing(∇para_ne) ? D :
+        @. flux_limited_diffusivity(D, ∇para_ne, pla.ne, vm_e, RP.flags.limit_flux.factor)
+    D_flux = flux_ceiling(D0)
 
     # Stage 4. Whichever ceiling is tighter.
     @. tp.Dpara = min(D_geom, D_flux)
+
+    # What u∥ and Te conduct with: the electrons' own collisional limb under the same two
+    # ceilings. The ions' friction holds back the electrons' particle flux, through the
+    # ambipolar field, not the heat and momentum they pass along B.
+    D0_own = @. tp.Dpara0 + tp.Dpara_e_coll
+    D_own_flux = flux_ceiling(D0_own)
+    D_own = @. min(min(D0_own, step_ceiling), D_own_flux)
 
     # Ions carry no gradient ceiling yet — they have only stage 3a. It is NOT the one
     # line it looks like: an ion ceiling has to bound the total non-convective species
@@ -194,8 +200,10 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dperp)
-    # what u∥ and Te conduct with along B: what the particles diffuse with
-    tp.Dpara_cond .= tp.Dpara
+    # never less than what the particles diffuse with, so the conduction correction is a
+    # parallel diffusion
+    extrapolate_field_to_boundary_nodes!(RP.G, D_own)
+    @. tp.Dpara_cond = max(D_own, tp.Dpara)
 
     # Project the parallel speeds onto (R, ϕ, Z). `"upara"` is the only representation
     # implemented: a `"uRphiZ"` mode would evolve the components directly and skip this.
