@@ -37,7 +37,8 @@
         end
         initialize_coil_system!(RP)
         initialize_coupled_fields!(RP)
-        RAPID2D.update_transport_quantities!(RP)   # what run_simulation! establishes before its loop
+        RAPID2D.update_space_charge_weights!(RP)   # what run_simulation! establishes before its loop
+        RAPID2D.update_transport_quantities!(RP)
         return RP
     end
 
@@ -60,7 +61,7 @@
     # and the snapshots left out): the caches the next step starts from follow its state
     function step!(RP)
         RAPID2D.take_step!(RP)
-        RP.flags.charge_sheet_field && RAPID2D.estimate_electrostatic_field_effects!(RP)
+        RAPID2D.estimate_electrostatic_field_effects!(RP)
         RAPID2D.update_transport_quantities!(RP)
         return RP
     end
@@ -290,12 +291,14 @@ end
     RP = transaction_rp()
     step!(RP)
     entry = StepState(RP)
-    Dpara = copy(RP.transport.Dpara)
+    Dpara, Dpol_turb = copy(RP.transport.Dpara), copy(RP.transport.Dpol_turb)
+    @test any(!iszero, Dpol_turb)
     calls = Ref(0)
     verdict = rp -> (calls[] += 1; calls[] == 2 ? Accept() : Reject(:late))
     @test_throws ErrorException take_step!(RP, StepTransaction(RP); verdict)
     @test same(StepState(RP), entry)
     @test same(RP.transport.Dpara, Dpara)   # refreshed again from the state put back
+    @test same(RP.transport.Dpol_turb, Dpol_turb)   # the charge sheets' with it
 end
 
 @testitem "A rejected attempt leaves no trace in the ledgers or the reaction counts" setup = [StepTransactionRun] begin

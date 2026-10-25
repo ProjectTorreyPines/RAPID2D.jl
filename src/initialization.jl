@@ -242,6 +242,9 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFl
     # Update Coulomb collision parameters
     update_coulomb_collision_parameters!(RP)
 
+    # the space charge's weights, read by the transport; the charge sheets' field waits for a
+    # step's end
+    update_space_charge_weights!(RP)
     update_transport_quantities!(RP)
 
     return RP

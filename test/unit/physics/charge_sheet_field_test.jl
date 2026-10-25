@@ -89,3 +89,80 @@ end
     estimate_electrostatic_field_effects!(RP)
     @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
 end
+
+@testitem "ambipolar weight: 1 on closed lines, the sheets' share of the cancelling field on open ones" setup = [CurrentDisc] begin
+    using RAPID2D: update_space_charge_weights!, estimate_electrostatic_field_effects!, smooth_data_2D
+    RP, _ = current_disc()
+    trace_closed_region!(RP)
+    pla, F, G = RP.plasma, RP.fields, RP.G
+    closed = RP.flf.closed_surface_nids
+    open_in = setdiff(G.nodes.in_wall_nids, closed)
+    pla.ne[open_in] .= [G.R2D[k] < R0 ? 1.0e10 : 1.0e17 for k in open_in]   # below and above nc_para
+    E_target, E_debye = update_space_charge_weights!(RP)
+    w = pla.ambipolar_weight
+    n_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D)
+
+    @test all(==(1), w[closed])
+    # on open lines the share of the cancelling field the sheets hold, as the threshold gives it too
+    @test w[open_in] ≈ min.(1, E_debye[open_in] ./ E_target[open_in])
+    @test w[open_in] ≈ min.(1, sqrt.(n_SM[open_in] ./ pla.nc_para[open_in]))
+    @test any(x -> 0 < x < 1, w[open_in]) && any(==(1), w[open_in])
+    # and the sheets' field is that share of what they would need
+    estimate_electrostatic_field_effects!(RP)
+    @test F.ERZ_pla_mag[open_in] ≈ w[open_in] .* E_target[open_in]
+    # the snapshots carry both weights, the 0D ones as density-weighted means
+    s2, s0 = RAPID2D.measure_snap2D(RP), RAPID2D.measure_snap0D(RP)
+    @test s2.ambipolar_weight == w && s2.turbulence_weight == pla.turbulence_weight
+    Ne = pla.ne .* G.inVol2D
+    @test s0.ambipolar_weight ≈ sum(w .* Ne) / sum(Ne) && s0.turbulence_weight ≈ sum(pla.turbulence_weight .* Ne) / sum(Ne)
+
+    # nothing to cancel: any plasma holds it
+    foreach(a -> fill!(a, 0.0), (F.Eϕ_para_presc, F.Eϕ_para_coils_pla))
+    update_space_charge_weights!(RP)
+    @test all(==(1), w[open_in]) && all(iszero, pla.nc_para[open_in])
+    # a cold plasma holds no charge
+    fill!(pla.Te_eV, 0.0)
+    update_space_charge_weights!(RP)
+    @test all(iszero, w[open_in]) && all(==(1), w[closed])
+    @test all(isinf, pla.nc_para)
+    # without the coupling, no weight
+    RP.flags.ambipolar_coupling = false
+    update_space_charge_weights!(RP)
+    @test all(iszero, w)
+end
+
+@testitem "space-charge weights: set by initialize!, kept without the sheets' field, which leaves nothing behind" setup = [CurrentDisc] begin
+    using RAPID2D: update_space_charge_weights!, estimate_electrostatic_field_effects!, calculate_parallel_electric_field!
+    # initialize! sets the weights from its state; the sheets' field waits for a step's end
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
+        NR = 17, NZ = 17, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    w0 = (copy(RP.plasma.turbulence_weight), copy(RP.plasma.ambipolar_weight))
+    @test all(a -> any(>(0), a), w0)
+    @test all(iszero, RP.fields.ERZ_pla_mag)
+    update_space_charge_weights!(RP)
+    @test (RP.plasma.turbulence_weight, RP.plasma.ambipolar_weight) == w0
+
+    # the sheets' field switched off: no field, parallel part, turbulence weight or diffusivity
+    # left from before; the coupling's weight is still set
+    RP, _ = current_disc()
+    trace_closed_region!(RP)
+    pla, F, tp = RP.plasma, RP.fields, RP.transport
+    closed = RP.flf.closed_surface_nids
+    pla.ne[setdiff(RP.G.nodes.in_wall_nids, closed)] .= 1.0e17
+    estimate_electrostatic_field_effects!(RP)
+    @test any(>(0), F.ERZ_pla_mag) && any(>(0), tp.Dpol_turb) && any(!iszero, F.ERZ_para_pla)
+    RP.flags.charge_sheet_field = false
+    RP.flags.E_para_cancellation = false
+    estimate_electrostatic_field_effects!(RP)
+    calculate_parallel_electric_field!(RP)
+    @test all(iszero, F.ERZ_pla_mag) && all(iszero, F.ERZ_para_pla)
+    @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
+    @test all(==(1), pla.ambipolar_weight[closed])
+end

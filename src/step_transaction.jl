@@ -255,9 +255,10 @@ function take_part!(RP::RAPID{FT}, tx::StepTransaction{FT}, t0::FT, dt::FT, q::I
         restore_step_state!(RP, tx.entry)
         RP.dt = dt
         if tx.refreshed
-            # the caches an accepted part refreshed, rebuilt from the state put back; the rates
-            # the refresh writes into the plasma, put back as the step found them
-            update_transport_quantities!(RP)
+            # the caches an accepted part refreshed (the transport's, the charge sheets' turbulent
+            # diffusivity with them), rebuilt from the state put back; what the refresh writes into
+            # the plasma and the fields, put back as the step found it
+            refresh_between_parts!(RP)
             restore_step_state!(RP, tx.entry)
         end
         error(
@@ -290,7 +291,7 @@ end
 # Between two accepted parts of a step, what the end of a step refreshes from the state; the
 # field-line analysis keeps to the steps.
 function refresh_between_parts!(RP::RAPID)
-    RP.flags.charge_sheet_field && @timeit RAPID_TIMER "electrostatic_field" estimate_electrostatic_field_effects!(RP)
+    @timeit RAPID_TIMER "electrostatic_field" estimate_electrostatic_field_effects!(RP)
     @timeit RAPID_TIMER "transport_quantities" update_transport_quantities!(RP)
     return RP
 end

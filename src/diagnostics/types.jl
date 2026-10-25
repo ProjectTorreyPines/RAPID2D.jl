@@ -44,6 +44,7 @@ Contains volume-averaged quantities
     abs_ue_para_RZ::FT = zero(FT)     # Average parallel velocity
     D_RZ::FT = zero(FT)         # Average diffusion coefficient
     turbulence_weight::FT = zero(FT)  # ⟨w_turb⟩, the turbulent E×B mixing's onset
+    ambipolar_weight::FT = zero(FT)   # ⟨w_amb⟩, the common-mode coupling's weight
 
     # Neutral gas (its average is the species' `ng_H2`, also read as `n_H2_gas`)
     n_H2_gas_min::FT = zero(FT)     # Minimum H2 density
@@ -336,6 +337,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     nc_perp::Matrix{FT} = zeros(FT, dims_RZ)        # Perpendicular critical density
     γ_shape_fac::Matrix{FT} = zeros(FT, dims_RZ)    # Gamma coefficient
     turbulence_weight::Matrix{FT} = zeros(FT, dims_RZ)  # w_turb, the turbulent E×B mixing's onset
+    ambipolar_weight::Matrix{FT} = zeros(FT, dims_RZ)   # w_amb, the common-mode coupling's weight
 
     # Collision frequencies
     ν_en_iz::Matrix{FT} = zeros(FT, dims_RZ)        # Average ionization frequency [1/s]

@@ -404,12 +404,13 @@ Contains the plasma state variables including density, temperature, and velocity
     mean_aR_by_JxB::Matrix{FT} = zeros(FT, dims) # Mean JxB acceleration R component [m/s²]
     mean_aZ_by_JxB::Matrix{FT} = zeros(FT, dims) # Mean JxB acceleration Z component [m/s²]
 
-    # Parameters for Self-E field effects
-    nc_para::Matrix{FT} = zeros(FT, dims) # Parallel critical density [m^-3]
-    nc_perp::Matrix{FT} = zeros(FT, dims) # Perpendicular critical density [m^-3]
+    # The space charge's regime (`update_space_charge_weights!`)
+    nc_para::Matrix{FT} = zeros(FT, dims) # density at which the charge sheets' Debye field cancels the driven E∥ [m^-3]
+    nc_perp::Matrix{FT} = zeros(FT, dims) # density at which their E×B drift outruns the parallel streaming in RZ [m^-3]
     γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
-    # how much of what the code does not resolve a closure carries (`update_space_charge_weights!`)
+    # how much of what the code does not resolve a closure carries
     turbulence_weight::Matrix{FT} = zeros(FT, dims) # w_turb: the turbulent E×B mixing's onset, min(1, √(n/nc_perp))
+    ambipolar_weight::Matrix{FT} = zeros(FT, dims)  # w_amb: the common-mode coupling, 1 on closed lines, min(1, √(n/nc_para)) on open ones
 
     # Collision parameters
     lnΛ::Matrix{FT} = zeros(FT, dims)   # ELECTRON-ion Coulomb logarithm (NRL p.34b)
@@ -1317,6 +1318,7 @@ Contains boolean flags that control various aspects of the simulation.
     charge_sheet_field::Bool = true           # Compute the open-line charge sheets' field
     E_para_cancellation::Bool = true          # Its parallel part cancels the driven E∥
     E_para_induction::Bool = true             # The induced Eϕ's parallel part drives u∥ (and the coupled solve)
+    ambipolar_coupling::Bool = true           # The ambipolar field couples the species' parallel transport: `ambipolar_weight`, 0 when off
     negative_n_correction::Bool = true             # Correct negative densities
     Te_evolve::Bool = true                    # Evolve electron temperature
     ud_evolve::Bool = true                    # Evolve drift velocity

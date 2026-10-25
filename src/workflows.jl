@@ -392,6 +392,9 @@ function run_simulation!(
         # rebuilds everything from the current state, so on an untouched resume it changes
         # nothing and splitting a run in two stays bit for bit. Ahead of the snapshots,
         # which report those rates too. notes/issues/stale-rrcs-on-first-step.md
+        # The space charge's weights with them; the charge sheets' field keeps to the ends of
+        # steps, so the first step of a fresh run has none.
+        update_space_charge_weights!(RP)
         update_transport_quantities!(RP)
 
         # Initial snapshots at t_start_s
@@ -430,11 +433,9 @@ function run_simulation!(
                     end
                 end
 
-                # Calculate self-consistent electrostatic field if enabled
-                if RP.flags.charge_sheet_field
-                    @timeit RAPID_TIMER "electrostatic_field" begin
-                        estimate_electrostatic_field_effects!(RP)
-                    end
+                # The space charge's weights, and the charge sheets' field when it is modelled
+                @timeit RAPID_TIMER "electrostatic_field" begin
+                    estimate_electrostatic_field_effects!(RP)
                 end
 
                 # Update transport coefficients after all state variables are updated

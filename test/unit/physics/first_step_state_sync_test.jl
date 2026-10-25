@@ -31,6 +31,17 @@
     @test lib.plasma.ue_para == hand.plasma.ue_para
 end
 
+@testitem "the space charge's weights the first step reads come from the state assigned after initialize!" setup = [ResumeFixtures] begin
+    RP = wall_geometry(1.0e-6)                      # a density and a field assigned after initialize!
+    at_initialize = copy(RP.plasma.ambipolar_weight)
+    handed = deepcopy(RP)
+    RAPID2D.update_space_charge_weights!(handed)    # what the state handed over gives
+    first_step = Ref{Matrix{Float64}}()
+    run_simulation!(RP; callback_before_step = rp -> (isassigned(first_step) || (first_step[] = copy(rp.plasma.ambipolar_weight))))
+    @test first_step[] == handed.plasma.ambipolar_weight
+    @test first_step[] != at_initialize
+end
+
 @testsnippet ResumeFixtures begin
     # A wall strictly inside the domain, a nonzero drift everywhere (outside the wall too),
     # convection and diffusion on, nothing else: the shape every resume test needs, since an
