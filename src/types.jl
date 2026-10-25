@@ -538,7 +538,7 @@ Fields include components of the magnetic and electric fields.
     LV_presc::Matrix{FT} = zeros(FT, dims)        # loop voltage [V]
     ψ_presc::Matrix{FT} = zeros(FT, dims)         # [Wb/rad]
     Eϕ_presc::Matrix{FT} = zeros(FT, dims)        # [V/m]
-    E_para_presc::Matrix{FT} = zeros(FT, dims)    # Eϕ_presc bϕ [V/m]
+    Eϕ_para_presc::Matrix{FT} = zeros(FT, dims)    # Eϕ_presc bϕ [V/m]
 
     # The vertical-field control's vacuum field (`IdealVerticalFieldControl`), added to the total
     # only when the run has one
@@ -546,7 +546,7 @@ Fields include components of the magnetic and electric fields.
     BZ_ctrl::Matrix{FT} = zeros(FT, dims)       # [T]
     ψ_ctrl::Matrix{FT} = zeros(FT, dims)        # [Wb/rad]
     Eϕ_ctrl::Matrix{FT} = zeros(FT, dims)       # induced by ψ_ctrl's change over the step [V/m]
-    E_para_ctrl::Matrix{FT} = zeros(FT, dims)   # Eϕ_ctrl bϕ [V/m]
+    Eϕ_para_ctrl::Matrix{FT} = zeros(FT, dims)   # Eϕ_ctrl bϕ [V/m]
 
     # The fields of the currents RAPID2D solves for, coils (walls included) and plasma together: the
     # state the coupled solve carries. Each source alone is computed on demand (plasma_flux_on_grid,
@@ -556,9 +556,9 @@ Fields include components of the magnetic and electric fields.
     ψ_coils_pla::Matrix{FT} = zeros(FT, dims)        # [Wb/rad]
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims)       # induced by ψ_coils_pla's change over the step; below the Ampère gate, the coils' alone [V/m]
     Eϕ_coils_pla_prev::Matrix{FT} = zeros(FT, dims)  # the same, one step before [V/m]
-    Epol_self::Matrix{FT} = zeros(FT, dims)       # Self-generated poloidal electric field [V/m]
-    E_para_self_ES::Matrix{FT} = zeros(FT, dims) # Electrostatic self-generated parallel electric field [V/m]
-    E_para_self_EM::Matrix{FT} = zeros(FT, dims) # Electromagnetic self-generated parallel electric field [V/m]
+    ERZ_pla_mag::Matrix{FT} = zeros(FT, dims)        # the open-line charge sheets' (S1) RZ field, magnitude, along ±b̂ in RZ [V/m]
+    ERZ_para_pla::Matrix{FT} = zeros(FT, dims)       # its parallel projection, against the driven E∥ [V/m]
+    Eϕ_para_coils_pla::Matrix{FT} = zeros(FT, dims)  # Eϕ_coils_pla bϕ [V/m]
 
     # Total fields: prescribed + coils and plasma (+ vertical-field control)
     BR::Matrix{FT} = zeros(FT, dims)            # Total radial magnetic field [T]
@@ -1309,8 +1309,12 @@ Contains boolean flags that control various aspects of the simulation.
     mean_ExB::Bool = true                     # Include mean ExB drift
     diaMag_drift::Bool = false                # Include diamagnetic drift
     turb_ExB_mixing::Bool = true              # Include turbulent ExB mixing
-    E_para_self_ES::Bool = true               # Include self-electrostatic parallel E-field
-    E_para_self_EM::Bool = true               # Include self-electromagnetic parallel E-field
+    # The open-line charge sheets' field (`estimate_electrostatic_field_effects!`): computed when
+    # `charge_sheet_field`; its effects are switched one by one by `E_para_cancellation`,
+    # `mean_ExB` and `turb_ExB_mixing`. With the field off, `mean_ExB` adds whatever drift is set.
+    charge_sheet_field::Bool = true           # Compute the open-line charge sheets' field
+    E_para_cancellation::Bool = true          # Its parallel part cancels the driven E∥
+    E_para_induction::Bool = true             # The induced Eϕ's parallel part drives u∥ (and the coupled solve)
     negative_n_correction::Bool = true             # Correct negative densities
     Te_evolve::Bool = true                    # Evolve electron temperature
     ud_evolve::Bool = true                    # Evolve drift velocity
@@ -1471,12 +1475,12 @@ function validate_scheme_flags(flags::SimulationFlags)
     # pays for this refusal. Its remaining gate — |I_tor| ≥ Ampere_Itor_threshold — is
     # runtime state and cannot be checked here, which is exactly why the pairing has to
     # be refused up front: the route opens partway through a run.
-    if flags.scheme.decay === ExpRB && flags.Ampere && flags.E_para_self_EM &&
+    if flags.scheme.decay === ExpRB && flags.Ampere && flags.E_para_induction &&
             flags.ud_evolve
         throw(
             ArgumentError(
                 "scheme.decay = ExpRB is not available with Ampere = true, " *
-                    "E_para_self_EM = true and ud_evolve = true: " *
+                    "E_para_induction = true and ud_evolve = true: " *
                     "above Ampere_Itor_threshold that combination solves u∥ in the " *
                     "combined momentum–Ampère block, which takes the constant θ_imp.decay " *
                     "and would silently revert to the Theta scheme mid-run. Only update_ue_para! " *

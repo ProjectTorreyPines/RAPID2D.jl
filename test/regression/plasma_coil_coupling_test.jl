@@ -555,11 +555,11 @@ end
 
     RP.flags = SimulationFlags{Float64}(
         # ── THE PHYSICS UNDER TEST: inductive plasma ↔ coil coupling ────────────
-        # Ampère solves for the field of the plasma current; E_para_self_EM feeds the
+        # Ampère solves for the field of the plasma current; E_para_induction feeds the
         # resulting -∂A/∂t back onto the electrons. Together they ARE the inductive
         # link between the plasma loop and the coil circuit — this test measures it.
         Ampere = true,
-        E_para_self_EM = true,
+        E_para_induction = true,
         Ampere_Itor_threshold = 0.0,  # no dead band: couple from the first amp onwards
 
         # The plasma responds through parallel momentum only, and its loop resistance
@@ -582,7 +582,7 @@ end
         Include_ud_diffu_term = false,
         Include_ud_pressure_term = false,
         Include_Te_convec_term = false,
-        E_para_self_ES = false,       # electrostatic self-field is not what is tested
+        charge_sheet_field = false, E_para_cancellation = false,       # electrostatic self-field is not what is tested
         Global_JxB_Force = false,     # no bulk displacement of the column
 
         # ── Numerics ───────────────────────────────────────────────────────────
@@ -596,7 +596,7 @@ end
     # Pure toroidal field with E0 = 0.0 — no external Eϕ imposed by this scenario.
     # NOTE: E0 = 0.0 does NOT mean undriven. `initialize!` above already installed the
     # manual-device default loop voltage (src/initialization.jl, set_RZ_B_E_manually!:
-    # 0.3 V/m); this helper overwrites Eϕ / Eϕ_presc / E_para_presc but NOT fields.LV_presc,
+    # 0.3 V/m); this helper overwrites Eϕ / Eϕ_presc / Eϕ_para_presc but NOT fields.LV_presc,
     # and that surviving LV_presc is what drives the plasma loop. It is read back as V₂
     # (and, via the saturated drift, as R_plasma) in extract_plasma_circuit_parameters.
     setup_toroidal_field!(RP; E0 = 0.0, verbose)

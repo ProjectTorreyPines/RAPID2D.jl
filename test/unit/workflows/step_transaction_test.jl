@@ -60,7 +60,7 @@
     # and the snapshots left out): the caches the next step starts from follow its state
     function step!(RP)
         RAPID2D.take_step!(RP)
-        RP.flags.E_para_self_ES && RAPID2D.estimate_electrostatic_field_effects!(RP)
+        RP.flags.charge_sheet_field && RAPID2D.estimate_electrostatic_field_effects!(RP)
         RAPID2D.update_transport_quantities!(RP)
         return RP
     end

@@ -134,16 +134,17 @@ function setup_induced_current_flags!(RP::RAPID)
         update_ni_independently = false,
         Gas_evolve = false,
         Ampere = true,
-        E_para_self_ES = false,
+        charge_sheet_field = false, E_para_cancellation = false,
         negative_n_correction = true
     )
 
     # Additional flags
     RP.flags.mean_ExB = false
     RP.flags.turb_ExB_mixing = false
-    RP.flags.E_para_self_ES = false
+    RP.flags.charge_sheet_field = false
+    RP.flags.E_para_cancellation = false
     RP.flags.Coulomb_Collision = true
-    RP.flags.E_para_self_EM = true
+    RP.flags.E_para_induction = true
     RP.flags.Ampere_Itor_threshold = 0.0
     RP.flags.FLF_nstep = 10
     RP.flags.Implicit = true
@@ -181,7 +182,7 @@ function setup_magnetic_field!(RP::RAPID; verbose::Bool = false)
     E0 = 0.0  # V/m
     @. RP.fields.Eϕ = E0 * $mean(RP.G.R1D) / RP.G.Jacob
     @. RP.fields.Eϕ_presc = RP.fields.Eϕ
-    @. RP.fields.E_para_presc = RP.fields.Eϕ * RP.fields.bϕ
+    @. RP.fields.Eϕ_para_presc = RP.fields.Eϕ * RP.fields.bϕ
 
     return if verbose
         println("  ✓ Magnetic field configuration set")

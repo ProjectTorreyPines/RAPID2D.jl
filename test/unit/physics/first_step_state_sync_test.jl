@@ -49,7 +49,7 @@ end
         RP.flags = SimulationFlags{FT}(
             convec = true, diffu = true, ud_evolve = true, src = false,
             Te_evolve = false, Ti_evolve = false, Ampere = false,
-            E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+            charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
             update_ni_independently = false, Include_ud_convec_term = false,
             Coulomb_Collision = false, negative_n_correction = false,
         )

@@ -76,21 +76,21 @@ function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: Abstract
     F = RP.fields
     # the prescribed field's parallel electric field, and the vertical-field control's
     control = _vertical_field_control_on(RP)
-    @. F.E_para_presc = F.Eϕ_presc * F.bϕ
+    @. F.Eϕ_para_presc = F.Eϕ_presc * F.bϕ
     if control
-        @. F.E_para_ctrl = F.Eϕ_ctrl * F.bϕ
+        @. F.Eϕ_para_ctrl = F.Eϕ_ctrl * F.bϕ
     end
 
     # self parallel electric field, against the applied loop voltage
-    if RP.flags.E_para_self_ES
+    if RP.flags.E_para_cancellation
         if control
-            @. F.E_para_self_ES = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+            @. F.ERZ_para_pla = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.ERZ_pla_mag * F.Bpol / F.Btot
         else
-            @. F.E_para_self_ES = sign(-F.Eϕ_presc * F.Bϕ) * F.Epol_self * F.Bpol / F.Btot
+            @. F.ERZ_para_pla = sign(-F.Eϕ_presc * F.Bϕ) * F.ERZ_pla_mag * F.Bpol / F.Btot
         end
     end
-    if RP.flags.E_para_self_EM
-        @. F.E_para_self_EM = F.Eϕ_coils_pla * F.bϕ
+    if RP.flags.E_para_induction
+        @. F.Eϕ_para_coils_pla = F.Eϕ_coils_pla * F.bϕ
     end
 
     combine_E_para!(RP)
@@ -102,9 +102,9 @@ end
 function combine_E_para!(RP::RAPID)
     F = RP.fields
     if _vertical_field_control_on(RP)
-        @. F.E_para_tot = F.E_para_presc + F.E_para_ctrl + F.E_para_self_ES + F.E_para_self_EM
+        @. F.E_para_tot = F.Eϕ_para_presc + F.Eϕ_para_ctrl + F.ERZ_para_pla + F.Eϕ_para_coils_pla
     else
-        @. F.E_para_tot = F.E_para_presc + F.E_para_self_ES + F.E_para_self_EM
+        @. F.E_para_tot = F.Eϕ_para_presc + F.ERZ_para_pla + F.Eϕ_para_coils_pla
     end
     return RP
 end
@@ -298,7 +298,7 @@ This function ports the MATLAB `Estimate_E_self_effects` function from lines 544
 in c_RAPID.m. It calculates:
 - Shape factor (γ_shape_fac) based on magnetic field properties
 - Critical densities for parallel and perpendicular transport
-- Self-consistent electric fields (E_self_pol, E_para_self_ES)
+- The open-line charge sheets' field (ERZ_pla_mag) and its parallel projection (ERZ_para_pla)
 - Mean ExB drift velocities
 - Turbulent diffusion coefficients
 
@@ -348,29 +348,29 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     # 3. Calculate self-consistent electric fields (MATLAB lines 582-620)
     # =========================================================================
     # Parallel electrostatic self-field component
-    # E_para_self_ES = E_self_pol * (Bpol/Btot) * sign(direction)
-    EM = RP.flags.E_para_self_EM
+    # ERZ_para_pla = ±ERZ_pla_mag * (Bpol/Btot), against the driven E∥
+    EM = RP.flags.E_para_induction
     E_pol_required_for_cancellation = if _vertical_field_control_on(RP)
-        @. abs(F.E_para_presc + F.E_para_ctrl + EM * F.E_para_self_EM) * (F.Btot / F.Bpol)
+        @. abs(F.Eϕ_para_presc + F.Eϕ_para_ctrl + EM * F.Eϕ_para_coils_pla) * (F.Btot / F.Bpol)
     else
-        @. abs(F.E_para_presc + EM * F.E_para_self_EM) * (F.Btot / F.Bpol)
+        @. abs(F.Eϕ_para_presc + EM * F.Eϕ_para_coils_pla) * (F.Btot / F.Bpol)
     end
 
     ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
-    # E_self_debye = @. sqrt(abs(pla.ne)*ee*pla.Te_eV/eps0)
-    E_self_debye = @. sqrt(abs(ne_SM) * ee * pla.Te_eV / eps0)
+    # E_debye = @. sqrt(abs(pla.ne)*ee*pla.Te_eV/eps0)
+    E_debye = @. sqrt(abs(ne_SM) * ee * pla.Te_eV / eps0)
 
-    F.Epol_self = @. min(pla.γ_shape_fac * E_pol_required_for_cancellation, E_self_debye)
-    extrapolate_field_to_boundary_nodes!(RP.G, F.Epol_self)
+    F.ERZ_pla_mag = @. min(pla.γ_shape_fac * E_pol_required_for_cancellation, E_debye)
+    extrapolate_field_to_boundary_nodes!(RP.G, F.ERZ_pla_mag)
 
     calculate_parallel_electric_field!(RP)
 
     if RP.flags.mean_ExB
-        @. pla.mean_ExB_R = (F.Epol_self / F.Btot) * sign(F.Eϕ) * F.bpol_Z
-        @. pla.mean_ExB_Z = (F.Epol_self / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
+        @. pla.mean_ExB_R = (F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * F.bpol_Z
+        @. pla.mean_ExB_Z = (F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
 
-        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.Epol_self * F.bpol_R
-        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.Epol_self * F.bpol_Z
+        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_mag * F.bpol_R
+        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_mag * F.bpol_Z
     end
 
     # # Turbulent parallel diffusion based on fluctuation levels
@@ -384,7 +384,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
 
     # # Turbulent diffusion coefficient
     # Dpol_turb = 0.5 * v_(ExB) * L_mixing
-    @. tp.Dpol_turb = 0.5 * F.Epol_self / F.Btot * tp.L_mixing
+    @. tp.Dpol_turb = 0.5 * F.ERZ_pla_mag / F.Btot * tp.L_mixing
 
     return RP
 end

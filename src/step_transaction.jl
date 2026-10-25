@@ -290,7 +290,7 @@ end
 # Between two accepted parts of a step, what the end of a step refreshes from the state; the
 # field-line analysis keeps to the steps.
 function refresh_between_parts!(RP::RAPID)
-    RP.flags.E_para_self_ES && @timeit RAPID_TIMER "electrostatic_field" estimate_electrostatic_field_effects!(RP)
+    RP.flags.charge_sheet_field && @timeit RAPID_TIMER "electrostatic_field" estimate_electrostatic_field_effects!(RP)
     @timeit RAPID_TIMER "transport_quantities" update_transport_quantities!(RP)
     return RP
 end

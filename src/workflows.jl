@@ -126,7 +126,7 @@ function below_gate_entry_state(RP::RAPID)
     return (;
         ue_para = copy(pla.ue_para), Jϕ = copy(pla.Jϕ),
         Eϕ_coils_pla = copy(F.Eϕ_coils_pla), Eϕ_coils_pla_prev = copy(F.Eϕ_coils_pla_prev),
-        E_para_self_EM = copy(F.E_para_self_EM), E_para_tot = copy(F.E_para_tot),
+        Eϕ_para_coils_pla = copy(F.Eϕ_para_coils_pla), E_para_tot = copy(F.E_para_tot),
         coil_current = csys.n_total > 0 ? copy(get_all_currents(csys)) : nothing,
         coil_ψ_pla = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : nothing, coil_time = csys.time_s,
         closed_surface = (; solve = deepcopy(RP.closed_surface.solve), ledger = deepcopy(RP.closed_surface.ledger)),
@@ -140,7 +140,7 @@ function restore_below_gate_entry_state!(RP::RAPID, entry)
     pla.Jϕ .= entry.Jϕ
     F.Eϕ_coils_pla .= entry.Eϕ_coils_pla
     F.Eϕ_coils_pla_prev .= entry.Eϕ_coils_pla_prev
-    F.E_para_self_EM .= entry.E_para_self_EM
+    F.Eϕ_para_coils_pla .= entry.Eϕ_para_coils_pla
     F.E_para_tot .= entry.E_para_tot
     if csys.n_total > 0
         set_all_currents!(csys, entry.coil_current)
@@ -173,7 +173,7 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
         I_coils_entry = get_all_currents(RP.coil_system)
 
         above_gate = RP.flags.Ampere && abs(I_tor) >= RP.flags.Ampere_Itor_threshold
-        if above_gate && RP.flags.E_para_self_EM && RP.flags.ud_evolve
+        if above_gate && RP.flags.E_para_induction && RP.flags.ud_evolve
             # u∥, ψ_coils_pla and the coil currents together
             solve_combined_momentum_Ampere_equations_with_coils!(RP; NamedTuple(RP.flags.ampere_picard)...)
         elseif above_gate
@@ -192,10 +192,10 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
             # coupled solve starts from it when the gate opens. A step whose u∥ update carries
             # the current across the gate would have accelerated it without its
             # self-inductance; it is solved again by the coupled solve, from where it started.
-            coupled = RP.flags.Ampere && RP.flags.E_para_self_EM && RP.flags.ud_evolve
+            coupled = RP.flags.Ampere && RP.flags.E_para_induction && RP.flags.ud_evolve
             entry = coupled ? below_gate_entry_state(RP) : nothing
             ΔI_coils = advance_coils!(RP; plasma = false)
-            RP.flags.Ampere && RP.flags.E_para_self_EM && set_Eϕ_coils_pla_from_coils!(RP, ΔI_coils)
+            RP.flags.Ampere && RP.flags.E_para_induction && set_Eϕ_coils_pla_from_coils!(RP, ΔI_coils)
             if RP.flags.ud_evolve
                 update_ue_para!(RP)
             end
@@ -431,7 +431,7 @@ function run_simulation!(
                 end
 
                 # Calculate self-consistent electrostatic field if enabled
-                if RP.flags.E_para_self_ES
+                if RP.flags.charge_sheet_field
                     @timeit RAPID_TIMER "electrostatic_field" begin
                         estimate_electrostatic_field_effects!(RP)
                     end

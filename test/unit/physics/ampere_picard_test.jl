@@ -16,11 +16,11 @@
         )
         RP = RAPID{FT}(config)
         RP.flags = SimulationFlags{FT}(;
-            Ampere = true, Ampere_Itor_threshold = 0.0, E_para_self_EM = true, ud_evolve = true,
+            Ampere = true, Ampere_Itor_threshold = 0.0, E_para_induction = true, ud_evolve = true,
             Coulomb_Collision = true, Atomic_Collision = false, src = false, convec = false, diffu = false,
             Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
             Include_ud_convec_term = false, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
-            E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
+            charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
         )
         initialize!(RP)
         r = @. sqrt((RP.G.R2D - 1.5)^2 + RP.G.Z2D^2)
@@ -114,11 +114,11 @@ end
         )
         RP = RAPID{FT}(config)
         RP.flags = SimulationFlags{FT}(;
-            Ampere = true, Ampere_Itor_threshold = 0.0, E_para_self_EM = true, ud_evolve = true,
+            Ampere = true, Ampere_Itor_threshold = 0.0, E_para_induction = true, ud_evolve = true,
             Coulomb_Collision = true, Atomic_Collision = false, src = false, convec = false, diffu = false,
             Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
             Include_ud_convec_term = advection, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
-            E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
+            charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
         )
         initialize!(RP)
         r = @. sqrt((RP.G.R2D - cenR)^2 + RP.G.Z2D^2)
@@ -408,11 +408,11 @@ end
     )
     RP = RAPID{Float64}(config)
     RP.flags = SimulationFlags{Float64}(;
-        Ampere = true, Ampere_Itor_threshold = 0.0, E_para_self_EM = true, ud_evolve = true,
+        Ampere = true, Ampere_Itor_threshold = 0.0, E_para_induction = true, ud_evolve = true,
         Coulomb_Collision = true, Atomic_Collision = false, src = false, convec = false, diffu = false,
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
         Include_ud_convec_term = false, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
-        E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
+        charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
     )
     initialize!(RP)
     fill!(RP.plasma.Te_eV, 1.0)
@@ -439,7 +439,7 @@ end
     )
     initialize_coil_system!(RP)
     prepare_timestep!(RP)
-    RP.fields.E_para_presc[argmax(RP.plasma.ne)] = NaN
+    RP.fields.Eϕ_para_presc[argmax(RP.plasma.ne)] = NaN
     F, pla, csys = RP.fields, RP.plasma, RP.coil_system
     state() = (F.ψ_coils_pla, F.Eϕ_coils_pla, F.Eϕ_coils_pla_prev, pla.ue_para, pla.Rue_ei, csys.coils.current, csys.coils.ψ_pla, csys.time_s)
     before = deepcopy(state())

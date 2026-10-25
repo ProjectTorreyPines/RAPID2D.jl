@@ -29,7 +29,7 @@
         for f in (
                 :Coulomb_Collision, :diffu, :convec, :Include_Te_diffu_term,
                 :Include_Te_convec_term, :Include_heat_flux_term, :Ampere,
-                :E_para_self_ES, :E_para_self_EM, :mean_ExB, :turb_ExB_mixing,
+                :charge_sheet_field, :E_para_cancellation, :E_para_induction, :mean_ExB, :turb_ExB_mixing,
             )
             setproperty!(RP.flags, f, false)
         end

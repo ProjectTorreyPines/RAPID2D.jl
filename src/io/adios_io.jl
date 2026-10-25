@@ -380,10 +380,14 @@ end
 const RENAMED_SNAPSHOT_FIELDS = Dict(
     "ψ_self" => "ψ_coils_pla", "BR_self" => "BR_coils_pla", "BZ_self" => "BZ_coils_pla",
     "Eϕ_self" => "Eϕ_coils_pla", "force_R_self" => "force_R_pla", "force_Z_self" => "force_Z_pla",
-    "ψ_ext" => "ψ_presc", "LV_ext" => "LV_presc", "E_para_ext" => "E_para_presc",
-    "Epara_ext" => "Epara_presc", "force_R_ext" => "force_R_presc", "force_Z_ext" => "force_Z_presc",
+    "ψ_ext" => "ψ_presc", "LV_ext" => "LV_presc", "E_para_ext" => "Eϕ_para_presc",
+    "Epara_ext" => "Eϕ_para_presc", "force_R_ext" => "force_R_presc", "force_Z_ext" => "force_Z_presc",
     "BZ_ext_at_cen_by_Jϕ" => "BZ_presc_at_cen_by_Jϕ", "BR_ext_at_cen_by_Jϕ" => "BR_presc_at_cen_by_Jϕ",
     "coils_V_ext" => "coils_V_applied", "ni" => "ni_tot", "ni_max" => "ni_tot_max",
+    # the E-field names by component, then para, then source
+    "Epol_self" => "ERZ_pla_mag", "E_para_presc" => "Eϕ_para_presc", "Epara_tot" => "E_para_tot",
+    "Epara_presc" => "Eϕ_para_presc", "Epara_ctrl" => "Eϕ_para_ctrl", "Epara_self_ES" => "ERZ_para_pla",
+    "Epara_self_EM" => "Eϕ_para_coils_pla",
 )
 
 """

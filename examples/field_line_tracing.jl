@@ -230,8 +230,8 @@ RP = setup(
     src = true, Atomic_Collision = true, Coulomb_Collision = true, Spitzer_Resistivity = true,
     diffu = true, convec = true, ud_evolve = true, Te_evolve = true, Ti_evolve = true,
     update_ni_independently = true, Gas_evolve = true,
-    mean_ExB = true, turb_ExB_mixing = true, E_para_self_ES = true,
-    Ampere = true, Ampere_Itor_threshold = 0.1, Ampere_nstep = 1, E_para_self_EM = true,
+    mean_ExB = true, turb_ExB_mixing = true, charge_sheet_field = true, E_para_cancellation = true,
+    Ampere = true, Ampere_Itor_threshold = 0.1, Ampere_nstep = 1, E_para_induction = true,
     Global_JxB_Force = false, FLF_nstep = 50,
 )
 times_ms = (2.0, 4.0, 10.0, 20.0)

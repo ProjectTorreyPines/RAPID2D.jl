@@ -248,8 +248,9 @@ end
     using RAPID2D: IdealVerticalFieldControl, write_vertical_control_field!, combine_field_sources!
     RP, _ = current_disc(; control = IdealVerticalFieldControl(t_on_s = 0.0))
     st, F = RP.vertical_field_control, RP.fields
-    RP.flags.E_para_self_ES = true
-    RP.fields.Epol_self .= 1.0                                  # a poloidal self field to project
+    RP.flags.charge_sheet_field = true
+    RP.flags.E_para_cancellation = true
+    RP.fields.ERZ_pla_mag .= 1.0                                  # a poloidal self field to project
     st.R_ref = 1.6
     st.dt_applied = 1.0e-6
     st.a .= [1.0e-3, 0.0]                                       # a fast rise: Eϕ,ctrl ≈ −500 R V/m reverses Eϕ,presc
@@ -258,13 +259,13 @@ end
     Eϕ_vacuum = F.Eϕ_presc .+ F.Eϕ_ctrl
     @test all(<(0), Eϕ_vacuum) && all(>(0), F.Eϕ_presc)
     @test F.Eϕ ≈ Eϕ_vacuum .+ F.Eϕ_coils_pla
-    @test F.E_para_presc ≈ F.Eϕ_presc .* F.bϕ && F.E_para_ctrl ≈ F.Eϕ_ctrl .* F.bϕ
-    @test F.E_para_tot ≈ F.E_para_presc .+ F.E_para_ctrl .+ F.E_para_self_ES .+ F.E_para_self_EM
+    @test F.Eϕ_para_presc ≈ F.Eϕ_presc .* F.bϕ && F.Eϕ_para_ctrl ≈ F.Eϕ_ctrl .* F.bϕ
+    @test F.E_para_tot ≈ F.Eϕ_para_presc .+ F.Eϕ_para_ctrl .+ F.ERZ_para_pla .+ F.Eϕ_para_coils_pla
     @test F.ψ ≈ F.ψ_presc .+ F.ψ_coils_pla .+ F.ψ_ctrl
     @test F.BZ ≈ F.BZ_presc .+ F.BZ_coils_pla .+ F.BZ_ctrl
-    nonzero = F.E_para_self_ES .!= 0
+    nonzero = F.ERZ_para_pla .!= 0
     @test any(nonzero)
-    @test sign.(F.E_para_self_ES[nonzero]) == sign.(-Eϕ_vacuum[nonzero] .* F.Bϕ[nonzero])
+    @test sign.(F.ERZ_para_pla[nonzero]) == sign.(-Eϕ_vacuum[nonzero] .* F.Bϕ[nonzero])
 end
 
 @testitem "ideal vertical field: the electrostatic estimate takes the control's E∥ as a prescribed one" setup = [CurrentDisc] begin
@@ -272,20 +273,21 @@ end
         estimate_electrostatic_field_effects!
     RP, _ = current_disc(; control = IdealVerticalFieldControl(t_on_s = 0.0))
     st, F = RP.vertical_field_control, RP.fields
-    RP.flags.E_para_self_ES = true
+    RP.flags.charge_sheet_field = true
+    RP.flags.E_para_cancellation = true
     st.R_ref = 1.6
     st.dt_applied = 1.0e-6
     st.a .= [1.0e-3, 0.0]                                       # Eϕ,ctrl ≈ −500 R V/m
     write_vertical_control_field!(RP)
     combine_field_sources!(RP)
-    estimate!() = (estimate_electrostatic_field_effects!(RP); copy(F.Epol_self))
+    estimate!() = (estimate_electrostatic_field_effects!(RP); copy(F.ERZ_pla_mag))
     with_ctrl = estimate!()
     # the control's part moved into the prescribed one gives the same estimate
-    F.E_para_presc .+= F.E_para_ctrl
-    fill!(F.E_para_ctrl, 0.0)
+    F.Eϕ_para_presc .+= F.Eϕ_para_ctrl
+    fill!(F.Eϕ_para_ctrl, 0.0)
     @test isapprox(estimate!(), with_ctrl; rtol = 1.0e-12, nans = true)
     # without it, a clearly different one
-    fill!(F.E_para_ctrl, 0.0)
+    fill!(F.Eϕ_para_ctrl, 0.0)
     @test !isapprox(estimate!(), with_ctrl; rtol = 1.0e-3, nans = true)
 end
 
@@ -299,11 +301,11 @@ end
     # control arrays left with values are not added
     F.BZ_ctrl .= 1.0
     F.Eϕ_ctrl .= 1.0
-    F.E_para_ctrl .= 1.0
+    F.Eϕ_para_ctrl .= 1.0
     combine_field_sources!(RP)
     @test F.BZ == F.BZ_presc .+ F.BZ_coils_pla
-    @test F.E_para_presc == F.Eϕ_presc .* F.bϕ
-    @test F.E_para_tot == F.E_para_presc .+ F.E_para_self_ES .+ F.E_para_self_EM
+    @test F.Eϕ_para_presc == F.Eϕ_presc .* F.bϕ
+    @test F.E_para_tot == F.Eϕ_para_presc .+ F.ERZ_para_pla .+ F.Eϕ_para_coils_pla
 end
 
 @testitem "ideal vertical field: refused with the global J×B kick, without Ampère, and with coils" setup = [CurrentDisc] begin
@@ -377,8 +379,8 @@ end
         on = pla.ne .> 0
         pla.ue_para[on] .= pla.Jϕ[on] ./ (RP.config.constants.qe .* pla.ne[on] .* F.bϕ[on])
         RP.t_end_s = RP.dt
-        E_ctrl = zero(F.E_para_ctrl)
-        callback(RP) = (E_ctrl .= RP.fields.E_para_ctrl; drop && fill!(RP.fields.E_para_ctrl, 0.0))
+        E_ctrl = zero(F.Eϕ_para_ctrl)
+        callback(RP) = (E_ctrl .= RP.fields.Eϕ_para_ctrl; drop && fill!(RP.fields.Eϕ_para_ctrl, 0.0))
         redirect_stdout(devnull) do
             run_simulation!(RP; callback_before_step = callback)
         end

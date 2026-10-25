@@ -52,7 +52,7 @@ end
         RP.flags = SimulationFlags{Float64}(
             diffu = true, convec = false, src = false,
             Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false,
-            turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+            turb_ExB_mixing = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false,
             Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
             update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
         )
@@ -89,7 +89,7 @@ end
     RP.flags = SimulationFlags{Float64}(
         diffu = true, convec = false, src = false,
         Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false, turb_ExB_mixing = false,
-        E_para_self_ES = false, E_para_self_EM = false, Ampere = false, Te_evolve = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false, Te_evolve = false,
         ud_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
         secondary_electron = false, negative_n_correction = false,
     )
@@ -118,7 +118,7 @@ end
     RP.flags = SimulationFlags{Float64}(
         diffu = true, convec = true, src = false,
         Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = true,
-        turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+        turb_ExB_mixing = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false,
         Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
         update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
     )
@@ -127,7 +127,7 @@ end
     inw = G.nodes.in_wall_nids
     RP.plasma.ne .= 0
     RP.plasma.ne[inw] .= 1.0e14
-    # a poloidal drift toward the outer wall; E_para_self_ES is off so nothing rebuilds it
+    # a poloidal drift toward the outer wall; charge_sheet_field is off so nothing rebuilds it
     RP.plasma.mean_ExB_R .= 2.0e4
     RP.plasma.mean_ExB_Z .= 0.0
     N0 = sum(G.Jacob[inw] .* RP.plasma.ne[inw])
@@ -159,7 +159,7 @@ end
         RP.flags = SimulationFlags{Float64}(
             diffu = diffu, convec = convec, Implicit = implicit, src = false,
             Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = convec,
-            turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+            turb_ExB_mixing = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false,
             Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
             update_ni_independently = independent_ions, secondary_electron = secondary,
             negative_n_correction = false,
@@ -228,7 +228,7 @@ end
         RP.flags = SimulationFlags{Float64}(
             diffu = true, convec = false, src = false,
             Atomic_Collision = true, Coulomb_Collision = false, mean_ExB = false, turb_ExB_mixing = false,
-            E_para_self_ES = false, E_para_self_EM = false, Ampere = false, Te_evolve = false,
+            charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false, Te_evolve = false,
             ud_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
             secondary_electron = false, negative_n_correction = false,
         )
@@ -271,7 +271,7 @@ end
         RP.flags = SimulationFlags{Float64}(
             diffu = diffu, convec = convec, Implicit = true, src = false,
             Atomic_Collision = false, Coulomb_Collision = false, mean_ExB = false,
-            turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+            turb_ExB_mixing = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false,
             Te_evolve = false, ud_evolve = false, Ti_evolve = false, Gas_evolve = false,
             update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
         )

@@ -55,7 +55,7 @@
         # Applied toroidal electric field
         @. RP.fields.Eϕ = E0 * $mean(RP.G.R1D) / RP.G.Jacob
         @. RP.fields.Eϕ_presc = RP.fields.Eϕ
-        @. RP.fields.E_para_presc = RP.fields.Eϕ * RP.fields.bϕ
+        @. RP.fields.Eϕ_para_presc = RP.fields.Eϕ * RP.fields.bϕ
 
         if verbose
             println("  ✓ Toroidal field set: R₀B₀ = $(RP.config.R0B0) T⋅m, E0 = $E0 V/m")

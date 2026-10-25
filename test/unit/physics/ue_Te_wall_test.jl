@@ -14,7 +14,7 @@
         RP.flags = SimulationFlags{Float64}(
             Implicit = Implicit, upwind = upwind,
             diffu = true, convec = convec, src = false, Atomic_Collision = false, Coulomb_Collision = false,
-            mean_ExB = false, turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false,
+            mean_ExB = false, turb_ExB_mixing = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
             Ampere = false, Te_evolve = true, ud_evolve = true, Ti_evolve = false, Gas_evolve = false,
             update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
             Include_ud_pressure_term = false, Include_heat_flux_term = heat_flux,
@@ -28,7 +28,7 @@
         # initialize!, so zero them too, not just the loop voltage they came from.
         RP.fields.LV_presc .= 0.0
         RP.fields.Eϕ_presc .= 0.0
-        RP.fields.E_para_presc .= 0.0
+        RP.fields.Eϕ_para_presc .= 0.0
         RP.fields.E_para_tot .= 0.0
         RP.plasma.ue_para .= -1.0e6
         RP.plasma.Te_eV .= 12.0
@@ -171,8 +171,8 @@ end
     RP.flags = SimulationFlags{Float64}(
         src = true, diffu = true, convec = true, Atomic_Collision = true, Coulomb_Collision = true,
         ud_evolve = true, Te_evolve = true, Ti_evolve = true, update_ni_independently = true,
-        Gas_evolve = false, E_para_self_ES = true, mean_ExB = true, turb_ExB_mixing = true,
-        negative_n_correction = true, Ampere = false, E_para_self_EM = false,
+        Gas_evolve = false, charge_sheet_field = true, E_para_cancellation = true, mean_ExB = true, turb_ExB_mixing = true,
+        negative_n_correction = true, Ampere = false, E_para_induction = false,
     )
     initialize!(RP)
     G = RP.G

@@ -20,11 +20,11 @@
         )
         RP = RAPID{FT}(config)
         RP.flags = SimulationFlags{FT}(;
-            Ampere = ampere, Ampere_Itor_threshold = 0.0, E_para_self_EM = true, ud_evolve = true,
+            Ampere = ampere, Ampere_Itor_threshold = 0.0, E_para_induction = true, ud_evolve = true,
             Coulomb_Collision = true, Atomic_Collision = false, src = false, convec = false, diffu = false,
             Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
             Include_ud_convec_term = true, Include_ud_pressure_term = true, Include_ud_diffu_term = diffusion,
-            E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
+            charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
             Implicit = implicit,
         )
         RP.flags.θ_imp.decay = θ
@@ -62,7 +62,7 @@ end
         prepare_timestep!(b)
         u0 = copy(a.plasma.ue_para)
         solve_combined_momentum_Ampere_equations_with_coils!(a)
-        @. b.fields.E_para_tot = b.fields.E_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
+        @. b.fields.E_para_tot = b.fields.Eϕ_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
         update_ue_para!(b)
 
         Δu = a.plasma.ue_para .- u0
@@ -198,7 +198,7 @@ end
         u0, u_ref = copy(a.plasma.ue_para), reference(a)
         @test minimum(abs, u_ref[hole]) > 1.0e-3 * maximum(abs, u0)       # a reference other than 0
         solve_combined_momentum_Ampere_equations_with_coils!(a)
-        @. b.fields.E_para_tot = b.fields.E_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
+        @. b.fields.E_para_tot = b.fields.Eϕ_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
         update_ue_para!(b)
         Δu = a.plasma.ue_para .- u0
         @test maximum(abs, a.plasma.ue_para .- b.plasma.ue_para) <= 1.0e-12 * maximum(abs, Δu)

@@ -159,7 +159,7 @@ end
     # Dropping any one flag of the route sends the step back to `update_ue_para!`,
     # which honours the fit — so the refusal must be about the route, not about
     # ExpRB. Narrowing more than the defect requires would cost a real capability.
-    for off in (:Ampere, :E_para_self_EM, :ud_evolve)
+    for off in (:Ampere, :E_para_induction, :ud_evolve)
         ok = SimulationFlags{Float64}()
         ok.scheme.decay = ExpRB
         ok.Ampere = true

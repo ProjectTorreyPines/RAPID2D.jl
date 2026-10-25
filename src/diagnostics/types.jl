@@ -34,11 +34,11 @@ Contains volume-averaged quantities
     I_tor_endpoint::FT = zero(FT)  # the same from the step's end state, e(Z nᵢ uᵢ∥ − nₑ uₑ∥) bϕ
 
     # Electric fields
-    Epara_tot::FT = zero(FT)       # Total parallel E-field
-    Epara_presc::FT = zero(FT)     # Prescribed parallel E-field
-    Epara_ctrl::FT = zero(FT)      # the vertical-field control's parallel E-field
-    Epara_self_ES::FT = zero(FT)   # Self-consistent electrostatic E-field
-    Epara_self_EM::FT = zero(FT)   # Self-consistent electromagnetic E-field
+    E_para_tot::FT = zero(FT)       # Total parallel E-field
+    Eϕ_para_presc::FT = zero(FT)     # Prescribed parallel E-field
+    Eϕ_para_ctrl::FT = zero(FT)      # the vertical-field control's parallel E-field
+    ERZ_para_pla::FT = zero(FT)   # Self-consistent electrostatic E-field
+    Eϕ_para_coils_pla::FT = zero(FT)   # Self-consistent electromagnetic E-field
 
     # Transport quantities
     abs_ue_para_RZ::FT = zero(FT)     # Average parallel velocity
@@ -259,9 +259,9 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Electric field
     E_para_tot::Matrix{FT} = zeros(FT, dims_RZ)     # Total parallel electric field
-    E_para_presc::Matrix{FT} = zeros(FT, dims_RZ)   # Prescribed parallel electric field
+    Eϕ_para_presc::Matrix{FT} = zeros(FT, dims_RZ)   # Prescribed parallel electric field
     mean_ExB_pol::Matrix{FT} = zeros(FT, dims_RZ)   # ExB drift magnitude
-    Epol_self::Matrix{FT} = zeros(FT, dims_RZ)      # Self-consistent poloidal E-field
+    ERZ_pla_mag::Matrix{FT} = zeros(FT, dims_RZ)      # Self-consistent poloidal E-field
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)   # induced by the coils and the plasma over the last step
     Eϕ_coils::Matrix{FT} = zeros(FT, dims_RZ)       # the coils' part, −ψ_coils(ΔI)/(R Δt); NaN without induction
     Eϕ_pla::Matrix{FT} = zeros(FT, dims_RZ)         # the rest, Eϕ_coils_pla − Eϕ_coils (not −Δψ_pla/(R Δt)); NaN without induction
