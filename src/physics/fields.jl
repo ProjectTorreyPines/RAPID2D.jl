@@ -292,40 +292,27 @@ end
 """
     estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-Estimate self-consistent electrostatic field effects on plasma transport.
-
-This function ports the MATLAB `Estimate_E_self_effects` function from lines 544-679
-in c_RAPID.m. It calculates:
-- Shape factor (γ_shape_fac) based on magnetic field properties
-- Critical densities for parallel and perpendicular transport
-- The open-line charge sheets' field (ERZ_pla_mag) and its parallel projection (ERZ_para_pla)
-- Mean ExB drift velocities
-- Turbulent diffusion coefficients
-
-# Arguments
-- `RP::RAPID{FT}`: The RAPID simulation object
-
-# Returns
-- `RP::RAPID{FT}`: Updated RAPID object with calculated field effects
+The open-line charge sheets' field and its effects on transport, from the present state (MATLAB
+`Estimate_E_self_effects`, c_RAPID.m lines 544–679):
+- the shape factor `γ_shape_fac`, a property of the field's shape alone, and the critical
+  densities `nc_para`, `nc_perp` of the open-line sheets, never reached on a closed line;
+- the sheets' field `ERZ_pla_mag = min(γ E_req, E_D)`, zero on closed lines, which short-circuit
+  along B; its parallel projection `ERZ_para_pla` ([`calculate_parallel_electric_field!`](@ref)),
+  the mean E×B drift and the turbulent diffusivity `Dpol_turb`.
 """
 function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: AbstractFloat}
-    # Extract commonly used variables
     pla = RP.plasma
     F = RP.fields
     G = RP.G
-
-    # Physical constants
-    cnst = RP.config.constants
     @unpack me, ee, eps0 = RP.config.constants
-
-    # Initialize arrays for calculations
-    NR, NZ = G.NR, G.NZ
+    closed = RP.flf.is_closed
 
     # =========================================================================
-    # 1. Calculate shape factor (γ_shape_fac) based on magnetic field properties
+    # 1. Shape factor γ_shape_fac: the field's shape alone, on closed lines too
     # =========================================================================
-
-    Bpol_norm = F.Bpol ./ mean(F.Bpol[G.nodes.in_wall_nids])
+    # A closed line has no sheets; that is the source's topology (3.), not a value of γ. Without
+    # a poloidal field there is no shape.
+    Bpol_mean = mean(F.Bpol[G.nodes.in_wall_nids])
     # tan_θB = F.Bpol ./ F.Bϕ
     # tan_θB_norm = tan_θB ./ maximum(tan_θB[G.nodes.in_wall_nids])
 
@@ -334,34 +321,49 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     # term2 = my_sigmf(tan_θB_norm, FT(5.0), FT(0.4))
     # pla.γ_shape_fac = @. term1 * term2
 
-    pla.γ_shape_fac = min.(FT(1.0), 0.65 * Bpol_norm)
-
-    pla.γ_shape_fac[RP.flf.closed_surface_nids] .= 0.0 # closed surface has no self-E effects
-
-    # =========================================================================
-    # 2. Calculate critical densities
-    # =========================================================================
-    @. pla.nc_para = (eps0 / (ee * pla.Te_eV)) * (F.Bϕ / F.Bpol)^2 * (F.Eϕ / pla.γ_shape_fac)^2
-    @. pla.nc_perp = eps0 / me * (F.Btot * F.Bpol / F.Bϕ)^2 * (FT(1.0) / pla.γ_shape_fac)^2
-
-    # =========================================================================
-    # 3. Calculate self-consistent electric fields (MATLAB lines 582-620)
-    # =========================================================================
-    # Parallel electrostatic self-field component
-    # ERZ_para_pla = ±ERZ_pla_mag * (Bpol/Btot), against the driven E∥
-    EM = RP.flags.E_para_induction
-    E_pol_required_for_cancellation = if _vertical_field_control_on(RP)
-        @. abs(F.Eϕ_para_presc + F.Eϕ_para_ctrl + EM * F.Eϕ_para_coils_pla) * (F.Btot / F.Bpol)
+    if Bpol_mean > 0
+        @. pla.γ_shape_fac = min(FT(1.0), 0.65 * (F.Bpol / Bpol_mean))
     else
-        @. abs(F.Eϕ_para_presc + EM * F.Eϕ_para_coils_pla) * (F.Btot / F.Bpol)
+        fill!(pla.γ_shape_fac, zero(FT))
+    end
+
+    # =========================================================================
+    # 2. Critical densities of the open-line sheets
+    # =========================================================================
+    @. pla.nc_para = ifelse(closed, FT(Inf), (eps0 / (ee * pla.Te_eV)) * (F.Bϕ / F.Bpol)^2 * (F.Eϕ / pla.γ_shape_fac)^2)
+    # Bpol/γ = max(Bpol, ⟨Bpol⟩/0.65), finite where Bpol vanishes
+    @. pla.nc_perp = ifelse(
+        closed | (Bpol_mean <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_mean / 0.65))^2
+    )
+
+    # =========================================================================
+    # 3. The open-line charge sheets' field (MATLAB lines 582-620)
+    # =========================================================================
+    # The field that cancels the driven E∥, shaped by γ: E_target = γ E_req, E_req = |E∥,drive| B/Bpol;
+    # where Bpol vanishes, its limit 0.65 |E∥,drive| B/⟨Bpol⟩. The sheets hold at most the Debye
+    # field E_D = √(n e Tₑ/ε₀) of the local plasma.
+    EM = RP.flags.E_para_induction
+    E_para_drive = if _vertical_field_control_on(RP)
+        @. F.Eϕ_para_presc + F.Eϕ_para_ctrl + EM * F.Eϕ_para_coils_pla
+    else
+        @. F.Eϕ_para_presc + EM * F.Eϕ_para_coils_pla
+    end
+    E_target = if Bpol_mean > 0
+        @. ifelse(
+            F.Bpol > 0, pla.γ_shape_fac * (abs(E_para_drive) * (F.Btot / F.Bpol)),
+            0.65 * abs(E_para_drive) * F.Btot / Bpol_mean
+        )
+    else
+        zero(E_para_drive)
     end
 
     ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
-    # E_debye = @. sqrt(abs(pla.ne)*ee*pla.Te_eV/eps0)
-    E_debye = @. sqrt(abs(ne_SM) * ee * pla.Te_eV / eps0)
+    E_debye = @. sqrt(max(ne_SM, zero(FT)) * ee * max(pla.Te_eV, zero(FT)) / eps0)
 
-    F.ERZ_pla_mag = @. min(pla.γ_shape_fac * E_pol_required_for_cancellation, E_debye)
-    extrapolate_field_to_boundary_nodes!(RP.G, F.ERZ_pla_mag)
+    # none on a closed line, before and after the boundary nodes take their neighbours' mean
+    @. F.ERZ_pla_mag = ifelse(closed, zero(FT), min(E_target, E_debye))
+    extrapolate_field_to_boundary_nodes!(G, F.ERZ_pla_mag)
+    F.ERZ_pla_mag[RP.flf.closed_surface_nids] .= zero(FT)
 
     calculate_parallel_electric_field!(RP)
 
