@@ -282,7 +282,7 @@ no default that is right for more than one channel. A default would have to be
 `v̄ = c·v`, and the whole reason this field exists is that no such `c` exists.
 
 Mixing is the normal case rather than a convenience: a channel's speed is a field
-(`v_E = E_pol/B_tot`) while its step length is usually a configuration scalar
+(`v_E = ERZ/B_tot`) while its step length is usually a configuration scalar
 (`L_mixing`), and a cross-field channel's parallel quantities are identically
 zero. Broadcasting decides the shape, so a genuine mismatch raises
 `DimensionMismatch` from Julia itself rather than being silently reshaped.
@@ -441,7 +441,7 @@ rather than merely cheap and close.
 ## What is exact and what is not
 
 `D` is reproduced exactly whenever the species agree on it — which covers Bohm
-(`D_B = T_e/16B`, mass cancels) and ExB mixing (`v_E = E_pol/B_tot`), leaving
+(`D_B = T_e/16B`, mass cancels) and ExB mixing (`v_E = ERZ/B_tot`), leaving
 `D∥` as the only mechanism the mixture actually approximates.
 
 The wall ceiling is exact only at the two limits. `¼v̄_n` interpolates in
@@ -538,15 +538,15 @@ end
 # pinned by a round-trip test against the diffusivity the solver already computes.
 #
 # All arithmetic here is elementwise. These take fields, and `/` between two
-# matrices is right-division, not division — `E_pol / B_tot` on a square grid
+# matrices is right-division, not division — `ERZ / B_tot` on a square grid
 # throws `SingularException`, and on a non-square one it silently returns an
 # array of the wrong shape. Every expression below is written under `@.` for that
 # reason, and the non-square case is a regression test.
 
 """
-    turbulent_ExB_channel(E_pol, B_tot, L_mixing, f_para, f_perp)
+    turbulent_ExB_channel(ERZ, B_tot, L_mixing, f_para, f_perp)
 
-Anomalous ExB mixing: `D_pol = ½·v_E·L_mixing` with `v_E = E_pol/B_tot`, split
+Anomalous ExB mixing: `D_pol = ½·v_E·L_mixing` with `v_E = ERZ/B_tot`, split
 `f_para : f_perp` along the **poloidal** field.
 
 One speed, two step lengths — `λ∥ = f∥·L_mixing`, `λ⊥ = f⊥·L_mixing` — so at the
@@ -556,8 +556,8 @@ eddy, which is what an ExB mixing model should produce.
 Aligned with `b̂_pol`, **not** the full `b̂`: use the per-channel-direction
 `total_tensor` when combining it with a collisional channel.
 """
-function turbulent_ExB_channel(E_pol, B_tot, L_mixing, f_para, f_perp)
-    v_E = @. E_pol / B_tot
+function turbulent_ExB_channel(ERZ, B_tot, L_mixing, f_para, f_perp)
+    v_E = @. ERZ / B_tot
     # An ExB eddy is not a Maxwellian, so `maxwellian_mean_speed` has nothing to say
     # about how fast it delivers to a wall and `v̄ = √(8/π)·v_E` is a modelling
     # choice, not a theorem. It is written out here rather than inherited from a

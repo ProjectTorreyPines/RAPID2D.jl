@@ -96,6 +96,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     # Transport quantities
     snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * F.Bpol / F.Btot * Ne2D) / total_Ne
     snap0D.D_RZ = sum(@. sqrt(RP.transport.DRR^2 + RP.transport.DZZ^2) * Ne2D) / total_Ne
+    snap0D.turbulence_weight = sum(@. pla.turbulence_weight * Ne2D) / total_Ne
 
     # Each parent's species, volume-averaged: its ions by charge state, its neutral gas (the H₂
     # gas among them)
@@ -434,6 +435,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.nc_perp .= pla.nc_perp
 
     snap2D.γ_shape_fac .= pla.γ_shape_fac
+    snap2D.turbulence_weight .= pla.turbulence_weight
 
     # Ion quantities (all species: their sum, sharing one velocity and temperature)
     snap2D.ni_tot .= pla.ni_tot

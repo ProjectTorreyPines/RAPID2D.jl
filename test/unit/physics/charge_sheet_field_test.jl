@@ -55,3 +55,37 @@ end
     @test all(isinf, pla.nc_perp)
     @test all_finite()
 end
+
+@testitem "turbulence weight: one onset for the four consumers; the mean field's effects take none" setup = [CurrentDisc] begin
+    using RAPID2D: estimate_electrostatic_field_effects!, shared_turbulent_channel, electron_wall_channels,
+        ion_transport_channels, smooth_data_2D
+    RP, _ = current_disc()
+    trace_closed_region!(RP)
+    pla, F, G, tp = RP.plasma, RP.fields, RP.G, RP.transport
+    closed = RP.flf.closed_surface_nids
+    open_in = setdiff(G.nodes.in_wall_nids, closed)
+    pla.ne[open_in] .= [G.R2D[k] < R0 ? 1.0e10 : 1.0e17 for k in open_in]   # below and above nc_perp
+    estimate_electrostatic_field_effects!(RP)
+
+    w = pla.turbulence_weight
+    n_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D)
+    @test w ≈ min.(1, sqrt.(max.(n_SM, 0) ./ pla.nc_perp))
+    @test any(x -> 0 < x < 1, w[open_in]) && any(==(1), w[open_in])
+    @test all(iszero, w[closed])
+    # one speed for the electrons' tensor (`Dpol_turb`), the electron wall, the ions' channels and
+    # their wall
+    v = w .* F.ERZ_pla_mag ./ F.Btot
+    @test tp.Dpol_turb ≈ 0.5 .* v .* tp.L_mixing
+    turb = shared_turbulent_channel(RP)
+    @test turb.v_para ≈ v && turb.v_perp ≈ v
+    @test electron_wall_channels(RP)[end][1].v_para ≈ v
+    @test ion_transport_channels(RP, tp.ion_species[1], turb)[end] === turb
+    # the mean field's effects take no weight
+    @test pla.mean_ExB_R ≈ F.ERZ_pla_mag ./ F.Btot .* sign.(F.Eϕ) .* F.bpol_Z
+    @test F.ERZ_para_pla ≈ sign.(-F.Eϕ_presc .* F.Bϕ) .* F.ERZ_pla_mag .* F.Bpol ./ F.Btot
+
+    # without the mixing, no weight and no turbulent diffusivity
+    RP.flags.turb_ExB_mixing = false
+    estimate_electrostatic_field_effects!(RP)
+    @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
+end

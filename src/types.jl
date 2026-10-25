@@ -408,6 +408,8 @@ Contains the plasma state variables including density, temperature, and velocity
     nc_para::Matrix{FT} = zeros(FT, dims) # Parallel critical density [m^-3]
     nc_perp::Matrix{FT} = zeros(FT, dims) # Perpendicular critical density [m^-3]
     γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
+    # how much of what the code does not resolve a closure carries (`update_space_charge_weights!`)
+    turbulence_weight::Matrix{FT} = zeros(FT, dims) # w_turb: the turbulent E×B mixing's onset, min(1, √(n/nc_perp))
 
     # Collision parameters
     lnΛ::Matrix{FT} = zeros(FT, dims)   # ELECTRON-ion Coulomb logarithm (NRL p.34b)
