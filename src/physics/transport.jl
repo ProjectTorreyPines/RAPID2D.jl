@@ -170,6 +170,12 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     w = pla.ambipolar_weight
     @. tp.Dpara = (one(FT) - w) * D_base + w * tp.Dpara_common
 
+    # The rest of the common mode's pressure drive, down the temperature gradient: the pair's
+    # pressure is n e(Tₑ + Tᵢ), so Γ = −D_common (∇∥n + n ∇∥ln(Tₑ + Tᵢ)). D_common carries the
+    # first part, this drift along b̂ the second, for both species alike, at most at the sound speed.
+    ∇para_lnT = calculate_para_grad_of_scalar_F(RP, log.(max.(pla.Te_eV .+ pla.Ti_eV, floatmin(FT))); upwind = false)
+    @. tp.u_para_thermal = -w * clamp(tp.Dpara_common * ∇para_lnT, -c_s, c_s)
+
     # What u∥ and Te conduct with: the electrons' own collisional limb under their own
     # ceilings. The ions' friction holds back the electrons' particle flux, through the
     # ambipolar field, not the heat and momentum they pass along B.
@@ -219,6 +225,10 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         pla.ueϕ .= pla.ue_para .* RP.fields.bϕ
         pla.ueZ .= pla.ue_para .* RP.fields.bZ
 
+        # the common mode's thermal drift, the electrons' and the ions' alike
+        @. pla.ueR += tp.u_para_thermal * RP.fields.bR
+        @. pla.ueZ += tp.u_para_thermal * RP.fields.bZ
+
         # Add ExB and diamagnetic drifts if enabled
         if RP.flags.mean_ExB
             pla.ueR .+= pla.mean_ExB_R
@@ -239,6 +249,9 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         pla.uiR .= pla.ui_para .* RP.fields.bR
         pla.uiϕ .= pla.ui_para .* RP.fields.bϕ
         pla.uiZ .= pla.ui_para .* RP.fields.bZ
+
+        @. pla.uiR += tp.u_para_thermal * RP.fields.bR
+        @. pla.uiZ += tp.u_para_thermal * RP.fields.bZ
 
         # Add ExB drift for ions too if enabled
         if RP.flags.mean_ExB

@@ -1764,7 +1764,7 @@ end
 
 The share `∇Tₑ` makes of the common mode's pressure drive, `w_amb`- and `nₑ`-weighted over the
 in-wall volume: `Σ V n w |∂∥Tₑ| / Σ V n w (|Tₑ ∂∥ln n| + |∂∥Tₑ|)`, 0 where nothing is coupled.
-`D_common` moves density down `∇n` alone, so this share is what the closure does not carry.
+`D_common` carries the density's part, the thermal drift `transport.u_para_thermal` this one.
 """
 function ambipolar_gradTe_share(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, V = RP.plasma, RP.G.inVol2D

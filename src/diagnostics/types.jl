@@ -46,7 +46,7 @@ Contains volume-averaged quantities
     turbulence_weight::FT = zero(FT)  # ⟨w_turb⟩, the turbulent E×B mixing's onset
     ambipolar_weight::FT = zero(FT)   # ⟨w_amb⟩, the common-mode coupling's weight
     ambipolar_exchange::FT = zero(FT)     # what the ambipolar field passed from the electrons' pressure to the ions, cumulative [J]
-    ambipolar_gradTe_share::FT = zero(FT) # the share ∇Tₑ makes of the common mode's pressure drive, which D_common does not carry
+    ambipolar_gradTe_share::FT = zero(FT) # the share ∇Tₑ makes of the common mode's pressure drive, carried by the thermal drift
 
     # Neutral gas (its average is the species' `ng_H2`, also read as `n_H2_gas`)
     n_H2_gas_min::FT = zero(FT)     # Minimum H2 density

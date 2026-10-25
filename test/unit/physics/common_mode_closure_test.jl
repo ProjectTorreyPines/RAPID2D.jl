@@ -153,3 +153,28 @@ end
     fill!(pla.ambipolar_weight, 0.0)
     @test ambipolar_gradTe_share(RP) == 0
 end
+
+@testitem "common mode: its drive down ∇(Tₑ + Tᵢ) is a drift both species take, at most the sound speed" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: calculate_para_grad_of_scalar_F, sound_speed
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, tp, G, F = RP.plasma, RP.transport, RP.G, RP.fields
+    inw = G.nodes.in_wall_nids
+    @. pla.Te_eV = 5.0 * (1 + 0.5 * G.Z2D)              # a temperature gradient along the field
+    fill!(pla.ambipolar_weight, 1.0)
+    update_transport_quantities!(RP)
+    ∇lnT = calculate_para_grad_of_scalar_F(RP, log.(pla.Te_eV .+ pla.Ti_eV); upwind = false)
+    c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean)
+    @test tp.u_para_thermal[inw] ≈ (@. -clamp(tp.Dpara_common * ∇lnT, -c_s, c_s))[inw]
+    @test any(!iszero, tp.u_para_thermal[inw])
+    # the electrons and the ions move with it alike: no current
+    @test pla.ueR .- pla.ue_para .* F.bR ≈ pla.uiR .- pla.ui_para .* F.bR
+    @test pla.ueZ .- pla.ue_para .* F.bZ ≈ pla.uiZ .- pla.ui_para .* F.bZ
+    # uncoupled, or isothermal, none
+    fill!(pla.ambipolar_weight, 0.0)
+    update_transport_quantities!(RP)
+    @test all(iszero, tp.u_para_thermal)
+    fill!(pla.ambipolar_weight, 1.0)
+    fill!(pla.Te_eV, 5.0)
+    update_transport_quantities!(RP)
+    @test all(iszero, tp.u_para_thermal[inw])
+end
