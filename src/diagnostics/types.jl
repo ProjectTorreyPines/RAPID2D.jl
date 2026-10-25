@@ -45,6 +45,8 @@ Contains volume-averaged quantities
     D_RZ::FT = zero(FT)         # Average diffusion coefficient
     turbulence_weight::FT = zero(FT)  # ⟨w_turb⟩, the turbulent E×B mixing's onset
     ambipolar_weight::FT = zero(FT)   # ⟨w_amb⟩, the common-mode coupling's weight
+    ambipolar_exchange::FT = zero(FT)     # what the ambipolar field passed from the electrons' pressure to the ions, cumulative [J]
+    ambipolar_gradTe_share::FT = zero(FT) # the share ∇Tₑ makes of the common mode's pressure drive, which D_common does not carry
 
     # Neutral gas (its average is the species' `ng_H2`, also read as `n_H2_gas`)
     n_H2_gas_min::FT = zero(FT)     # Minimum H2 density
@@ -545,6 +547,11 @@ No legacy Dictionary compatibility layer
 
     # what the near-vacuum treatments did (`near_vacuum.jl`)
     near_vacuum::NearVacuumLedger{FT} = NearVacuumLedger{FT}()
+
+    # the work the common mode's share of the electron pressure force would have done on u∥,
+    # cumulative [J]: what the ambipolar field passes from the electrons' pressure to the ions
+    # (`book_ambipolar_exchange!`)
+    ambipolar_exchange::FT = zero(FT)
 
     # the attempts at a step the verdict rejected (`take_step!`)
     step_retries::StepRetries = StepRetries()

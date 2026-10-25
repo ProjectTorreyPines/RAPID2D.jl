@@ -118,7 +118,7 @@ end
 # What a step below the Ampère gate writes before it knows whether its current crosses the gate,
 # put back when the step is solved again by the coupled solve: u∥, Jϕ, the induced field and
 # its parallel projection, the coils' currents, memory and clock, the closed-surface
-# constraint's solve and ledger, and the near-vacuum ledger, whole. The rest it writes is
+# constraint's solve and ledger, the near-vacuum ledger, whole, and the ambipolar exchange. The rest it writes is
 # assigned afresh by that solve before use (Rue_ei), or is a cache rebuilt from the same state
 # (the u∥ operators and LU, the circuit matrices, the Grad–Shafranov factorization).
 function below_gate_entry_state(RP::RAPID)
@@ -131,6 +131,7 @@ function below_gate_entry_state(RP::RAPID)
         coil_ψ_pla = csys.n_total > 0 ? copy(csys.coils.ψ_pla) : nothing, coil_time = csys.time_s,
         closed_surface = (; solve = deepcopy(RP.closed_surface.solve), ledger = deepcopy(RP.closed_surface.ledger)),
         near_vacuum = deepcopy(RP.diagnostics.near_vacuum),
+        ambipolar_exchange = RP.diagnostics.ambipolar_exchange,
     )
 end
 
@@ -150,6 +151,7 @@ function restore_below_gate_entry_state!(RP::RAPID, entry)
     RP.closed_surface.solve = deepcopy(entry.closed_surface.solve)
     RP.closed_surface.ledger = deepcopy(entry.closed_surface.ledger)
     RP.diagnostics.near_vacuum = deepcopy(entry.near_vacuum)
+    RP.diagnostics.ambipolar_exchange = entry.ambipolar_exchange
     return RP
 end
 

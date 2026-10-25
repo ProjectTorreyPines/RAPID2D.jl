@@ -98,6 +98,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.D_RZ = sum(@. sqrt(RP.transport.DRR^2 + RP.transport.DZZ^2) * Ne2D) / total_Ne
     snap0D.turbulence_weight = sum(@. pla.turbulence_weight * Ne2D) / total_Ne
     snap0D.ambipolar_weight = sum(@. pla.ambipolar_weight * Ne2D) / total_Ne
+    snap0D.ambipolar_exchange = RP.diagnostics.ambipolar_exchange
+    snap0D.ambipolar_gradTe_share = ambipolar_gradTe_share(RP)
 
     # Each parent's species, volume-averaged: its ions by charge state, its neutral gas (the H₂
     # gas among them)

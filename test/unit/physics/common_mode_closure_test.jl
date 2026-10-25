@@ -94,3 +94,62 @@ end
     own = @. min(EE * pla.Ti_eV / (MH2 * tp.νi_neutral) + tp.Dpara0, RAPID2D.wall_step_ceiling(vm, RP.flf.Lc_forward, RP.flf.Lc_backward))
     @test channel_D_para(i_para)[inw] ≈ own[inw]
 end
+
+@testitem "common mode: the work its share of the pressure force would have done is booked, and a gate retry puts it back" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: update_ue_para!, calculate_electron_acceleration_by_pressure, below_gate_entry_state,
+        restore_below_gate_entry_state!, measure_snap0D!, Snapshot0D
+    flags = SimulationFlags{Float64}(;
+        src = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false, diffu = false, convec = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false,
+        Include_ud_convec_term = false, Include_ud_diffu_term = false,
+    )
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6, flags)
+    pla, G = RP.plasma, RP.G
+    @. pla.ne = 1.0e17 * (1 + 0.5 * G.Z2D)
+    pla.ni .= pla.ne
+    me = RP.config.constants.me
+    function step(w)
+        fill!(pla.ue_para, 1.0e5)
+        fill!(pla.ambipolar_weight, w)
+        update_transport_quantities!(RP)
+        RP.fields.E_para_tot .= 0.0
+        a_p = calculate_electron_acceleration_by_pressure(RP)
+        u_old = copy(pla.ue_para)
+        before = RP.diagnostics.ambipolar_exchange
+        update_ue_para!(RP)
+        booked = RP.diagnostics.ambipolar_exchange - before
+        want = RP.dt * sum(G.inVol2D[k] * me * pla.ne[k] * w * a_p[k] * (u_old[k] + pla.ue_para[k]) / 2 for k in G.nodes.in_wall_nids)
+        return booked, want
+    end
+    @test step(0.0) == (0.0, 0.0)
+    for w in (0.5, 1.0)
+        booked, want = step(w)
+        @test booked != 0
+        @test booked ≈ want rtol = 1.0e-12
+    end
+    # the snapshot reads the ledger; a step solved again above the gate puts it back
+    snap = Snapshot0D{Float64}()
+    measure_snap0D!(RP, snap)
+    @test snap.ambipolar_exchange == RP.diagnostics.ambipolar_exchange
+    entry = below_gate_entry_state(RP)
+    RP.diagnostics.ambipolar_exchange += 1.0
+    restore_below_gate_entry_state!(RP, entry)
+    @test RP.diagnostics.ambipolar_exchange == snap.ambipolar_exchange
+end
+
+@testitem "common mode: the ∇Tₑ share of its drive is 0 at uniform Tₑ and 1 at uniform density" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: ambipolar_gradTe_share
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, G = RP.plasma, RP.G
+    fill!(pla.ambipolar_weight, 1.0)
+    @. pla.ne = 1.0e17 * (1 + 0.5 * G.Z2D)
+    @test ambipolar_gradTe_share(RP) == 0
+    pla.ne .= 1.0e17
+    @. pla.Te_eV = 5.0 * (1 + 0.5 * G.Z2D)
+    @test ambipolar_gradTe_share(RP) ≈ 1
+    @. pla.ne = 1.0e17 * (1 + 0.5 * G.Z2D)
+    @test 0 < ambipolar_gradTe_share(RP) < 1
+    # nothing coupled, nothing to share
+    fill!(pla.ambipolar_weight, 0.0)
+    @test ambipolar_gradTe_share(RP) == 0
+end
