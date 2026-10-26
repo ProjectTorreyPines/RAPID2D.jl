@@ -13,7 +13,8 @@
 # internal/docs/src/notes/design/turbulent-mixing-u-T.md §4.
 
 @testsnippet PerParticleFixtures begin
-    using RAPID2D: build_wall_pattern, build_wall_diffusion_matrix!
+    using RAPID2D: build_wall_pattern, build_wall_diffusion_matrix!, limit_antidiffusive_pairs!,
+        per_particle_operator!, add_conduction_correction!
 
     "A walled box, or a staircase wall with a re-entrant corner, on a 41 × 47 grid."
     function walled_RP(wall::Symbol)
@@ -109,6 +110,35 @@
                 V = cell_volume(G), n = plasma_density(G),
             )
         end
+    end
+
+    """
+    A_part and A_cond along the same tilted or X-point field, A_cond with a larger parallel
+    coefficient, both limited at a density with floor nodes (so the pair limiter acts).
+    """
+    function conduction_cases()
+        box, stair = walled_RP(:box), walled_RP(:lshape)
+        specs = (
+            ("tilted tensor, box", box, G -> tilted_tensor(G; Dpara = 100.0), G -> tilted_tensor(G; Dpara = 400.0)),
+            ("X-point tensor, box", box, G -> xpoint_tensor(G; Dpara = 100.0), G -> xpoint_tensor(G; Dpara = 250.0)),
+            ("tilted tensor, staircase", stair, G -> tilted_tensor(G; θ = 0.9, Dpara = 100.0), G -> tilted_tensor(G; θ = 0.9, Dpara = 300.0)),
+        )
+        return map(specs) do (name, RP, part, cond)
+            G = RP.G
+            n = plasma_density(G; floor_nodes = 6)
+            A_part, A_cond = diffusion_operator(G, part(G)), diffusion_operator(G, cond(G))
+            limited = limit_antidiffusive_pairs!(A_part, G, n; max_ratio = 4.0)
+            limit_antidiffusive_pairs!(A_cond, G, n; max_ratio = 4.0)
+            (; name, G, A_part, A_cond, n, V = cell_volume(G), limited)
+        end
+    end
+
+    "The per-particle operator of A_part, and the same with the conduction correction."
+    function with_correction(c; n = c.n)
+        M_part = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
+        M = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
+        add_conduction_correction!(M, c.A_part, c.A_cond, n, c.G; n_floor = 1.0)
+        return M_part, M
     end
 end
 
@@ -312,40 +342,7 @@ end
 # not volume-symmetric (the cross terms), so this, not a split of M by face densities, is what
 # keeps Σ V n f. internal/docs/src/notes/design/ambipolar-gate-criterion-v3.md §3.5.
 
-@testsnippet ConductionCases begin
-    using RAPID2D: limit_antidiffusive_pairs!
-
-    """
-    A_part and A_cond along the same tilted or X-point field, A_cond with a larger parallel
-    coefficient, both limited at a density with floor nodes (so the pair limiter acts).
-    """
-    function conduction_cases()
-        box, stair = walled_RP(:box), walled_RP(:lshape)
-        specs = (
-            ("tilted tensor, box", box, G -> tilted_tensor(G; Dpara = 100.0), G -> tilted_tensor(G; Dpara = 400.0)),
-            ("X-point tensor, box", box, G -> xpoint_tensor(G; Dpara = 100.0), G -> xpoint_tensor(G; Dpara = 250.0)),
-            ("tilted tensor, staircase", stair, G -> tilted_tensor(G; θ = 0.9, Dpara = 100.0), G -> tilted_tensor(G; θ = 0.9, Dpara = 300.0)),
-        )
-        return map(specs) do (name, RP, part, cond)
-            G = RP.G
-            n = plasma_density(G; floor_nodes = 6)
-            A_part, A_cond = diffusion_operator(G, part(G)), diffusion_operator(G, cond(G))
-            limited = limit_antidiffusive_pairs!(A_part, G, n; max_ratio = 4.0)
-            limit_antidiffusive_pairs!(A_cond, G, n; max_ratio = 4.0)
-            (; name, G, A_part, A_cond, n, V = cell_volume(G), limited)
-        end
-    end
-
-    "The per-particle operator of A_part, and the same with the conduction correction."
-    function with_correction(c; n = c.n)
-        M_part = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
-        M = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
-        add_conduction_correction!(M, c.A_part, c.A_cond, n, c.G; n_floor = 1.0)
-        return M_part, M
-    end
-end
-
-@testitem "conduction correction: keeps Σ V n f and constants; no difference leaves M bit for bit" setup = [PerParticleFixtures, ConductionCases] begin
+@testitem "conduction correction: keeps Σ V n f and constants; no difference leaves M bit for bit" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!, add_conduction_correction!
     for c in conduction_cases()
         @test c.limited > 0
@@ -365,7 +362,7 @@ end
     end
 end
 
-@testitem "conduction correction: only adds dissipation, and the heating identity holds for the whole operator" setup = [PerParticleFixtures, ConductionCases] begin
+@testitem "conduction correction: only adds dissipation, and the heating identity holds for the whole operator" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!, add_conduction_correction!, dissipation_rate!
     using RAPID2D.SparseArrays: findnz
     for c in conduction_cases()
@@ -389,7 +386,7 @@ end
     end
 end
 
-@testitem "conduction correction: a pair with a node on the floor is skipped, both ways" setup = [PerParticleFixtures, ConductionCases] begin
+@testitem "conduction correction: a pair with a node on the floor is skipped, both ways" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!, add_conduction_correction!
     for c in conduction_cases()
         M_part, M = with_correction(c)
