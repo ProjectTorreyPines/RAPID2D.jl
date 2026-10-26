@@ -27,8 +27,9 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         wall_divergence!(op.div_ue, G, pla.ueR, pla.ueZ)
     else
         # SurfaceFluxConstraint: on every face of the constraint domain the density moves with the
-        # perpendicular drift only; the parallel flux there is the stream-function flux, which
-        # leaves every control volume as it found it
+        # drifts besides u∥, the perpendicular one and the common mode's thermal drift u_T b̂ (the ions
+        # take it alike, so the pair stays together); u∥'s flux there is the stream-function flux,
+        # which leaves every control volume as it found it
         F = RP.fields
         mask = falses(G.NR, G.NZ)
         mask[RP.closed_surface.basis.nodes] .= true

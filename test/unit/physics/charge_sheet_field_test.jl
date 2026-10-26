@@ -166,3 +166,19 @@ end
     @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
     @test all(==(1), pla.ambipolar_weight[closed])
 end
+
+@testitem "charge-sheet field: the shape factor at the mean B_pol must be finite and positive" begin
+    using RAPID2D: validate_config!
+    config(γ0) = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
+        NR = 9, NZ = 9, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(), charge_sheet_shape_factor = γ0,
+    )
+    validate_config!(config(0.65))
+    validate_config!(config(1.0))
+    for γ0 in (0.0, -0.65, Inf, NaN)
+        @test_throws ArgumentError validate_config!(config(γ0))
+    end
+end

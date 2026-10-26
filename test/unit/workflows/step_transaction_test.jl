@@ -348,7 +348,7 @@ end
     end
     ledgers(rp) = deepcopy(
         (
-            rp.diagnostics.Ntracker, rp.diagnostics.near_vacuum, rp.diagnostics.ampere_picard,
+            rp.diagnostics.Ntracker, rp.diagnostics.near_vacuum, rp.diagnostics.ampere_picard, rp.diagnostics.ambipolar_exchange,
             rp.closed_surface.ledger, rp.vertical_field_control.energy, rp.reactions.counts, rp.reactions.published,
         )
     )

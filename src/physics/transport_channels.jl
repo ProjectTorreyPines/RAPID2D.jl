@@ -772,7 +772,7 @@ Two more edges, both outside anything a caller is expected to hit: `D` at or bel
 itself overflows to `Inf` there before `hypot` ever runs. And a negative `D`
 returns a *positive* value of the same magnitude `-D` would — `hypot` only ever
 sees `inv(D)` squared, so the sign is lost rather than propagated. Unreachable
-given `Dpara0 ≥ 0` and `Dpara_e_eff ≥ 0` upstream, but worth naming as a sign flip
+given `Dpara0`, `Dpara` and `Dpara_common ≥ 0` upstream, but worth naming as a sign flip
 rather than assumed to be graceful degradation.
 
 `hypot` rather than `sqrt(a^2 + b^2)`: what actually arrives here is `D = Inf`, not

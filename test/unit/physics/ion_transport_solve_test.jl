@@ -324,3 +324,39 @@ end
     @test shared[1] ≈ shared[2] rtol = 1.0e-12
     @test per[1] < shared[1] < per[2]
 end
+
+@testitem "Ion operators take the electrons' pair limiter at the step's starting density" begin
+    using RAPID2D: ion_step_operators, ion_transport_operator, ion_wall_albedo
+    # a poloidal field at 45° (cross terms, so anti-diffusive pairs) and a density blob whose flanks
+    # are not resolved (neighbour ratios above the limiter's 20)
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 4.0e-3, BZ = 4.0e-3, Eϕ = 0.0),
+        NR = 17, NZ = 17, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 2.0e-3, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.flags.convec = false                 # the diffusive operator alone
+    G, pla = RP.G, RP.plasma
+    blob(R0) = @. 1.0e17 * exp(-((G.R2D - R0)^2 + G.Z2D^2) / 0.005) + 1.0e10
+    pla.ne .= blob(1.5)
+    pla.ni .= pla.ne
+    fill!(pla.Te_eV, 5.0)
+    fill!(pla.Ti_eV, 1.0)
+    update_transport_quantities!(RP)
+    RP.prev_n .= pla.ne                     # the density the step starts from
+    pla.ne .= blob(1.6)                     # and the present one, moved
+    limiter = RP.flags.limit_antidiffusive_pairs
+    @test limiter.state
+    _, faces, dirs = ion_step_operators(RP)
+    group, A, _ = only(first(ion_step_operators(RP)))
+    op(n) = first(ion_transport_operator(G, group, dirs; faces, albedo = ion_wall_albedo(RP), limit_density = n, max_ratio = limiter.factor))
+    @test A == op(RP.prev_n)
+    @test A != op(nothing)                  # the limiter acts on this density
+    @test A != op(pla.ne)                   # at the step's starting density, not the present one
+    RP.flags.limit_antidiffusive_pairs = (state = false, factor = limiter.factor)
+    _, A_off, _ = only(first(ion_step_operators(RP)))
+    @test A_off == op(nothing)
+end

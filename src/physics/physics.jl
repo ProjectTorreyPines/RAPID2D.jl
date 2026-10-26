@@ -106,7 +106,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             accel_para_tilde .+= shares.ue
             a_common = shares.common
         end
-        u_old = copy(pla.ue_para)
+        u_old = isnothing(a_common) ? nothing : copy(pla.ue_para)   # for the exchange ledger
 
         # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]. Under
         # ExpRB uⁿ carries bern(−z) instead, applied to the RHS below.
@@ -1788,10 +1788,10 @@ function ambipolar_gradTe_share(RP::RAPID{FT}) where {FT <: AbstractFloat}
     grad_Te = calculate_para_grad_of_scalar_F(RP, pla.Te_eV)
     num, den = zero(FT), zero(FT)
     for k in RP.G.nodes.in_wall_nids
-        c = V[k] * pla.ne[k] * w[k]
+        node_weight = V[k] * pla.ne[k] * w[k]
         isfinite(grad_ln_n[k]) && isfinite(grad_Te[k]) || continue
-        num += c * abs(grad_Te[k])
-        den += c * (abs(pla.Te_eV[k] * grad_ln_n[k]) + abs(grad_Te[k]))
+        num += node_weight * abs(grad_Te[k])
+        den += node_weight * (abs(pla.Te_eV[k] * grad_ln_n[k]) + abs(grad_Te[k]))
     end
     return den > zero(FT) ? num / den : zero(FT)
 end
@@ -2335,7 +2335,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θu) * pla.ue_para)
         end
-        u_old = copy(pla.ue_para)
+        u_old = isnothing(a_common) ? nothing : copy(pla.ue_para)   # for the exchange ledger
         F.ψ_coils_pla .= ψ_k
         if !closed_surface_active(RP)
             pla.ue_para .= ue_k
