@@ -508,8 +508,9 @@ end
     RP.flags.src = false
     RP.flags.Atomic_Collision = false
     RP.flags.Coulomb_Collision = false
-    RP.flags.E_para_self_ES = false
-    RP.flags.E_para_self_EM = false
+    RP.flags.charge_sheet_field = false
+    RP.flags.E_para_cancellation = false
+    RP.flags.E_para_induction = false
     RP.flags.turb_ExB_mixing = false
     RP.flags.ud_evolve = false
     RP.flags.Te_evolve = false
@@ -545,8 +546,9 @@ end
     RP.flags.src = true
     RP.flags.Atomic_Collision = false
     RP.flags.Coulomb_Collision = false
-    RP.flags.E_para_self_ES = false
-    RP.flags.E_para_self_EM = false
+    RP.flags.charge_sheet_field = false
+    RP.flags.E_para_cancellation = false
+    RP.flags.E_para_induction = false
     RP.flags.turb_ExB_mixing = false
     RP.flags.ud_evolve = false
     RP.flags.Te_evolve = false
@@ -586,8 +588,9 @@ end
     RP.flags.convec = true
     RP.flags.Atomic_Collision = false
     RP.flags.Coulomb_Collision = false
-    RP.flags.E_para_self_ES = false
-    RP.flags.E_para_self_EM = false
+    RP.flags.charge_sheet_field = false
+    RP.flags.E_para_cancellation = false
+    RP.flags.E_para_induction = false
     RP.flags.turb_ExB_mixing = false
     RP.flags.ud_evolve = false
     RP.flags.Te_evolve = false

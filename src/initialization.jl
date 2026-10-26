@@ -242,6 +242,9 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFl
     # Update Coulomb collision parameters
     update_coulomb_collision_parameters!(RP)
 
+    # the space charge's weights, read by the transport; the charge sheets' field waits for a
+    # step's end
+    update_space_charge_weights!(RP)
     update_transport_quantities!(RP)
 
     return RP
@@ -368,7 +371,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.fields.LV_presc = Eϕ .* (2 * π * RP.G.R2D)
 
     # Parallel component of E
-    RP.fields.E_para_presc = Eϕ .* (RP.fields.Bϕ ./ RP.fields.Btot)
+    RP.fields.Eϕ_para_presc = Eϕ .* (RP.fields.Bϕ ./ RP.fields.Btot)
 
     # Initialize other field components
     RP.fields.BR_presc = copy(RP.fields.BR)
@@ -379,7 +382,7 @@ function set_RZ_B_E_manually!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.fields.ψ_presc = @. manual.BZ * RP.G.R2D^2 / 2 - manual.BR * RP.G.R2D * RP.G.Z2D
 
     # the prescribed parallel field is the whole parallel field initially
-    RP.fields.E_para_tot = copy(RP.fields.E_para_presc)
+    RP.fields.E_para_tot = copy(RP.fields.Eϕ_para_presc)
 
 
     return RP

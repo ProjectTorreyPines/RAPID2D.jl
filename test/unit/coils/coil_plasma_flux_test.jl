@@ -16,11 +16,11 @@
         )
         RP = RAPID{FT}(config)
         RP.flags = SimulationFlags{FT}(;
-            Ampere = true, Ampere_Itor_threshold = 0.0, E_para_self_EM = true, ud_evolve = true,
+            Ampere = true, Ampere_Itor_threshold = 0.0, E_para_induction = true, ud_evolve = true,
             Coulomb_Collision = true, Atomic_Collision = false, src = false, convec = false, diffu = false,
             Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
             Include_ud_convec_term = false, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
-            E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
+            charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false, turb_ExB_mixing = false, FLF_nstep = 100_000,
         )
         initialize!(RP)
         r = @. sqrt((RP.G.R2D - 1.5)^2 + RP.G.Z2D^2)
@@ -194,11 +194,11 @@ end
     @test all(isfinite, RP.coil_system.coils.ψ_pla)
 end
 
-@testitem "Coupled step: with E_para_self_EM off the coils induce no Eϕ_coils_pla" setup = [CoilFluxColumn] begin
+@testitem "Coupled step: with E_para_induction off the coils induce no Eϕ_coils_pla" setup = [CoilFluxColumn] begin
     # Below the gate, a 10 V coil changes; with the electromagnetic self-field off nothing is
     # induced on the plasma, as before the coils advanced there.
     RP = column_with_loops([(0.6, 0.0, 1.0e-4, 10.0, "OH")]; t_end = 25.0e-6)
-    RP.flags.E_para_self_EM = false
+    RP.flags.E_para_induction = false
     RP.flags.Ampere_Itor_threshold = 1.0e6
     quiet(() -> run_simulation!(RP))
     @test abs(RP.coil_system.coils.current[1]) > 0

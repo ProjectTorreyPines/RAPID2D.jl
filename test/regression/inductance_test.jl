@@ -307,7 +307,7 @@ end
 
     # ── The physics under test ───────────────────────────────────────────────
     # Ampère's law evolves the current, ud_evolve accelerates the electrons along B, and
-    # E_para_self_EM (set below) supplies the inductive back-EMF that opposes it. Those
+    # E_para_induction (set below) supplies the inductive back-EMF that opposes it. Those
     # three together ARE the L/R circuit. Everything else is off so that nothing else can
     # move current or particles around.
     RP.flags = SimulationFlags{Float64}(
@@ -329,11 +329,11 @@ end
         Include_ud_diffu_term = false,
         Include_ud_pressure_term = false,
         Include_Te_convec_term = false,
-        E_para_self_ES = false,               # electrostatic self-field is NOT the effect studied
+        charge_sheet_field = false, E_para_cancellation = false,               # electrostatic self-field is NOT the effect studied
     )
 
     RP.flags.Coulomb_Collision = true         # the only resistivity source -> the "R" in L/R
-    RP.flags.E_para_self_EM = true            # inductive back-EMF: the effect being measured
+    RP.flags.E_para_induction = true            # inductive back-EMF: the effect being measured
     RP.flags.Ampere_Itor_threshold = 0.0      # apply Ampère from the very first amp
     RP.flags.FLF_nstep = 100
     RP.flags.Implicit = true

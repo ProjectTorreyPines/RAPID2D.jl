@@ -43,10 +43,10 @@ end
     @test any(!iszero, RP.coil_system.ΔI_step)
     @test snap.Eϕ_coils == RP.fields.Eϕ_coils_pla
     @test all(iszero, snap.Eϕ_pla)
-    # without the induced field (E_para_self_EM off) the split is not defined
+    # without the induced field (E_para_induction off) the split is not defined
     RP = column_with_loops([(0.6, 0.0, 1.0e-4, 10.0, "OH")]; t_end = 25.0e-6)
     RP.flags.Ampere_Itor_threshold = 1.0e6
-    RP.flags.E_para_self_EM = false
+    RP.flags.E_para_induction = false
     quiet(() -> run_simulation!(RP))
     measure_field_sources!(RP, snap)
     @test all(isnan, snap.Eϕ_coils) && all(isnan, snap.Eϕ_pla)
@@ -145,12 +145,41 @@ end
     snaps = [Snapshot2D{Float64}(; dims_RZ)]
     process_symbol_based_snapshots!(snaps, Adict, create_symbol_path_mapping(Snapshot2D{Float64}, Adict), 1)
     @test snaps[1].ψ_presc == old[:, :, 1] && snaps[1].LV_presc == 2 .* old[:, :, 1]
-    @test snaps[1].E_para_presc == 3 .* old[:, :, 1]
+    @test snaps[1].Eϕ_para_presc == 3 .* old[:, :, 1]
     # the 0D names
     old0D = (
-        "Epara_ext" => :Epara_presc, "force_R_ext" => :force_R_presc, "force_Z_ext" => :force_Z_presc,
+        "Epara_ext" => :Eϕ_para_presc, "force_R_ext" => :force_R_presc, "force_Z_ext" => :force_Z_presc,
         "BZ_ext_at_cen_by_Jϕ" => :BZ_presc_at_cen_by_Jϕ, "BR_ext_at_cen_by_Jϕ" => :BR_presc_at_cen_by_Jϕ,
         "coils_V_ext" => :coils_V_applied,
+    )
+    Adict0 = Dict{String, Any}("time_s" => [0.1], (k => [1.0] for (k, _) in old0D)...)
+    paths0 = create_symbol_path_mapping(Snapshot0D{Float64}, Adict0)
+    @test all(paths0[k] == [v] for (k, v) in old0D)
+end
+
+@testitem "field sources: the plotting extensions and the demo read the 0D snapshot's present names" begin
+    # A renamed field the recipes still read fails only when a plot is drawn, and the tests load
+    # no Makie: their source is read instead. `s` is a 0D snapshot in their comprehensions.
+    root = pkgdir(RAPID2D)
+    files = (joinpath(root, "ext", "RAPID2DPlotsExt.jl"), joinpath(root, "ext", "RAPID2DMakieExt.jl"), joinpath(root, "scripts", "plotting_demo.jl"))
+    names0D = Set(String.(fieldnames(Snapshot0D{Float64})))
+    read_names(file) = Set(m.captures[1] for m in eachmatch(r"\b(?:s|snap0D)\.([\p{L}\p{N}_]+)", read(file, String)))
+    @test all(f -> !isempty(read_names(f)), files)
+    @test Dict(basename(f) => sort!(collect(setdiff(read_names(f), names0D))) for f in files) ==
+        Dict(basename(f) => String[] for f in files)
+end
+
+@testitem "field sources: old E-field names are read into the component-first ones" begin
+    using RAPID2D: create_symbol_path_mapping, process_symbol_based_snapshots!
+    dims_RZ = (4, 5)
+    old = reshape(collect(1.0:20.0), dims_RZ..., 1)
+    Adict = Dict{String, Any}("time_s" => [0.1], "Epol_self" => old, "E_para_presc" => 2 .* old)
+    snaps = [Snapshot2D{Float64}(; dims_RZ)]
+    process_symbol_based_snapshots!(snaps, Adict, create_symbol_path_mapping(Snapshot2D{Float64}, Adict), 1)
+    @test snaps[1].ERZ_pla_mag == old[:, :, 1] && snaps[1].Eϕ_para_presc == 2 .* old[:, :, 1]
+    old0D = (
+        "Epara_tot" => :E_para_tot, "Epara_presc" => :Eϕ_para_presc, "Epara_ctrl" => :Eϕ_para_ctrl,
+        "Epara_self_ES" => :ERZ_para_pla, "Epara_self_EM" => :Eϕ_para_coils_pla,
     )
     Adict0 = Dict{String, Any}("time_s" => [0.1], (k => [1.0] for (k, _) in old0D)...)
     paths0 = create_symbol_path_mapping(Snapshot0D{Float64}, Adict0)

@@ -87,15 +87,17 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     measure_vertical_field_control!(snap0D, RP)
 
     # Electric fields (density-weighted averages)
-    snap0D.Epara_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
-    snap0D.Epara_presc = sum(@. F.E_para_presc * Ne2D) / total_Ne
-    snap0D.Epara_ctrl = sum(@. F.E_para_ctrl * Ne2D) / total_Ne
-    snap0D.Epara_self_ES = sum(@. F.E_para_self_ES * Ne2D) / total_Ne
-    snap0D.Epara_self_EM = sum(@. F.E_para_self_EM * Ne2D) / total_Ne
+    snap0D.E_para_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
+    snap0D.Eϕ_para_presc = sum(@. F.Eϕ_para_presc * Ne2D) / total_Ne
+    snap0D.Eϕ_para_ctrl = sum(@. F.Eϕ_para_ctrl * Ne2D) / total_Ne
+    snap0D.ERZ_para_pla = sum(@. F.ERZ_para_pla * Ne2D) / total_Ne
+    snap0D.Eϕ_para_coils_pla = sum(@. F.Eϕ_para_coils_pla * Ne2D) / total_Ne
 
     # Transport quantities
     snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * F.Bpol / F.Btot * Ne2D) / total_Ne
     snap0D.D_RZ = sum(@. sqrt(RP.transport.DRR^2 + RP.transport.DZZ^2) * Ne2D) / total_Ne
+    snap0D.turbulence_weight = sum(@. pla.turbulence_weight * Ne2D) / total_Ne
+    snap0D.ambipolar_weight = sum(@. pla.ambipolar_weight * Ne2D) / total_Ne
 
     # Each parent's species, volume-averaged: its ions by charge state, its neutral gas (the H₂
     # gas among them)
@@ -297,7 +299,7 @@ The coils' (walls included) and the plasma's fields by source, for a 2D snapshot
   step's change `ΔI_step` and the rest, `Eϕ_coils_pla − Eϕ_coils`: the field the model applied less the
   coils' part, not the change of the plasma's own flux (below the Ampère gate it is zero).
 NaN where the run does not solve the field (Ampère off), and the split NaN without induction
-(`E_para_self_EM` off).
+(`E_para_induction` off).
 """
 function measure_field_sources!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: AbstractFloat}
     G, F, csys = RP.G, RP.fields, RP.coil_system
@@ -319,7 +321,7 @@ function measure_field_sources!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT
     scale = max(FT(PSI_CLOSURE_FLOOR), maximum(abs, F.ψ_coils_pla), maximum(abs, snap2D.ψ_pla) + maximum(abs, snap2D.ψ_coils))
     snap2D.ψ_closure_rel = snap2D.ψ_closure_abs / scale
 
-    if !RP.flags.E_para_self_EM
+    if !RP.flags.E_para_induction
         fill!(snap2D.Eϕ_coils, FT(NaN))
         fill!(snap2D.Eϕ_pla, FT(NaN))
         return snap2D
@@ -382,8 +384,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     # Electric fields
     snap2D.E_para_tot .= F.E_para_tot
-    snap2D.E_para_presc .= F.E_para_presc
-    snap2D.Epol_self .= F.Epol_self
+    snap2D.Eϕ_para_presc .= F.Eϕ_para_presc
+    snap2D.ERZ_pla_mag .= F.ERZ_pla_mag
     snap2D.Eϕ_coils_pla .= F.Eϕ_coils_pla
 
     # Loop voltages
@@ -434,6 +436,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.nc_perp .= pla.nc_perp
 
     snap2D.γ_shape_fac .= pla.γ_shape_fac
+    snap2D.turbulence_weight .= pla.turbulence_weight
+    snap2D.ambipolar_weight .= pla.ambipolar_weight
 
     # Ion quantities (all species: their sum, sharing one velocity and temperature)
     snap2D.ni_tot .= pla.ni_tot

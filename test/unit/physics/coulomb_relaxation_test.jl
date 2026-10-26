@@ -92,7 +92,7 @@
         src = false, diffu = false, convec = false, ud_evolve = false, Gas_evolve = false,
         Atomic_Collision = false, Coulomb_Collision = true, Te_evolve = true, Ti_evolve = true,
         update_ni_independently = true, mean_ExB = false, turb_ExB_mixing = false,
-        E_para_self_ES = false, E_para_self_EM = false, Ampere = false, Global_JxB_Force = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false, Global_JxB_Force = false,
         Include_Te_convec_term = false, Include_Te_diffu_term = false, Include_heat_flux_term = false,
         vacuum_relaxation = (state = false, factor = 100.0),
     )
@@ -362,7 +362,7 @@ end
             [("H2", MH2, 1, n)]; ne = n, Te = 5.0, Ti = 1.0, dt = 1.0e-6,
             flags = SimulationFlags{Float64}(;
                 src = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false, diffu = false, convec = false,
-                E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+                charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false,
                 Include_ud_convec_term = false, Include_ud_pressure_term = false, Include_ud_diffu_term = false,
             ),
         )

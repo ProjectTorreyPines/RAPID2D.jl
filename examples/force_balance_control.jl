@@ -60,11 +60,11 @@ function blob_run(name; control::Union{Nothing, CurvedBzControl})
         Global_JxB_Force = true,                # the hoop force
         # Benchmark setting: the blob starts formed at 0 A, so Ampère runs from the first step;
         # under a gate its first step would accelerate freely, without its self-inductance.
-        Ampere = true, Ampere_Itor_threshold = 0.0, E_para_self_EM = true,
+        Ampere = true, Ampere_Itor_threshold = 0.0, E_para_induction = true,
         ud_evolve = true, convec = true, Coulomb_Collision = true, Atomic_Collision = true,
         src = false, diffu = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
         update_ni_independently = true, Include_Te_convec_term = true,
-        E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false,
+        charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false, turb_ExB_mixing = false,
         FLF_nstep = 10,
     )
     set_column!(RP, masked_gaussian(RP.G; cenR = R_BLOB, radius = A_BLOB, n0 = N_BLOB))

@@ -125,7 +125,7 @@ end
         RP.flags = SimulationFlags{Float64}(
             ud_evolve = true, Implicit = true, Atomic_Collision = false, Coulomb_Collision = true,
             Spitzer_Resistivity = true, src = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
-            diffu = false, convec = false, Ampere = false, E_para_self_ES = false, E_para_self_EM = false,
+            diffu = false, convec = false, Ampere = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
             update_ni_independently = false, Include_ud_convec_term = false, Include_ud_pressure_term = false,
             Include_ud_diffu_term = false,
         )
@@ -230,7 +230,7 @@ end
     RP = RAPID{Float64}(config)
     RP.flags = SimulationFlags{Float64}(
         Atomic_Collision = false, Coulomb_Collision = true, src = false, diffu = false, convec = false,
-        Ampere = false, E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        Ampere = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
         ud_evolve = false, Te_evolve = true, Ti_evolve = true, update_ni_independently = false,
         mean_ExB = false, turb_ExB_mixing = false,
     )
@@ -295,7 +295,7 @@ end
     RP = RAPID{Float64}(config)
     RP.flags = SimulationFlags{Float64}(
         Atomic_Collision = false, Coulomb_Collision = true, src = false, diffu = false, convec = false,
-        Ampere = false, E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        Ampere = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
         ud_evolve = false, Te_evolve = true, Ti_evolve = true, update_ni_independently = false,
         mean_ExB = false, turb_ExB_mixing = false,
     )

@@ -270,7 +270,7 @@ policy at all:
 |---|---|---|
 | collisional | `b̂` | **yes** — `1/D∥ = mν/T + 2/(vm·L)`, Einstein plus a free-streaming bound |
 | Bohm | `b̂` | `D⊥ = T_e/16B` is mass-free; only the `v`/`λ` split moves |
-| turbulent ExB | `b̂_pol` | no — `v_E = E_pol/B_tot` has neither mass nor charge in it |
+| turbulent ExB | `b̂_pol` | no — `v_E = ERZ/B_tot` has neither mass nor charge in it |
 
 The ExB channel is therefore built once and handed to every species as the same
 object, which is what lets the mixture return it untouched.
@@ -463,12 +463,15 @@ function ion_channel_directions(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return dirs
 end
 
-"The ExB channel every ion species shares, or `nothing` when it is switched off."
+"""
+The ExB channel every ion species and the electron wall share, or `nothing` when it is switched
+off: the charge sheets' drift speed at the turbulence's weight, as in `Dpol_turb`.
+"""
 function shared_turbulent_channel(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.flags.turb_ExB_mixing || return nothing
     f_para = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
     return turbulent_ExB_channel(
-        RP.fields.Epol_self, RP.fields.Btot, RP.transport.L_mixing,
+        RP.plasma.turbulence_weight .* RP.fields.ERZ_pla_mag, RP.fields.Btot, RP.transport.L_mixing,
         f_para, one(FT) - f_para
     )
 end

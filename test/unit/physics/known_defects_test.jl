@@ -19,7 +19,7 @@
         :diffu, :convec, :upwind, :mean_ExB, :turb_ExB_mixing,
         :Include_Te_diffu_term, :Include_Te_convec_term, :Include_heat_flux_term,
         :Include_ud_convec_term, :Include_ud_pressure_term, :Include_ud_diffu_term,
-        :Ampere, :E_para_self_ES, :E_para_self_EM, :Coulomb_Collision, :Gas_evolve,
+        :Ampere, :charge_sheet_field, :E_para_cancellation, :E_para_induction, :Coulomb_Collision, :Gas_evolve,
     )
 
     # `resync = false` hands `run_simulation!` a plasma whose state was replaced after

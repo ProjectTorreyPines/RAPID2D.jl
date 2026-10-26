@@ -126,7 +126,7 @@ module RAPID2DPlotsExt
             title := "Parallel E-field"
             label := L"\mathrm{E_{tot}}" * label_postfix
             linewidth := 2
-            times_ms, [s.Epara_tot for s in snaps0D]
+            times_ms, [s.E_para_tot for s in snaps0D]
         end
 
 
@@ -134,21 +134,21 @@ module RAPID2DPlotsExt
             subplot := 7
             label := L"\mathrm{E_{presc}}" * label_postfix
             linewidth := 2
-            times_ms, [s.Epara_presc for s in snaps0D]
+            times_ms, [s.Eϕ_para_presc for s in snaps0D]
         end
 
         @series begin
             subplot := 7
-            label := L"\mathrm{E_{self}^{ES}}" * label_postfix
+            label := L"\mathrm{E_{RZ,pla}}" * label_postfix
             linewidth := 2
-            times_ms, [s.Epara_self_ES for s in snaps0D]
+            times_ms, [s.ERZ_para_pla for s in snaps0D]
         end
 
         @series begin
             subplot := 7
-            label := L"\mathrm{E_{self}^{EM}}" * label_postfix
+            label := L"\mathrm{E_{\phi,coils+pla}}" * label_postfix
             linewidth := 2
-            times_ms, [s.Epara_self_EM for s in snaps0D]
+            times_ms, [s.Eϕ_para_coils_pla for s in snaps0D]
         end
 
         # Panel 8: Parallel velocity
@@ -433,12 +433,12 @@ module RAPID2DPlotsExt
         )
 
         p3 = plot(
-            times_1, [abs(s.Epara_tot) for s in snaps0D_1],
+            times_1, [abs(s.E_para_tot) for s in snaps0D_1],
             ylabel = "|⟨E∥⟩| (V/m)", label = labels[1],
             yscale = :log10, linewidth = 2
         )
         plot!(
-            p3, times_2, [abs(s.Epara_tot) for s in snaps0D_2],
+            p3, times_2, [abs(s.E_para_tot) for s in snaps0D_2],
             label = labels[2], linewidth = 2, linestyle = :dash
         )
 

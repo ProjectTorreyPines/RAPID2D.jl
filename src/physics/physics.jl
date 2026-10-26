@@ -1773,7 +1773,7 @@ function solve_Ampere_equation!(RP::RAPID{FT}, F::Fields{FT} = RP.fields; plasma
         # the magnetic field of ψ_coils_pla
         calculate_B_from_ψ!(RP.G, F.ψ_coils_pla, F.BR_coils_pla, F.BZ_coils_pla)
 
-        if update_Eϕ_coils_pla && RP.flags.E_para_self_EM
+        if update_Eϕ_coils_pla && RP.flags.E_para_induction
             @. F.Eϕ_coils_pla = - (F.ψ_coils_pla - old_ψ_coils_pla) / (RP.G.R2D * RP.dt)
         end
 
@@ -1843,8 +1843,8 @@ function set_Eϕ_coils_pla_from_coils!(RP::RAPID{FT}, ΔI::AbstractVector{FT}) w
     F = RP.fields
     F.Eϕ_coils_pla_prev .= F.Eϕ_coils_pla
     F.Eϕ_coils_pla .= coil_induced_Eϕ(RP, ΔI)
-    if RP.flags.E_para_self_EM
-        @. F.E_para_self_EM = F.Eϕ_coils_pla * F.bϕ
+    if RP.flags.E_para_induction
+        @. F.Eϕ_para_coils_pla = F.Eϕ_coils_pla * F.bϕ
     end
     combine_E_para!(RP)
     return RP
@@ -2092,14 +2092,15 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             accel_para_tilde .+= (one(FT) - θ_op) * (pops.A_diffu * pla.ue_para)
         end
 
-        # Electric field contributions: [(qe/me)* (E∥_presc (+ E∥_ctrl) + E∥_self_ES)]
-        if flags.E_para_self_ES
-            @. accel_para_tilde += qe / me * (F.E_para_presc + F.E_para_self_ES)
+        # Electric field contributions: (qe/me) (Eϕ_para_presc (+ Eϕ_para_ctrl) + ERZ_para_pla); the
+        # induced part is solved with ψ
+        if flags.E_para_cancellation
+            @. accel_para_tilde += qe / me * (F.Eϕ_para_presc + F.ERZ_para_pla)
         else
-            @. accel_para_tilde += qe / me * (F.E_para_presc)
+            @. accel_para_tilde += qe / me * (F.Eϕ_para_presc)
         end
         if _vertical_field_control_on(RP)
-            @. accel_para_tilde += qe / me * F.E_para_ctrl
+            @. accel_para_tilde += qe / me * F.Eϕ_para_ctrl
         end
 
         # Effective electron collision frequency

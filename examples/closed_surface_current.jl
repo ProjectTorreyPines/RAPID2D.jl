@@ -52,11 +52,11 @@ function column(policy; α, ampere, t_end)
     )
     RP = setup(
         config;
-        Ampere = ampere, Ampere_Itor_threshold = 0.0, E_para_self_EM = ampere, ud_evolve = true,
+        Ampere = ampere, Ampere_Itor_threshold = 0.0, E_para_induction = ampere, ud_evolve = true,
         Atomic_Collision = false, Coulomb_Collision = false, src = false, convec = false, diffu = false,
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
         Include_ud_convec_term = false, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
-        Include_Te_convec_term = false, E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false,
+        Include_Te_convec_term = false, charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false, turb_ExB_mixing = false,
         FLF_nstep = 100, closed_surface_flow = policy,
     )
     G, F, pla = RP.G, RP.fields, RP.plasma

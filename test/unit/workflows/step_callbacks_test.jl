@@ -17,7 +17,7 @@
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
             diffu = false, convec = false, mean_ExB = false, turb_ExB_mixing = false,
-            Ampere = false, E_para_self_ES = false, E_para_self_EM = false,
+            Ampere = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
             Coulomb_Collision = false, Gas_evolve = false, Ti_evolve = false,
             update_ni_independently = false,
         )
@@ -103,7 +103,7 @@ end
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(
             diffu = false, convec = false, mean_ExB = false, turb_ExB_mixing = false,
-            Ampere = false, E_para_self_ES = false, E_para_self_EM = false,
+            Ampere = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
             Coulomb_Collision = false, Gas_evolve = false, Ti_evolve = false, update_ni_independently = false,
         )
         initialize!(RP)

@@ -1,5 +1,5 @@
 # The avalanche of townsend_avalanche.jl with the self-electric-field model on: parallel E∥
-# cancellation (E_para_self_ES), the mean E×B drift and turbulent E×B mixing. The space
+# cancellation (E_para_cancellation), the mean E×B drift and turbulent E×B mixing. The space
 # charge limits the growth and spreads the plasma along the poloidal field.
 #
 #   julia --project=examples examples/selfE_avalanche.jl
@@ -18,8 +18,8 @@ RP = setup(
     src = true, Atomic_Collision = true, Coulomb_Collision = true,
     diffu = true, convec = true, ud_evolve = true, Te_evolve = true, Ti_evolve = false,
     update_ni_independently = false, Gas_evolve = false,
-    mean_ExB = true, turb_ExB_mixing = true, E_para_self_ES = true,   # the self-E model
-    E_para_self_EM = false, Ampere = false,
+    mean_ExB = true, turb_ExB_mixing = true, charge_sheet_field = true, E_para_cancellation = true,   # the self-E model
+    E_para_induction = false, Ampere = false,
     FLF_nstep = 100,
 )
 

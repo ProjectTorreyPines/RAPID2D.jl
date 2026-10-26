@@ -76,7 +76,7 @@ function mixing_RP(name; N, t_end_s, xpoint::Bool, dt = 1.0e-6, nsnap = 10)
         config;
         Implicit = true, diffu = true, convec = false, src = false,
         Atomic_Collision = false, Coulomb_Collision = false,
-        mean_ExB = false, turb_ExB_mixing = false, E_para_self_ES = false, E_para_self_EM = false,
+        mean_ExB = false, turb_ExB_mixing = false, charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
         Ampere = false, Te_evolve = true, ud_evolve = true, Ti_evolve = false, Gas_evolve = false,
         update_ni_independently = false, secondary_electron = false, negative_n_correction = false,
         Include_ud_pressure_term = false, Include_ud_convec_term = false,

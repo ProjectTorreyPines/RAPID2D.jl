@@ -1,6 +1,6 @@
 # Current rise in a plasma filament driven by a loop voltage, in a pure toroidal field with
 # Coulomb collisions as the only resistivity. Two runs: without the inductive E∥
-# (E_para_self_EM) the current saturates on the electron momentum-relaxation time 1/ν; with
+# (E_para_induction) the current saturates on the electron momentum-relaxation time 1/ν; with
 # it, the current rises on the L/R time of the loop, where L includes the electrons' inertia
 # (their kinetic inductance). The current plot adds that single-filament L/R curve.
 #
@@ -11,7 +11,7 @@ include("common.jl")
 const R_FIL, A_FIL, N_FIL = 1.5, 0.3, 1.0e16   # filament major/minor radius [m], density [m⁻³]
 const E0 = 0.3                                  # toroidal E at the mean R [V/m]
 
-function filament_run(name; E_para_self_EM::Bool)
+function filament_run(name; E_para_induction::Bool)
     config = SimulationConfig{Float64}(
         device_Name = "manual", manual = pure_toroidal(E0), NR = 30, NZ = 50, R0B0 = 3.0,
         prefilled_gas_pressure = 0.0,          # vacuum: no neutrals
@@ -23,13 +23,13 @@ function filament_run(name; E_para_self_EM::Bool)
         # A benchmark setting: Ampère from the first step. The column starts formed at I = 0, so
         # under any threshold its first step accelerates with no back-EMF (to ~550 A here) and
         # the next takes that current back. Runs that grow from breakdown keep the default (1 A).
-        Ampere = true, Ampere_Itor_threshold = 0.0, E_para_self_EM,
+        Ampere = true, Ampere_Itor_threshold = 0.0, E_para_induction,
         ud_evolve = true, Coulomb_Collision = true,
         Atomic_Collision = false, src = false, convec = false, diffu = false,
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
         Include_ud_convec_term = false, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
         Include_Te_convec_term = false,
-        E_para_self_ES = false, mean_ExB = false, turb_ExB_mixing = false,
+        charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false, turb_ExB_mixing = false,
         FLF_nstep = 100,
     )
     set_column!(RP, tophat(RP.G; cenR = R_FIL, radius = A_FIL, n0 = N_FIL))
@@ -60,8 +60,8 @@ function lr_reference(RP::RAPID)
     return t, @.((LV / R_p) * (1 - exp(-t / τ))), @.((LV / R_p) * (1 - exp(-t * R_p / L_p)))
 end
 
-RP_noEM = filament_run("current_diffusion/no_Eind"; E_para_self_EM = false)
-RP_EM = filament_run("current_diffusion/with_Eind"; E_para_self_EM = true)
+RP_noEM = filament_run("current_diffusion/no_Eind"; E_para_induction = false)
+RP_EM = filament_run("current_diffusion/with_Eind"; E_para_induction = true)
 
 out = output_dir("current_diffusion")
 t_ref, I_ref, I_ref_noLkin = lr_reference(RP_EM)

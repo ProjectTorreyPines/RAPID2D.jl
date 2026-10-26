@@ -26,13 +26,13 @@ function column(
     )
     RP = setup(
         config;
-        Ampere = true, Ampere_Itor_threshold = threshold, E_para_self_EM = true,
+        Ampere = true, Ampere_Itor_threshold = threshold, E_para_induction = true,
         ud_evolve = true, Coulomb_Collision = true,
         Atomic_Collision = false, src = false, convec = moving, diffu = false,
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
         Include_ud_convec_term = moving, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
         Include_Te_convec_term = false,
-        E_para_self_ES = false, mean_ExB = moving, turb_ExB_mixing = false,
+        charge_sheet_field = false, E_para_cancellation = false, mean_ExB = moving, turb_ExB_mixing = false,
         FLF_nstep = 100_000,                   # no field-line tracing
     )
     set_column!(RP, tophat(RP.G; cenR, cenZ, radius, n0); Te_eV = Te)

@@ -400,7 +400,7 @@ end
         Global_JxB_Force = true,        # ← THE FEATURE: net J×B force on the plasma column
         Ampere = true,                  # toroidal current from Ampère's law — supplies the J in J×B
         Ampere_Itor_threshold = 0.0,    # [A] solve from the first amp, no dead band
-        E_para_self_EM = true,          # inductive back-EMF of the growing current
+        E_para_induction = true,          # inductive back-EMF of the growing current
         ud_evolve = true,               # parallel momentum equation
         Include_ud_convec_term = true,
         Include_ud_diffu_term = true,
@@ -422,7 +422,7 @@ end
         Ti_evolve = false,
         Gas_evolve = false,             # ... and a frozen neutral background
         update_ni_independently = false,  # ni follows ne
-        E_para_self_ES = false,         # electrostatic self-field off (the EM one above is on)
+        charge_sheet_field = false, E_para_cancellation = false,         # electrostatic self-field off (the EM one above is on)
 
         # ── Numerics ─────────────────────────────────────────────────────────
         Implicit = true,

@@ -24,11 +24,11 @@
         )
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(;
-            Ampere = true, Ampere_Itor_threshold = threshold, E_para_self_EM = true,
+            Ampere = true, Ampere_Itor_threshold = threshold, E_para_induction = true,
             ud_evolve = true, Coulomb_Collision = true, Atomic_Collision = false, src = false,
             convec = moving, diffu = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
             update_ni_independently = false, Include_ud_convec_term = moving, Include_ud_diffu_term = false,
-            Include_ud_pressure_term = false, Include_Te_convec_term = false, E_para_self_ES = false,
+            Include_ud_pressure_term = false, Include_Te_convec_term = false, charge_sheet_field = false, E_para_cancellation = false,
             mean_ExB = moving, turb_ExB_mixing = false, FLF_nstep = 100_000,
         )
         initialize!(RP)
@@ -285,7 +285,7 @@ end
         off = rp -> if rp.time_s >= 1.0e-3 - 1.0e-12
             fill!(rp.fields.LV_presc, 0.0)
             fill!(rp.fields.Eϕ_presc, 0.0)
-            fill!(rp.fields.E_para_presc, 0.0)
+            fill!(rp.fields.Eϕ_para_presc, 0.0)
         end
         Ip = Float64[]
         run_quiet!(RP; before = off, after = rp -> push!(Ip, plasma_current(rp, current_density(rp))))
@@ -309,7 +309,7 @@ end
     off = rp -> if rp.time_s >= 1.0e-3 - 1.0e-12
         fill!(rp.fields.LV_presc, 0.0)
         fill!(rp.fields.Eϕ_presc, 0.0)
-        fill!(rp.fields.E_para_presc, 0.0)
+        fill!(rp.fields.Eϕ_para_presc, 0.0)
     end
     Ip = Float64[]
     run_quiet!(RP; before = off, after = rp -> push!(Ip, plasma_current(rp, current_density(rp))))
@@ -572,18 +572,18 @@ end
     # step after crosses it. A run stopped at 10 µs and resumed steps as the whole run.
     function switched_on(t_end)
         RP = column(; n0 = 1.0e17, Te = 5.0, threshold = 1.0, t_end)
-        field = (LV = copy(RP.fields.LV_presc), Eϕ = copy(RP.fields.Eϕ_presc), Epara = copy(RP.fields.E_para_presc))
+        field = (LV = copy(RP.fields.LV_presc), Eϕ = copy(RP.fields.Eϕ_presc), Epara = copy(RP.fields.Eϕ_para_presc))
         return RP, field
     end
     function drive(field)
         return rp -> if rp.time_s < 15.0e-6 - 1.0e-12
             fill!(rp.fields.LV_presc, 0.0)
             fill!(rp.fields.Eϕ_presc, 0.0)
-            fill!(rp.fields.E_para_presc, 0.0)
+            fill!(rp.fields.Eϕ_para_presc, 0.0)
         else
             rp.fields.LV_presc .= field.LV
             rp.fields.Eϕ_presc .= field.Eϕ
-            rp.fields.E_para_presc .= field.Epara
+            rp.fields.Eϕ_para_presc .= field.Epara
         end
     end
     whole, fw = switched_on(30.0e-6)

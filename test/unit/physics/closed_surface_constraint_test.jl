@@ -124,14 +124,14 @@ end
         update_ue_para!
     # The coupled block and the below-gate u∥ system hold the same constrained equation; given the
     # step's induced field bϕ Eϕ_coils_pla, the two give the same u∥, surface flux and friction ledger.
-    a, b = (closed_RP(; Ampere = true, E_para_self_ES = false) for _ in 1:2)
+    a, b = (closed_RP(; Ampere = true, charge_sheet_field = false, E_para_cancellation = false) for _ in 1:2)
     for RP in (a, b)
         initialize_coupled_fields!(RP)
         prepare_timestep!(RP)
     end
     u0 = copy(a.plasma.ue_para)
     solve_combined_momentum_Ampere_equations_with_coils!(a; NamedTuple(a.flags.ampere_picard)...)
-    @. b.fields.E_para_tot = b.fields.E_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
+    @. b.fields.E_para_tot = b.fields.Eϕ_para_presc + b.fields.bϕ * a.fields.Eϕ_coils_pla
     update_ue_para!(b)
     Δu = a.plasma.ue_para .- u0
     @test maximum(abs, Δu) > 1.0e-3 * maximum(abs, u0)

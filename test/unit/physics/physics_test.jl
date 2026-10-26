@@ -54,8 +54,8 @@ end
     @test all(RP.fields.BZ .> 0.0)
 
     # With no self-field yet, the total parallel E equals the external one
-    @test all(RP.fields.E_para_tot .== RP.fields.E_para_presc)
-    @test all(RP.fields.E_para_presc .== RP.fields.Eϕ_presc .* RP.fields.bϕ)
+    @test all(RP.fields.E_para_tot .== RP.fields.Eϕ_para_presc)
+    @test all(RP.fields.Eϕ_para_presc .== RP.fields.Eϕ_presc .* RP.fields.bϕ)
 
     # No initial flow
     @test all(RP.plasma.ue_para .== 0.0)
@@ -239,8 +239,8 @@ end
         Te_evolve = false,
         Ti_evolve = false,
         Ampere = false,
-        E_para_self_ES = false,
-        E_para_self_EM = false,
+        charge_sheet_field = false, E_para_cancellation = false,
+        E_para_induction = false,
         Gas_evolve = false,
         update_ni_independently = false,
         Include_ud_convec_term = false,
@@ -400,8 +400,8 @@ end
         Te_evolve = false,
         Ti_evolve = false,
         Ampere = false,
-        E_para_self_ES = false,
-        E_para_self_EM = false,
+        charge_sheet_field = false, E_para_cancellation = false,
+        E_para_induction = false,
         Gas_evolve = false,
         update_ni_independently = false,
         Include_ud_convec_term = false,
@@ -513,7 +513,7 @@ end
         # no drag, no transport, no heating: acceleration must be purely ballistic
         Te_evolve = false, Ti_evolve = false,
         src = false, diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
         Include_ud_diffu_term = false, Include_ud_pressure_term = false,
         Coulomb_Collision = false, negative_n_correction = false,
@@ -547,10 +547,10 @@ end
             cnst = RP.config.constants
             ee, me, mi = cnst.ee, cnst.me, cnst.mi
 
-            elec_accel_2D = @. -ee * RP.fields.E_para_presc / me
+            elec_accel_2D = @. -ee * RP.fields.Eϕ_para_presc / me
             expected_avg_ue_para = sum(@. ini_n * elec_accel_2D) / sum(ini_n) * RP.config.t_end_s
 
-            ion_accel_2D = @. ee * RP.fields.E_para_presc / mi
+            ion_accel_2D = @. ee * RP.fields.Eϕ_para_presc / mi
             expected_avg_ui_para = sum(@. ini_n * ion_accel_2D) / sum(ini_n) * RP.config.t_end_s
 
             actual_avg_ue_para = sum(RP.plasma.ne .* RP.plasma.ue_para) / sum(RP.plasma.ne)
@@ -587,7 +587,7 @@ end
         ud_evolve = false,
         Te_evolve = false, Ti_evolve = false,
         diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
         Coulomb_Collision = false, negative_n_correction = false,
     )
@@ -670,7 +670,7 @@ end
         ud_evolve = false,
         Ti_evolve = false,
         diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
         Coulomb_Collision = false, negative_n_correction = false,
     )
@@ -759,7 +759,7 @@ end
             src = true, ud_evolve = false,
             Ti_evolve = false,
             diffu = false, convec = false, Ampere = false,
-            E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+            charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
             update_ni_independently = false, Include_ud_convec_term = false,
             Coulomb_Collision = false, negative_n_correction = false,
         )
@@ -924,7 +924,7 @@ end
     RP.flags = SimulationFlags{FT}(
         Te_evolve = false, src = false, ud_evolve = false,
         Ti_evolve = false, diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
         Coulomb_Collision = false, negative_n_correction = false,
     )
@@ -975,7 +975,7 @@ end
     RP.flags = SimulationFlags{FT}(
         Te_evolve = true, src = true, ud_evolve = true,
         Ti_evolve = false, diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
         Coulomb_Collision = false, negative_n_correction = false,
     )
@@ -1098,7 +1098,7 @@ end
     RP.flags = SimulationFlags{FT}(
         Te_evolve = false, src = true, ud_evolve = false,
         Ti_evolve = false, diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false, Gas_evolve = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Gas_evolve = false,
         update_ni_independently = false, Include_ud_convec_term = false,
         Coulomb_Collision = false, negative_n_correction = false,
     )
@@ -1275,7 +1275,7 @@ end
         src = false, convec = false, diffu = false, ud_evolve = false,
         Include_ud_convec_term = false, Include_ud_diffu_term = false,
         Include_Te_convec_term = false, update_ni_independently = false,
-        Gas_evolve = false, Ampere = false, E_para_self_ES = false,
+        Gas_evolve = false, Ampere = false, charge_sheet_field = false, E_para_cancellation = false,
     )
     initialize!(RP)
     # the ions start below the default floor, which their own update would apply before the
@@ -1365,7 +1365,7 @@ end
         src = false,                      # no ionization: ν_iz = 0, ne stays put
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
         diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
         update_ni_independently = false,
         Include_ud_convec_term = false,
         Include_ud_pressure_term = false,
@@ -1422,7 +1422,7 @@ end
         src = false,
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
         diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
         update_ni_independently = false,
         Include_ud_convec_term = false,
         Include_ud_pressure_term = false,
@@ -1479,7 +1479,7 @@ end
         src = false,
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
         diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
         update_ni_independently = false,
         Include_ud_convec_term = false,
         Include_ud_pressure_term = false,
@@ -1556,7 +1556,7 @@ end
         src = false,
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
         diffu = false, convec = false, Ampere = false,
-        E_para_self_ES = false, E_para_self_EM = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false,
         update_ni_independently = false,
         Include_ud_convec_term = false,
         Include_ud_pressure_term = false,
@@ -1650,7 +1650,7 @@ end
             diffu = false, convec = false,
             Ampere = ampere,
             Ampere_Itor_threshold = threshold,
-            E_para_self_ES = false, E_para_self_EM = true,
+            charge_sheet_field = false, E_para_cancellation = false, E_para_induction = true,
             update_ni_independently = false,
             # ON, so both routings assemble the in-wall (u·∇)u∥ operator; with a uniform u∥
             # it contributes nothing, so the force balance below is unchanged
@@ -1821,7 +1821,7 @@ end
     )
     config.Output_path = mktempdir()
     RP = RAPID{FT}(config)
-    RP.flags = SimulationFlags{FT}(Ampere = true, E_para_self_EM = true)
+    RP.flags = SimulationFlags{FT}(Ampere = true, E_para_induction = true)
     initialize!(RP)
     G = RP.G
     RP.plasma.Jϕ .= 0.0
@@ -1845,7 +1845,7 @@ end
     )
     config.Output_path = mktempdir()
     RP = RAPID{FT}(config)
-    RP.flags = SimulationFlags{FT}(Ampere = true, E_para_self_EM = true)
+    RP.flags = SimulationFlags{FT}(Ampere = true, E_para_induction = true)
     initialize!(RP)
     G = RP.G
     RP.plasma.Jϕ .= 0.0
@@ -1871,7 +1871,7 @@ end
         ud_evolve = true, Implicit = true, Atomic_Collision = true, Coulomb_Collision = true,
         Spitzer_Resistivity = true, src = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false,
         diffu = false, convec = false, Ampere = true, Ampere_Itor_threshold = 0.0,
-        E_para_self_ES = false, E_para_self_EM = true, update_ni_independently = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = true, update_ni_independently = false,
         Include_ud_convec_term = true, Include_ud_pressure_term = false, Include_ud_diffu_term = false,
     )
     initialize!(RP)

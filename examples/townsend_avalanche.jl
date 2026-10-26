@@ -20,7 +20,7 @@ RP = setup(
     diffu = true, convec = true, ud_evolve = true, Te_evolve = true, Ti_evolve = false,
     update_ni_independently = false, Gas_evolve = false,
     mean_ExB = false, turb_ExB_mixing = false,
-    E_para_self_ES = false, E_para_self_EM = false, Ampere = false,
+    charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false,
     FLF_nstep = 100,
 )
 

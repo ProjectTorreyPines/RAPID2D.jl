@@ -22,9 +22,9 @@ RP = setup(
     src = true, Atomic_Collision = true, Coulomb_Collision = true, Spitzer_Resistivity = true,
     diffu = true, convec = true, ud_evolve = true, Te_evolve = true, Ti_evolve = true,
     update_ni_independently = true, Gas_evolve = true,
-    mean_ExB = true, turb_ExB_mixing = true, E_para_self_ES = true,     # self-E
+    mean_ExB = true, turb_ExB_mixing = true, charge_sheet_field = true, E_para_cancellation = true,     # self-E
     Ampere = true, Ampere_Itor_threshold = 0.1, Ampere_nstep = 1,         # self-B
-    E_para_self_EM = true,                                                # inductive E
+    E_para_induction = true,                                                # inductive E
     Global_JxB_Force = false,
     FLF_nstep = 50,
 )
