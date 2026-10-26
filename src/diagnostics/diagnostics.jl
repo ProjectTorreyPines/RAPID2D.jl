@@ -92,6 +92,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.Eϕ_para_ctrl = sum(@. F.Eϕ_para_ctrl * Ne2D) / total_Ne
     snap0D.ERZ_para_pla = sum(@. F.ERZ_para_pla * Ne2D) / total_Ne
     snap0D.Eϕ_para_coils_pla = sum(@. F.Eϕ_para_coils_pla * Ne2D) / total_Ne
+    E_para_amb = ambipolar_parallel_field(RP)
+    snap0D.abs_E_para_amb = sum(@. abs(E_para_amb) * Ne2D) / total_Ne
 
     # Transport quantities
     snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * F.Bpol / F.Btot * Ne2D) / total_Ne
@@ -386,6 +388,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
 
     # Electric fields
     snap2D.E_para_tot .= F.E_para_tot
+    snap2D.E_para_amb .= ambipolar_parallel_field(RP)
     snap2D.Eϕ_para_presc .= F.Eϕ_para_presc
     snap2D.ERZ_pla_mag .= F.ERZ_pla_mag
     snap2D.Eϕ_coils_pla .= F.Eϕ_coils_pla

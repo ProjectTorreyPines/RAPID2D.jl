@@ -1740,6 +1740,19 @@ end
 ue_pressure_acceleration(RP::RAPID) = electron_pressure_shares(RP).ue
 
 """
+    ambipolar_parallel_field(RP) -> Matrix
+
+The parallel field that holds the electrons to the ions in the common mode, `E∥,amb = (mₑ/e) w_amb a_p`:
+it takes the common mode's share of the electron pressure acceleration
+([`electron_pressure_shares`](@ref)) off the electrons and passes it to the ions, `≈ −w_amb ∇∥pₑ/(e nₑ)`
+(Boltzmann) where the acceleration limiter does not bind. A diagnostic: no part of `E_para_tot`.
+"""
+function ambipolar_parallel_field(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    @unpack me, ee = RP.config.constants
+    return (me / ee) .* electron_pressure_shares(RP).common
+end
+
+"""
     book_ambipolar_exchange!(RP, a_common, u_old) -> RP
 
 Add to `diagnostics.ambipolar_exchange` the work the common mode's share of the electron

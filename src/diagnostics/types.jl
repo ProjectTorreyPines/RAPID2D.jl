@@ -39,6 +39,7 @@ Contains volume-averaged quantities
     Eϕ_para_ctrl::FT = zero(FT)       # the vertical-field control's parallel E-field
     ERZ_para_pla::FT = zero(FT)       # the open-line charge sheets' parallel E-field, against the driven E∥
     Eϕ_para_coils_pla::FT = zero(FT)  # the parallel E-field induced by the coils and the plasma
+    abs_E_para_amb::FT = zero(FT)     # ⟨|E∥,amb|⟩, the ambipolar field the common mode implies (no part of E_para_tot)
 
     # Transport quantities
     abs_ue_para_RZ::FT = zero(FT)     # Average parallel velocity
@@ -263,6 +264,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Electric field
     E_para_tot::Matrix{FT} = zeros(FT, dims_RZ)     # Total parallel electric field
+    E_para_amb::Matrix{FT} = zeros(FT, dims_RZ)     # the ambipolar field the common mode implies, (mₑ/e) w_amb a_p (no part of E_para_tot)
     Eϕ_para_presc::Matrix{FT} = zeros(FT, dims_RZ)   # Prescribed parallel electric field
     mean_ExB_pol::Matrix{FT} = zeros(FT, dims_RZ)   # ExB drift magnitude
     ERZ_pla_mag::Matrix{FT} = zeros(FT, dims_RZ)    # the open-line charge sheets' RZ field, magnitude

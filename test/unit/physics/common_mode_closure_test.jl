@@ -23,6 +23,33 @@
     end
 end
 
+@testitem "common mode: its ambipolar field takes its share of the electron pressure push, Boltzmann where nothing limits it, and the snapshots record it" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: calculate_electron_acceleration_by_pressure, ambipolar_parallel_field
+    using RAPID2D.Statistics: median
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, F, G = RP.plasma, RP.fields, RP.G
+    @. pla.ne = 1.0e17 * (1 + 0.5 * G.Z2D)              # a gradient along the (vertical) field
+    pla.ni .= pla.ne
+    RP.flags.limit_acceleration = (state = false, factor = RP.flags.limit_acceleration.factor)
+    inw = G.nodes.in_wall_nids
+    me, ee = RP.config.constants.me, RP.config.constants.ee
+    for w in (0.0, 0.5, 1.0)
+        fill!(pla.ambipolar_weight, w)
+        update_transport_quantities!(RP)
+        @test ambipolar_parallel_field(RP) ≈ (me / ee) .* w .* calculate_electron_acceleration_by_pressure(RP)
+    end
+    # fully coupled at uniform Tₑ: E∥,amb = −Tₑ ∇∥ln n, down the density gradient
+    E = ambipolar_parallel_field(RP)
+    boltzmann = @. -5.0 * F.bZ * 0.5 / (1 + 0.5 * G.Z2D)
+    @test all(E[inw] .* boltzmann[inw] .>= 0)
+    @test median(E[inw] ./ boltzmann[inw]) ≈ 1 rtol = 0.1
+    # the snapshots: the field in 2D, its density-weighted magnitude in 0D
+    s2, s0 = RAPID2D.measure_snap2D(RP), RAPID2D.measure_snap0D(RP)
+    @test s2.E_para_amb ≈ E
+    Ne = pla.ne .* G.inVol2D
+    @test s0.abs_E_para_amb ≈ sum(abs.(E) .* Ne) / sum(Ne)
+end
+
 @testitem "common mode: fully coupled, the electrons and one ion species share the parallel channel and its wall speed" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: electron_wall_channels
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
