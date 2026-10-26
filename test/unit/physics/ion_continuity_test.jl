@@ -450,6 +450,7 @@ end
     turb_ref = shared_turbulent_channel(RP)
     channels(ν, L) = begin
         fill!(RP.transport.νi_neutral, ν)
+        fill!(RP.transport.νi_birth, 0.0)
         fill!(RP.transport.νi_coulomb, 0.0)
         fill!(RP.transport.L_mixing, L)
         ion_transport_channels(RP, H2⁺, turb_ref)

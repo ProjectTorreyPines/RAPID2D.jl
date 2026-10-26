@@ -117,10 +117,10 @@ end
     full = calculate_electron_acceleration_by_pressure(RP)
     @test any(!iszero, full[inw]) && ue_pressure_acceleration(RP) == full
     @test all(==(tp.Dpara0), tp.Dpara[inw])
-    # the ions' own: the drag of the gas alone, under the thermal ceiling
+    # the ions' own: the drag of the gas and of the ions born from it at rest, under the thermal ceiling
     i_para = ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))[1]
     vm = @. sqrt(8 * EE * pla.Ti_eV / (π * MH2))
-    own = @. min(EE * pla.Ti_eV / (MH2 * tp.νi_neutral) + tp.Dpara0, RAPID2D.wall_step_ceiling(vm, RP.flf.Lc_forward, RP.flf.Lc_backward))
+    own = @. min(EE * pla.Ti_eV / (MH2 * (tp.νi_neutral + tp.νi_birth)) + tp.Dpara0, RAPID2D.wall_step_ceiling(vm, RP.flf.Lc_forward, RP.flf.Lc_backward))
     @test channel_D_para(i_para)[inw] ≈ own[inw]
 end
 
@@ -220,7 +220,7 @@ end
         inw = RP.G.nodes.in_wall_nids
         @test RAPID2D.mean_ion_charge(RP)[inw] ≈ fill(Z̄, length(inw))
         ν_en = pla.ν_en_mom_tot .+ pla.ν_en_iz_tot
-        @test tp.Dpara_amb[inw] ≈ (@. EE * (Z̄ * pla.Te_eV + pla.Ti_eV) / (Z̄ * ME * ν_en + pla.mi_mean * tp.νi_neutral))[inw]
+        @test tp.Dpara_amb[inw] ≈ (@. EE * (Z̄ * pla.Te_eV + pla.Ti_eV) / (Z̄ * ME * ν_en + pla.mi_mean * (tp.νi_neutral + tp.νi_birth)))[inw]
         c_s = @. sqrt(EE * (Z̄ * pla.Te_eV + pla.Ti_eV) / pla.mi_mean)
         e_para = electron_wall_channels(RP)[1][1]
         i_para = ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))[1]

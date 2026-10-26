@@ -418,3 +418,51 @@ end
     #     is the damping the momentum path shows
     @test cs2(dense) / Da(dense) ≈ wet.rate rtol = 0.02
 end
+
+@testitem "The common mode's drag counts the ions born at rest, as the ions' momentum equation does" setup = [CoulombReference] tags = [:physics] begin
+    # Ionization brings ions in at rest from the gas: the ion fluid's momentum is shared with more
+    # mass (`update_ui_para!`), a drag on the common motion D_amb must carry, as it carries the
+    # electrons' (ν_en' holds ν_iz). The two paths of the code must still agree about one rate.
+    # The run's own species: the H₂⁺ that ionization creates, so the births are counted.
+    using RAPID2D: bulk_ion_mass
+    Te, Ti, n = 20.0, 1.0, 1.0e19                     # dense enough that e–i friction locks the pair
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 5.0e-3, Eϕ = 0.0),
+        NR = 7, NZ = 7, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 2.0e-3, R0B0 = 1.0, dt = 1.0e-6, t_end_s = 1.0,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(; cleanup = false),
+    )
+    RP = RAPID{Float64}(config)
+    RP.flags = SimulationFlags{Float64}(;
+        src = true, Te_evolve = false, Ti_evolve = false, Gas_evolve = false, diffu = false, convec = false,
+        charge_sheet_field = false, E_para_cancellation = false, E_para_induction = false, Ampere = false,
+        Include_ud_convec_term = false, Include_ud_pressure_term = false, Include_ud_diffu_term = false,
+    )
+    initialize!(RP)
+    pla, tp = RP.plasma, RP.transport
+    pla.ni .= n
+    pla.ne .= n
+    fill!(pla.Te_eV, Te)
+    fill!(pla.Ti_eV, Ti)
+    fill!(pla.ue_para, 1.0e3)
+    fill!(pla.ui_para, 1.0e3)
+    update_transport_quantities!(RP)
+    RP.fields.E_para_tot .= 0.0
+    @test pla.ν_en_iz_tot[4, 4] > 3 * tp.νi_neutral[4, 4]       # the births outweigh the ions' neutral drag
+    # the momentum path, a step's births at a time, the ions kept with the electrons
+    steps, skip = 200, 100
+    ui = zeros(steps)
+    for k in 1:steps
+        RAPID2D.reset_reaction_counts!(RP)
+        RAPID2D.solve_electron_continuity_equation!(RP)
+        RAPID2D.slave_ions_to_electrons!(RP)
+        RAPID2D.update_ue_para!(RP)
+        RAPID2D.update_ui_para!(RP)
+        ui[k] = pla.ui_para[4, 4]
+    end
+    rate = log(ui[skip] / ui[steps]) / ((steps - skip) * RP.dt)
+    @test pla.ue_para[4, 4] / pla.ui_para[4, 4] ≈ 1 rtol = 0.1    # locked: the common mode
+    cs2 = EE * (Te + Ti) / (ME + bulk_ion_mass(RP))
+    @test cs2 / tp.Dpara_amb[4, 4] ≈ rate rtol = 0.05
+end

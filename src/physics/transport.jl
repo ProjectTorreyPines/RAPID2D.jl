@@ -60,6 +60,15 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         @. νi_eff += pla.n_H2_gas * (FT(0.5) * iRRC_elastic + iRRC_cx)
     end
     tp.νi_neutral .= νi_eff      # everything so far is ion-neutral
+    # The ions born at rest from the gas share the ion fluid's momentum with more mass
+    # (`update_ui_para!`): a drag on it, the born mass per ion mass at Z̄ν_iz births per ion and
+    # second. Ionization of the gas creates H₂⁺ (`born_ion_mass`), the first species.
+    if RP.flags.Atomic_Collision && RP.flags.src
+        m_born = bulk_ion_mass(RP)
+        @. tp.νi_birth = (m_born / mi) * Z_mean * pla.ν_en_iz_tot
+    else
+        fill!(tp.νi_birth, zero(FT))
+    end
 
     # Calculate total collision frequency
     if RP.flags.Coulomb_Collision
@@ -100,18 +109,18 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # neither ν_ei nor ν_ii enters what drags it (coulomb-collision-0d-audit.md).
     ν_en_drag = RP.flags.Atomic_Collision ? (@. pla.ν_en_mom_tot + pla.ν_en_iz_tot) : zeros(FT, size(pla.ne))
 
-    # The bulk ion channel on the gas: ½vp²/ν_in = Tᵢ/(mᵢν_in), Inf without gas.
-    tp.Dpara_i_coll = @. ifelse(vp_i > 0, FT(0.5) * vp_i^2 / tp.νi_neutral, zero(FT))
+    # The bulk ion channel on the gas: ½vp²/ν = Tᵢ/(mᵢν), ν = ν_in + ν_birth, Inf without gas.
+    tp.Dpara_i_coll = @. ifelse(vp_i > 0, FT(0.5) * vp_i^2 / (tp.νi_neutral + tp.νi_birth), zero(FT))
 
     # Ambipolar diffusivity of the pair on that drag, per ion, D_amb = c_s²/ν_cm =
-    # e(Z̄Tₑ+Tᵢ)/(Z̄mₑν_en' + mᵢν_in): the pair's pressure nᵢe(Z̄Tₑ + Tᵢ) against the drag on its Z̄
-    # electrons and its ion. At Z̄ = 1 it is the mobility-weighted harmonic mean of the two
+    # e(Z̄Tₑ+Tᵢ)/(Z̄mₑν_en' + mᵢ(ν_in + ν_birth)): the pair's pressure nᵢe(Z̄Tₑ + Tᵢ) against the drag
+    # on its Z̄ electrons and its ion, the births at rest on both sides. At Z̄ = 1 it is the mobility-weighted harmonic mean of the two
     # drag-only limbs, written as one ratio because each limb's temperature cancels
     # (`Te/De ≡ mₑν/e`). The numerator is tested, not the quotient: zero thermal drive means
     # zero diffusion, not 0/0; no drag at all is Inf.
     tp.Dpara_amb = @. ifelse(
         Z_mean * pla.Te_eV + pla.Ti_eV > 0,
-        EE * (Z_mean * pla.Te_eV + pla.Ti_eV) / (Z_mean * me * ν_en_drag + mi * tp.νi_neutral),
+        EE * (Z_mean * pla.Te_eV + pla.Ti_eV) / (Z_mean * me * ν_en_drag + mi * (tp.νi_neutral + tp.νi_birth)),
         zero(FT)
     )
 

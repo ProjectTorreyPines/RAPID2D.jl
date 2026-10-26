@@ -340,7 +340,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
         store_identity(r) == own && (n_s .= n)
     end
     μ_s = species.mass / mp
-    ν_s = copy(tp.νi_neutral)
+    ν_s = tp.νi_neutral .+ tp.νi_birth               # the gas's drag, the births from it at rest included
     if RP.flags.Coulomb_Collision
         for (r, n_t) in zip(tp.ion_refresh_records, tp.ion_n_refresh)
             store_identity(r) == own && continue

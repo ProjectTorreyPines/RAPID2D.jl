@@ -82,7 +82,7 @@ end
         ),
         :transport => (
             :dims, :Dpara0, :Dperp0, :Dpara_e_coll, :Dpara_i_coll, :Dpara_amb, :Dpara_common, :u_para_thermal, :νi_eff,
-            :νi_neutral, :νi_coulomb, :ion_refresh_records, :ion_n_refresh, :ion_species, :ion_solvers,
+            :νi_neutral, :νi_birth, :νi_coulomb, :ion_refresh_records, :ion_n_refresh, :ion_species, :ion_solvers,
             :ion_N, :ion_S, :Dpara, :Dpara_cond, :Dperp, :L_mixing, :Dpol_turb,
             :DRR_turb, :DRZ_turb, :DZZ_turb, :DRR, :DRZ, :DZZ, :CTRR, :CTRZ, :CTZZ, :wall_faces,
         ),
