@@ -38,7 +38,7 @@ end
         (F.ERZ_pla_mag, F.ERZ_para_pla, F.E_para_tot, pla.mean_ExB_R, pla.mean_ExB_Z, F.ER, F.EZ, tp.Dpol_turb),
     )
 
-    # an open node where Bpol vanishes: γ E_req at its limit 0.65 |E∥| B/⟨Bpol⟩ (γ → 0, E_req → ∞),
+    # an open node where Bpol vanishes: γ ERZ_req at its limit 0.65 |E∥| B/⟨Bpol⟩ (γ → 0, ERZ_req → ∞),
     # below the Debye field here
     k = open_in[length(open_in) ÷ 2]
     F.Bpol[k] = F.bpol_R[k] = F.bpol_Z[k] = 0.0
@@ -98,18 +98,18 @@ end
     closed = RP.flf.closed_surface_nids
     open_in = setdiff(G.nodes.in_wall_nids, closed)
     pla.ne[open_in] .= [G.R2D[k] < R0 ? 1.0e10 : 1.0e17 for k in open_in]   # below and above nc_para
-    E_target, E_debye = update_space_charge_weights!(RP)
+    ERZ_target, E_Debye = update_space_charge_weights!(RP)
     w = pla.ambipolar_weight
     n_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D)
 
     @test all(==(1), w[closed])
     # on open lines the share of the cancelling field the sheets hold, as the threshold gives it too
-    @test w[open_in] ≈ min.(1, E_debye[open_in] ./ E_target[open_in])
+    @test w[open_in] ≈ min.(1, E_Debye[open_in] ./ ERZ_target[open_in])
     @test w[open_in] ≈ min.(1, sqrt.(n_SM[open_in] ./ pla.nc_para[open_in]))
     @test any(x -> 0 < x < 1, w[open_in]) && any(==(1), w[open_in])
     # and the sheets' field is that share of what they would need
     estimate_electrostatic_field_effects!(RP)
-    @test F.ERZ_pla_mag[open_in] ≈ w[open_in] .* E_target[open_in]
+    @test F.ERZ_pla_mag[open_in] ≈ w[open_in] .* ERZ_target[open_in]
     # the snapshots carry both weights, the 0D ones as density-weighted means
     s2, s0 = RAPID2D.measure_snap2D(RP), RAPID2D.measure_snap0D(RP)
     @test s2.ambipolar_weight == w && s2.turbulence_weight == pla.turbulence_weight

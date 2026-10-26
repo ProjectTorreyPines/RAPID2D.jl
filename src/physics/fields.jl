@@ -293,13 +293,13 @@ function my_sigmf(x, a, c)
 end
 
 """
-    update_space_charge_weights!(RP::RAPID{FT}) -> (E_target, E_debye) where {FT<:AbstractFloat}
+    update_space_charge_weights!(RP::RAPID{FT}) -> (ERZ_target, E_Debye) where {FT<:AbstractFloat}
 
 The space charge's regime from the present state: the shape factor `γ_shape_fac` (the field's shape
 alone, on closed lines too), the critical densities of the open-line charge sheets (infinite on a
 closed line, which carries none) and the weights of the two closures that model what the code does
 not resolve:
-- `nc_para = ε₀ (γ E_req)²/(e Tₑ)`, where the sheets' Debye field reaches the field that cancels
+- `nc_para = ε₀ (γ ERZ_req)²/(e Tₑ)`, where the sheets' Debye field reaches the field that cancels
   the driven E∥; `nc_perp`, where their E×B drift outruns the parallel streaming projected on the
   RZ plane (Yoo et al. 2018);
 - `turbulence_weight = min(1, √(n/nc_perp))`, the onset of the turbulent E×B mixing; zero without
@@ -308,8 +308,10 @@ not resolve:
   lines, `min(1, √(n/nc_para))` on open ones; zero without `ambipolar_coupling`. Recorded; nothing
   reads it yet.
 
-Returns the field that cancels the driven E∥ shaped by γ, `E_target = γ E_req`, and the Debye field
-`E_debye`, from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets' field.
+Returns the two fields from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets'
+field:
+- `ERZ_target = γ ERZ_req`, the RZ field that cancels the driven E∥, shaped by γ;
+- `E_Debye`, the Debye field, the most the local plasma holds.
 """
 function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
@@ -341,16 +343,16 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # =========================================================================
     # 2. What the sheets would need, and what they can hold
     # =========================================================================
-    # The field that cancels the driven E∥, shaped by γ: E_target = γ E_req, E_req = |E∥,drive| B/Bpol;
-    # where Bpol vanishes, its limit 0.65 |E∥,drive| B/⟨Bpol⟩. The sheets hold at most the Debye
-    # field E_D = √(n e Tₑ/ε₀) of the local plasma.
+    # - ERZ_req = |E∥,drive| B/Bpol: the RZ field whose parallel part cancels the driven E∥
+    # - ERZ_target = γ ERZ_req: shaped by γ; where Bpol vanishes, its limit 0.65 |E∥,drive| B/⟨Bpol⟩
+    # - E_Debye = √(n e Tₑ/ε₀): the most the local plasma holds
     EM = RP.flags.E_para_induction
     E_para_drive = if _vertical_field_control_on(RP)
         @. F.Eϕ_para_presc + F.Eϕ_para_ctrl + EM * F.Eϕ_para_coils_pla
     else
         @. F.Eϕ_para_presc + EM * F.Eϕ_para_coils_pla
     end
-    E_target = if Bpol_mean > 0
+    ERZ_target = if Bpol_mean > 0
         @. ifelse(
             F.Bpol > 0, pla.γ_shape_fac * (abs(E_para_drive) * (F.Btot / F.Bpol)),
             0.65 * abs(E_para_drive) * F.Btot / Bpol_mean
@@ -360,13 +362,13 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
 
     ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
-    E_debye = @. sqrt(max(ne_SM, zero(FT)) * ee * max(pla.Te_eV, zero(FT)) / eps0)
+    E_Debye = @. sqrt(max(ne_SM, zero(FT)) * ee * max(pla.Te_eV, zero(FT)) / eps0)
 
     # =========================================================================
     # 3. Critical densities of the open-line sheets
     # =========================================================================
-    # E_debye reaches E_target at nc_para: none where the plasma is cold, any where nothing is needed
-    @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * E_target^2 / (ee * pla.Te_eV))
+    # E_Debye reaches ERZ_target at nc_para: none where the plasma is cold, any where nothing is needed
+    @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * ERZ_target^2 / (ee * pla.Te_eV))
     # Bpol/γ = max(Bpol, ⟨Bpol⟩/0.65), finite where Bpol vanishes
     @. pla.nc_perp = ifelse(
         closed | (Bpol_mean <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_mean / 0.65))^2
@@ -384,18 +386,18 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     # The parallel pressure-driven flow of one species alone charges the plasma wherever its
     # divergence does not vanish, so the ambipolar field couples the species: always on a closed
-    # line; on an open line as far as the sheets' charge reaches, f∥ = min(1, E_D/E_target) — a
+    # line; on an open line as far as the sheets' charge reaches, f∥ = min(1, E_Debye/ERZ_target) — a
     # plasma that holds the sheets' charge holds the far smaller ambipolar charge
     if RP.flags.ambipolar_coupling
         @. pla.ambipolar_weight = ifelse(
             closed, one(FT),
-            ifelse(E_debye > 0, ifelse(E_target > 0, min(one(FT), E_debye / E_target), one(FT)), zero(FT))
+            ifelse(E_Debye > 0, ifelse(ERZ_target > 0, min(one(FT), E_Debye / ERZ_target), one(FT)), zero(FT))
         )
     else
         fill!(pla.ambipolar_weight, zero(FT))
     end
 
-    return E_target, E_debye
+    return ERZ_target, E_Debye
 end
 
 """
@@ -404,7 +406,7 @@ end
 The open-line charge sheets' field and its effects on transport, from the present state (MATLAB
 `Estimate_E_self_effects`, c_RAPID.m lines 544–679): the regime and the closures' weights
 ([`update_space_charge_weights!`](@ref)); with `charge_sheet_field`, the sheets' field
-`ERZ_pla_mag = min(γ E_req, E_D)`, zero on closed lines, which short-circuit along B; its parallel
+`ERZ_pla_mag = min(γ ERZ_req, E_Debye)`, zero on closed lines, which short-circuit along B; its parallel
 projection `ERZ_para_pla` ([`calculate_parallel_electric_field!`](@ref)), the mean E×B drift and the
 turbulent diffusivity `Dpol_turb` at the turbulence's weight. Without it, no field, parallel part
 or diffusivity, so a run that turns it off keeps none from before.
@@ -413,7 +415,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     pla = RP.plasma
     F = RP.fields
     G = RP.G
-    E_target, E_debye = update_space_charge_weights!(RP)
+    ERZ_target, E_Debye = update_space_charge_weights!(RP)
     if !RP.flags.charge_sheet_field
         fill!(F.ERZ_pla_mag, zero(FT))
         fill!(RP.transport.Dpol_turb, zero(FT))
@@ -424,7 +426,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
 
     # The open-line charge sheets' field (MATLAB lines 582-620): none on a closed line, before and
     # after the boundary nodes take their neighbours' mean
-    @. F.ERZ_pla_mag = ifelse(RP.flf.is_closed, zero(FT), min(E_target, E_debye))
+    @. F.ERZ_pla_mag = ifelse(RP.flf.is_closed, zero(FT), min(ERZ_target, E_Debye))
     extrapolate_field_to_boundary_nodes!(G, F.ERZ_pla_mag)
     F.ERZ_pla_mag[RP.flf.closed_surface_nids] .= zero(FT)
 
