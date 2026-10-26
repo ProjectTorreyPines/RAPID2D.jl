@@ -376,7 +376,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # its wall speed as its own speed as well: with D the primitive, λ∥ = 2D∥/v is derived.
     w = pla.ambipolar_weight
     D_para = @. (one(FT) - w) * D_own + w * tp.Dpara_common
-    collisional = coupled_parallel_channel(vm_s, sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean), D_para, w)
+    collisional = coupled_parallel_channel(vm_s, sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean, mean_ion_charge(RP)), D_para, w)
 
     # `bohm_charge_scaling = false` hands the channel Z = 1 instead of the species
     # charge, so D⊥ loses its 1/Z and every species shares the textbook Bohm value.
@@ -961,6 +961,15 @@ function ion_mean!(out::AbstractMatrix{FT}, RP::RAPID{FT}, f) where {FT <: Abstr
     end
     return out
 end
+
+"""
+    mean_ion_charge(RP) -> Matrix
+
+The electrons each ion brings on average, `Z̄ = Σ zₛnₛ/Σ nₛ = nₑ/Σ nₛ`, node by node from the
+densities as they are; the first species' charge where there are no ions. With one species it
+is that species' charge exactly.
+"""
+mean_ion_charge(RP::RAPID{FT}) where {FT <: AbstractFloat} = ion_mean!(similar(RP.plasma.ni), RP, (z, m) -> z)
 
 """
     slave_ions_to_electrons!(RP) -> RP

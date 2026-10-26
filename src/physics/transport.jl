@@ -36,6 +36,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # average, the ELECTRON one: the mean ion mass node by node, the species' own
     # where there is one.
     mi = pla.mi_mean
+    # The electrons each ion brings, Z̄ = nₑ/Σ nₛ: the pair's pressure and drag per ion
+    Z_mean = mean_ion_charge(RP)
 
     # The one RRC evaluation point of the step. Everything downstream — the rest of this
     # function and the whole of the next advance_timestep! — reads plasma.ν_en_* instead
@@ -101,13 +103,15 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # The bulk ion channel on the gas: ½vp²/ν_in = Tᵢ/(mᵢν_in), Inf without gas.
     tp.Dpara_i_coll = @. ifelse(vp_i > 0, FT(0.5) * vp_i^2 / tp.νi_neutral, zero(FT))
 
-    # Ambipolar diffusivity of the pair on that drag, D_a = c_s²/ν_cm = e(Tₑ+Tᵢ)/(mₑν_en' + mᵢν_in):
-    # the mobility-weighted harmonic mean of the two drag-only limbs, written as one ratio
-    # because each limb's temperature cancels (`Te/De ≡ mₑν/e`). The numerator is tested, not
-    # the quotient: zero thermal drive means zero diffusion, not 0/0; no drag at all is Inf.
+    # Ambipolar diffusivity of the pair on that drag, per ion, D_a = c_s²/ν_cm =
+    # e(Z̄Tₑ+Tᵢ)/(Z̄mₑν_en' + mᵢν_in): the pair's pressure nᵢe(Z̄Tₑ + Tᵢ) against the drag on its Z̄
+    # electrons and its ion. At Z̄ = 1 it is the mobility-weighted harmonic mean of the two
+    # drag-only limbs, written as one ratio because each limb's temperature cancels
+    # (`Te/De ≡ mₑν/e`). The numerator is tested, not the quotient: zero thermal drive means
+    # zero diffusion, not 0/0; no drag at all is Inf.
     tp.Dpara_amb = @. ifelse(
-        pla.Te_eV + pla.Ti_eV > 0,
-        EE * (pla.Te_eV + pla.Ti_eV) / (me * ν_en_drag + mi * tp.νi_neutral),
+        Z_mean * pla.Te_eV + pla.Ti_eV > 0,
+        EE * (Z_mean * pla.Te_eV + pla.Ti_eV) / (Z_mean * me * ν_en_drag + mi * tp.νi_neutral),
         zero(FT)
     )
 
@@ -129,15 +133,16 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     #
     # Both bound the SUM (capping inside it would let `Dpara0` escape) and both read the SAME
     # D0: they are one free-streaming limit at two lengths, so feeding D_geom into F₂
-    # double-counts it — 29 % low at the crossover. The electrons' speed is v̄ₑ, the common
-    # mode's the sound speed c_s.
+    # double-counts it — 29 % low at the crossover. The electrons' speed is v̄ₑ for both. The
+    # common mode's free flight is at the sound speed c_s (3a), and what it carries across a
+    # surface is the Bohm flux c_s n (3b at `bohm_flux_mean_speed`), not a Maxwellian's ¼c_s n.
 
     # `vm_e`, not the `vp_e` above: both ceilings are ONE-WAY fluxes across a surface,
     # ⟨v_n θ(v_n)⟩ = ¼v̄, and only the mean speed has that meaning. The pair (½, vp) two
     # dozen lines up is a different derivation and must not be copied here — see the
     # speed contract at the top of `transport_channels.jl`.
     vm_e = maxwellian_mean_speed.(pla.Te_eV, me)
-    c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, mi)
+    c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, mi, Z_mean)
 
     # Stage 3a. The geometric ceiling: a random step cannot be longer than the
     # distance at which the geometry stops being new — wall distance, circuit, or 2πR
@@ -161,19 +166,22 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     flux_ceiling(D0, v) = isnothing(∇para_ne) ? D0 :
         @. flux_limited_diffusivity(D0, ∇para_ne, pla.ne, v, RP.flags.limit_flux.factor)
 
-    # Stage 4, for a D0 and the speed of what it carries
-    bounded(D0, v) = (D_flux = flux_ceiling(D0, v); @. min(min(D0, $(step_ceiling(v))), D_flux))
+    # Stage 4, for a D0, the speed of its free flight and the mean speed of what it carries
+    # across a surface
+    bounded(D0, v, vm_flux = v) = (D_flux = flux_ceiling(D0, vm_flux); @. min(min(D0, $(step_ceiling(v))), D_flux))
 
-    # The common mode: the drag-only D_a, plus the base path, under the sound speed's ceilings
-    tp.Dpara_common .= bounded((@. tp.Dpara0 + tp.Dpara_amb), c_s)
+    # The common mode: the drag-only D_a, plus the base path, its free flight at the sound speed
+    # and its flux at the Bohm flux
+    tp.Dpara_common .= bounded((@. tp.Dpara0 + tp.Dpara_amb), c_s, bohm_flux_mean_speed.(c_s))
     D_base = bounded(fill(tp.Dpara0, size(pla.ne)), vm_e)
     w = pla.ambipolar_weight
     @. tp.Dpara = (one(FT) - w) * D_base + w * tp.Dpara_common
 
     # The rest of the common mode's pressure drive, down the temperature gradient: the pair's
-    # pressure is n e(Tₑ + Tᵢ), so Γ = −D_common (∇∥n + n ∇∥ln(Tₑ + Tᵢ)). D_common carries the
-    # first part, this drift along b̂ the second, for both species alike, at most at the sound speed.
-    ∇para_lnT = calculate_para_grad_of_scalar_F(RP, log.(max.(pla.Te_eV .+ pla.Ti_eV, floatmin(FT))); upwind = false)
+    # pressure is nᵢe(Z̄Tₑ + Tᵢ), so Γ = −D_common (∇∥n + n ∇∥ln(Z̄Tₑ + Tᵢ)) at a uniform
+    # composition. D_common carries the first part, this drift along b̂ the second, for both
+    # species alike, at most at the sound speed.
+    ∇para_lnT = calculate_para_grad_of_scalar_F(RP, log.(max.(Z_mean .* pla.Te_eV .+ pla.Ti_eV, floatmin(FT))); upwind = false)
     @. tp.u_para_thermal = -w * clamp(tp.Dpara_common * ∇para_lnT, -c_s, c_s)
 
     # What u∥ and Te conduct with: the electrons' own collisional limb under their own

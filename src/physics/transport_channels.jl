@@ -108,13 +108,26 @@ through the projection `|b̂·n̂|` in [`channel_ceiling`](@ref).
 maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE / (π * m))
 
 """
-    sound_speed(Te_eV, Ti_eV, m_i) -> Float
+    sound_speed(Te_eV, Ti_eV, m_i, Z = 1) -> Float
 
-`c_s = √(e(Tₑ + Tᵢ)/mᵢ)` [m/s]: the speed of the electrons and ions moving together, held by
-the ambipolar field. It stands in for `vm` wherever the common mode crosses a surface: its
-geometric and flux ceilings and its wall speed.
+`c_s = √(e(Z Tₑ + Tᵢ)/mᵢ)` [m/s]: the speed of the electrons and ions moving together, held by
+the ambipolar field: the pair's pressure `nₑeTₑ + nᵢeTᵢ` over its mass density `nᵢmᵢ`, with
+`nₑ = Z nᵢ`. For a mixture, `mᵢ` is the density-weighted mean mass and `Z` the mean charge
+`Σ zₛnₛ/Σ nₛ`. It is the common mode's free-flight speed (its geometric ceiling);
+[`bohm_flux_mean_speed`](@ref) is what it carries across a surface.
 """
-sound_speed(Te_eV, Ti_eV, m_i) = sqrt(max(zero(Te_eV), Te_eV + Ti_eV) * EE / m_i)
+sound_speed(Te_eV, Ti_eV, m_i, Z = 1) = sqrt(max(zero(Te_eV), Z * Te_eV + Ti_eV) * EE / m_i)
+
+"""
+    bohm_flux_mean_speed(c_s) -> 4c_s
+
+The mean speed `v̄` whose one-sided flux `¼v̄n` is the Bohm flux `c_s n`: what the common mode
+carries across a surface, its flux ceiling and its wall. The pair does not cross a surface as a
+Maxwellian's one-way flux: the ambipolar field accelerates it to the sound speed by the sheath
+(the Bohm criterion), so it leaves at `c_s n`, four times `¼c_s n`. The ceilings take `¼v̄n`, so
+the common mode declares `v̄ = 4c_s` there.
+"""
+bohm_flux_mean_speed(c_s) = 4 * c_s
 
 # ─── The random-step vocabulary ──────────────────────────────────────────────
 #
@@ -584,15 +597,18 @@ end
 
 The parallel channel of a species that the ambipolar field couples to the others by the weight
 `w` (`ambipolar_weight`): the coefficient `D_para` (its own share and the common mode's, mixed
-by the caller) and the wall speed mixed alike, `(1 − w) v̄_own + w c_s`, with `λ∥ = 2D∥/v`. At
-`w = 1` every species' parallel channel is the common mode's, so the wall takes their pairs at
-one speed. `v_perp = 0`: streaming along the field reaches no wall across it.
+by the caller) and what it delivers to a wall mixed alike, the species' own one-sided flux
+`¼v̄_own n` and the common mode's Bohm flux `c_s n` ([`bohm_flux_mean_speed`](@ref)). Its own
+speed `(1 − w) v̄_own + w c_s` carries `λ∥ = 2D∥/v`. At `w = 1` every species' parallel channel
+is the common mode's, so the wall takes their pairs at one speed. `v_perp = 0`: streaming along
+the field reaches no wall across it.
 """
 function coupled_parallel_channel(vm_own, c_s, D_para, w)
-    vm = @. (1 - w) * vm_own + w * c_s
-    FT = eltype(vm)
-    λ = @. ifelse(vm > 0, 2 * D_para / vm, zero(FT))
-    return DiffusionChannel(vm, λ, zero.(vm), zero.(vm); vm_para = vm, vm_perp = zero.(vm))
+    v = @. (1 - w) * vm_own + w * c_s
+    FT = eltype(v)
+    λ = @. ifelse(v > 0, 2 * D_para / v, zero(FT))
+    vm = @. (1 - w) * vm_own + w * bohm_flux_mean_speed(c_s)
+    return DiffusionChannel(v, λ, zero.(v), zero.(v); vm_para = vm, vm_perp = zero.(v))
 end
 
 """

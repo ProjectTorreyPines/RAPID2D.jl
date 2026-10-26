@@ -1,7 +1,7 @@
 # The common mode of the parallel transport (the ambipolar closure). The pressure-driven parallel
 # flow is carried once: by u∥ for the share 1 − w_amb, and for the share w_amb by the common-mode
 # coefficient D_common, the drag-only D_a under the sound speed's ceilings, which the electrons and
-# every ion species take alike, with the sound speed at the wall.
+# every ion species take alike, leaving the wall at the Bohm flux c_s n.
 # internal/docs/src/notes/design/space-charge-layers-v4.md §5.
 
 @testitem "common mode: the parallel pressure is carried once, at every coupling weight" setup = [CoulombReference] tags = [:physics] begin
@@ -36,7 +36,9 @@ end
     e_para, i_para = e_channels[1][1], i_channels[1]
     @test channel_D_para(e_para)[inw] ≈ tp.Dpara_common[inw]
     @test channel_D_para(i_para)[inw] ≈ tp.Dpara_common[inw]
-    @test e_para.vm_para[inw] ≈ c_s[inw] && i_para.vm_para[inw] ≈ c_s[inw]
+    # both deliver the Bohm flux c_s n to the wall: the one-sided ¼v̄n of v̄ = 4c_s
+    @test e_para.vm_para[inw] ≈ 4 .* c_s[inw]
+    @test i_para.vm_para[inw] ≈ 4 .* c_s[inw]
     # the electrons' Bohm channel moves at the ions' speed
     @test e_channels[2][1].vm_perp[inw] ≈ i_channels[2].vm_perp[inw]
 end
@@ -177,4 +179,30 @@ end
     fill!(pla.Te_eV, 5.0)
     update_transport_quantities!(RP)
     @test all(iszero, tp.u_para_thermal[inw])
+end
+
+@testitem "common mode: the pair's pressure and drag carry the electrons each ion brings, Z̄, and so does its sound speed at the wall" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: electron_wall_channels
+    MHE = 4.002602 * 1.6605390666e-27
+    # He²⁺ alone, nₑ = 2nᵢ; then with H₂⁺, Z̄ = Σ zₛnₛ/Σ nₛ = 4/3 at the density-weighted mass
+    for (ions, Z̄) in (([("He2", MHE, 2, 0.5e17)], 2.0), ([("H2", MH2, 1, 0.5e17), ("He2", MHE, 2, 0.25e17)], 4 / 3))
+        RP = uniform_box(ions; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+        pla, tp = RP.plasma, RP.transport
+        fill!(pla.ambipolar_weight, 1.0)
+        update_transport_quantities!(RP)
+        inw = RP.G.nodes.in_wall_nids
+        @test RAPID2D.mean_ion_charge(RP)[inw] ≈ fill(Z̄, length(inw))
+        ν_en = pla.ν_en_mom_tot .+ pla.ν_en_iz_tot
+        @test tp.Dpara_amb[inw] ≈ (@. EE * (Z̄ * pla.Te_eV + pla.Ti_eV) / (Z̄ * ME * ν_en + pla.mi_mean * tp.νi_neutral))[inw]
+        c_s = @. sqrt(EE * (Z̄ * pla.Te_eV + pla.Ti_eV) / pla.mi_mean)
+        e_para = electron_wall_channels(RP)[1][1]
+        i_para = ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))[1]
+        @test e_para.vm_para[inw] ≈ 4 .* c_s[inw]
+        @test i_para.vm_para[inw] ≈ 4 .* c_s[inw]
+    end
+end
+
+@testitem "common mode: with one singly charged species the mean charge is exactly one" setup = [CoulombReference] tags = [:physics] begin
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    @test all(==(1.0), RAPID2D.mean_ion_charge(RP))
 end

@@ -9,8 +9,9 @@
 
 The three channels the electron transport tensor is a sum of, in the channel basis, so
 `wall_absorption_speeds` can take their kinetic ceilings. The parallel channel carries
-`D∥ = tp.Dpara`, the tensor's parallel diffusivity, at the wall speed the ambipolar coupling
-mixes, `(1 − w) v̄ₑ + w c_s` ([`coupled_parallel_channel`](@ref)); the Bohm channel moves at the
+`D∥ = tp.Dpara`, the tensor's parallel diffusivity, and delivers to the wall what the ambipolar
+coupling mixes, the electrons' own one-sided flux `¼v̄ₑn` and the common mode's Bohm flux `c_s n`
+([`coupled_parallel_channel`](@ref)); the Bohm channel moves at the
 ions' Bohm speeds, averaged over the species by the electrons each brings (`Z n`), so the
 coupled pairs leave at one speed; the turbulent channel is species-independent. `Dperp0` (a
 bare base diffusivity) has no kinetic ceiling and is not a channel.
@@ -19,7 +20,7 @@ function electron_wall_channels(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, tp, F = RP.plasma, RP.transport, RP.fields
     me = RP.config.constants.me
     vm_e = maxwellian_mean_speed.(pla.Te_eV, me)
-    c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean)
+    c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean, mean_ion_charge(RP))
     species = tp.ion_species
     bohm = if length(species) == 1
         bohm_channel(pla.Te_eV, F.Bϕ, only(species).mass, 1)
