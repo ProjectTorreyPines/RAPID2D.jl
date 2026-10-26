@@ -62,7 +62,9 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     tp.νi_neutral .= νi_eff      # everything so far is ion-neutral
     # The ions born at rest from the gas share the ion fluid's momentum with more mass
     # (`update_ui_para!`): a drag on it, the born mass per ion mass at Z̄ν_iz births per ion and
-    # second. Ionization of the gas creates H₂⁺ (`born_ion_mass`), the first species.
+    # second. Ionization of the gas creates the first species, H₂⁺ (`bulk_ion_mass`): exact for one
+    # species. `born_ion_mass`, which the momentum update reads, also counts the ions that other
+    # ions turn into (H₃⁺ by conversion); this rate leaves them out.
     if RP.flags.Atomic_Collision && RP.flags.src
         m_born = bulk_ion_mass(RP)
         @. tp.νi_birth = (m_born / mi) * Z_mean * pla.ν_en_iz_tot
@@ -99,9 +101,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # `Inf`, bounded downstream by the geometric ceiling.
     tp.Dpara_e_coll = @. ifelse(vp_e > 0, FT(0.5) * vp_e^2 / ν_sum_mom_iz_ei, zero(FT))
 
-    # Kept as state, not a local: the ion continuity equation rebuilds D∥ per
-    # species from its own mass, so it needs the collision frequency rather than
-    # the H₂⁺ diffusivity this line happens to produce.
+    # Kept as state for the diagnostics: no coefficient reads it. Each ion species builds its own
+    # rate from `νi_neutral`, `νi_birth` and its friction on the other species (`ion_transport_channels`).
     tp.νi_eff .= νi_eff
 
     # The common motion of the electrons and ions is dragged by the gas alone: e–i friction
@@ -189,14 +190,18 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # The rest of the common mode's pressure drive, down the temperature gradient: the pair's
     # pressure is nᵢe(Z̄Tₑ + Tᵢ), so Γ = −D_common (∇∥n + n ∇∥ln(Z̄Tₑ + Tᵢ)) at a uniform
     # composition. D_common carries the first part, this drift along b̂ the second, for both
-    # species alike, at most at the sound speed.
-    ∇para_lnT = calculate_para_grad_of_scalar_F(RP, log.(max.(Z_mean .* pla.Te_eV .+ pla.Ti_eV, floatmin(FT))); upwind = false)
+    # species alike, at most at the sound speed. The temperature on and beyond the wall is
+    # extrapolated from inside: no solve reaches that band, which keeps the room temperature it
+    # started with, and a gradient read across the wall would drive the pair into it at c_s.
+    T_pair = @. Z_mean * pla.Te_eV + pla.Ti_eV
+    extrapolate_field_to_boundary_nodes!(RP.G, T_pair)
+    ∇para_lnT = calculate_para_grad_of_scalar_F(RP, log.(max.(T_pair, floatmin(FT))); upwind = false)
     @. tp.u_para_thermal = -w * clamp(tp.Dpara_common * ∇para_lnT, -c_s, c_s)
 
     # What u∥ and Te conduct with: the electrons' own collisional limb under their own
     # ceilings. The ions' friction holds back the electrons' particle flux, through the
     # ambipolar field, not the heat and momentum they pass along B.
-    D_own = bounded((@. tp.Dpara0 + tp.Dpara_e_coll), vm_e)
+    D_cond = bounded((@. tp.Dpara0 + tp.Dpara_e_coll), vm_e)
 
     # Ions carry no gradient ceiling yet — they have only stage 3a. It is NOT the one
     # line it looks like: an ion ceiling has to bound the total non-convective species
@@ -219,8 +224,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dperp)
     # never less than what the particles diffuse with, so the conduction correction is a
     # parallel diffusion
-    extrapolate_field_to_boundary_nodes!(RP.G, D_own)
-    @. tp.Dpara_cond = max(D_own, tp.Dpara)
+    extrapolate_field_to_boundary_nodes!(RP.G, D_cond)
+    @. tp.Dpara_cond = max(D_cond, tp.Dpara)
 
     # Project the parallel speeds onto (R, ϕ, Z). `"upara"` is the only representation
     # implemented: a `"uRphiZ"` mode would evolve the components directly and skip this.

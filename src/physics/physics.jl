@@ -1775,9 +1775,10 @@ end
 """
     ambipolar_gradTe_share(RP) -> FT
 
-The share `∇Tₑ` makes of the common mode's pressure drive, `w_amb`- and `nₑ`-weighted over the
-in-wall volume: `Σ V n w |∂∥Tₑ| / Σ V n w (|Tₑ ∂∥ln n| + |∂∥Tₑ|)`, 0 where nothing is coupled.
-`D_common` carries the density's part, the thermal drift `transport.u_para_thermal` this one.
+The share `∇Tₑ` makes of the electron pressure drive the common mode takes, `w_amb`- and
+`nₑ`-weighted over the in-wall volume: `Σ V n w |∂∥Tₑ| / Σ V n w (|Tₑ ∂∥ln n| + |∂∥Tₑ|)`, 0 where
+nothing is coupled. The electrons' pressure only: the thermal drift `transport.u_para_thermal`
+carries the pair's `∇ln(Z̄Tₑ + Tᵢ)`, the ions' temperature as well.
 """
 function ambipolar_gradTe_share(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, V = RP.plasma, RP.G.inVol2D

@@ -184,14 +184,16 @@ end
 end
 
 @testitem "common mode: its drive down ∇(Tₑ + Tᵢ) is a drift both species take, at most the sound speed" setup = [CoulombReference] tags = [:physics] begin
-    using RAPID2D: calculate_para_grad_of_scalar_F, sound_speed
+    using RAPID2D: calculate_para_grad_of_scalar_F, sound_speed, extrapolate_field_to_boundary_nodes!
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp, G, F = RP.plasma, RP.transport, RP.G, RP.fields
     inw = G.nodes.in_wall_nids
     @. pla.Te_eV = 5.0 * (1 + 0.5 * G.Z2D)              # a temperature gradient along the field
     fill!(pla.ambipolar_weight, 1.0)
     update_transport_quantities!(RP)
-    ∇lnT = calculate_para_grad_of_scalar_F(RP, log.(pla.Te_eV .+ pla.Ti_eV); upwind = false)
+    T = pla.Te_eV .+ pla.Ti_eV
+    extrapolate_field_to_boundary_nodes!(G, T)            # read inside the wall
+    ∇lnT = calculate_para_grad_of_scalar_F(RP, log.(T); upwind = false)
     c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean)
     @test tp.u_para_thermal[inw] ≈ (@. -clamp(tp.Dpara_common * ∇lnT, -c_s, c_s))[inw]
     @test any(!iszero, tp.u_para_thermal[inw])
@@ -206,6 +208,28 @@ end
     fill!(pla.Te_eV, 5.0)
     update_transport_quantities!(RP)
     @test all(iszero, tp.u_para_thermal[inw])
+end
+
+@testitem "common mode: its thermal drift reads the temperature inside the wall, whatever the band outside holds" setup = [CoulombReference] tags = [:physics] begin
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, tp, G = RP.plasma, RP.transport, RP.G
+    inw, band = G.nodes.in_wall_nids, G.nodes.on_out_wall_nids
+    fill!(pla.ambipolar_weight, 1.0)
+    # what a run holds there: no solve reaches the band, which keeps the room temperature it started with
+    room = RP.config.constants.room_T_eV
+    pla.Te_eV[band] .= room
+    pla.Ti_eV[band] .= room
+    update_transport_quantities!(RP)
+    @test all(iszero, tp.u_para_thermal[inw])
+    # a gradient inside drives the same drift for any band
+    @. pla.Te_eV = 5.0 * (1 + 0.5 * G.Z2D)
+    pla.Te_eV[band] .= room
+    update_transport_quantities!(RP)
+    u_room = tp.u_para_thermal[inw]
+    @test any(!iszero, u_room)
+    pla.Te_eV[band] .= 50.0
+    update_transport_quantities!(RP)
+    @test tp.u_para_thermal[inw] == u_room
 end
 
 @testitem "common mode: the pair's pressure and drag carry the electrons each ion brings, Z̄, and so does its sound speed at the wall" setup = [CoulombReference] tags = [:physics] begin
@@ -254,4 +278,24 @@ end
     RP.flags.bohm_charge_scaling = false
     update_transport_quantities!(RP)
     @test tp.Dperp[inw] ≈ (tp.Dperp0 .+ D_B)[inw]
+end
+
+@testitem "Bohm: the electrons reach the wall across the field at the ions' Bohm speeds, averaged by the electrons each species brings" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: electron_wall_channels, channel_D_perp, bohm_channel, ion_plane
+    MHE = 4.002602 * 1.6605390666e-27
+    RP = uniform_box([("H2", MH2, 1, 0.5e17), ("He2", MHE, 2, 0.25e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, G = RP.plasma, RP.G
+    inw = G.nodes.in_wall_nids
+    # a composition varying across the box, so the weights act node by node
+    n_H2, n_He = (ion_plane(pla, slot) for slot in RP.store_layout.transport_slots)
+    @. n_He = 0.25e17 * (1 + 0.8 * G.Z2D)
+    @. pla.ne = n_H2 + 2 * n_He
+    update_transport_quantities!(RP)
+    bohm = electron_wall_channels(RP)[2][1]
+    # each species' channel delivers √(8/π) c_s/8 with c_s = √(Tₑ/mₛ); the electrons weight it by z n
+    bohm_vm(m) = @. sqrt(8 / π) * sqrt(EE * pla.Te_eV / m) / 8
+    vm_H2, vm_He = bohm_vm(MH2), bohm_vm(MHE)
+    @test bohm.vm_perp[inw] ≈ (@. (n_H2 * vm_H2 + 2 * n_He * vm_He) / (n_H2 + 2 * n_He))[inw]
+    # D_B is mass-free, so the mixture keeps it exactly
+    @test channel_D_perp(bohm)[inw] ≈ channel_D_perp(bohm_channel(pla.Te_eV, RP.fields.Bϕ, MH2, 1))[inw]
 end

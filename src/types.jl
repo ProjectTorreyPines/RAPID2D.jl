@@ -108,8 +108,8 @@ Contains simulation configuration parameters.
     max_Te::FT = FT(500.0)             # Maximum electron temperature (eV)
 
     # Transport parameters
-    Dpara0::FT = FT(0.0)               # Base parallel diffusion coefficient
-    Dperp0::FT = FT(0.0)               # Base perpendicular diffusion coefficient
+    Dpara0::FT = FT(0.0)               # Base parallel diffusivity: a notional background added to every parallel coefficient [m²/s]
+    Dperp0::FT = FT(0.0)               # Base perpendicular diffusivity: a notional background added to D⊥ [m²/s]
 
     turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
 
@@ -654,7 +654,7 @@ Fields include diffusion coefficients in different directions.
 
     # Parallel diffusion coefficients
     Dpara_e_coll::Matrix{FT} = zeros(FT, dims)  # Electron parallel diffusion coefficient due to collisions [m²/s]
-    Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # the bulk ions' on the gas, Tᵢ/(mᵢν_in) [m²/s]
+    Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # the bulk ions' on the gas and their births, Tᵢ/(mᵢ(ν_in + ν_birth)) [m²/s]
     Dpara_amb::Matrix{FT} = zeros(FT, dims)  # ambipolar, on the gas's drag: e(Z̄Tₑ+Tᵢ)/(Z̄mₑν_en' + m̄ᵢ(ν_in + ν_birth)) [m²/s]
     Dpara_common::Matrix{FT} = zeros(FT, dims)  # the common mode's, both species alike: D_amb under the sound speed's ceilings [m²/s]
     u_para_thermal::Matrix{FT} = zeros(FT, dims)  # the common mode's drift along b̂ down ∇ln(Z̄Tₑ+Tᵢ), both species alike [m/s]
