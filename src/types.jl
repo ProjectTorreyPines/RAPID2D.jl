@@ -113,6 +113,12 @@ Contains simulation configuration parameters.
 
     turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
 
+    # The open-line charge sheets' shape factor at the mean B_pol, γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩):
+    # their field reaches at most γ E_req (`update_space_charge_weights!`). The potential is a global
+    # solution, and an open line between two points of one wall cannot shield its whole EMF. 1
+    # shields E∥ fully wherever the plasma holds the charge: tests of the parallel physics alone.
+    charge_sheet_shape_factor::FT = FT(0.65)
+
     # Fraction of ions the wall returns to the plasma. 0 = fully absorbing,
     # 1 = perfectly reflecting; the Robin coefficient is ¼v̄_n(1 − R).
     ion_wall_albedo::FT = FT(0.0)
