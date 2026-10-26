@@ -14,7 +14,7 @@
 @testsnippet IonRun begin
     """
     A discharge-shaped setup with a box wall and ions free to evolve. `coupled = false` reads the
-    species' own coefficients: the common mode uncoupled, nothing of it mixed in.
+    species' own coefficients: the ambipolar share off, nothing of it mixed in.
     """
     function ion_case(; NR = 25, NZ = 25, ne = 1.0e15, Te = 5.0, coupled = true, kw...)
         config = SimulationConfig{Float64}(

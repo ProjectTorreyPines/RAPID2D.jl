@@ -1,10 +1,10 @@
-# The common mode of the parallel transport (the ambipolar closure). The pressure-driven parallel
-# flow is carried once: by u∥ for the share 1 − w_amb, and for the share w_amb by the common-mode
-# coefficient D_common, the drag-only D_amb under the sound speed's ceilings, which the electrons and
-# every ion species take alike, leaving the wall at the Bohm flux c_s n.
+# The ambipolar closure of the parallel transport. The pressure-driven parallel flow is carried
+# once: by u∥ for the electrons' own share 1 − w_amb, and for the ambipolar share w_amb by D_amb,
+# the pair's c_s²/ν_amb under the sound speed's ceilings, which the electrons and every ion species
+# take alike, leaving the wall at the Bohm flux c_s n.
 # internal/docs/src/notes/design/space-charge-layers-v4.md §5.
 
-@testitem "common mode: the parallel pressure is carried once, at every coupling weight" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: the parallel pressure is carried once, at every coupling weight" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: calculate_electron_acceleration_by_pressure, ue_pressure_acceleration
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp, G = RP.plasma, RP.transport, RP.G
@@ -17,13 +17,13 @@
         update_transport_quantities!(RP)                # the gradient is upwinded on the velocity this writes
         full = calculate_electron_acceleration_by_pressure(RP)
         @test any(!iszero, full[inw])
-        # u∥ carries 1 − w of the pressure drive, the common mode w of it
+        # u∥ carries 1 − w of the pressure drive, the ambipolar share w of it
         @test ue_pressure_acceleration(RP) ≈ (1 - w) .* full
-        @test tp.Dpara[inw] ≈ (1 - w) .* tp.Dpara0 .+ w .* tp.Dpara_common[inw]
+        @test tp.Dpara[inw] ≈ (1 - w) .* tp.Dpara0 .+ w .* tp.Dpara_amb[inw]
     end
 end
 
-@testitem "common mode: its ambipolar field takes its share of the electron pressure push, Boltzmann where nothing limits it, and the snapshots record it" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: its field takes its share of the electron pressure push, Boltzmann where nothing limits it, and the snapshots record it" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: calculate_electron_acceleration_by_pressure, ambipolar_parallel_field
     using RAPID2D.Statistics: median
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
@@ -50,7 +50,7 @@ end
     @test s0.abs_E_para_amb ≈ sum(abs.(E) .* Ne) / sum(Ne)
 end
 
-@testitem "common mode: fully coupled, the electrons and one ion species share the parallel channel and its wall speed" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: fully coupled, the electrons and one ion species share the parallel channel and its wall speed" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: electron_wall_channels
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp = RP.plasma, RP.transport
@@ -61,8 +61,8 @@ end
     e_channels = electron_wall_channels(RP)
     i_channels = ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))
     e_para, i_para = e_channels[1][1], i_channels[1]
-    @test channel_D_para(e_para)[inw] ≈ tp.Dpara_common[inw]
-    @test channel_D_para(i_para)[inw] ≈ tp.Dpara_common[inw]
+    @test channel_D_para(e_para)[inw] ≈ tp.Dpara_amb[inw]
+    @test channel_D_para(i_para)[inw] ≈ tp.Dpara_amb[inw]
     # both deliver the Bohm flux c_s n to the wall: the one-sided ¼v̄n of v̄ = 4c_s
     @test e_para.vm_para[inw] ≈ 4 .* c_s[inw]
     @test i_para.vm_para[inw] ≈ 4 .* c_s[inw]
@@ -70,39 +70,39 @@ end
     @test e_channels[2][1].vm_perp[inw] ≈ i_channels[2].vm_perp[inw]
 end
 
-@testitem "common mode: finite without gas, under the sound speed's ceilings, and continuous as the coupling vanishes" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: finite without gas, under the sound speed's ceilings, and continuous as the coupling vanishes" setup = [CoulombReference] tags = [:physics] begin
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp = RP.plasma, RP.transport
     pla.n_H2_gas .= 0.0
     fill!(pla.ambipolar_weight, 1.0)
     update_transport_quantities!(RP)
     inw = RP.G.nodes.in_wall_nids
-    @test all(isinf, tp.Dpara_amb[inw])                  # nothing drags the common motion
+    @test all(iszero, tp.ν_amb[inw])                     # nothing drags the ambipolar pair
     c_s = @. sqrt(EE * (pla.Te_eV + pla.Ti_eV) / pla.mi_mean)
     ceiling = RAPID2D.wall_step_ceiling.(c_s, RP.flf.Lc_forward, RP.flf.Lc_backward)
-    @test all(isfinite, tp.Dpara_common[inw]) && all(tp.Dpara_common[inw] .<= ceiling[inw])
+    @test all(isfinite, tp.Dpara_amb[inw]) && all(tp.Dpara_amb[inw] .<= ceiling[inw])
     # the coupling switched on by a hair moves the coefficients by a hair
-    D_common = copy(tp.Dpara_common)
+    D_amb = copy(tp.Dpara_amb)
     fill!(pla.ambipolar_weight, 0.0)
     update_transport_quantities!(RP)
     D0 = copy(tp.Dpara)
     fill!(pla.ambipolar_weight, 1.0e-9)
     update_transport_quantities!(RP)
-    @test tp.Dpara[inw] ≈ D0[inw] .+ 1.0e-9 .* (D_common[inw] .- D0[inw]) rtol = 1.0e-12
+    @test tp.Dpara[inw] ≈ D0[inw] .+ 1.0e-9 .* (D_amb[inw] .- D0[inw]) rtol = 1.0e-12
 end
 
-@testitem "common mode: the electrons conduct with their own coefficient whatever the coupling" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: the electrons conduct with their own coefficient whatever the coupling" setup = [CoulombReference] tags = [:physics] begin
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp = RP.plasma, RP.transport
     inw = RP.G.nodes.in_wall_nids
     conduction(w) = (fill!(pla.ambipolar_weight, w); update_transport_quantities!(RP); copy(tp.Dpara_cond))
     D0, D1 = conduction(0.0), conduction(1.0)
-    own = [k for k in inw if D0[k] >= tp.Dpara_common[k]]
+    own = [k for k in inw if D0[k] >= tp.Dpara_amb[k]]
     @test !isempty(own)
     @test D1[own] == D0[own]
 end
 
-@testitem "common mode: without the coupling the pressure is all u∥'s and each species diffuses on its own" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: without the coupling the pressure is all u∥'s and each species diffuses on its own" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: calculate_electron_acceleration_by_pressure, ue_pressure_acceleration, update_space_charge_weights!
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp, G = RP.plasma, RP.transport, RP.G
@@ -124,7 +124,7 @@ end
     @test channel_D_para(i_para)[inw] ≈ own[inw]
 end
 
-@testitem "common mode: the work its share of the pressure force would have done is booked, and a gate retry puts it back" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: the work its share of the pressure force would have done is booked, and a gate retry puts it back" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: update_ue_para!, calculate_electron_acceleration_by_pressure, below_gate_entry_state,
         restore_below_gate_entry_state!, measure_snap0D!, Snapshot0D
     flags = SimulationFlags{Float64}(;
@@ -166,7 +166,7 @@ end
     @test RP.diagnostics.ambipolar_exchange == snap.ambipolar_exchange
 end
 
-@testitem "common mode: the ∇Tₑ share of its drive is 0 at uniform Tₑ and 1 at uniform density" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: the ∇Tₑ share of its drive is 0 at uniform Tₑ and 1 at uniform density" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: ambipolar_gradTe_share
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, G = RP.plasma, RP.G
@@ -183,7 +183,7 @@ end
     @test ambipolar_gradTe_share(RP) == 0
 end
 
-@testitem "common mode: its drive down ∇(Tₑ + Tᵢ) is a drift both species take, at most the sound speed" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: its drive down ∇(Tₑ + Tᵢ) is a drift both species take, at most the sound speed" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: calculate_para_grad_of_scalar_F, sound_speed, extrapolate_field_to_boundary_nodes!
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp, G, F = RP.plasma, RP.transport, RP.G, RP.fields
@@ -195,7 +195,7 @@ end
     extrapolate_field_to_boundary_nodes!(G, T)            # read inside the wall
     ∇lnT = calculate_para_grad_of_scalar_F(RP, log.(T); upwind = false)
     c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean)
-    @test tp.u_para_thermal[inw] ≈ (@. -clamp(tp.Dpara_common * ∇lnT, -c_s, c_s))[inw]
+    @test tp.u_para_thermal[inw] ≈ (@. -clamp(tp.Dpara_amb * ∇lnT, -c_s, c_s))[inw]
     @test any(!iszero, tp.u_para_thermal[inw])
     # the electrons and the ions move with it alike: no current
     @test pla.ueR .- pla.ue_para .* F.bR ≈ pla.uiR .- pla.ui_para .* F.bR
@@ -210,7 +210,7 @@ end
     @test all(iszero, tp.u_para_thermal[inw])
 end
 
-@testitem "common mode: its thermal drift reads the temperature inside the wall, whatever the band outside holds" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: its thermal drift reads the temperature inside the wall, whatever the band outside holds" setup = [CoulombReference] tags = [:physics] begin
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp, G = RP.plasma, RP.transport, RP.G
     inw, band = G.nodes.in_wall_nids, G.nodes.on_out_wall_nids
@@ -232,7 +232,7 @@ end
     @test tp.u_para_thermal[inw] == u_room
 end
 
-@testitem "common mode: the pair's pressure and drag carry the electrons each ion brings, Z̄, and so does its sound speed at the wall" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: the pair's pressure and drag carry the electrons each ion brings, Z̄, and so does its sound speed at the wall" setup = [CoulombReference] tags = [:physics] begin
     using RAPID2D: electron_wall_channels
     MHE = 4.002602 * 1.6605390666e-27
     # He²⁺ alone, nₑ = 2nᵢ; then with H₂⁺, Z̄ = Σ zₛnₛ/Σ nₛ = 4/3 at the density-weighted mass
@@ -244,7 +244,7 @@ end
         inw = RP.G.nodes.in_wall_nids
         @test RAPID2D.mean_ion_charge(RP)[inw] ≈ fill(Z̄, length(inw))
         ν_en = pla.ν_en_mom_tot .+ pla.ν_en_iz_tot
-        @test tp.Dpara_amb[inw] ≈ (@. EE * (Z̄ * pla.Te_eV + pla.Ti_eV) / (Z̄ * ME * ν_en + pla.mi_mean * (tp.νi_neutral + tp.νi_birth)))[inw]
+        @test tp.ν_amb[inw] ≈ (@. (Z̄ * ME * ν_en + pla.mi_mean * (tp.νi_neutral + tp.νi_birth)) / pla.mi_mean)[inw]
         c_s = @. sqrt(EE * (Z̄ * pla.Te_eV + pla.Ti_eV) / pla.mi_mean)
         e_para = electron_wall_channels(RP)[1][1]
         i_para = ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))[1]
@@ -253,7 +253,7 @@ end
     end
 end
 
-@testitem "common mode: with one singly charged species the mean charge is exactly one" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: with one singly charged species the mean charge is exactly one" setup = [CoulombReference] tags = [:physics] begin
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     @test all(==(1.0), RAPID2D.mean_ion_charge(RP))
 end

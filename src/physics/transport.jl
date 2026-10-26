@@ -105,33 +105,25 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # rate from `νi_neutral`, `νi_birth` and its friction on the other species (`ion_transport_channels`).
     tp.νi_eff .= νi_eff
 
-    # The common motion of the electrons and ions is dragged by the gas alone: e–i friction
-    # vanishes when they move together and ion–ion collisions cannot slow the ion fluid, so
-    # neither ν_ei nor ν_ii enters what drags it (coulomb-collision-0d-audit.md).
+    # The ambipolar pair, electrons and ions moving together, is dragged by the gas alone: e–i
+    # friction vanishes when they move together and ion–ion collisions cannot slow the ion fluid,
+    # so neither ν_ei nor ν_ii enters what drags it (coulomb-collision-0d-audit.md).
     ν_en_drag = RP.flags.Atomic_Collision ? (@. pla.ν_en_mom_tot + pla.ν_en_iz_tot) : zeros(FT, size(pla.ne))
 
     # The bulk ion channel on the gas: ½vp²/ν = Tᵢ/(mᵢν), ν = ν_in + ν_birth, Inf without gas.
     tp.Dpara_i_coll = @. ifelse(vp_i > 0, FT(0.5) * vp_i^2 / (tp.νi_neutral + tp.νi_birth), zero(FT))
 
-    # Ambipolar diffusivity of the pair on that drag, per ion, D_amb = c_s²/ν_cm =
-    # e(Z̄Tₑ+Tᵢ)/(Z̄mₑν_en' + mᵢ(ν_in + ν_birth)): the pair's pressure nᵢe(Z̄Tₑ + Tᵢ) against the drag
-    # on its Z̄ electrons and its ion, the births at rest on both sides. At Z̄ = 1 it is the mobility-weighted harmonic mean of the two
-    # drag-only limbs, written as one ratio because each limb's temperature cancels
-    # (`Te/De ≡ mₑν/e`). The numerator is tested, not the quotient: zero thermal drive means
-    # zero diffusion, not 0/0; no drag at all is Inf.
-    tp.Dpara_amb = @. ifelse(
-        Z_mean * pla.Te_eV + pla.Ti_eV > 0,
-        EE * (Z_mean * pla.Te_eV + pla.Ti_eV) / (Z_mean * me * ν_en_drag + mi * (tp.νi_neutral + tp.νi_birth)),
-        zero(FT)
-    )
+    # The pair's drag rate per ion mass, ν_amb = (Z̄mₑν_en' + mᵢ(ν_in + ν_birth))/mᵢ: the drag on
+    # its Z̄ electrons and its ion, the births at rest on both sides. Its damping rate, mₑ ≪ mᵢ.
+    @. tp.ν_amb = (Z_mean * me * ν_en_drag + mi * (tp.νi_neutral + tp.νi_birth)) / mi
 
     # ── how D∥ᵉ is assembled ──────────────────────────────────────────────────
     #
     # The pressure-driven parallel flow is carried once (space-charge-layers-v4.md §5): by u∥
-    # for the share 1 − w, w = `ambipolar_weight` (`ue_pressure_acceleration`), and for the
-    # share w by the common mode, which both species take alike:
+    # for the electrons' own share 1 − w, w = `ambipolar_weight` (`ue_pressure_acceleration`),
+    # and for the ambipolar share w by D_amb, which both species take alike:
     #
-    #   D∥ᵉ = (1 − w)·D_base + w·D_common
+    #   D∥ᵉ = (1 − w)·D_base + w·D_amb
     #
     # D_base is the bare base `Dpara0`: the electrons' own pressure-driven motion is u∥'s.
     # Each coefficient is bounded by the two ceilings of its own speed, from its own D0
@@ -144,7 +136,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Both bound the SUM (capping inside it would let `Dpara0` escape) and both read the SAME
     # D0: they are one free-streaming limit at two lengths, so feeding D_geom into F₂
     # double-counts it — 29 % low at the crossover. The electrons' speed is v̄ₑ for both. The
-    # common mode's free flight is at the sound speed c_s (3a), and what it carries across a
+    # ambipolar pair's free flight is at the sound speed c_s (3a), and what it carries across a
     # surface is the Bohm flux c_s n (3b at `bohm_flux_mean_speed`), not a Maxwellian's ¼c_s n.
 
     # `vm_e`, not the `vp_e` above: both ceilings are ONE-WAY fluxes across a surface,
@@ -180,23 +172,30 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # across a surface
     bounded(D0, v, vm_flux = v) = (D_flux = flux_ceiling(D0, vm_flux); @. min(min(D0, $(step_ceiling(v))), D_flux))
 
-    # The common mode: the drag-only D_amb, plus the base path, its free flight at the sound speed
-    # and its flux at the Bohm flux
-    tp.Dpara_common .= bounded((@. tp.Dpara0 + tp.Dpara_amb), c_s, bohm_flux_mean_speed.(c_s))
+    # The ambipolar diffusivity: the pair's pressure nᵢe(Z̄Tₑ + Tᵢ) against its drag, c_s²/ν_amb, plus
+    # the base path, under its free flight at the sound speed and its flux at the Bohm flux. At
+    # Z̄ = 1, c_s²/ν_amb is the mobility-weighted harmonic mean of the two drag-only limbs, written as
+    # one ratio because each limb's temperature cancels (`Te/De ≡ mₑν/e`). The numerator is tested,
+    # not the quotient: zero thermal drive means zero diffusion, not 0/0; no drag at all is Inf,
+    # which the ceilings bound.
+    D_amb_drag = @. ifelse(
+        Z_mean * pla.Te_eV + pla.Ti_eV > 0, EE * (Z_mean * pla.Te_eV + pla.Ti_eV) / (mi * tp.ν_amb), zero(FT)
+    )
+    tp.Dpara_amb .= bounded((@. tp.Dpara0 + D_amb_drag), c_s, bohm_flux_mean_speed.(c_s))
     D_base = bounded(fill(tp.Dpara0, size(pla.ne)), vm_e)
     w = pla.ambipolar_weight
-    @. tp.Dpara = (one(FT) - w) * D_base + w * tp.Dpara_common
+    @. tp.Dpara = (one(FT) - w) * D_base + w * tp.Dpara_amb
 
-    # The rest of the common mode's pressure drive, down the temperature gradient: the pair's
-    # pressure is nᵢe(Z̄Tₑ + Tᵢ), so Γ = −D_common (∇∥n + n ∇∥ln(Z̄Tₑ + Tᵢ)) at a uniform
-    # composition. D_common carries the first part, this drift along b̂ the second, for both
+    # The rest of the ambipolar pressure drive, down the temperature gradient: the pair's
+    # pressure is nᵢe(Z̄Tₑ + Tᵢ), so Γ = −D_amb (∇∥n + n ∇∥ln(Z̄Tₑ + Tᵢ)) at a uniform
+    # composition. D_amb carries the first part, this drift along b̂ the second, for both
     # species alike, at most at the sound speed. The temperature on and beyond the wall is
     # extrapolated from inside: no solve reaches that band, which keeps the room temperature it
     # started with, and a gradient read across the wall would drive the pair into it at c_s.
     T_pair = @. Z_mean * pla.Te_eV + pla.Ti_eV
     extrapolate_field_to_boundary_nodes!(RP.G, T_pair)
     ∇para_lnT = calculate_para_grad_of_scalar_F(RP, log.(max.(T_pair, floatmin(FT))); upwind = false)
-    @. tp.u_para_thermal = -w * clamp(tp.Dpara_common * ∇para_lnT, -c_s, c_s)
+    @. tp.u_para_thermal = -w * clamp(tp.Dpara_amb * ∇para_lnT, -c_s, c_s)
 
     # What u∥ and Te conduct with: the electrons' own collisional limb under their own
     # ceilings. The ions' friction holds back the electrons' particle flux, through the
@@ -251,7 +250,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         pla.ueϕ .= pla.ue_para .* RP.fields.bϕ
         pla.ueZ .= pla.ue_para .* RP.fields.bZ
 
-        # the common mode's thermal drift, the electrons' and the ions' alike
+        # the ambipolar thermal drift, the electrons' and the ions' alike
         @. pla.ueR += tp.u_para_thermal * RP.fields.bR
         @. pla.ueZ += tp.u_para_thermal * RP.fields.bZ
 

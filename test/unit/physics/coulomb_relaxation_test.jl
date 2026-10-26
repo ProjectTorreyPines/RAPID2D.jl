@@ -1,9 +1,9 @@
 # Coulomb collisions in 0D: a uniform box without transport. The code's temperature exchange and its
 # collision rates are held against a reference that gives every species its own temperature (NRL 2023
 # p.34 energy-exchange rates, per-pair Coulomb logarithms) and against the slowing-down rate of a trace
-# species on the other ions (the friction between drifting Maxwellians). The common-mode item holds
-# what the 0D audit found (internal/docs/src/notes/coulomb-collision-0d-audit.md): the common mode's
-# diffusivities take the gas's drag, not the plasma's internal friction.
+# species on the other ions (the friction between drifting Maxwellians). The ambipolar items hold
+# what the 0D audit found (internal/docs/src/notes/coulomb-collision-0d-audit.md): the ambipolar
+# pair's drag is the gas's, not the plasma's internal friction.
 
 @testsnippet CoulombReference begin
     using RAPID2D
@@ -215,8 +215,8 @@
     function coulomb_box(ions; Ti)
         RP = uniform_box(ions; ne = sum(s[3] * s[4] for s in ions), Te = 10.0, Ti, dt = 1.0e-6)
         RP.flags.Atomic_Collision = false
-        # the species' own coefficients: the common mode uncoupled (with no drive to cancel the
-        # ambipolar weight is 1, and every species would read the common mode's)
+        # the species' own coefficients: the ambipolar share off (with no drive to cancel the
+        # ambipolar weight is 1, and every species would read D_amb)
         RP.flags.ambipolar_coupling = false
         fill!(RP.plasma.ambipolar_weight, 0.0)
         update_transport_quantities!(RP)
@@ -336,8 +336,8 @@ end
     end
     # The channel's Coulomb rate is the species' friction on every other ion, the friction between two
     # drifting Maxwellians with the pair's charges, reduced mass and logarithm (`ion_transport_channels`),
-    # on top of its share n_s/n_I of the mean ion's self-collision rate that stands in for the common
-    # mode's damping. A dilute species (≤ 1 %) therefore feels its friction alone, to 2 % …
+    # on top of its share n_s/n_I of the mean ion's self-collision rate that stands in for the pair's
+    # damping. A dilute species (≤ 1 %) therefore feels its friction alone, to 2 % …
     code_over_reference(ions) = code_trace_friction(ions, 2; Ti = 1.0) / trace_friction_reference(ions, 2; Ti = 1.0)
     @test code_over_reference([("H2", MH2, 1, 1.0e18), ("H", MH, 1, 1.0e16)]) ≈ 1 rtol = 0.02
     @test code_over_reference([("H", MH, 1, 1.0e18), ("C6", MC, 6, 1.0e16)]) ≈ 1 rtol = 0.02
@@ -355,11 +355,11 @@ end
     @test mν(200MP) ≈ mν(50MP) rtol = 0.02
 end
 
-@testitem "The common mode's parallel diffusivities take the gas's drag, not the plasma's internal friction" setup = [CoulombReference] tags = [:physics] begin
+@testitem "The ambipolar pair's drag and the bulk ion channel take the gas, not the plasma's internal friction" setup = [CoulombReference] tags = [:physics] begin
     # Electrons and ions moving together feel no e–i friction, and ion–ion collisions cannot slow the ion
-    # fluid: internal forces leave the plasma's momentum alone, only the neutrals drag the common motion.
-    # Its damping rate is ν_cm = (mₑν_en' + mᵢν_in)/(mₑ+mᵢ) and its diffusivity D_amb = c_s²/ν_cm with
-    # c_s² = e(Tₑ+Tᵢ)/(mₑ+mᵢ): both set by the gas, neither by the plasma density.
+    # fluid: internal forces leave the plasma's momentum alone, only the neutrals drag the pair. Its
+    # damping rate is ν_cm = (mₑν_en' + mᵢν_in)/(mₑ+mᵢ), which the code's ν_amb, per ion mass, holds
+    # for mₑ ≪ mᵢ: set by the gas, not by the plasma density.
     "A uniform H₂⁺ box at density n with a common drift, the rates refreshed on it, no parallel field, no births."
     function box_at(n; gas = true)
         RP = uniform_box(
@@ -389,8 +389,7 @@ end
         return (rate = log(ui[skip] / ui[steps]) / ((steps - skip) * RP.dt), locked = pla.ue_para[4, 4] / pla.ui_para[4, 4])
     end
     ν_cm(RP) = (ME * (RP.plasma.ν_en_mom_tot[4, 4] + RP.plasma.ν_en_iz_tot[4, 4]) + MH2 * RP.transport.νi_neutral[4, 4]) / (ME + MH2)
-    cs2(RP) = EE * (RP.plasma.Te_eV[4, 4] + RP.plasma.Ti_eV[4, 4]) / (ME + MH2)
-    Da(RP) = RP.transport.Dpara_amb[4, 4]
+    νamb(RP) = RP.transport.ν_amb[4, 4]
     Di(RP) = RP.transport.Dpara_i_coll[4, 4]
 
     # (1) The momentum path knows it. Ionized, the e–i friction locks the electrons to the ions within a
@@ -401,30 +400,29 @@ end
     @test wet.locked ≈ 1 rtol = 0.1
     dry = common_decay(box_at(1.0e18; gas = false))
     @test abs(dry.rate) < 1.0e-6 * ν_cm(dense)
-    # (2) So does the diffusion path: D_amb and the bulk ion channel take the gas's drag in their
-    #     denominators (`update_transport_quantities!`), not ν_ei and ν_ii. Tenuous, D_amb is c_s²/ν_cm,
+    # (2) So does the diffusion path: ν_amb and the bulk ion channel take the gas's drag
+    #     (`update_transport_quantities!`), not ν_ei and ν_ii. Tenuous, ν_amb is ν_cm,
     #     Dᵢ the ions' mobility on the gas …
     tenuous = box_at(1.0e12)
-    @test Da(tenuous) ≈ cs2(tenuous) / ν_cm(tenuous) rtol = 0.02
+    @test νamb(tenuous) ≈ ν_cm(tenuous) rtol = 0.02
     @test Di(tenuous) ≈ EE * 1.0 / (MH2 * tenuous.transport.νi_neutral[4, 4]) rtol = 0.02
     # … and ionized they stay put at fixed gas: the plasma's own density does not enter …
-    @test Da(dense) ≈ Da(tenuous) rtol = 0.02
+    @test νamb(dense) ≈ νamb(tenuous) rtol = 0.02
     @test Di(dense) ≈ Di(tenuous) rtol = 0.02
-    # … and without any gas nothing drags the common motion
+    # … and without any gas nothing drags the pair
     dry_box = box_at(1.0e18; gas = false)
-    @test isinf(Da(dry_box))
+    @test iszero(νamb(dry_box))
     @test isinf(Di(dry_box))
-    # (3) So the two paths of one code agree about one rate: the damping D_amb implies, c_s²/D_amb,
+    # (3) So the two paths of one code agree about one rate: the drag D_amb = c_s²/ν_amb is built on
     #     is the damping the momentum path shows
-    @test cs2(dense) / Da(dense) ≈ wet.rate rtol = 0.02
+    @test νamb(dense) ≈ wet.rate rtol = 0.02
 end
 
-@testitem "The common mode's drag counts the ions born at rest, as the ions' momentum equation does" setup = [CoulombReference] tags = [:physics] begin
+@testitem "The ambipolar pair's drag counts the ions born at rest, as the ions' momentum equation does" setup = [CoulombReference] tags = [:physics] begin
     # Ionization brings ions in at rest from the gas: the ion fluid's momentum is shared with more
-    # mass (`update_ui_para!`), a drag on the common motion D_amb must carry, as it carries the
+    # mass (`update_ui_para!`), a drag on the pair ν_amb must carry, as it carries the
     # electrons' (ν_en' holds ν_iz). The two paths of the code must still agree about one rate.
     # The run's own species: the H₂⁺ that ionization creates, so the births are counted.
-    using RAPID2D: bulk_ion_mass
     Te, Ti, n = 20.0, 1.0, 1.0e19                     # dense enough that e–i friction locks the pair
     config = SimulationConfig{Float64}(;
         device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 5.0e-3, Eϕ = 0.0),
@@ -462,7 +460,6 @@ end
         ui[k] = pla.ui_para[4, 4]
     end
     rate = log(ui[skip] / ui[steps]) / ((steps - skip) * RP.dt)
-    @test pla.ue_para[4, 4] / pla.ui_para[4, 4] ≈ 1 rtol = 0.1    # locked: the common mode
-    cs2 = EE * (Te + Ti) / (ME + bulk_ion_mass(RP))
-    @test cs2 / tp.Dpara_amb[4, 4] ≈ rate rtol = 0.05
+    @test pla.ue_para[4, 4] / pla.ui_para[4, 4] ≈ 1 rtol = 0.1    # locked: the ambipolar pair
+    @test tp.ν_amb[4, 4] ≈ rate rtol = 0.05
 end

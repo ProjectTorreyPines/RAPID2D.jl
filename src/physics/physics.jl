@@ -98,15 +98,15 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             accel_para_tilde .+= (one_FT - θ_op) * (-(pops.A_adv * pla.ue_para))
         end
 
-        # #3: Pressure term [-∇∥(ne*Te)/(me*ne)], the share u∥ carries; the common mode's, kept
+        # #3: Pressure term [-∇∥(ne*Te)/(me*ne)], the share u∥ carries; the ambipolar one, kept
         # for its ledger
-        a_common = nothing
+        a_amb = nothing
         if RP.flags.Include_ud_pressure_term
             shares = electron_pressure_shares(RP)
             accel_para_tilde .+= shares.ue
-            a_common = shares.common
+            a_amb = shares.amb
         end
-        u_old = isnothing(a_common) ? nothing : copy(pla.ue_para)   # for the exchange ledger
+        u_old = isnothing(a_amb) ? nothing : copy(pla.ue_para)   # for the exchange ledger
 
         # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]. Under
         # ExpRB uⁿ carries bern(−z) instead, applied to the RHS below.
@@ -179,8 +179,8 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         # the momentum the near-vacuum relaxation took out
         RP.diagnostics.near_vacuum.relax_momentum +=
             me * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.ue_para, ue_ref)
-        # the work the common mode's share of the pressure force would have done
-        isnothing(a_common) || book_ambipolar_exchange!(RP, a_common, u_old)
+        # the work the ambipolar share of the pressure force would have done
+        isnothing(a_amb) || book_ambipolar_exchange!(RP, a_amb, u_old)
 
         return RP
     end # @timeit
@@ -1723,17 +1723,17 @@ end
 
 
 """
-    electron_pressure_shares(RP) -> (ue, common)
+    electron_pressure_shares(RP) -> (ue, amb)
 
 The electron pressure acceleration ([`calculate_electron_acceleration_by_pressure`](@ref), after
 its limiter) split by the coupling weight `w_amb = ambipolar_weight`: the share u∥ carries,
-`(1 − w_amb) a_p`, and the common mode's, `w_amb a_p`, which both species diffuse with
-`transport.Dpara_common`, so the drive is carried once.
+`(1 − w_amb) a_p`, and the ambipolar one, `w_amb a_p`, which both species diffuse with
+`transport.Dpara_amb`, so the drive is carried once.
 """
 function electron_pressure_shares(RP::RAPID{FT}) where {FT <: AbstractFloat}
     a_p = calculate_electron_acceleration_by_pressure(RP)
     w = RP.plasma.ambipolar_weight
-    return (ue = (one(FT) .- w) .* a_p, common = w .* a_p)
+    return (ue = (one(FT) .- w) .* a_p, amb = w .* a_p)
 end
 
 "The share of the electron pressure acceleration that u∥ carries ([`electron_pressure_shares`](@ref))."
@@ -1742,31 +1742,31 @@ ue_pressure_acceleration(RP::RAPID) = electron_pressure_shares(RP).ue
 """
     ambipolar_parallel_field(RP) -> Matrix
 
-The parallel field that holds the electrons to the ions in the common mode, `E∥,amb = (mₑ/e) w_amb a_p`:
-it takes the common mode's share of the electron pressure acceleration
+The parallel field that holds the electrons to the ions in the ambipolar pair, `E∥,amb = (mₑ/e) w_amb a_p`:
+it takes the ambipolar share of the electron pressure acceleration
 ([`electron_pressure_shares`](@ref)) off the electrons and passes it to the ions, `≈ −w_amb ∇∥pₑ/(e nₑ)`
 (Boltzmann) where the acceleration limiter does not bind. A diagnostic: no part of `E_para_tot`.
 """
 function ambipolar_parallel_field(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @unpack me, ee = RP.config.constants
-    return (me / ee) .* electron_pressure_shares(RP).common
+    return (me / ee) .* electron_pressure_shares(RP).amb
 end
 
 """
-    book_ambipolar_exchange!(RP, a_common, u_old) -> RP
+    book_ambipolar_exchange!(RP, a_amb, u_old) -> RP
 
-Add to `diagnostics.ambipolar_exchange` the work the common mode's share of the electron
+Add to `diagnostics.ambipolar_exchange` the work the ambipolar share of the electron
 pressure force would have done on u∥ over the step, at the step's mean velocity,
-`Σ V mₑ nₑ a_common (uⁿ + uⁿ⁺¹)/2 Δt` [J], `u_old` being uⁿ and `ue_para` uⁿ⁺¹. The ambipolar
-field passes it from the electrons' pressure to the common motion, the ions', and no equation of
+`Σ V mₑ nₑ a_amb (uⁿ + uⁿ⁺¹)/2 Δt` [J], `u_old` being uⁿ and `ue_para` uⁿ⁺¹. The ambipolar
+field passes it from the electrons' pressure to the pair's motion, the ions', and no equation of
 the electrons' energy sees it: a diagnostic.
 """
-function book_ambipolar_exchange!(RP::RAPID{FT}, a_common::AbstractMatrix{FT}, u_old::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+function book_ambipolar_exchange!(RP::RAPID{FT}, a_amb::AbstractMatrix{FT}, u_old::AbstractMatrix{FT}) where {FT <: AbstractFloat}
     pla, V = RP.plasma, RP.G.inVol2D
     me = RP.config.constants.me
     W = zero(FT)
     @inbounds for k in RP.G.nodes.in_wall_nids
-        W += V[k] * me * pla.ne[k] * a_common[k] * (u_old[k] + pla.ue_para[k]) / 2
+        W += V[k] * me * pla.ne[k] * a_amb[k] * (u_old[k] + pla.ue_para[k]) / 2
     end
     RP.diagnostics.ambipolar_exchange += W * RP.dt
     return RP
@@ -1775,7 +1775,7 @@ end
 """
     ambipolar_gradTe_share(RP) -> FT
 
-The share `∇Tₑ` makes of the electron pressure drive the common mode takes, `w_amb`- and
+The share `∇Tₑ` makes of the electron pressure drive the ambipolar share takes, `w_amb`- and
 `nₑ`-weighted over the in-wall volume: `Σ V n w |∂∥Tₑ| / Σ V n w (|Tₑ ∂∥ln n| + |∂∥Tₑ|)`, 0 where
 nothing is coupled. The electrons' pressure only: the thermal drift `transport.u_para_thermal`
 carries the pair's `∇ln(Z̄Tₑ + Tᵢ)`, the ions' temperature as well.
@@ -2158,13 +2158,13 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         # accel_para_tilde from the state at the step's start
         accel_para_tilde = zeros(FT, G.NR, G.NZ) # Initialize acceleration field
 
-        # pressure gradient contribution: [-∇∥(ne*Te)/(me*ne)], the share u∥ carries; the common
-        # mode's, kept for its ledger
-        a_common = nothing
+        # pressure gradient contribution: [-∇∥(ne*Te)/(me*ne)], the share u∥ carries; the
+        # ambipolar one, kept for its ledger
+        a_amb = nothing
         if RP.flags.Include_ud_pressure_term
             shares = electron_pressure_shares(RP)
             accel_para_tilde .+= shares.ue
-            a_common = shares.common
+            a_amb = shares.amb
         end
 
         # convection -(𝐮⋅∇)u∥ and diffusion ∇⋅(D∇u∥), from the in-wall operators
@@ -2336,7 +2336,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θu) * pla.ue_para)
         end
-        u_old = isnothing(a_common) ? nothing : copy(pla.ue_para)   # for the exchange ledger
+        u_old = isnothing(a_amb) ? nothing : copy(pla.ue_para)   # for the exchange ledger
         F.ψ_coils_pla .= ψ_k
         if !closed_surface_active(RP)
             pla.ue_para .= ue_k
@@ -2352,7 +2352,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         end
         RP.diagnostics.near_vacuum.relax_momentum +=
             me * vacuum_relaxation_exchange(RP, pla.ne, relax_weight, pla.ue_para, ue_ref)
-        isnothing(a_common) || book_ambipolar_exchange!(RP, a_common, u_old)
+        isnothing(a_amb) || book_ambipolar_exchange!(RP, a_amb, u_old)
 
         # Update self-consistent electric field: Eϕ = -∂ψ/∂t/R
         F.Eϕ_coils_pla_prev .= F.Eϕ_coils_pla

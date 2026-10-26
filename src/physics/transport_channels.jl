@@ -113,7 +113,7 @@ maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE / (π * m))
 `c_s = √(e(Z Tₑ + Tᵢ)/mᵢ)` [m/s]: the speed of the electrons and ions moving together, held by
 the ambipolar field: the pair's pressure `nₑeTₑ + nᵢeTᵢ` over its mass density `nᵢmᵢ`, with
 `nₑ = Z nᵢ`. For a mixture, `mᵢ` is the density-weighted mean mass and `Z` the mean charge
-`Σ zₛnₛ/Σ nₛ`. It is the common mode's free-flight speed (its geometric ceiling);
+`Σ zₛnₛ/Σ nₛ`. It is the ambipolar pair's free-flight speed (its geometric ceiling);
 [`bohm_flux_mean_speed`](@ref) is what it carries across a surface.
 """
 sound_speed(Te_eV, Ti_eV, m_i, Z = 1) = sqrt(max(zero(Te_eV), Z * Te_eV + Ti_eV) * EE / m_i)
@@ -121,11 +121,11 @@ sound_speed(Te_eV, Ti_eV, m_i, Z = 1) = sqrt(max(zero(Te_eV), Z * Te_eV + Ti_eV)
 """
     bohm_flux_mean_speed(c_s) -> 4c_s
 
-The mean speed `v̄` whose one-sided flux `¼v̄n` is the Bohm flux `c_s n`: what the common mode
+The mean speed `v̄` whose one-sided flux `¼v̄n` is the Bohm flux `c_s n`: what the ambipolar pair
 carries across a surface, its flux ceiling and its wall. The pair does not cross a surface as a
 Maxwellian's one-way flux: the ambipolar field accelerates it to the sound speed by the sheath
 (the Bohm criterion), so it leaves at `c_s n`, four times `¼c_s n`. The ceilings take `¼v̄n`, so
-the common mode declares `v̄ = 4c_s` there.
+the ambipolar pair declares `v̄ = 4c_s` there.
 """
 bohm_flux_mean_speed(c_s) = 4 * c_s
 
@@ -596,11 +596,11 @@ end
     coupled_parallel_channel(vm_own, c_s, D_para, w)
 
 The parallel channel of a species that the ambipolar field couples to the others by the weight
-`w` (`ambipolar_weight`): the coefficient `D_para` (its own share and the common mode's, mixed
+`w` (`ambipolar_weight`): the coefficient `D_para` (its own share and the ambipolar one, mixed
 by the caller) and what it delivers to a wall mixed alike, the species' own one-sided flux
-`¼v̄_own n` and the common mode's Bohm flux `c_s n` ([`bohm_flux_mean_speed`](@ref)). Its own
+`¼v̄_own n` and the ambipolar pair's Bohm flux `c_s n` ([`bohm_flux_mean_speed`](@ref)). Its own
 speed `(1 − w) v̄_own + w c_s` carries `λ∥ = 2D∥/v`. At `w = 1` every species' parallel channel
-is the common mode's, so the wall takes their pairs at one speed. `v_perp = 0`: streaming along
+is the ambipolar pair's, so the wall takes their pairs at one speed. `v_perp = 0`: streaming along
 the field reaches no wall across it.
 """
 function coupled_parallel_channel(vm_own, c_s, D_para, w)
@@ -772,7 +772,7 @@ Two more edges, both outside anything a caller is expected to hit: `D` at or bel
 itself overflows to `Inf` there before `hypot` ever runs. And a negative `D`
 returns a *positive* value of the same magnitude `-D` would — `hypot` only ever
 sees `inv(D)` squared, so the sign is lost rather than propagated. Unreachable
-given `Dpara0`, `Dpara` and `Dpara_common ≥ 0` upstream, but worth naming as a sign flip
+given `Dpara0`, `Dpara` and `Dpara_amb ≥ 0` upstream, but worth naming as a sign flip
 rather than assumed to be graceful degradation.
 
 `hypot` rather than `sqrt(a^2 + b^2)`: what actually arrives here is `D = Inf`, not

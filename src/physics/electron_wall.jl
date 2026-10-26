@@ -10,7 +10,7 @@
 The three channels the electron transport tensor is a sum of, in the channel basis, so
 `wall_absorption_speeds` can take their kinetic ceilings. The parallel channel carries
 `D∥ = tp.Dpara`, the tensor's parallel diffusivity, and delivers to the wall what the ambipolar
-coupling mixes, the electrons' own one-sided flux `¼v̄ₑn` and the common mode's Bohm flux `c_s n`
+coupling mixes, the electrons' own one-sided flux `¼v̄ₑn` and the ambipolar pair's Bohm flux `c_s n`
 ([`coupled_parallel_channel`](@ref)); the Bohm channel moves at the
 ions' Bohm speeds, averaged over the species by the electrons each brings (`Z n`), so the
 coupled pairs leave at one speed; the turbulent channel is species-independent. `Dperp0` (a

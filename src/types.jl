@@ -416,7 +416,7 @@ Contains the plasma state variables including density, temperature, and velocity
     γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
     # how much of what the code does not resolve a closure carries
     turbulence_weight::Matrix{FT} = zeros(FT, dims) # w_turb: the turbulent E×B mixing's onset, min(1, √(n/nc_perp))
-    ambipolar_weight::Matrix{FT} = zeros(FT, dims)  # w_amb: the common-mode coupling, 1 on closed lines, min(1, √(n/nc_para)) on open ones
+    ambipolar_weight::Matrix{FT} = zeros(FT, dims)  # w_amb ∈ [0, 1]: the ambipolar coupling, 1 on closed lines, min(1, √(n/nc_para)) on open ones
 
     # Collision parameters
     lnΛ::Matrix{FT} = zeros(FT, dims)   # ELECTRON-ion Coulomb logarithm (NRL p.34b)
@@ -655,9 +655,9 @@ Fields include diffusion coefficients in different directions.
     # Parallel diffusion coefficients
     Dpara_e_coll::Matrix{FT} = zeros(FT, dims)  # Electron parallel diffusion coefficient due to collisions [m²/s]
     Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # the bulk ions' on the gas and their births, Tᵢ/(mᵢ(ν_in + ν_birth)) [m²/s]
-    Dpara_amb::Matrix{FT} = zeros(FT, dims)  # ambipolar, on the gas's drag: e(Z̄Tₑ+Tᵢ)/(Z̄mₑν_en' + m̄ᵢ(ν_in + ν_birth)) [m²/s]
-    Dpara_common::Matrix{FT} = zeros(FT, dims)  # the common mode's, both species alike: D_amb under the sound speed's ceilings [m²/s]
-    u_para_thermal::Matrix{FT} = zeros(FT, dims)  # the common mode's drift along b̂ down ∇ln(Z̄Tₑ+Tᵢ), both species alike [m/s]
+    ν_amb::Matrix{FT} = zeros(FT, dims)  # the ambipolar pair's drag rate per ion mass, (Z̄mₑν_en' + m̄ᵢ(ν_in + ν_birth))/m̄ᵢ [1/s]
+    Dpara_amb::Matrix{FT} = zeros(FT, dims)  # ambipolar, both species alike: c_s²/ν_amb under the sound speed's ceilings [m²/s]
+    u_para_thermal::Matrix{FT} = zeros(FT, dims)  # the ambipolar drift along b̂ down ∇ln(Z̄Tₑ+Tᵢ), both species alike [m/s]
     νi_eff::Matrix{FT} = zeros(FT, dims)  # Ion momentum-randomizing collision frequency [1/s]
     # Kept apart because they scale differently with the ion's charge: the Coulomb
     # half carries Z², a charge-exchange or elastic hit on H₂ does not.

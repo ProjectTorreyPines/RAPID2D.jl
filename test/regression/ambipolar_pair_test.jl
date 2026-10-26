@@ -1,4 +1,4 @@
-# The common mode of the parallel transport in motion: the electrons and the ions leaving open
+# The ambipolar pair of the parallel transport in motion: the electrons and the ions leaving open
 # field lines together at the sound speed, and evening out the density over closed surfaces.
 #
 # Open lines: a blob with no loop voltage (Eϕ = 0: no charge sheets, no turbulence, w_amb = 1)
@@ -184,7 +184,7 @@ end
     end
 end
 
-@testitem "common mode on open lines: the pair leaves at the sound speed of its mass, mixture, charge and ion temperature" tags = [:regression] setup = [OpenLineBlob] begin
+@testitem "ambipolar pair on open lines: the pair leaves at the sound speed of its mass, mixture, charge and ion temperature" tags = [:regression] setup = [OpenLineBlob] begin
     cases = (
         H2 = ([H2P], [1.0], (;)),
         H1 = ([H1P], [1.0], (;)),
@@ -224,7 +224,7 @@ end
     @test maximum(abs.(mix.planes[2][held] ./ mix.planes[1][held] .- 1)) < 1.0e-8
 end
 
-@testitem "common mode on closed surfaces: the density evens out over each surface, the electrons and the ions together" tags = [:regression] setup = [ClosedSurfaceDensity] begin
+@testitem "ambipolar pair on closed surfaces: the density evens out over each surface, the electrons and the ions together" tags = [:regression] setup = [ClosedSurfaceDensity] begin
     RP = closed_surfaces(; Eϕ = 0.0, policy = FreeParallelFlow())
     spread0 = surface_spread(RP, RP.plasma.ne)
     redirect_stdout(devnull) do

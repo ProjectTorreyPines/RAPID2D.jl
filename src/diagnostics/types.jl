@@ -39,15 +39,15 @@ Contains volume-averaged quantities
     Eϕ_para_ctrl::FT = zero(FT)       # the vertical-field control's parallel E-field
     ERZ_para_pla::FT = zero(FT)       # the open-line charge sheets' parallel E-field, against the driven E∥
     Eϕ_para_coils_pla::FT = zero(FT)  # the parallel E-field induced by the coils and the plasma
-    abs_E_para_amb::FT = zero(FT)     # ⟨|E∥,amb|⟩, the ambipolar field the common mode implies (no part of E_para_tot)
+    abs_E_para_amb::FT = zero(FT)     # ⟨|E∥,amb|⟩, the ambipolar field the closure implies (no part of E_para_tot)
 
     # Transport quantities
     abs_ue_para_RZ::FT = zero(FT)     # Average parallel velocity
     D_RZ::FT = zero(FT)         # Average diffusion coefficient
     turbulence_weight::FT = zero(FT)  # ⟨w_turb⟩, the turbulent E×B mixing's onset
-    ambipolar_weight::FT = zero(FT)   # ⟨w_amb⟩, the common-mode coupling's weight
+    ambipolar_weight::FT = zero(FT)   # ⟨w_amb⟩, the ambipolar coupling's weight in [0, 1]
     ambipolar_exchange::FT = zero(FT)     # what the ambipolar field passed from the electrons' pressure to the ions, cumulative [J]
-    ambipolar_gradTe_share::FT = zero(FT) # the share ∇Tₑ makes of the common mode's pressure drive, carried by the thermal drift
+    ambipolar_gradTe_share::FT = zero(FT) # the share ∇Tₑ makes of the electron pressure drive the ambipolar share takes
 
     # Neutral gas (its average is the species' `ng_H2`, also read as `n_H2_gas`)
     n_H2_gas_min::FT = zero(FT)     # Minimum H2 density
@@ -264,7 +264,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Electric field
     E_para_tot::Matrix{FT} = zeros(FT, dims_RZ)     # Total parallel electric field
-    E_para_amb::Matrix{FT} = zeros(FT, dims_RZ)     # the ambipolar field the common mode implies, (mₑ/e) w_amb a_p (no part of E_para_tot)
+    E_para_amb::Matrix{FT} = zeros(FT, dims_RZ)     # the ambipolar field the closure implies, (mₑ/e) w_amb a_p (no part of E_para_tot)
     Eϕ_para_presc::Matrix{FT} = zeros(FT, dims_RZ)   # Prescribed parallel electric field
     mean_ExB_pol::Matrix{FT} = zeros(FT, dims_RZ)   # ExB drift magnitude
     ERZ_pla_mag::Matrix{FT} = zeros(FT, dims_RZ)    # the open-line charge sheets' RZ field, magnitude
@@ -341,7 +341,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     nc_perp::Matrix{FT} = zeros(FT, dims_RZ)        # Perpendicular critical density
     γ_shape_fac::Matrix{FT} = zeros(FT, dims_RZ)    # Gamma coefficient
     turbulence_weight::Matrix{FT} = zeros(FT, dims_RZ)  # w_turb, the turbulent E×B mixing's onset
-    ambipolar_weight::Matrix{FT} = zeros(FT, dims_RZ)   # w_amb, the common-mode coupling's weight
+    ambipolar_weight::Matrix{FT} = zeros(FT, dims_RZ)   # w_amb, the ambipolar coupling's weight in [0, 1]
 
     # Collision frequencies
     ν_en_iz::Matrix{FT} = zeros(FT, dims_RZ)        # Average ionization frequency [1/s]
@@ -550,7 +550,7 @@ No legacy Dictionary compatibility layer
     # what the near-vacuum treatments did (`near_vacuum.jl`)
     near_vacuum::NearVacuumLedger{FT} = NearVacuumLedger{FT}()
 
-    # the work the common mode's share of the electron pressure force would have done on u∥,
+    # the work the ambipolar share of the electron pressure force would have done on u∥,
     # cumulative [J]: what the ambipolar field passes from the electrons' pressure to the ions
     # (`book_ambipolar_exchange!`)
     ambipolar_exchange::FT = zero(FT)

@@ -213,7 +213,7 @@ end
         )
         config.Output_path = mktempdir(; cleanup = false)   # the writer outlives an auto-cleaned dir
         RP = RAPID{Float64}(config)
-        # the species' and the electrons' own coefficients: the common mode uncoupled
+        # the species' and the electrons' own coefficients: the ambipolar share off
         RP.flags = SimulationFlags{Float64}(
             Ampere = false, Gas_evolve = false, ambipolar_coupling = false,
             limit_flux = (state = limit_flux, factor = 0.25),

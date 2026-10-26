@@ -304,9 +304,9 @@ not resolve:
   RZ plane (Yoo et al. 2018);
 - `turbulence_weight = min(1, √(n/nc_perp))`, the onset of the turbulent E×B mixing; zero without
   `charge_sheet_field` or `turb_ExB_mixing`;
-- `ambipolar_weight`, the common-mode coupling of the species' parallel transport: 1 on closed
+- `ambipolar_weight`, the ambipolar coupling of the species' parallel transport, in [0, 1]: 1 on closed
   lines, `min(1, √(n/nc_para))` on open ones; zero without `ambipolar_coupling`. It splits the
-  electron pressure drive between u∥ and the common mode ([`electron_pressure_shares`](@ref)).
+  electron pressure drive between u∥ and the ambipolar diffusion ([`electron_pressure_shares`](@ref)).
 
 Returns the two fields from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets'
 field:

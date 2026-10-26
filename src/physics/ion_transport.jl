@@ -321,7 +321,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # from densities moving within the step.
     #
     # The ion fluid's own self-collisions do not enter: they cannot slow its common
-    # parallel motion. That motion is the common mode's, carried by `Dpara_common` for the
+    # parallel motion. That motion is the ambipolar pair's, carried by `Dpara_amb` for the
     # share the ambipolar field couples (`ambipolar_weight`), below.
     #
     # Only the Coulomb half carries the pair's charges. An ion–neutral collision rate
@@ -371,11 +371,11 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # shorter; it now serves the turbulent channel alone — see
     # internal/docs/src/notes/TODO/L-mixing-serves-two-lengths.md).
     D_own = @. min(D0, wall_step_ceiling(vm_s, RP.flf.Lc_forward, RP.flf.Lc_backward))
-    # The species' own share and the common mode's, as the electrons mix theirs
+    # The species' own share and the ambipolar one, as the electrons mix theirs
     # (`update_transport_quantities!`), and the wall speed mixed alike. The channel carries
     # its wall speed as its own speed as well: with D the primitive, λ∥ = 2D∥/v is derived.
     w = pla.ambipolar_weight
-    D_para = @. (one(FT) - w) * D_own + w * tp.Dpara_common
+    D_para = @. (one(FT) - w) * D_own + w * tp.Dpara_amb
     collisional = coupled_parallel_channel(vm_s, sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean, mean_ion_charge(RP)), D_para, w)
 
     # `bohm_charge_scaling = false` hands the channel Z = 1 instead of the species
