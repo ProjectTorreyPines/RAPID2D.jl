@@ -157,6 +157,18 @@ end
     @test all(paths0[k] == [v] for (k, v) in old0D)
 end
 
+@testitem "field sources: the plotting extensions and the demo read the 0D snapshot's present names" begin
+    # A renamed field the recipes still read fails only when a plot is drawn, and the tests load
+    # no Makie: their source is read instead. `s` is a 0D snapshot in their comprehensions.
+    root = pkgdir(RAPID2D)
+    files = (joinpath(root, "ext", "RAPID2DPlotsExt.jl"), joinpath(root, "ext", "RAPID2DMakieExt.jl"), joinpath(root, "scripts", "plotting_demo.jl"))
+    names0D = Set(String.(fieldnames(Snapshot0D{Float64})))
+    read_names(file) = Set(m.captures[1] for m in eachmatch(r"\b(?:s|snap0D)\.([\p{L}\p{N}_]+)", read(file, String)))
+    @test all(f -> !isempty(read_names(f)), files)
+    @test Dict(basename(f) => sort!(collect(setdiff(read_names(f), names0D))) for f in files) ==
+        Dict(basename(f) => String[] for f in files)
+end
+
 @testitem "field sources: old E-field names are read into the component-first ones" begin
     using RAPID2D: create_symbol_path_mapping, process_symbol_based_snapshots!
     dims_RZ = (4, 5)

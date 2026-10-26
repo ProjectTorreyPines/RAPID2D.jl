@@ -132,7 +132,7 @@ end
 end
 
 @testitem "space-charge weights: set by initialize!, kept without the sheets' field, which leaves nothing behind" setup = [CurrentDisc] begin
-    using RAPID2D: update_space_charge_weights!, estimate_electrostatic_field_effects!, calculate_parallel_electric_field!
+    using RAPID2D: update_space_charge_weights!, estimate_electrostatic_field_effects!
     # initialize! sets the weights from its state; the sheets' field waits for a step's end
     config = SimulationConfig{Float64}(;
         device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
@@ -149,8 +149,9 @@ end
     update_space_charge_weights!(RP)
     @test (RP.plasma.turbulence_weight, RP.plasma.ambipolar_weight) == w0
 
-    # the sheets' field switched off: no field, parallel part, turbulence weight or diffusivity
-    # left from before; the coupling's weight is still set
+    # the sheets' field switched off, its cancellation left on: no field, parallel part,
+    # turbulence weight or diffusivity left from before, and E∥ without them at once (the
+    # transport's refresh reads it before the next step); the coupling's weight is still set
     RP, _ = current_disc()
     trace_closed_region!(RP)
     pla, F, tp = RP.plasma, RP.fields, RP.transport
@@ -159,10 +160,9 @@ end
     estimate_electrostatic_field_effects!(RP)
     @test any(>(0), F.ERZ_pla_mag) && any(>(0), tp.Dpol_turb) && any(!iszero, F.ERZ_para_pla)
     RP.flags.charge_sheet_field = false
-    RP.flags.E_para_cancellation = false
     estimate_electrostatic_field_effects!(RP)
-    calculate_parallel_electric_field!(RP)
     @test all(iszero, F.ERZ_pla_mag) && all(iszero, F.ERZ_para_pla)
+    @test F.E_para_tot ≈ F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla
     @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
     @test all(==(1), pla.ambipolar_weight[closed])
 end

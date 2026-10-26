@@ -44,7 +44,7 @@ module RAPID2DMakieExt
 
         # Parallel E-field
         ax3 = Axis(fig[2, 1], ylabel = "|⟨E∥⟩| (V/m)", yscale = log10)
-        lines!(ax3, times_ms, [abs(s.Epara_tot) for s in snap0D], linewidth = 2, label = "Parallel E-field")
+        lines!(ax3, times_ms, [abs(s.E_para_tot) for s in snap0D], linewidth = 2, label = "Parallel E-field")
 
         # Parallel velocity
         ax4 = Axis(fig[2, 2], ylabel = "|⟨u∥⟩| (m/s)", xlabel = "Time (ms)", yscale = log10)
@@ -171,8 +171,8 @@ module RAPID2DMakieExt
 
         # Parallel E-field comparison
         ax3 = Axis(fig[2, 1], ylabel = "|⟨E∥⟩| (V/m)", yscale = log10)
-        lines!(ax3, times_1, [abs(s.Epara_tot) for s in snaps0D_1], linewidth = 2, label = labels[1])
-        lines!(ax3, times_2, [abs(s.Epara_tot) for s in snaps0D_2], linewidth = 2, linestyle = :dash, label = labels[2])
+        lines!(ax3, times_1, [abs(s.E_para_tot) for s in snaps0D_1], linewidth = 2, label = labels[1])
+        lines!(ax3, times_2, [abs(s.E_para_tot) for s in snaps0D_2], linewidth = 2, linestyle = :dash, label = labels[2])
 
         # Energy comparison
         ax4 = Axis(fig[2, 2], ylabel = "⟨𝒲e⟩ (eV)", xlabel = "Time (ms)")

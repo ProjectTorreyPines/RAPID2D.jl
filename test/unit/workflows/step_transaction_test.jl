@@ -38,6 +38,7 @@
         initialize_coil_system!(RP)
         initialize_coupled_fields!(RP)
         RAPID2D.update_space_charge_weights!(RP)   # what run_simulation! establishes before its loop
+        RAPID2D.update_turbulent_diffusivity!(RP)
         RAPID2D.update_transport_quantities!(RP)
         return RP
     end
@@ -299,6 +300,44 @@ end
     @test same(StepState(RP), entry)
     @test same(RP.transport.Dpara, Dpara)   # refreshed again from the state put back
     @test same(RP.transport.Dpol_turb, Dpol_turb)   # the charge sheets' with it
+end
+
+@testitem "A run's first step taken in parts fails back without the charge sheets' field" setup = [StepTransactionRun] begin
+    # the first step starts without the sheets' field (it keeps to the ends of steps); its
+    # accepted first half refreshes one, and the failure puts back the diffusivity of none
+    using RAPID2D: take_step!, StepTransaction, StepState, Accept, Reject
+    RP = transaction_rp()
+    entry = StepState(RP)
+    @test all(iszero, RP.fields.ERZ_pla_mag) && all(iszero, RP.transport.Dpol_turb)
+    Dpara = copy(RP.transport.Dpara)
+    calls, refreshed = Ref(0), Ref(false)
+    verdict = function (rp)
+        calls[] += 1
+        calls[] == 3 && (refreshed[] = any(!iszero, rp.transport.Dpol_turb))
+        return calls[] == 2 ? Accept() : Reject(:late)
+    end
+    @test_throws ErrorException take_step!(RP, StepTransaction(RP); verdict)
+    @test refreshed[]
+    @test same(StepState(RP), entry)
+    @test all(iszero, RP.transport.Dpol_turb) && all(iszero, RP.transport.DRR_turb)
+    @test same(RP.transport.Dpara, Dpara)
+end
+
+@testitem "A run starts its turbulent consumers on the weight of the state handed over" setup = [StepTransactionRun] begin
+    # handed a state whose sheets' diffusivity was built under another weight (the sheets' model
+    # switched off since), the first step's electron diffusivity takes the speed the ion channels
+    # and the wall ceilings take: none
+    RP = transaction_rp()
+    step!(RP)
+    @test any(!iszero, RP.transport.Dpol_turb)
+    RP.flags.charge_sheet_field = false
+    RP.t_end_s = RP.time_s + RP.dt
+    first = Ref{Any}(nothing)
+    capture(rp) = isnothing(first[]) && (first[] = (copy(rp.plasma.turbulence_weight), copy(rp.transport.Dpol_turb), copy(rp.transport.DRR_turb)))
+    run_simulation!(RP; callback_before_step = capture)
+    w, D, DRR = first[]
+    @test all(iszero, w)
+    @test all(iszero, D) && all(iszero, DRR)
 end
 
 @testitem "A rejected attempt leaves no trace in the ledgers or the reaction counts" setup = [StepTransactionRun] begin

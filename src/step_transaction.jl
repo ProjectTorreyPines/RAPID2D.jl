@@ -255,10 +255,12 @@ function take_part!(RP::RAPID{FT}, tx::StepTransaction{FT}, t0::FT, dt::FT, q::I
         restore_step_state!(RP, tx.entry)
         RP.dt = dt
         if tx.refreshed
-            # the caches an accepted part refreshed (the transport's, the charge sheets' turbulent
-            # diffusivity with them), rebuilt from the state put back; what the refresh writes into
-            # the plasma and the fields, put back as the step found it
-            refresh_between_parts!(RP)
+            # the caches an accepted part refreshed, rebuilt from the state put back: the charge
+            # sheets' turbulent diffusivity from the field and weight the step found (not estimated
+            # again: a run's first step has no field), then the transport's; what that writes into
+            # the plasma, put back as the step found it
+            update_turbulent_diffusivity!(RP)
+            update_transport_quantities!(RP)
             restore_step_state!(RP, tx.entry)
         end
         error(

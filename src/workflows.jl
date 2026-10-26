@@ -392,9 +392,11 @@ function run_simulation!(
         # rebuilds everything from the current state, so on an untouched resume it changes
         # nothing and splitting a run in two stays bit for bit. Ahead of the snapshots,
         # which report those rates too. notes/issues/stale-rrcs-on-first-step.md
-        # The space charge's weights with them; the charge sheets' field keeps to the ends of
-        # steps, so the first step of a fresh run has none.
+        # The space charge's weights with them, and the turbulent diffusivity they give the
+        # field handed over; the charge sheets' field keeps to the ends of steps, so the first
+        # step of a fresh run has none.
         update_space_charge_weights!(RP)
+        update_turbulent_diffusivity!(RP)
         update_transport_quantities!(RP)
 
         # Initial snapshots at t_start_s

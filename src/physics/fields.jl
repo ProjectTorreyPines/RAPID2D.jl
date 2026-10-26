@@ -406,8 +406,8 @@ The open-line charge sheets' field and its effects on transport, from the presen
 ([`update_space_charge_weights!`](@ref)); with `charge_sheet_field`, the sheets' field
 `ERZ_pla_mag = min(γ E_req, E_D)`, zero on closed lines, which short-circuit along B; its parallel
 projection `ERZ_para_pla` ([`calculate_parallel_electric_field!`](@ref)), the mean E×B drift and the
-turbulent diffusivity `Dpol_turb` at the turbulence's weight. Without it, no field and no
-diffusivity, so a run that turns it off keeps none from before.
+turbulent diffusivity `Dpol_turb` at the turbulence's weight. Without it, no field, parallel part
+or diffusivity, so a run that turns it off keeps none from before.
 """
 function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
@@ -417,6 +417,8 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     if !RP.flags.charge_sheet_field
         fill!(F.ERZ_pla_mag, zero(FT))
         fill!(RP.transport.Dpol_turb, zero(FT))
+        # E∥ without the sheets' part at once: the transport's refresh reads it
+        calculate_parallel_electric_field!(RP)
         return RP
     end
 
@@ -445,10 +447,22 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     extrapolate_field_to_boundary_nodes!(RP.G, tp.L_mixing)
     # smooth_data_2D!(tp.L_mixing; num_SM = 3)
 
-    # Dpol_turb = ½ v_E L_mixing, the sheets' drift speed at the turbulence's weight
-    # (`shared_turbulent_channel` takes the same speed)
-    @. tp.Dpol_turb = 0.5 * (pla.turbulence_weight * F.ERZ_pla_mag) / F.Btot * tp.L_mixing
+    update_turbulent_diffusivity!(RP)
 
+    return RP
+end
+
+"""
+    update_turbulent_diffusivity!(RP) -> RP
+
+The turbulent E×B mixing's diffusivity from the charge sheets' present field and the turbulence's
+weight, `Dpol_turb = ½ w_turb (ERZ_pla_mag/B) L_mixing`: the drift speed `shared_turbulent_channel`
+takes. Where the weights are refreshed without the field (a run's start, a failed step put back),
+the diffusivity follows them.
+"""
+function update_turbulent_diffusivity!(RP::RAPID)
+    pla, F, tp = RP.plasma, RP.fields, RP.transport
+    @. tp.Dpol_turb = 0.5 * (pla.turbulence_weight * F.ERZ_pla_mag) / F.Btot * tp.L_mixing
     return RP
 end
 

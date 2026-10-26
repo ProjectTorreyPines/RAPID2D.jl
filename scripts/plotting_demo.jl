@@ -49,7 +49,7 @@ for i in 1:5
     snap0D.time_s = i * 2.0e-5
     snap0D.ne = 1.0e19 * (1 + 0.1 * sin(i))
     snap0D.Te_eV = 10.0 * (1 + 0.2 * cos(i))
-    snap0D.Epara_tot = 1000.0 * exp(-i / 10)
+    snap0D.E_para_tot = 1000.0 * exp(-i / 10)
     snap0D.ue_para = 1.0e5 * (1 + 0.3 * sin(i))
     snap0D.Ke_eV = 15.0 * (1 + 0.1 * i)
     push!(RP.diagnostics.snaps0D, snap0D)
