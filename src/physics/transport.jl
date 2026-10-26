@@ -103,7 +103,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # The bulk ion channel on the gas: ½vp²/ν_in = Tᵢ/(mᵢν_in), Inf without gas.
     tp.Dpara_i_coll = @. ifelse(vp_i > 0, FT(0.5) * vp_i^2 / tp.νi_neutral, zero(FT))
 
-    # Ambipolar diffusivity of the pair on that drag, per ion, D_a = c_s²/ν_cm =
+    # Ambipolar diffusivity of the pair on that drag, per ion, D_amb = c_s²/ν_cm =
     # e(Z̄Tₑ+Tᵢ)/(Z̄mₑν_en' + mᵢν_in): the pair's pressure nᵢe(Z̄Tₑ + Tᵢ) against the drag on its Z̄
     # electrons and its ion. At Z̄ = 1 it is the mobility-weighted harmonic mean of the two
     # drag-only limbs, written as one ratio because each limb's temperature cancels
@@ -170,7 +170,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # across a surface
     bounded(D0, v, vm_flux = v) = (D_flux = flux_ceiling(D0, vm_flux); @. min(min(D0, $(step_ceiling(v))), D_flux))
 
-    # The common mode: the drag-only D_a, plus the base path, its free flight at the sound speed
+    # The common mode: the drag-only D_amb, plus the base path, its free flight at the sound speed
     # and its flux at the Bohm flux
     tp.Dpara_common .= bounded((@. tp.Dpara0 + tp.Dpara_amb), c_s, bohm_flux_mean_speed.(c_s))
     D_base = bounded(fill(tp.Dpara0, size(pla.ne)), vm_e)

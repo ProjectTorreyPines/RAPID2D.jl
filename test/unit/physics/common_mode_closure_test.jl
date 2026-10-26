@@ -1,6 +1,6 @@
 # The common mode of the parallel transport (the ambipolar closure). The pressure-driven parallel
 # flow is carried once: by u∥ for the share 1 − w_amb, and for the share w_amb by the common-mode
-# coefficient D_common, the drag-only D_a under the sound speed's ceilings, which the electrons and
+# coefficient D_common, the drag-only D_amb under the sound speed's ceilings, which the electrons and
 # every ion species take alike, leaving the wall at the Bohm flux c_s n.
 # internal/docs/src/notes/design/space-charge-layers-v4.md §5.
 

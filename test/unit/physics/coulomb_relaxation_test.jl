@@ -358,7 +358,7 @@ end
 @testitem "The common mode's parallel diffusivities take the gas's drag, not the plasma's internal friction" setup = [CoulombReference] tags = [:physics] begin
     # Electrons and ions moving together feel no e–i friction, and ion–ion collisions cannot slow the ion
     # fluid: internal forces leave the plasma's momentum alone, only the neutrals drag the common motion.
-    # Its damping rate is ν_cm = (mₑν_en' + mᵢν_in)/(mₑ+mᵢ) and its diffusivity D_a = c_s²/ν_cm with
+    # Its damping rate is ν_cm = (mₑν_en' + mᵢν_in)/(mₑ+mᵢ) and its diffusivity D_amb = c_s²/ν_cm with
     # c_s² = e(Tₑ+Tᵢ)/(mₑ+mᵢ): both set by the gas, neither by the plasma density.
     "A uniform H₂⁺ box at density n with a common drift, the rates refreshed on it, no parallel field, no births."
     function box_at(n; gas = true)
@@ -401,8 +401,8 @@ end
     @test wet.locked ≈ 1 rtol = 0.1
     dry = common_decay(box_at(1.0e18; gas = false))
     @test abs(dry.rate) < 1.0e-6 * ν_cm(dense)
-    # (2) So does the diffusion path: D_a and the bulk ion channel take the gas's drag in their
-    #     denominators (`update_transport_quantities!`), not ν_ei and ν_ii. Tenuous, D_a is c_s²/ν_cm,
+    # (2) So does the diffusion path: D_amb and the bulk ion channel take the gas's drag in their
+    #     denominators (`update_transport_quantities!`), not ν_ei and ν_ii. Tenuous, D_amb is c_s²/ν_cm,
     #     Dᵢ the ions' mobility on the gas …
     tenuous = box_at(1.0e12)
     @test Da(tenuous) ≈ cs2(tenuous) / ν_cm(tenuous) rtol = 0.02
@@ -414,7 +414,7 @@ end
     dry_box = box_at(1.0e18; gas = false)
     @test isinf(Da(dry_box))
     @test isinf(Di(dry_box))
-    # (3) So the two paths of one code agree about one rate: the damping D_a implies, c_s²/D_a,
+    # (3) So the two paths of one code agree about one rate: the damping D_amb implies, c_s²/D_amb,
     #     is the damping the momentum path shows
     @test cs2(dense) / Da(dense) ≈ wet.rate rtol = 0.02
 end
