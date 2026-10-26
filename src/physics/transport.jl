@@ -198,8 +198,12 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # behind the ambipolar-gate work; see
     # `internal/docs/src/notes/TODO/electron-parallel-transport-gating.md`.
 
-    # Calculate perpendicular diffusion using Bohm diffusivity
+    # Bohm, D_B = Tₑ/(16B), shared so that the cross-field flux carries no current: the
+    # electrons take the mean of what the ion species take (`ion_transport_channels`), weighted
+    # by the charge each brings, Σ zₛnₛ D_B/zₛ / Σ zₛnₛ = D_B/Z̄ with the per-charge 1/Z of
+    # `bohm_charge_scaling`, D_B without it
     Dperp_bohm = @. abs((1 / 16) * pla.Te_eV / RP.fields.Bϕ)
+    RP.flags.bohm_charge_scaling && (Dperp_bohm ./= Z_mean)
     @. tp.Dperp = tp.Dperp0 + Dperp_bohm
 
     extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara)

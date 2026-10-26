@@ -206,3 +206,25 @@ end
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     @test all(==(1.0), RAPID2D.mean_ion_charge(RP))
 end
+
+@testitem "Bohm: the electrons cross the field as the charge they balance, so the cross-field flux carries no current" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: channel_D_perp
+    MHE = 4.002602 * 1.6605390666e-27
+    # He²⁺ alone: the electrons at the ions' D_B/2
+    RP = uniform_box([("He2", MHE, 2, 0.5e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    update_transport_quantities!(RP)
+    tp, pla, F = RP.transport, RP.plasma, RP.fields
+    inw = RP.G.nodes.in_wall_nids
+    bohm_ion = ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))[2]
+    @test tp.Dperp[inw] ≈ (tp.Dperp0 .+ channel_D_perp(bohm_ion))[inw]
+    # H₂⁺ and He²⁺: Σ zₛnₛ (D_B/zₛ) / Σ zₛnₛ = D_B Σ nₛ/nₑ
+    RP = uniform_box([("H2", MH2, 1, 0.5e17), ("He2", MHE, 2, 0.25e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    update_transport_quantities!(RP)
+    tp, pla, F = RP.transport, RP.plasma, RP.fields
+    D_B = @. abs(pla.Te_eV / (16 * F.Bϕ))
+    @test tp.Dperp[inw] ≈ (tp.Dperp0 .+ 0.75 .* D_B)[inw]
+    # without the per-charge 1/Z every species and the electrons take D_B
+    RP.flags.bohm_charge_scaling = false
+    update_transport_quantities!(RP)
+    @test tp.Dperp[inw] ≈ (tp.Dperp0 .+ D_B)[inw]
+end
