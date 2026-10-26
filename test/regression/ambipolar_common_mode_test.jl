@@ -247,7 +247,7 @@ end
 end
 
 @testitem "open lines under a loop voltage, the sheets shielding E∥ fully: the pair stays together and leaves as without it" tags = [:regression] setup = [OpenLineBlob] begin
-    # γ = 1: the sheets' field reaches E_req wherever E_D does, and E∥ drives no current there
+    # γ = 1: the sheets' field reaches ERZ_req wherever E_Debye does, and E∥ drives no current there
     function loss(Eϕ)
         RP, planes = open_line_blob([H2P], [1.0]; Bpol = 0.1, Eϕ, γ0 = 1.0, t_end = 2.0e-3, dt = 1.0e-6)
         G, pla = RP.G, RP.plasma
