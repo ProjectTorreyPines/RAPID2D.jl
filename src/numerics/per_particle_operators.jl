@@ -82,9 +82,13 @@ makes the carried variable conduct (and diffuse momentum) with `A_cond` instead:
 
 with `R_k = G.Jacob[k]`. The pair transfers are symmetric, so `Σ R n f` is kept and constants
 stay in the kernel (the cross terms make `R A` asymmetric, so a split of `M` by face densities
-would not keep it). A negative transfer is dropped, so `C` only adds dissipation, and a pair
-with a node at or below `n_floor` is skipped, its row being frozen. In a uniform plasma with
-`R ΔA` symmetric (no cross terms) `M + C` is `A_cond`; `A_cond = A_part` leaves `M` bit for bit.
+would not keep it). The negative transfers are kept, as `A_part` and `A_cond` keep theirs: on an
+oblique field they are what cancels the diffusion across `b`, so a profile constant along `b`
+stays in the kernel to truncation order (dropping them conducted ≈ ½ΔD across the field at any
+resolution). Where the density is not resolved, `limit_antidiffusive_pairs!` has bounded them in
+both operators. A pair with a node at or below `n_floor` is skipped, its row being frozen. In a
+uniform plasma with `R ΔA` symmetric (no cross terms) `M + C` is `A_cond`; `A_cond = A_part`
+leaves `M` bit for bit.
 All three on the wall pattern of `G`, `M` aliasing neither; nothing is allocated.
 """
 function add_conduction_correction!(
@@ -110,7 +114,7 @@ function add_conduction_correction!(
         (n[k] > n_floor && n[l] > n_floor) || continue
         p_lk = slot_position(k2c, l, slot_back)     # the pattern is structurally symmetric
         S = half * (R[k] * (nzQ[p_kl] - nzP[p_kl]) + R[l] * (nzQ[p_lk] - nzP[p_lk]))
-        S > zero(FT) || continue
+        iszero(S) && continue
         n_mean = half * (n[k] + n[l])
         _add_pair_transfer!(nzU, p_kl, slot_position(k2c, k, SLOT_C), S * n_mean / (R[k] * n[k]))
         _add_pair_transfer!(nzU, p_lk, slot_position(k2c, l, SLOT_C), S * n_mean / (R[l] * n[l]))

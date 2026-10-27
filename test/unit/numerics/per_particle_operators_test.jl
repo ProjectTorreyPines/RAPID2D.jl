@@ -16,15 +16,15 @@
     using RAPID2D: build_wall_pattern, build_wall_diffusion_matrix!, limit_antidiffusive_pairs!,
         per_particle_operator!, add_conduction_correction!
 
-    "A walled box, or a staircase wall with a re-entrant corner, on a 41 × 47 grid."
-    function walled_RP(wall::Symbol)
+    "A walled box, or a staircase wall with a re-entrant corner, on a 41 × 47 grid by default."
+    function walled_RP(wall::Symbol; NR = 41, NZ = 47)
         wall_R, wall_Z = if wall === :box
             [1.2, 1.8, 1.8, 1.2], [-0.3, -0.3, 0.3, 0.3]
         else
             [1.2, 1.8, 1.8, 1.5, 1.5, 1.2], [-0.3, -0.3, 0.0, 0.0, 0.3, 0.3]
         end
         config = SimulationConfig{Float64}(
-            device_Name = "manual", NR = 41, NZ = 47,
+            device_Name = "manual", NR = NR, NZ = NZ,
             R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
             wall_R = wall_R, wall_Z = wall_Z,
             prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
@@ -139,6 +139,55 @@
         M = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
         add_conduction_correction!(M, c.A_part, c.A_cond, n, c.G; n_floor = 1.0)
         return M_part, M
+    end
+
+    """
+    Two poloidal fields with a profile `f` constant along `b`, and `∇·(n̂ n̂·∇f)` across it (n̂ ⊥ b
+    in the poloidal plane, cylindrical, Jacobian R): a diagonal field and circles about (1.5, 0),
+    the centre excluded.
+    """
+    function parallel_fields()
+        s = sin(π / 4)
+        diagonal = (
+            name = "diagonal",
+            b = (R, Z) -> (s, s),
+            f = (R, Z) -> (Z - (R - 1.5))^2 / 2,
+            perp_div = (R, Z) -> 2 - (Z - (R - 1.5)) / R,
+            excluded = (R, Z) -> false,
+        )
+        circular = (
+            name = "circular",
+            b = (R, Z) -> (r = hypot(R - 1.5, Z); (-Z / r, (R - 1.5) / r)),
+            f = (R, Z) -> (R - 1.5)^2 + Z^2,
+            perp_div = (R, Z) -> 6 - 3 / R,
+            excluded = (R, Z) -> hypot(R - 1.5, Z) < 0.1,
+        )
+        return (diagonal, circular)
+    end
+
+    "D∥ b bᵀ along the field, no cross-field part."
+    function parallel_tensor(G, field; Dpara)
+        DRR, DRZ, DZZ = zeros(G.NR, G.NZ), zeros(G.NR, G.NZ), zeros(G.NR, G.NZ)
+        for j in 1:G.NZ, i in 1:G.NR
+            field.excluded(G.R2D[i, j], G.Z2D[i, j]) && continue
+            bR, bZ = field.b(G.R2D[i, j], G.Z2D[i, j])
+            DRR[i, j], DRZ[i, j], DZZ[i, j] = Dpara * bR^2, Dpara * bR * bZ, Dpara * bZ^2
+        end
+        return (DRR, DRZ, DZZ)
+    end
+
+    """
+    The largest cross-field diffusivity `Op` adds, `|(Op f)_k| / ∇·(n̂ n̂·∇f)_k`, over the nodes two
+    cells inside the wall and away from the excluded centre: zero for an operator that carries
+    nothing across the field.
+    """
+    function artificial_perp_diffusivity(Op, G, field)
+        R, Z = vec(G.R2D), vec(G.Z2D)
+        Of = Op * field.f.(R, Z)
+        inw = Set(G.nodes.in_wall_nids)
+        inner(k) = all(((k + di + dj * G.NR) in inw) for di in -2:2, dj in -2:2) &&
+            !any(field.excluded(R[k + di + dj * G.NR], Z[k + di + dj * G.NR]) for di in -1:1, dj in -1:1)
+        return maximum(abs(Of[k]) / field.perp_div(R[k], Z[k]) for k in G.nodes.in_wall_nids if inner(k))
     end
 end
 
@@ -362,18 +411,19 @@ end
     end
 end
 
-@testitem "conduction correction: only adds dissipation, and the heating identity holds for the whole operator" setup = [PerParticleFixtures] begin
+@testitem "conduction correction: carries the cross terms, adds dissipation in total, and the heating identity holds for the whole operator" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!, add_conduction_correction!, dissipation_rate!
     using RAPID2D.SparseArrays: findnz
     for c in conduction_cases()
         M_part, M = with_correction(c)
-        # every pair transfer it adds is non-negative: negative ones are dropped, both ways
+        # the negative transfers come with it, as in the operators it is built from: they are what
+        # cancels the diffusion across b (the artificial cross-field diffusivity test)
         C = M.matrix - M_part.matrix
         off = [C[k, l] for (k, l, _) in zip(findnz(C)...) if k != l]
-        @test all(>=(0), off) && any(>(0), off)
+        @test any(<(0), off) && any(>(0), off)
         u = smooth_field(c.G; a = 2.0e5, k = (2, 3))
         Γ, Γ_part = dissipation_rate!(similar(u), M, u), dissipation_rate!(similar(u), M_part, u)
-        # the heating it adds is what it takes from Σ V ½ n u², and positive
+        # the heating it adds is what it takes from Σ V ½ n u², and positive in total
         heat = sum(c.V .* c.n .* (Γ .- Γ_part))
         @test heat > 0
         @test heat ≈ -sum(c.V .* c.n .* u .* (C * u)) rtol = 1.0e-10
@@ -408,4 +458,37 @@ end
     M = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
     add_conduction_correction!(M, A_part, A_cond, n, G; n_floor = 1.0)
     @test M.matrix.nzval ≈ A_cond.matrix.nzval rtol = 1.0e-12
+end
+
+# A profile constant along b must not diffuse: what an operator moves across the field is its
+# truncation error alone, second order. The conduction correction carries the cross terms of
+# A_cond − A_part as its operators do; dropping its negative transfers left ≈ ½ΔD across a
+# diagonal field at every resolution.
+@testitem "artificial cross-field diffusivity: truncation only, in the diffusion, per-particle and conduction operators" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!, add_conduction_correction!
+    # D_art / D at 41 × 47, about ten cells across the box: the diagonal field is exact for the
+    # diffusion operator and second order through the density's variation; the circles, second order
+    bound = (diagonal = 1.0e-3, circular = 2.0e-2)
+    for field in parallel_fields()
+        D_art = map(((41, 47), (81, 93))) do (NR, NZ)
+            G = walled_RP(:box; NR, NZ).G
+            n = plasma_density(G)
+            A_part = diffusion_operator(G, parallel_tensor(G, field; Dpara = 1.0))
+            A_cond = diffusion_operator(G, parallel_tensor(G, field; Dpara = 4.0))
+            M_part = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
+            M = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
+            add_conduction_correction!(M, A_part, A_cond, n, G; n_floor = 1.0)
+            # each per its own coefficient along b: 4 for A_cond and for M + C, 1 for M
+            (
+                diffusion = artificial_perp_diffusivity(A_cond, G, field) / 4,
+                per_particle = artificial_perp_diffusivity(M_part, G, field),
+                conduction = artificial_perp_diffusivity(M, G, field) / 4,
+            )
+        end
+        for op in (:diffusion, :per_particle, :conduction)
+            coarse, fine = D_art[1][op], D_art[2][op]
+            @test coarse <= bound[Symbol(field.name)]
+            @test fine <= max(coarse / 3, 1.0e-10)
+        end
+    end
 end
