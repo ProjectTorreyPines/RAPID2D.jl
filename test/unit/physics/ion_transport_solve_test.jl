@@ -348,15 +348,16 @@ end
     update_transport_quantities!(RP)
     RP.prev_n .= pla.ne                     # the density the step starts from
     pla.ne .= blob(1.6)                     # and the present one, moved
-    limiter = RP.flags.limit_antidiffusive_pairs
-    @test limiter.state
+    limited = RP.flags.anisotropic_discretization
+    @test limited isa LimitedNinePoint
     _, faces, dirs = ion_step_operators(RP)
     group, A, _ = only(first(ion_step_operators(RP)))
-    op(n) = first(ion_transport_operator(G, group, dirs; faces, albedo = ion_wall_albedo(RP), limit_density = n, max_ratio = limiter.factor))
-    @test A == op(RP.prev_n)
-    @test A != op(nothing)                  # the limiter acts on this density
-    @test A != op(pla.ne)                   # at the step's starting density, not the present one
-    RP.flags.limit_antidiffusive_pairs = (state = false, factor = limiter.factor)
+    op(discretization, n = nothing) =
+        first(ion_transport_operator(G, group, dirs; faces, albedo = ion_wall_albedo(RP), discretization, n))
+    @test A == op(limited, RP.prev_n)
+    @test A != op(NinePoint())              # the limiter acts on this density
+    @test A != op(limited, pla.ne)          # at the step's starting density, not the present one
+    RP.flags.anisotropic_discretization = NinePoint()
     _, A_off, _ = only(first(ion_step_operators(RP)))
-    @test A_off == op(nothing)
+    @test A_off == op(NinePoint())
 end

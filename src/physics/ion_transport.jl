@@ -117,7 +117,7 @@ function ion_wall_albedo(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    ion_transport_operator(G, group, directions; faces, albedo, cross_terms, limit_density, max_ratio) -> (A, v_absorb)
+    ion_transport_operator(G, group, directions; faces, albedo, cross_terms, discretization, n) -> (A, v_absorb)
 
 Assemble the wall-aware `∇·(𝐃∇·)` a group of ion species will share, and the
 Robin coefficients that go with it.
@@ -132,17 +132,17 @@ reason this exists as a function rather than two calls at each site: a matrix
 assembled from one set of channels and a boundary condition from another is a
 mismatch nothing downstream can detect.
 
-Omitting `faces` gives the reflective operator and an empty coefficient vector. With
-`limit_density`, the anti-diffusive pairs are limited at that density
-([`limit_antidiffusive_pairs!`](@ref)), as the electrons' are.
+Omitting `faces` gives the reflective operator and an empty coefficient vector. The operator is
+assembled by `discretization` ([`assemble_anisotropic_diffusion!`](@ref)), a limiting one reading
+the density `n`.
 """
 function ion_transport_operator(
         G::GridGeometry{FT}, group::IonTransportGroup{FT}, directions;
         faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
         albedo = zero(FT),
         cross_terms::Symbol = :drop,
-        limit_density::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
-        max_ratio::FT = FT(Inf),
+        discretization::AnisotropicDiscretization = NinePoint(),
+        n::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
     ) where {FT <: AbstractFloat}
     length(directions) == length(group.channels) || throw(
         ArgumentError(
@@ -167,13 +167,11 @@ function ion_transport_operator(
     )
 
     v_absorb = isnothing(faces) ? FT[] : wall_absorption_speeds(cwd, faces, albedo)
-    A = build_wall_diffusion_matrix!(
-        build_wall_pattern(G), G, D_RR, D_RZ, D_ZZ;
-        cross_terms, faces, v_absorb = isnothing(faces) ? nothing : v_absorb
+    A = build_wall_pattern(G)
+    assemble_anisotropic_diffusion!(
+        A, G, D_RR, D_RZ, D_ZZ, discretization;
+        n, cross_terms, faces, v_absorb = isnothing(faces) ? nothing : v_absorb
     )
-    # the electrons' pair limiter at their density, so the pairs a coupled step moves together
-    # see one operator
-    isnothing(limit_density) || limit_antidiffusive_pairs!(A, G, limit_density; max_ratio)
     return dropzeros!(A.matrix), v_absorb
 end
 
@@ -599,15 +597,15 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
 
     turb = shared_turbulent_channel(RP)
-    pair_limiter = RP.flags.limit_antidiffusive_pairs
     per_species = [ion_transport_channels(RP, sp, turb) for sp in tp.ion_species]
     dirs = ion_channel_directions(RP)
     weights = [ion_plane(pla, slot) for slot in RP.store_layout.transport_slots]   # the densities, from the store
 
     ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
+        # the electrons' discretization at their density at the step's start, so the pairs a
+        # coupled step moves together see one operator
         A, v_absorb = ion_transport_operator(
-            G, group, dirs; faces, albedo,
-            limit_density = pair_limiter.state ? RP.prev_n : nothing, max_ratio = FT(pair_limiter.factor),
+            G, group, dirs; faces, albedo, discretization = RP.flags.anisotropic_discretization, n = RP.prev_n,
         )
         return (group, isnothing(A_conv) ? A : A - A_conv, v_absorb .+ v_conv)
     end

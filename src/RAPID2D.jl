@@ -41,6 +41,7 @@ include("physics/species.jl")       # species, ion records and the transport pol
 include("physics/species_registry.jl")   # a run's species as records, and the system RAPID holds
 include("reactions/rate_closures.jl")   # how a rate is averaged over the colliding distribution, the choice the config holds
 include("numerics/field_lines/field_line_tracer_policies.jl")   # how a field line is followed: the tracer policies the flags hold
+include("numerics/anisotropic_discretization_policies.jl")   # how an anisotropic diffusion tensor becomes a matrix: the policies the flags hold
 include("numerics/field_lines/closed_surface_flux_types.jl")   # the closed-surface flux constraint: policies, basis, state
 include("control/ideal_vertical_field_types.jl")   # the vertical-field control the flags hold, and its state
 include("types.jl")

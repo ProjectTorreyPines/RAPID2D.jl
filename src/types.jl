@@ -754,7 +754,7 @@ Fields include various matrices for solving different parts of the model.
     # v_D = −D∇n/n. `A_diffu_e`, ∇·(D∇f), equals the sum only at uniform ne.
     A_visc_drift_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     # The reflective ∇·D∇ with the parallel coefficient u∥ and Te conduct with
-    # (`transport.Dpara_cond`), limited like `A_diffu_e`; built only where it differs from it
+    # (`transport.Dpara_cond`), assembled like `A_diffu_e`; built only where it differs from it
     # (`A_cond_e_active`), when `ue_Te_operators` adds the difference to `A_visc_drift_e`
     # (`add_conduction_correction!`).
     A_cond_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
@@ -1402,12 +1402,10 @@ Contains boolean flags that control various aspects of the simulation.
         state = true,                         # Enable flux limiting
         factor = FT(0.25),                    # ¼ of the Hertz-Knudsen one-way flux ¼·n·v̄
     )
-    # The 9-point cross terms' negative pairs in the electron diffusion, scaled down where
-    # neighbouring ne differ by more than `factor` (`limit_antidiffusive_pairs!`)
-    limit_antidiffusive_pairs::@NamedTuple{state::Bool, factor::FT} = (
-        state = true,                         # Enable the pair limiter
-        factor = FT(20),                      # max_ratio: the neighbour density ratio it starts above
-    )
+    # How every anisotropic diffusion operator is assembled from its tensor (`assemble_anisotropic_diffusion!`):
+    # the nine-point stencil, its negative cross-term pairs limited where neighbouring ne differ
+    # by more than `max_ratio` (`LimitedNinePoint`), or nowhere (`NinePoint`)
+    anisotropic_discretization::AnisotropicDiscretization = LimitedNinePoint()
     # u∥ and Te relaxed implicitly where there is almost no plasma (`vacuum_relaxation_weights`):
     # u∥ → 0 and Te → the density-weighted local mean; nothing changes at ne ≥ 100·factor
     vacuum_relaxation::@NamedTuple{state::Bool, factor::FT} = (

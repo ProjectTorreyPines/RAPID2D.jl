@@ -463,18 +463,24 @@ end
 # A profile constant along b must not diffuse: what an operator moves across the field is its
 # truncation error alone, second order. The conduction correction carries the cross terms of
 # A_cond − A_part as its operators do; dropping its negative transfers left ≈ ½ΔD across a
-# diagonal field at every resolution.
+# diagonal field at every resolution. The contract of every `AnisotropicDiscretization`.
 @testitem "artificial cross-field diffusivity: truncation only, in the diffusion, per-particle and conduction operators" setup = [PerParticleFixtures] begin
-    using RAPID2D: per_particle_operator!, add_conduction_correction!
+    using RAPID2D: per_particle_operator!, add_conduction_correction!, assemble_anisotropic_diffusion!
     # D_art / D at 41 × 47, about ten cells across the box: the diagonal field is exact for the
     # diffusion operator and second order through the density's variation; the circles, second order
     bound = (diagonal = 1.0e-3, circular = 2.0e-2)
-    for field in parallel_fields()
+    function assembled(G, D, discretization, n)
+        A = build_wall_pattern(G)
+        assemble_anisotropic_diffusion!(A, G, D..., discretization; n)
+        return A
+    end
+    grids = Dict(r => walled_RP(:box; NR = r[1], NZ = r[2]).G for r in ((41, 47), (81, 93)))
+    for discretization in (LimitedNinePoint(), NinePoint()), field in parallel_fields()
         D_art = map(((41, 47), (81, 93))) do (NR, NZ)
-            G = walled_RP(:box; NR, NZ).G
+            G = grids[(NR, NZ)]
             n = plasma_density(G)
-            A_part = diffusion_operator(G, parallel_tensor(G, field; Dpara = 1.0))
-            A_cond = diffusion_operator(G, parallel_tensor(G, field; Dpara = 4.0))
+            A_part = assembled(G, parallel_tensor(G, field; Dpara = 1.0), discretization, n)
+            A_cond = assembled(G, parallel_tensor(G, field; Dpara = 4.0), discretization, n)
             M_part = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
             M = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
             add_conduction_correction!(M, A_part, A_cond, n, G; n_floor = 1.0)

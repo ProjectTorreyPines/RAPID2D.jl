@@ -39,7 +39,7 @@ Every outward face of every in-wall cell of `G`.
 
 A face exists wherever an in-wall cell has a cardinal neighbour that is *not*
 in-wall — on the wall, outside it, or off the grid. That is deliberately the same
-predicate `build_reflective_diffusion_matrix` uses to decide which stencil arm to
+predicate `build_isotropic_diffusion_matrix` uses to decide which stencil arm to
 omit, so the faces returned here are exactly the arms that operator drops: the
 places where the flux is currently forced to zero and where a Robin condition
 will instead put `v_absorb·n_w`.

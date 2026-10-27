@@ -4,8 +4,8 @@
 # - the near-vacuum relaxation of u∥ and Te (`flags.vacuum_relaxation`), used by the u∥ and Te solves
 # - the negative-density floor after each step (`flags.negative_n_correction`)
 #
-# Next to what they act on instead: the anti-diffusive pair limiter of the electron diffusion
-# stencil (`limit_antidiffusive_pairs!`, numerics/wall_diffusion.jl), the flux-limited diffusivity
+# Next to what they act on instead: the anti-diffusive pair limiter of the diffusion stencil
+# (`LimitedNinePoint`, `limit_antidiffusive_pairs!`, numerics/wall_diffusion.jl), the flux-limited diffusivity
 # (transport.jl) and the clamp on the pressure acceleration (`calculate_electron_acceleration_by_pressure`).
 
 # ── near-vacuum relaxation of u∥ and Te ──────────────────────────────────────────
