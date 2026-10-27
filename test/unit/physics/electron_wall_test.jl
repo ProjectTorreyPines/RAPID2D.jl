@@ -286,6 +286,12 @@ end
         RP.plasma.ue_para .= convec ? upara : 0.0
         RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
         RP.plasma.ueZ .= RP.plasma.ue_para .* RP.fields.bZ
+        # the coefficients and wall speeds the run starts from: the space charge's weights, read
+        # by the parallel channel's wall speed, follow the density just set
+        RAPID2D.update_space_charge_weights!(RP)
+        RAPID2D.update_transport_quantities!(RP)
+        RP.plasma.ueR .= RP.plasma.ue_para .* RP.fields.bR
+        RP.plasma.ueZ .= RP.plasma.ue_para .* RP.fields.bZ
         faces = wall_faces(G)
         v_diff = diffu ? electron_wall_absorption_speeds(RP, faces) : zeros(length(faces))
         v_conv = convec ? face_outflow_speeds(G, faces, RP.plasma.ueR, RP.plasma.ueZ) : zeros(length(faces))

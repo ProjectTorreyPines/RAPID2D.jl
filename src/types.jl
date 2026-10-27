@@ -108,10 +108,16 @@ Contains simulation configuration parameters.
     max_Te::FT = FT(500.0)             # Maximum electron temperature (eV)
 
     # Transport parameters
-    Dpara0::FT = FT(0.0)               # Base parallel diffusion coefficient
-    Dperp0::FT = FT(0.0)               # Base perpendicular diffusion coefficient
+    Dpara0::FT = FT(0.0)               # Base parallel diffusivity: a notional background added to every parallel coefficient [m²/s]
+    Dperp0::FT = FT(0.0)               # Base perpendicular diffusivity: a notional background added to D⊥ [m²/s]
 
     turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
+
+    # The open-line charge sheets' shape factor at the mean B_pol, γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩):
+    # their field reaches at most γ ERZ_req (`update_space_charge_weights!`). The potential is a global
+    # solution, and an open line between two points of one wall cannot shield its whole EMF. 1
+    # shields E∥ fully wherever the plasma holds the charge: tests of the parallel physics alone.
+    charge_sheet_shape_factor::FT = FT(0.65)
 
     # Fraction of ions the wall returns to the plasma. 0 = fully absorbing,
     # 1 = perfectly reflecting; the Robin coefficient is ¼v̄_n(1 − R).
@@ -410,7 +416,7 @@ Contains the plasma state variables including density, temperature, and velocity
     γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
     # how much of what the code does not resolve a closure carries
     turbulence_weight::Matrix{FT} = zeros(FT, dims) # w_turb: the turbulent E×B mixing's onset, min(1, √(n/nc_perp))
-    ambipolar_weight::Matrix{FT} = zeros(FT, dims)  # w_amb: the common-mode coupling, 1 on closed lines, min(1, √(n/nc_para)) on open ones
+    ambipolar_weight::Matrix{FT} = zeros(FT, dims)  # w_amb ∈ [0, 1]: the ambipolar coupling, 1 on closed lines, min(1, √(n/nc_para)) on open ones
 
     # Collision parameters
     lnΛ::Matrix{FT} = zeros(FT, dims)   # ELECTRON-ion Coulomb logarithm (NRL p.34b)
@@ -648,13 +654,15 @@ Fields include diffusion coefficients in different directions.
 
     # Parallel diffusion coefficients
     Dpara_e_coll::Matrix{FT} = zeros(FT, dims)  # Electron parallel diffusion coefficient due to collisions [m²/s]
-    Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # Ion parallel diffusion coefficient due to collisions [m²/s]
-    Dpara_amb::Matrix{FT} = zeros(FT, dims)  # Ambipolar diffusion coefficient [m²/s]
-    Dpara_e_eff::Matrix{FT} = zeros(FT, dims)  # Effective electron parallel diffusion coefficient [m²/s]
+    Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # the bulk ions' on the gas and their births, Tᵢ/(mᵢ(ν_in + ν_birth)) [m²/s]
+    ν_amb::Matrix{FT} = zeros(FT, dims)  # the ambipolar pair's drag rate per ion mass, (Z̄mₑν_en' + m̄ᵢ(ν_in + ν_birth))/m̄ᵢ [1/s]
+    Dpara_amb::Matrix{FT} = zeros(FT, dims)  # ambipolar, both species alike: c_s²/ν_amb under the sound speed's ceilings [m²/s]
+    u_para_amb_gradT::Matrix{FT} = zeros(FT, dims)  # the ambipolar temperature-gradient drift along b̂, −w D_amb ∇∥ln(Z̄Tₑ+Tᵢ): the thermodiffusion part of the pair's pressure flux, both species alike [m/s]
     νi_eff::Matrix{FT} = zeros(FT, dims)  # Ion momentum-randomizing collision frequency [1/s]
     # Kept apart because they scale differently with the ion's charge: the Coulomb
     # half carries Z², a charge-exchange or elastic hit on H₂ does not.
     νi_neutral::Matrix{FT} = zeros(FT, dims)  # ion-neutral part of νi_eff [1/s]
+    νi_birth::Matrix{FT} = zeros(FT, dims)    # the ions born at rest from the gas, a drag on the ion fluid: (m_born/m̄ᵢ) Z̄ ν_iz [1/s]
     νi_coulomb::Matrix{FT} = zeros(FT, dims)  # ion-ion part of νi_eff [1/s]: the mean ion's self-collision rate
     # the ion composition the refresh saw, record by record with a copy of its density: what the
     # species' Coulomb friction on each other is built from, not the densities as they move in a step
@@ -674,6 +682,7 @@ Fields include diffusion coefficients in different directions.
 
     # Spatially-varying diffusion coefficients
     Dpara::Matrix{FT} = zeros(FT, dims)  # Parallel diffusion coefficient [m²/s]
+    Dpara_cond::Matrix{FT} = zeros(FT, dims)  # what u∥ and Te conduct with along B, ≥ Dpara [m²/s]
     Dperp::Matrix{FT} = zeros(FT, dims)  # Perpendicular diffusion coefficient [m²/s]
 
     # turbulent diffusion coefficients
@@ -744,6 +753,12 @@ Fields include various matrices for solving different parts of the model.
     # (conduction for Te), (1/n)∇·(nD∇f), plus advection by the diffusive drift, −v_D·∇f with
     # v_D = −D∇n/n. `A_diffu_e`, ∇·(D∇f), equals the sum only at uniform ne.
     A_visc_drift_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    # The reflective ∇·D∇ with the parallel coefficient u∥ and Te conduct with
+    # (`transport.Dpara_cond`), limited like `A_diffu_e`; built only where it differs from it
+    # (`A_cond_e_active`), when `ue_Te_operators` adds the difference to `A_visc_drift_e`
+    # (`add_conduction_correction!`).
+    A_cond_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    A_cond_e_active::Bool = false
     div_ue::Matrix{FT} = zeros(FT, dims)
 
     # Basic differential operators (2nd-order central difference)

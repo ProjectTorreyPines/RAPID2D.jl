@@ -107,6 +107,28 @@ through the projection `|b̂·n̂|` in [`channel_ceiling`](@ref).
 """
 maxwellian_mean_speed(T_eV, m) = sqrt(8 * max(zero(T_eV), T_eV) * EE / (π * m))
 
+"""
+    sound_speed(Te_eV, Ti_eV, m_i, Z = 1) -> Float
+
+`c_s = √(e(Z Tₑ + Tᵢ)/mᵢ)` [m/s]: the speed of the electrons and ions moving together, held by
+the ambipolar field: the pair's pressure `nₑeTₑ + nᵢeTᵢ` over its mass density `nᵢmᵢ`, with
+`nₑ = Z nᵢ`. For a mixture, `mᵢ` is the density-weighted mean mass and `Z` the mean charge
+`Σ zₛnₛ/Σ nₛ`. It is the ambipolar pair's free-flight speed (its geometric ceiling);
+[`bohm_flux_mean_speed`](@ref) is what it carries across a surface.
+"""
+sound_speed(Te_eV, Ti_eV, m_i, Z = 1) = sqrt(max(zero(Te_eV), Z * Te_eV + Ti_eV) * EE / m_i)
+
+"""
+    bohm_flux_mean_speed(c_s) -> 4c_s
+
+The mean speed `v̄` whose one-sided flux `¼v̄n` is the Bohm flux `c_s n`: what the ambipolar pair
+carries across a surface, its flux ceiling and its wall. The pair does not cross a surface as a
+Maxwellian's one-way flux: the ambipolar field accelerates it to the sound speed by the sheath
+(the Bohm criterion), so it leaves at `c_s n`, four times `¼c_s n`. The ceilings take `¼v̄n`, so
+the ambipolar pair declares `v̄ = 4c_s` there.
+"""
+bohm_flux_mean_speed(c_s) = 4 * c_s
+
 # ─── The random-step vocabulary ──────────────────────────────────────────────
 #
 # Every geometric bound on a diffusivity here is `D = v̄·L/d`; only `d` differs, so
@@ -184,19 +206,26 @@ function inv_geometric_diffusivity(vm, L, model::RandomStepModel)
 end
 
 """
-    wall_step_ceiling(vm, Lc_forward, Lc_backward)
+    wall_step_ceiling(vm, L_c)
 
-The largest parallel diffusivity the geometry can carry: `vm·(Lf + Lb)/4`.
+The largest parallel diffusivity the geometry can carry, a random walk's `½vλ` at the free-flight
+speed `vm` (a Maxwellian's mean speed, the speed contract above; `c_s` for the ambipolar pair) with
+the largest step `λ = L_c/2`, `L_c` the connection length (`flf.Lc_tot`): `½vm·(L_c/2)`. The step is
+the mean over the two directions, the same for every node on a line (the SOL's midplane-to-target
+`πqR`). Not the one-way flux `¼v̄n` of the wall and the gradient ceiling.
 
-The two distances bound **disjoint halves of velocity space**, so they enter as
-an arithmetic mean under the along-axis `½` — not harmonically; they are not
-competing events. Symmetric lengths recover `½v̄L`. Either length `Inf` ⟹ that
-half is unbounded and the ceiling is absent; `vm = 0` or both lengths `0` ⟹ `0`.
+- On an open line `L_c = Lf + Lb`, end to end. The two distances bound **disjoint halves of
+  velocity space**, so they enter as an arithmetic mean under the along-axis `½`, not
+  harmonically: they are not competing events.
+- On a closed surface `L_c` is the connection length of one poloidal circuit, `∮ B/B_pol dl ≈ 2πqR`,
+  which each direction runs: a ring's farthest point is half a circuit away, `≈ πqR`, so the step
+  is bounded as on an open line of the same length.
+
+`L_c = Inf` ⟹ unbounded, the ceiling absent; `vm = 0` or `L_c = 0` ⟹ `0`.
 """
-function wall_step_ceiling(vm, Lc_forward, Lc_backward)
-    _check_step_inputs(vm, Lc_forward)
-    _check_step_inputs(vm, Lc_backward)
-    return geometric_diffusivity(vm, (Lc_forward + Lc_backward) / 2, AlongAxisStep())
+function wall_step_ceiling(vm, L_c)
+    _check_step_inputs(vm, L_c)
+    return geometric_diffusivity(vm, L_c / 2, AlongAxisStep())
 end
 
 """
@@ -571,6 +600,25 @@ function turbulent_ExB_channel(ERZ, B_tot, L_mixing, f_para, f_perp)
 end
 
 """
+    coupled_parallel_channel(vm_own, c_s, D_para, w)
+
+The parallel channel of a species that the ambipolar field couples to the others by the weight
+`w` (`ambipolar_weight`): the coefficient `D_para` (its own share and the ambipolar one, mixed
+by the caller) and what it delivers to a wall mixed alike, the species' own one-sided flux
+`¼v̄_own n` and the ambipolar pair's Bohm flux `c_s n` ([`bohm_flux_mean_speed`](@ref)). Its own
+speed `(1 − w) v̄_own + w c_s` carries `λ∥ = 2D∥/v`. At `w = 1` every species' parallel channel
+is the ambipolar pair's, so the wall takes their pairs at one speed. `v_perp = 0`: streaming along
+the field reaches no wall across it.
+"""
+function coupled_parallel_channel(vm_own, c_s, D_para, w)
+    v = @. (1 - w) * vm_own + w * c_s
+    FT = eltype(v)
+    λ = @. ifelse(v > 0, 2 * D_para / v, zero(FT))
+    vm = @. (1 - w) * vm_own + w * bohm_flux_mean_speed(c_s)
+    return DiffusionChannel(v, λ, zero.(v), zero.(v); vm_para = vm, vm_perp = zero.(v))
+end
+
+"""
     parallel_collisional_channel(vp_s, D_para)
 
 Collisional transport along `B`: `D∥ = ½·v²/ν`, so `λ∥ = 2D∥/v = v/ν`.
@@ -731,7 +779,7 @@ Two more edges, both outside anything a caller is expected to hit: `D` at or bel
 itself overflows to `Inf` there before `hypot` ever runs. And a negative `D`
 returns a *positive* value of the same magnitude `-D` would — `hypot` only ever
 sees `inv(D)` squared, so the sign is lost rather than propagated. Unreachable
-given `Dpara0 ≥ 0` and `Dpara_e_eff ≥ 0` upstream, but worth naming as a sign flip
+given `Dpara0`, `Dpara` and `Dpara_amb ≥ 0` upstream, but worth naming as a sign flip
 rather than assumed to be graceful degradation.
 
 `hypot` rather than `sqrt(a^2 + b^2)`: what actually arrives here is `D = Inf`, not

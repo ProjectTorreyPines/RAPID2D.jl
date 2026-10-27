@@ -40,8 +40,10 @@ end
 """
     _finalize_total_lengths!(flf) -> flf
 
-Totals are plain sums of the per-direction lengths, collapsed onto one direction only
-where BOTH terminations are `:closed` — the two directions then retraced one circuit.
+Totals are plain sums of the per-direction lengths, except where BOTH terminations are
+`:closed`: on a closed surface the two directions retraced one poloidal circuit, and the total
+is their mean, the circuit's connection length (≈ 2πqR, what `wall_step_ceiling` reads: a ring's
+farthest point is half of it away).
 The gate must be the termination pair, not `is_closed`: that flag is set by *either*
 direction, and a half-closed pair holds two different real measurements — collapsing
 there overwrote the backward one, and `Lpol_tot` feeds `L_mixing`. Per-direction `Lc`
@@ -56,7 +58,7 @@ function _finalize_total_lengths!(flf::FieldLineFollowingResult)
     for arr in (flf.Lpol_backward, flf.Lpol_tot)
         @. arr[both_closed] = flf.Lpol_forward[both_closed]
     end
-    @. flf.Lc_tot[both_closed] = flf.Lc_forward[both_closed]
+    @. flf.Lc_tot[both_closed] = (flf.Lc_forward[both_closed] + flf.Lc_backward[both_closed]) / 2
     return flf
 end
 

@@ -11,14 +11,17 @@
     """
     The bulk electron tensor `D_across 𝟙 + (D_along − D_across) b_pol b_polᵀ` on every node,
     isotropic where B_pol = 0, written over the plasma's and carried into the electron operators.
-    The refresh at every step's end rebuilds the plasma tensor (Bohm cannot be switched off), so
-    a run puts this one back before each solve with `tensor_keeper`.
+    u∥ and Te mix with it alone: they conduct with what the particles diffuse with, so no
+    conduction of their own is added along B. The refresh at every step's end rebuilds the plasma
+    tensor (Bohm cannot be switched off) and the conduction, so a run puts both back before each
+    solve with `tensor_keeper`.
     """
     function prescribe_aligned_tensor!(RP; D_along, D_across = 0.0)
         F, tp = RP.fields, RP.transport
         @. tp.DRR = D_across + (D_along - D_across) * F.bpol_R^2
         @. tp.DRZ = (D_along - D_across) * F.bpol_R * F.bpol_Z
         @. tp.DZZ = D_across + (D_along - D_across) * F.bpol_Z^2
+        tp.Dpara_cond .= tp.Dpara
         RAPID2D.cache_electron_operators!(RP)
         return RP
     end
@@ -31,6 +34,7 @@
             rp.transport.DRR .= DRR
             rp.transport.DRZ .= DRZ
             rp.transport.DZZ .= DZZ
+            rp.transport.Dpara_cond .= rp.transport.Dpara
             RAPID2D.cache_electron_operators!(rp)
             return nothing
         end
@@ -193,6 +197,16 @@ end
     pla.ne[inw] .*= 2 .+ sin.(vec(G.Z2D)[inw])
     n2 = vec(pla.ne)
     @test n2 .* (ue_Te_operators(RP).A_diffu * f) .+ f .* (A * n2) ≈ A * (n2 .* f) rtol = 1.0e-12
+    # where u∥ and Te conduct with more than the particles diffuse with, the difference along b̂
+    # is added to it as the conduction correction
+    tp = RP.transport
+    tp.Dpara_cond .= tp.Dpara .+ 1.0e3
+    RAPID2D.cache_electron_operators!(RP)
+    @test op.A_cond_e_active
+    M = RAPID2D.per_particle_operator!(similar(A), A, pla.ne; n_floor = 1.0)
+    RAPID2D.add_conduction_correction!(M, A, op.A_cond_e, pla.ne, G; n_floor = 1.0)
+    @test ue_Te_operators(RP).A_diffu.matrix.nzval == M.matrix.nzval
+    @test M.matrix.nzval != RAPID2D.per_particle_operator!(similar(A), A, pla.ne; n_floor = 1.0).matrix.nzval
 end
 
 @testitem "mixing along straight field lines: the column momentum converges to first order in Δt" setup = [PureMixingRun] begin

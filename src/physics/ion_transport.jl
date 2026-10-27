@@ -117,7 +117,7 @@ function ion_wall_albedo(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    ion_transport_operator(G, group, directions; faces, albedo, cross_terms) -> (A, v_absorb)
+    ion_transport_operator(G, group, directions; faces, albedo, cross_terms, limit_density, max_ratio) -> (A, v_absorb)
 
 Assemble the wall-aware `∇·(𝐃∇·)` a group of ion species will share, and the
 Robin coefficients that go with it.
@@ -132,13 +132,17 @@ reason this exists as a function rather than two calls at each site: a matrix
 assembled from one set of channels and a boundary condition from another is a
 mismatch nothing downstream can detect.
 
-Omitting `faces` gives the reflective operator and an empty coefficient vector.
+Omitting `faces` gives the reflective operator and an empty coefficient vector. With
+`limit_density`, the anti-diffusive pairs are limited at that density
+([`limit_antidiffusive_pairs!`](@ref)), as the electrons' are.
 """
 function ion_transport_operator(
         G::GridGeometry{FT}, group::IonTransportGroup{FT}, directions;
         faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
         albedo = zero(FT),
         cross_terms::Symbol = :drop,
+        limit_density::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
+        max_ratio::FT = FT(Inf),
     ) where {FT <: AbstractFloat}
     length(directions) == length(group.channels) || throw(
         ArgumentError(
@@ -162,15 +166,15 @@ function ion_transport_operator(
         )
     )
 
-    isnothing(faces) &&
-        return build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms), FT[]
-
-    v_absorb = wall_absorption_speeds(cwd, faces, albedo)
-    A = build_wall_diffusion_matrix(
-        G, D_RR, D_RZ, D_ZZ;
-        cross_terms = cross_terms, faces = faces, v_absorb = v_absorb
+    v_absorb = isnothing(faces) ? FT[] : wall_absorption_speeds(cwd, faces, albedo)
+    A = build_wall_diffusion_matrix!(
+        build_wall_pattern(G), G, D_RR, D_RZ, D_ZZ;
+        cross_terms, faces, v_absorb = isnothing(faces) ? nothing : v_absorb
     )
-    return A, v_absorb
+    # the electrons' pair limiter at their density, so the pairs a coupled step moves together
+    # see one operator
+    isnothing(limit_density) || limit_antidiffusive_pairs!(A, G, limit_density; max_ratio)
+    return dropzeros!(A.matrix), v_absorb
 end
 
 """
@@ -313,17 +317,12 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # logarithm). A species does not rub on itself — like collisions keep its
     # momentum — so the sum runs over the other species, and a probe the store does
     # not hold feels every one of them. The composition is the one the last refresh
-    # saw (`update_transport_quantities!`): one step's rates come from one state, as
-    # `νi_coulomb` does, not from densities moving within the step.
+    # saw (`update_transport_quantities!`): one step's rates come from one state, not
+    # from densities moving within the step.
     #
-    # The mean ion's self-collision rate `νi_coulomb` (NRL p.28, ν_i ∝ Z⁴μ^-½ n λ T^-3/2,
-    # from `update_coulomb_collision_parameters!`) is kept on top, carried by each
-    # species in proportion to its share of the ion fluid: with one species it is the
-    # whole Coulomb rate, as it has been, and a dilute species feels only its friction.
-    # It is not friction. It stands in for the damping of the ion fluid's common
-    # parallel motion, which no internal collision supplies — the common mode's
-    # DEFECT item in coulomb_relaxation_test.jl — until that motion has a closure of
-    # its own, and it leaves with it.
+    # The ion fluid's own self-collisions do not enter: they cannot slow its common
+    # parallel motion. That motion is the ambipolar pair's, carried by `Dpara_amb` for the
+    # share the ambipolar field couples (`ambipolar_weight`), below.
     #
     # Only the Coulomb half carries the pair's charges. An ion–neutral collision rate
     # goes as n₀σ√(T/m) (NRL p.39), so its contribution is species-independent
@@ -336,14 +335,12 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # not a shared D. See `internal/docs/src/details/impurity-transport-basics.md` §4.
     eps0, mp = RP.config.constants.eps0, RP.config.constants.mp
     own = store_identity(species)
-    n_s = zeros(FT, size(pla.ni))                        # the species' own density, none for a probe
-    n_I = zeros(FT, size(pla.ni))                        # the ions' total, both as the refresh saw them
+    n_s = zeros(FT, size(pla.ni))                        # the species' own density as the refresh saw it, none for a probe
     for (r, n) in zip(tp.ion_refresh_records, tp.ion_n_refresh)
         store_identity(r) == own && (n_s .= n)
-        n_I .+= n
     end
     μ_s = species.mass / mp
-    ν_s = @. tp.νi_neutral + ifelse(n_I > zero(FT), n_s / n_I, zero(FT)) * tp.νi_coulomb
+    ν_s = tp.νi_neutral .+ tp.νi_birth               # the gas's drag, the births from it at rest included
     if RP.flags.Coulomb_Collision
         for (r, n_t) in zip(tp.ion_refresh_records, tp.ion_n_refresh)
             store_identity(r) == own && continue
@@ -373,15 +370,13 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # is the PARALLEL wall distance from the trace, not `L_mixing` (poloidal, ~60×
     # shorter; it now serves the turbulent channel alone — see
     # internal/docs/src/notes/TODO/L-mixing-serves-two-lengths.md).
-    D_para = @. min(D0, wall_step_ceiling(vm_s, RP.flf.Lc_forward, RP.flf.Lc_backward))
-    # The channel carries `vm_s` as its own speed as well: with D the primitive,
-    # λ∥ = 2D∥/vm is a derived quantity and the bookkeeping speed no longer has a
-    # convention of its own to disagree with the wall's.
-    λ_para = @. ifelse(vm_s > 0, 2 * D_para / vm_s, zero(FT))
-    collisional = DiffusionChannel(
-        vm_s, λ_para, zero.(vm_s), zero.(vm_s);
-        vm_para = vm_s, vm_perp = zero.(vm_s)
-    )
+    D_own = @. min(D0, wall_step_ceiling(vm_s, RP.flf.Lc_tot))
+    # The species' own share and the ambipolar one, as the electrons mix theirs
+    # (`update_transport_quantities!`), and the wall speed mixed alike. The channel carries
+    # its wall speed as its own speed as well: with D the primitive, λ∥ = 2D∥/v is derived.
+    w = pla.ambipolar_weight
+    D_para = @. (one(FT) - w) * D_own + w * tp.Dpara_amb
+    collisional = coupled_parallel_channel(vm_s, sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean, mean_ion_charge(RP)), D_para, w)
 
     # `bohm_charge_scaling = false` hands the channel Z = 1 instead of the species
     # charge, so D⊥ loses its 1/Z and every species shares the textbook Bohm value.
@@ -604,12 +599,16 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
 
     turb = shared_turbulent_channel(RP)
+    pair_limiter = RP.flags.limit_antidiffusive_pairs
     per_species = [ion_transport_channels(RP, sp, turb) for sp in tp.ion_species]
     dirs = ion_channel_directions(RP)
     weights = [ion_plane(pla, slot) for slot in RP.store_layout.transport_slots]   # the densities, from the store
 
     ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
-        A, v_absorb = ion_transport_operator(G, group, dirs; faces = faces, albedo = albedo)
+        A, v_absorb = ion_transport_operator(
+            G, group, dirs; faces, albedo,
+            limit_density = pair_limiter.state ? RP.prev_n : nothing, max_ratio = FT(pair_limiter.factor),
+        )
         return (group, isnothing(A_conv) ? A : A - A_conv, v_absorb .+ v_conv)
     end
     return ops, faces, dirs
@@ -962,6 +961,15 @@ function ion_mean!(out::AbstractMatrix{FT}, RP::RAPID{FT}, f) where {FT <: Abstr
     end
     return out
 end
+
+"""
+    mean_ion_charge(RP) -> Matrix
+
+The electrons each ion brings on average, `Z̄ = Σ zₛnₛ/Σ nₛ = nₑ/Σ nₛ`, node by node from the
+densities as they are; the first species' charge where there are no ions. With one species it
+is that species' charge exactly.
+"""
+mean_ion_charge(RP::RAPID{FT}) where {FT <: AbstractFloat} = ion_mean!(similar(RP.plasma.ni), RP, (z, m) -> z)
 
 """
     slave_ions_to_electrons!(RP) -> RP

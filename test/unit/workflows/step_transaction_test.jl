@@ -81,9 +81,9 @@ end
             :t_start_s, :t_end_s, :dt, :tElap, :flf, :snap0D_path, :snap2D_path, :species, :store_layout,
         ),
         :transport => (
-            :dims, :Dpara0, :Dperp0, :Dpara_e_coll, :Dpara_i_coll, :Dpara_amb, :Dpara_e_eff, :νi_eff,
-            :νi_neutral, :νi_coulomb, :ion_refresh_records, :ion_n_refresh, :ion_species, :ion_solvers,
-            :ion_N, :ion_S, :Dpara, :Dperp, :L_mixing, :Dpol_turb,
+            :dims, :Dpara0, :Dperp0, :Dpara_e_coll, :Dpara_i_coll, :ν_amb, :Dpara_amb, :u_para_amb_gradT, :νi_eff,
+            :νi_neutral, :νi_birth, :νi_coulomb, :ion_refresh_records, :ion_n_refresh, :ion_species, :ion_solvers,
+            :ion_N, :ion_S, :Dpara, :Dpara_cond, :Dperp, :L_mixing, :Dpol_turb,
             :DRR_turb, :DRZ_turb, :DZZ_turb, :DRR, :DRZ, :DZZ, :CTRR, :CTRZ, :CTZZ, :wall_faces,
         ),
         :reactions => (:dims,),
@@ -179,7 +179,8 @@ end
     refreshed() = deepcopy(
         (
             RP.transport.Dpara, RP.transport.Dperp, RP.transport.DRR, RP.transport.DRZ, RP.transport.DZZ,
-            RP.transport.CTRR, RP.transport.CTRZ, RP.transport.CTZZ, RP.transport.νi_eff, RP.transport.Dpara_e_eff,
+            RP.transport.CTRR, RP.transport.CTRZ, RP.transport.CTZZ, RP.transport.νi_eff, RP.transport.Dpara_amb,
+            RP.transport.u_para_amb_gradT,
             RP.transport.L_mixing, OP.A_conv_e, OP.A_diffu_e, OP.div_ue, OP.ΔGS, OP.∂R, OP.∂Z,
         )
     )
@@ -348,7 +349,7 @@ end
     end
     ledgers(rp) = deepcopy(
         (
-            rp.diagnostics.Ntracker, rp.diagnostics.near_vacuum, rp.diagnostics.ampere_picard,
+            rp.diagnostics.Ntracker, rp.diagnostics.near_vacuum, rp.diagnostics.ampere_picard, rp.diagnostics.ambipolar_exchange,
             rp.closed_surface.ledger, rp.vertical_field_control.energy, rp.reactions.counts, rp.reactions.published,
         )
     )

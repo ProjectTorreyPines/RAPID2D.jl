@@ -122,8 +122,12 @@ function surface_constraint_terms(RP::RAPID{FT}, θu::Real) where {FT <: Abstrac
     Bp = pressure_operator(b, log.(max.(pla.ne, CLOSED_SURFACE_N_FLOOR)))
     extra = nothing
     if RP.flags.Include_ud_pressure_term
-        a_p = calculate_electron_acceleration_by_pressure(RP)
-        F_p = -(Bp * (ee .* pla.Te_eV[b.nodes])) ./ me
+        # the share u∥ carries, (1 − w_amb), in both: the nodal force the plain rows hold and the
+        # Galerkin force that replaces it. w_amb is one value on the closed lines (1 with the
+        # ambipolar coupling, 0 without), so the knots take its mean over the domain.
+        a_p = ue_pressure_acceleration(RP)
+        keep = sum(b.V[sel] .* (one(FT) .- pla.ambipolar_weight[cu])) / sum(b.V[sel])
+        F_p = -keep .* (Bp * (ee .* pla.Te_eV[b.nodes])) ./ me
         extra = dt .* (F_p .- knot_w_in' * (b.V[sel] .* RP.fields.Btot[cu] .* a_p[cu]))
     end
     return (; cu, shift = -θu * dt .* ν_iz, ionization = (1 - θu) * dt .* ν_iz .* pla.ue_para[cu], extra, Bp)

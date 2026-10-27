@@ -35,7 +35,7 @@ const STEP_STATE_RECORDS = (:plasma, :fields, :vertical_field_control)
 const STEP_STATE_FIELDS = (
     transport = (),        # its ion columns are gathered from the species store (plasma) at each solve
     reactions = (:counts, :published),
-    diagnostics = (:Ntracker, :ampere_picard, :near_vacuum),
+    diagnostics = (:Ntracker, :ampere_picard, :near_vacuum, :ambipolar_exchange),
     closed_surface = (:solve, :ledger),
     # the circuit matrices with the step and θ they were built for: the coils' last step, over
     # which their induced field is read

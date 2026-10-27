@@ -27,8 +27,9 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         wall_divergence!(op.div_ue, G, pla.ueR, pla.ueZ)
     else
         # SurfaceFluxConstraint: on every face of the constraint domain the density moves with the
-        # perpendicular drift only; the parallel flux there is the stream-function flux, which
-        # leaves every control volume as it found it
+        # drifts besides u∥, the perpendicular one and the ambipolar thermal drift u_T b̂ (the ions
+        # take it alike, so the pair stays together); u∥'s flux there is the stream-function flux,
+        # which leaves every control volume as it found it
         F = RP.fields
         mask = falses(G.NR, G.NZ)
         mask[RP.closed_surface.basis.nodes] .= true
@@ -46,12 +47,27 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pair_limiter = RP.flags.limit_antidiffusive_pairs
     RP.diagnostics.near_vacuum.limited_pairs = pair_limiter.state ?
         limit_antidiffusive_pairs!(op.A_diffu_e, G, pla.ne; max_ratio = pair_limiter.factor) : 0
+    # what u∥ and Te conduct with, where it is not what the particles diffuse with: the same
+    # tensor with `Dpara_cond` along b̂, limited alike
+    op.A_cond_e_active = tp.Dpara_cond != tp.Dpara
+    if op.A_cond_e_active
+        F = RP.fields
+        @with_pool pool begin
+            DRR, DRZ, DZZ = acquire!(pool, FT, G.NR, G.NZ), acquire!(pool, FT, G.NR, G.NZ), acquire!(pool, FT, G.NR, G.NZ)
+            @. DRR = tp.DRR + (tp.Dpara_cond - tp.Dpara) * F.bR^2
+            @. DRZ = tp.DRZ + (tp.Dpara_cond - tp.Dpara) * F.bR * F.bZ
+            @. DZZ = tp.DZZ + (tp.Dpara_cond - tp.Dpara) * F.bZ^2
+            build_wall_diffusion_matrix!(op.A_cond_e, G, DRR, DRZ, DZZ; cross_terms = :drop)
+            nothing
+        end
+        pair_limiter.state && limit_antidiffusive_pairs!(op.A_cond_e, G, pla.ne; max_ratio = pair_limiter.factor)
+    end
     return RP
 end
 
 # The electron operators must have been allocated on the wall pattern by `initialize!`.
 function check_electron_operators(op::Operators)
-    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_visc_drift_e, op.A_LHS)) || throw(
+    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_visc_drift_e, op.A_cond_e, op.A_LHS)) || throw(
         ArgumentError(
             "RP.operators was not built by initialize!: the electron in-wall operators " *
                 "are not allocated on the wall pattern"
@@ -124,8 +140,11 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # u∥ and Te ride the particles the density diffusion moves. One matrix holds the viscosity
     # (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
     # A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
-    # the second (electron-diffusive-transport.md §4).
+    # the second (electron-diffusive-transport.md §4). Where they conduct with more than the
+    # particles diffuse with, the difference is added as symmetric pair transfers.
     per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, pla.ne; n_floor = FT(1.0))
+    op.A_cond_e_active &&
+        add_conduction_correction!(op.A_visc_drift_e, op.A_diffu_e, op.A_cond_e, pla.ne, RP.G; n_floor = FT(1.0))
     return (A_adv = op.A_adv_e, A_diffu = op.A_visc_drift_e, div_u)
 end
 

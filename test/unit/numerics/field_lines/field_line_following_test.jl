@@ -197,10 +197,10 @@ end
     circuit_pol = 2π * 0.3
     @test isapprox(flf.Lpol_tot[i, j], circuit_pol; rtol = 5.0e-2)
     @test isapprox(flf.Lc_forward[i, j], circuit_pol * sqrt(1.09) / 0.3; rtol = 5.0e-2)
-    # Both directions carry the full circuit — that is what makes `wall_step_ceiling`
-    # return ¼v̄(L + L) = ½v̄L, the same form a symmetric pair of walls produces.
+    # Both directions carry the full circuit...
     @test flf.Lc_backward[i, j] == flf.Lc_forward[i, j]
-    # ...while the TOTAL names the length of the line, and a line is one circuit long.
+    # ...while the TOTAL, their mean, names the length of the line: one circuit, which
+    # `wall_step_ceiling` reads as ¼v̄L, a ring's farthest point being half a circuit away.
     @test flf.Lc_tot[i, j] == flf.Lc_forward[i, j]
     @test flf.Lpol_tot[i, j] == flf.Lpol_forward[i, j]
 end
@@ -368,7 +368,7 @@ end
 
     RAPID2D._finalize_total_lengths!(flf)
 
-    # Both-closed: one circuit, not two.
+    # Both-closed: one circuit (the mean of the two), not two.
     @test flf.Lpol_tot[1, 1] == 2.0
     @test flf.Lc_tot[1, 1] == 20.0
 

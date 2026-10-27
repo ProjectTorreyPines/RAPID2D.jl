@@ -304,9 +304,9 @@ not resolve:
   RZ plane (Yoo et al. 2018);
 - `turbulence_weight = min(1, √(n/nc_perp))`, the onset of the turbulent E×B mixing; zero without
   `charge_sheet_field` or `turb_ExB_mixing`;
-- `ambipolar_weight`, the common-mode coupling of the species' parallel transport: 1 on closed
-  lines, `min(1, √(n/nc_para))` on open ones; zero without `ambipolar_coupling`. Recorded; nothing
-  reads it yet.
+- `ambipolar_weight`, the ambipolar coupling of the species' parallel transport, in [0, 1]: 1 on closed
+  lines, `min(1, √(n/nc_para))` on open ones; zero without `ambipolar_coupling`. It splits the
+  electron pressure drive between u∥ and the ambipolar diffusion ([`electron_pressure_shares`](@ref)).
 
 Returns the two fields from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets'
 field:
@@ -334,8 +334,10 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # term2 = my_sigmf(tan_θB_norm, FT(5.0), FT(0.4))
     # pla.γ_shape_fac = @. term1 * term2
 
+    # γ₀, the shape factor at the mean B_pol (`config.charge_sheet_shape_factor`)
+    γ0 = RP.config.charge_sheet_shape_factor
     if Bpol_mean > 0
-        @. pla.γ_shape_fac = min(FT(1.0), 0.65 * (F.Bpol / Bpol_mean))
+        @. pla.γ_shape_fac = min(FT(1.0), γ0 * (F.Bpol / Bpol_mean))
     else
         fill!(pla.γ_shape_fac, zero(FT))
     end
@@ -344,7 +346,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # 2. What the sheets would need, and what they can hold
     # =========================================================================
     # - ERZ_req = |E∥,drive| B/Bpol: the RZ field whose parallel part cancels the driven E∥
-    # - ERZ_target = γ ERZ_req: shaped by γ; where Bpol vanishes, its limit 0.65 |E∥,drive| B/⟨Bpol⟩
+    # - ERZ_target = γ ERZ_req: shaped by γ; where Bpol vanishes, its limit γ₀ |E∥,drive| B/⟨Bpol⟩
     # - E_Debye = √(n e Tₑ/ε₀): the most the local plasma holds
     EM = RP.flags.E_para_induction
     E_para_drive = if _vertical_field_control_on(RP)
@@ -355,7 +357,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     ERZ_target = if Bpol_mean > 0
         @. ifelse(
             F.Bpol > 0, pla.γ_shape_fac * (abs(E_para_drive) * (F.Btot / F.Bpol)),
-            0.65 * abs(E_para_drive) * F.Btot / Bpol_mean
+            γ0 * abs(E_para_drive) * F.Btot / Bpol_mean
         )
     else
         zero(E_para_drive)
@@ -369,9 +371,9 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # =========================================================================
     # E_Debye reaches ERZ_target at nc_para: none where the plasma is cold, any where nothing is needed
     @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * ERZ_target^2 / (ee * pla.Te_eV))
-    # Bpol/γ = max(Bpol, ⟨Bpol⟩/0.65), finite where Bpol vanishes
+    # Bpol/γ = max(Bpol, ⟨Bpol⟩/γ₀), finite where Bpol vanishes
     @. pla.nc_perp = ifelse(
-        closed | (Bpol_mean <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_mean / 0.65))^2
+        closed | (Bpol_mean <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_mean / γ0))^2
     )
 
     # =========================================================================
