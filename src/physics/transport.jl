@@ -189,14 +189,15 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
     # The rest of the ambipolar pressure drive, down the temperature gradient: the pair's
     # pressure is nᵢe(Z̄Tₑ + Tᵢ), so Γ = −D_amb (∇∥n + n ∇∥ln(Z̄Tₑ + Tᵢ)) at a uniform
-    # composition. D_amb carries the first part, this drift along b̂ the second, for both
-    # species alike, at most at the sound speed. The temperature on and beyond the wall is
+    # composition. D_amb carries the first part as diffusion; the second, the thermodiffusion
+    # part in proportion to n, is this drift along b̂ (the ambipolar temperature-gradient drift),
+    # for both species alike, at most at the sound speed. The temperature on and beyond the wall is
     # extrapolated from inside: no solve reaches that band, which keeps the room temperature it
     # started with, and a gradient read across the wall would drive the pair into it at c_s.
     T_pair = @. Z_mean * pla.Te_eV + pla.Ti_eV
     extrapolate_field_to_boundary_nodes!(RP.G, T_pair)
     ∇para_lnT = calculate_para_grad_of_scalar_F(RP, log.(max.(T_pair, floatmin(FT))); upwind = false)
-    @. tp.u_para_thermal = -w * clamp(tp.Dpara_amb * ∇para_lnT, -c_s, c_s)
+    @. tp.u_para_amb_gradT = -w * clamp(tp.Dpara_amb * ∇para_lnT, -c_s, c_s)
 
     # What u∥ and Te conduct with: the electrons' own collisional limb under their own
     # ceilings. The ions' friction holds back the electrons' particle flux, through the
@@ -251,9 +252,9 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         pla.ueϕ .= pla.ue_para .* RP.fields.bϕ
         pla.ueZ .= pla.ue_para .* RP.fields.bZ
 
-        # the ambipolar thermal drift, the electrons' and the ions' alike
-        @. pla.ueR += tp.u_para_thermal * RP.fields.bR
-        @. pla.ueZ += tp.u_para_thermal * RP.fields.bZ
+        # the ambipolar temperature-gradient drift, the electrons' and the ions' alike
+        @. pla.ueR += tp.u_para_amb_gradT * RP.fields.bR
+        @. pla.ueZ += tp.u_para_amb_gradT * RP.fields.bZ
 
         # Add ExB and diamagnetic drifts if enabled
         if RP.flags.mean_ExB
@@ -276,8 +277,8 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         pla.uiϕ .= pla.ui_para .* RP.fields.bϕ
         pla.uiZ .= pla.ui_para .* RP.fields.bZ
 
-        @. pla.uiR += tp.u_para_thermal * RP.fields.bR
-        @. pla.uiZ += tp.u_para_thermal * RP.fields.bZ
+        @. pla.uiR += tp.u_para_amb_gradT * RP.fields.bR
+        @. pla.uiZ += tp.u_para_amb_gradT * RP.fields.bZ
 
         # Add ExB drift for ions too if enabled
         if RP.flags.mean_ExB

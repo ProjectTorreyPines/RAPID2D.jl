@@ -222,22 +222,22 @@ end
     extrapolate_field_to_boundary_nodes!(G, T)            # read inside the wall
     ∇lnT = calculate_para_grad_of_scalar_F(RP, log.(T); upwind = false)
     c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean)
-    @test tp.u_para_thermal[inw] ≈ (@. -clamp(tp.Dpara_amb * ∇lnT, -c_s, c_s))[inw]
-    @test any(!iszero, tp.u_para_thermal[inw])
+    @test tp.u_para_amb_gradT[inw] ≈ (@. -clamp(tp.Dpara_amb * ∇lnT, -c_s, c_s))[inw]
+    @test any(!iszero, tp.u_para_amb_gradT[inw])
     # the electrons and the ions move with it alike: no current
     @test pla.ueR .- pla.ue_para .* F.bR ≈ pla.uiR .- pla.ui_para .* F.bR
     @test pla.ueZ .- pla.ue_para .* F.bZ ≈ pla.uiZ .- pla.ui_para .* F.bZ
     # uncoupled, or isothermal, none
     fill!(pla.ambipolar_weight, 0.0)
     update_transport_quantities!(RP)
-    @test all(iszero, tp.u_para_thermal)
+    @test all(iszero, tp.u_para_amb_gradT)
     fill!(pla.ambipolar_weight, 1.0)
     fill!(pla.Te_eV, 5.0)
     update_transport_quantities!(RP)
-    @test all(iszero, tp.u_para_thermal[inw])
+    @test all(iszero, tp.u_para_amb_gradT[inw])
 end
 
-@testitem "ambipolar: its thermal drift reads the temperature inside the wall, whatever the band outside holds" setup = [CoulombReference] tags = [:physics] begin
+@testitem "ambipolar: its temperature-gradient drift reads the temperature inside the wall, whatever the band outside holds" setup = [CoulombReference] tags = [:physics] begin
     RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
     pla, tp, G = RP.plasma, RP.transport, RP.G
     inw, band = G.nodes.in_wall_nids, G.nodes.on_out_wall_nids
@@ -247,16 +247,96 @@ end
     pla.Te_eV[band] .= room
     pla.Ti_eV[band] .= room
     update_transport_quantities!(RP)
-    @test all(iszero, tp.u_para_thermal[inw])
+    @test all(iszero, tp.u_para_amb_gradT[inw])
     # a gradient inside drives the same drift for any band
     @. pla.Te_eV = 5.0 * (1 + 0.5 * G.Z2D)
     pla.Te_eV[band] .= room
     update_transport_quantities!(RP)
-    u_room = tp.u_para_thermal[inw]
+    u_room = tp.u_para_amb_gradT[inw]
     @test any(!iszero, u_room)
     pla.Te_eV[band] .= 50.0
     update_transport_quantities!(RP)
-    @test tp.u_para_thermal[inw] == u_room
+    @test tp.u_para_amb_gradT[inw] == u_room
+end
+
+@testitem "ambipolar: its temperature-gradient drift scales with the coupling and saturates at w c_s" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: sound_speed
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, tp, G = RP.plasma, RP.transport, RP.G
+    inw = G.nodes.in_wall_nids
+    @. pla.Te_eV = 5.0 * (1 + 0.5 * G.Z2D)
+    # a coefficient far above what the gradient allows at the sound speed: at a uniform density
+    # the flux ceiling does not act, and the connection length is put out of reach, so the clamp binds
+    tp.Dpara0 = 1.0e12
+    RP.flf.Lc_tot .= 1.0e9
+    fill!(pla.ambipolar_weight, 1.0)
+    update_transport_quantities!(RP)
+    c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean)
+    u_full = tp.u_para_amb_gradT[inw]
+    @test abs.(u_full) ≈ c_s[inw]
+    # the clamp acts on the pair's drift, the weight after it: half coupled, half the drift, w c_s
+    fill!(pla.ambipolar_weight, 0.5)
+    update_transport_quantities!(RP)
+    @test tp.u_para_amb_gradT[inw] ≈ 0.5 .* u_full
+end
+
+@testitem "ambipolar: the ions' temperature drives the pair alone, and so does a varying mean charge" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: calculate_para_grad_of_scalar_F, sound_speed, extrapolate_field_to_boundary_nodes!, mean_ion_charge
+    MHE = 4.002602 * 1.6605390666e-27
+    "The drift the pair's temperature Z̄Tₑ + Tᵢ gives, read as the closure reads it."
+    function expected_drift(RP)
+        pla, tp = RP.plasma, RP.transport
+        Z = mean_ion_charge(RP)
+        T = @. Z * pla.Te_eV + pla.Ti_eV
+        extrapolate_field_to_boundary_nodes!(RP.G, T)
+        ∇lnT = calculate_para_grad_of_scalar_F(RP, log.(T); upwind = false)
+        c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, pla.mi_mean, Z)
+        return (@. -clamp(tp.Dpara_amb * ∇lnT, -c_s, c_s)), ∇lnT
+    end
+    # uniform Tₑ, a gradient of Tᵢ alone: the pair flows down it
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, tp, G = RP.plasma, RP.transport, RP.G
+    inw = G.nodes.in_wall_nids
+    fill!(pla.ambipolar_weight, 1.0)
+    @. pla.Ti_eV = 1.0 * (1 + 0.5 * G.Z2D)
+    update_transport_quantities!(RP)
+    u, ∇lnT = expected_drift(RP)
+    @test tp.u_para_amb_gradT[inw] ≈ u[inw]
+    @test any(!iszero, tp.u_para_amb_gradT[inw])
+    @test all(<=(0), tp.u_para_amb_gradT[inw] .* ∇lnT[inw])
+    # uniform temperatures, the He²⁺ share varying at a uniform nₑ = n(H₂⁺) + 2 n(He²⁺): the mean
+    # charge per ion, and with it the pair's pressure per ion, varies, and drives the drift alone
+    RP = uniform_box([("H2", MH2, 1, 0.6e17), ("He2", MHE, 2, 0.2e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, tp, G = RP.plasma, RP.transport, RP.G
+    fill!(pla.ambipolar_weight, 1.0)
+    n_He = @. 0.2e17 * (1 + 0.5 * G.Z2D)
+    pla.n_ions[2] .= n_He
+    @. pla.ni = 1.0e17 - 2 * n_He
+    update_transport_quantities!(RP)
+    u, _ = expected_drift(RP)
+    @test tp.u_para_amb_gradT[inw] ≈ u[inw]
+    @test any(!iszero, tp.u_para_amb_gradT[inw])
+end
+
+@testitem "ambipolar: at a constant pair pressure its density diffusion and its temperature-gradient drift cancel" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: calculate_para_grad_of_scalar_F
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, tp, G = RP.plasma, RP.transport, RP.G
+    fill!(pla.ambipolar_weight, 1.0)
+    # n (Tₑ + Tᵢ) uniform: the pair's pressure pushes nothing, Γ = −(D/T) ∇∥(n T) = 0
+    @. pla.Te_eV = 5.0 * (1 + 0.5 * G.Z2D)
+    @. pla.ne = 1.0e17 * 6.0 / (pla.Te_eV + pla.Ti_eV)
+    pla.ni .= pla.ne
+    update_transport_quantities!(RP)
+    ∇n = calculate_para_grad_of_scalar_F(RP, pla.ne; upwind = false)
+    # the nodes whose stencil stays inside the wall
+    inw = Set(G.nodes.in_wall_nids)
+    inner = [k for k in G.nodes.in_wall_nids if all(((k + di + dj * G.NR) in inw) for di in -1:1, dj in -1:1)]
+    density_part = (.-tp.Dpara_amb .* ∇n)[inner]
+    temperature_part = (pla.ne .* tp.u_para_amb_gradT)[inner]
+    @test maximum(abs, density_part) > 0
+    # to the centred differences' truncation of ∇n/n + ∇ln T = ∇ln(nT)
+    @test maximum(abs, density_part .+ temperature_part) <= 1.0e-2 * maximum(abs, density_part)
 end
 
 @testitem "ambipolar: the pair's pressure and drag carry the electrons each ion brings, Z̄, and so does its sound speed at the wall" setup = [CoulombReference] tags = [:physics] begin

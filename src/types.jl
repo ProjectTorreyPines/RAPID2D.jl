@@ -657,7 +657,7 @@ Fields include diffusion coefficients in different directions.
     Dpara_i_coll::Matrix{FT} = zeros(FT, dims)  # the bulk ions' on the gas and their births, Tᵢ/(mᵢ(ν_in + ν_birth)) [m²/s]
     ν_amb::Matrix{FT} = zeros(FT, dims)  # the ambipolar pair's drag rate per ion mass, (Z̄mₑν_en' + m̄ᵢ(ν_in + ν_birth))/m̄ᵢ [1/s]
     Dpara_amb::Matrix{FT} = zeros(FT, dims)  # ambipolar, both species alike: c_s²/ν_amb under the sound speed's ceilings [m²/s]
-    u_para_thermal::Matrix{FT} = zeros(FT, dims)  # the ambipolar drift along b̂ down ∇ln(Z̄Tₑ+Tᵢ), both species alike [m/s]
+    u_para_amb_gradT::Matrix{FT} = zeros(FT, dims)  # the ambipolar temperature-gradient drift along b̂, −w D_amb ∇∥ln(Z̄Tₑ+Tᵢ): the thermodiffusion part of the pair's pressure flux, both species alike [m/s]
     νi_eff::Matrix{FT} = zeros(FT, dims)  # Ion momentum-randomizing collision frequency [1/s]
     # Kept apart because they scale differently with the ion's charge: the Coulomb
     # half carries Z², a charge-exchange or elastic hit on H₂ does not.
