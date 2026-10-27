@@ -513,7 +513,7 @@ end
 
 # ── One assembly ──────────────────────────────────────────────────────────────
 #
-# Every diffusion operator of a run is assembled through `assemble_anisotropic_diffusion!` by the
+# Every anisotropic diffusion operator of a run is assembled through `assemble_anisotropic_diffusion!` by the
 # run's `AnisotropicDiscretization`: `NinePoint` is the stencil, `LimitedNinePoint` the stencil with
 # its anti-diffusive pairs limited where the density is not resolved.
 

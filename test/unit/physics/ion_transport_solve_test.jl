@@ -118,7 +118,7 @@ end
     group = IonTransportGroup([1, 2], [ch1, ch2])
     dirs = [(bR, bZ), (ones(G.NR, G.NZ), zeros(G.NR, G.NZ))]
 
-    A, v_abs = ion_transport_operator(G, group, dirs; faces = faces, albedo = 0.3)
+    A, v_abs = ion_transport_operator(G, group, dirs; discretization = NinePoint(), faces = faces, albedo = 0.3)
 
     cwd = [(group.channels[m], dirs[m]...) for m in 1:2]
     D_RR, D_RZ, D_ZZ = total_tensor(cwd)
@@ -129,11 +129,11 @@ end
     @test v_abs ≈ wall_absorption_speeds(cwd, faces, 0.3)
 
     # with no wall given, the operator is the reflective one
-    A_refl, v_none = ion_transport_operator(G, group, dirs)
+    A_refl, v_none = ion_transport_operator(G, group, dirs; discretization = NinePoint())
     @test A_refl == build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ)
     @test isempty(v_none)
 
-    @test_throws ArgumentError ion_transport_operator(G, group, dirs[1:1])
+    @test_throws ArgumentError ion_transport_operator(G, group, dirs[1:1]; discretization = NinePoint())
 end
 
 @testitem "A batch solve is the sequential solve, one factorization apart" setup = [IonGrid] begin
@@ -147,7 +147,7 @@ end
     bR, bZ = oblique_b(G)
     ch = both_legs(G)
     group = IonTransportGroup([1, 2, 3], [ch])
-    A, v_abs = ion_transport_operator(G, group, [(bR, bZ)]; faces = faces, albedo = 0.4)
+    A, v_abs = ion_transport_operator(G, group, [(bR, bZ)]; discretization = NinePoint(), faces = faces, albedo = 0.4)
 
     Ng = G.NR * G.NZ
     inw = G.nodes.in_wall_nids
@@ -188,7 +188,7 @@ end
     bR, bZ = oblique_b(G)
     ch = both_legs(G)
     group = IonTransportGroup([1, 3], [ch])          # species 2 belongs elsewhere
-    A, _ = ion_transport_operator(G, group, [(bR, bZ)])
+    A, _ = ion_transport_operator(G, group, [(bR, bZ)]; discretization = NinePoint())
 
     Ng = G.NR * G.NZ
     N = zeros(Ng, 3)
@@ -214,7 +214,7 @@ end
     bR, bZ = oblique_b(G)
     ch = both_legs(G)
     group = IonTransportGroup([1, 2], [ch])
-    A, _ = ion_transport_operator(G, group, [(bR, bZ)]; faces = faces, albedo = 1.0)
+    A, _ = ion_transport_operator(G, group, [(bR, bZ)]; discretization = NinePoint(), faces = faces, albedo = 1.0)
 
     Ng = G.NR * G.NZ
     inw = G.nodes.in_wall_nids
@@ -252,7 +252,7 @@ end
     Jv = vec(G.Jacob)
 
     function remaining(albedo)
-        A, _ = ion_transport_operator(G, group, [(bR, bZ)]; faces = faces, albedo = albedo)
+        A, _ = ion_transport_operator(G, group, [(bR, bZ)]; discretization = NinePoint(), faces = faces, albedo = albedo)
         N = zeros(Ng, 1)
         N[inw, 1] .= 1.0e16
         start = sum(Jv .* N[:, 1])
@@ -306,7 +306,7 @@ end
     function evolve(policy)
         N = copy(n0)
         for g in ion_transport_groups(policy, per_species, w)
-            A, _ = ion_transport_operator(G, g, dirs; faces = faces, albedo = 0.0)
+            A, _ = ion_transport_operator(G, g, dirs; discretization = NinePoint(), faces = faces, albedo = 0.0)
             solver = SparseLUSolver{Float64}()
             for _ in 1:20
                 solve_ion_group!(N, g, A, solver, 1.0e-6)

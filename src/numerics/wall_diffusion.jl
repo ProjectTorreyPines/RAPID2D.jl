@@ -20,18 +20,6 @@ limited, 0 when it limits none.
 """
 function assemble_anisotropic_diffusion!(
         A::DiscretizedOperator{FT}, G::GridGeometry{FT},
-        D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT}, ::NinePoint;
-        n::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
-        faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
-        v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
-        cross_terms::Symbol = :drop,
-    ) where {FT <: AbstractFloat}
-    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
-    return 0
-end
-
-function assemble_anisotropic_diffusion!(
-        A::DiscretizedOperator{FT}, G::GridGeometry{FT},
         D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT},
         discretization::LimitedNinePoint;
         n::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
@@ -43,6 +31,18 @@ function assemble_anisotropic_diffusion!(
         throw(ArgumentError("assemble_anisotropic_diffusion!: LimitedNinePoint needs the density its limiter reads (`n`)"))
     build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
     return limit_antidiffusive_pairs!(A, G, n; max_ratio = FT(discretization.max_ratio))
+end
+
+function assemble_anisotropic_diffusion!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT},
+        D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT}, ::NinePoint;
+        n::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
+        faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
+        v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
+        cross_terms::Symbol = :drop,
+    ) where {FT <: AbstractFloat}
+    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
+    return 0
 end
 
 """

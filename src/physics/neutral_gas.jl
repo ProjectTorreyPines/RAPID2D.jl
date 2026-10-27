@@ -214,9 +214,8 @@ uniform neighbour test here produces the same matrix.
 
 **Isotropic, so its own builder.** The anisotropic operators' nine-point kernel
 ([`assemble_anisotropic_diffusion!`](@ref)) reduces to this stencil at `D_RZ = 0`, but builds
-slower (6–14 % at 30 × 50 to 129 × 257) and leaves the cross-term slots for `dropzeros!`;
-kept, they would cost the LU a third to a half more fill-in. Five points have no negative couplings, so
-there is no discretization policy to choose.
+slower, and its wider pattern, if stored, adds LU fill-in. Five points have no negative
+couplings, so there is no discretization policy to choose.
 """
 function build_isotropic_diffusion_matrix(
         G, D::AbstractMatrix{FT};

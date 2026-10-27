@@ -463,7 +463,9 @@ end
 # A profile constant along b must not diffuse: what an operator moves across the field is its
 # truncation error alone, second order. The conduction correction carries the cross terms of
 # A_cond − A_part as its operators do; dropping its negative transfers left ≈ ½ΔD across a
-# diagonal field at every resolution. The contract of every `AnisotropicDiscretization`.
+# diagonal field at every resolution. The loop over discretizations is where a new
+# `AnisotropicDiscretization` joins; at this resolved density `LimitedNinePoint` limits nothing and
+# is `NinePoint`.
 @testitem "artificial cross-field diffusivity: truncation only, in the diffusion, per-particle and conduction operators" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!, add_conduction_correction!, assemble_anisotropic_diffusion!
     # D_art / D at 41 × 47, about ten cells across the box: the diagonal field is exact for the
@@ -471,7 +473,7 @@ end
     bound = (diagonal = 1.0e-3, circular = 2.0e-2)
     function assembled(G, D, discretization, n)
         A = build_wall_pattern(G)
-        assemble_anisotropic_diffusion!(A, G, D..., discretization; n)
+        @test assemble_anisotropic_diffusion!(A, G, D..., discretization; n) == 0   # resolved: nothing limited
         return A
     end
     grids = Dict(r => walled_RP(:box; NR = r[1], NZ = r[2]).G for r in ((41, 47), (81, 93)))

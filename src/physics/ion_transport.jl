@@ -133,15 +133,17 @@ assembled from one set of channels and a boundary condition from another is a
 mismatch nothing downstream can detect.
 
 Omitting `faces` gives the reflective operator and an empty coefficient vector. The operator is
-assembled by `discretization` ([`assemble_anisotropic_diffusion!`](@ref)), a limiting one reading
-the density `n`.
+assembled by `discretization` ([`assemble_anisotropic_diffusion!`](@ref)), required so no caller
+falls back to a policy other than the run's; a limiting one reads the density `n`, which the step
+passes as the electrons' density at its start (`RP.prev_n`), so the pairs a coupled step moves
+together see one operator.
 """
 function ion_transport_operator(
         G::GridGeometry{FT}, group::IonTransportGroup{FT}, directions;
         faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
         albedo = zero(FT),
         cross_terms::Symbol = :drop,
-        discretization::AnisotropicDiscretization = NinePoint(),
+        discretization::AnisotropicDiscretization,
         n::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
     ) where {FT <: AbstractFloat}
     length(directions) == length(group.channels) || throw(
