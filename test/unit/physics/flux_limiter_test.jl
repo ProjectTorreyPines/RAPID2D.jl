@@ -334,7 +334,7 @@ end
     # Turning the FLUX ceiling off no longer restores them, and that is not a
     # regression — there are two ceilings on `Dpara` now and the deep exterior fails
     # both. `Lc_forward = Lc_backward = 0` outside the wall (a trace starting there is
-    # already at a wall), so `wall_step_ceiling` returns exactly 0 and the geometric
+    # already at a wall), so `Lc_tot = 0` and `wall_step_ceiling` returns exactly 0 and the geometric
     # ceiling zeroes the region on its own, through the same formula that bounds the
     # interior rather than through a special case.
     @test all(iszero, vec(off.transport.Dpara_cond)[deep])

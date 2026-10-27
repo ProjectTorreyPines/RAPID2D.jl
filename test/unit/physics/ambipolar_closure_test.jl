@@ -79,7 +79,7 @@ end
     inw = RP.G.nodes.in_wall_nids
     @test all(iszero, tp.ν_amb[inw])                     # nothing drags the ambipolar pair
     c_s = @. sqrt(EE * (pla.Te_eV + pla.Ti_eV) / pla.mi_mean)
-    ceiling = RAPID2D.wall_step_ceiling.(c_s, RP.flf.Lc_forward, RP.flf.Lc_backward)
+    ceiling = RAPID2D.wall_step_ceiling.(c_s, RP.flf.Lc_tot)
     @test all(isfinite, tp.Dpara_amb[inw]) && all(tp.Dpara_amb[inw] .<= ceiling[inw])
     # the coupling switched on by a hair moves the coefficients by a hair
     D_amb = copy(tp.Dpara_amb)
@@ -89,6 +89,33 @@ end
     fill!(pla.ambipolar_weight, 1.0e-9)
     update_transport_quantities!(RP)
     @test tp.Dpara[inw] ≈ D0[inw] .+ 1.0e-9 .* (D_amb[inw] .- D0[inw]) rtol = 1.0e-12
+end
+
+@testitem "ambipolar: on a closed surface the free flight is bounded by a quarter of a poloidal circuit, as on an open line of the same length" setup = [CoulombReference] tags = [:physics] begin
+    using RAPID2D: ion_transport_channels, shared_turbulent_channel, channel_D_para, maxwellian_mean_speed
+    RP = uniform_box([("H2", MH2, 1, 1.0e17)]; ne = 1.0e17, Te = 5.0, Ti = 1.0, dt = 1.0e-6)
+    pla, tp, flf = RP.plasma, RP.transport, RP.flf
+    inw = RP.G.nodes.in_wall_nids
+    pla.n_H2_gas .= 0.0                     # nothing drags anything, uniform n: only the geometry bounds D
+    # every node on a closed surface, one poloidal circuit of P (≈ 2πqR): each direction runs it whole
+    P = 40.0
+    fill!(flf.termination_forward, :closed)
+    fill!(flf.termination_backward, :closed)
+    fill!(flf.is_closed, true)
+    fill!(flf.Lc_forward, P)
+    fill!(flf.Lc_backward, P)
+    fill!(flf.Lc_tot, P)
+    # a ring's farthest point is half a circuit away: the step is bounded as on an open line of length P
+    fill!(pla.ambipolar_weight, 1.0)
+    update_transport_quantities!(RP)
+    c_s = @. sqrt(EE * (pla.Te_eV + pla.Ti_eV) / pla.mi_mean)
+    @test tp.Dpara_amb[inw] ≈ (@. c_s * P / 4)[inw]
+    # the ions' own share alike, at their own speed
+    fill!(pla.ambipolar_weight, 0.0)
+    update_transport_quantities!(RP)
+    i_para = ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))[1]
+    vm_i = maxwellian_mean_speed.(pla.Ti_eV, MH2)
+    @test channel_D_para(i_para)[inw] ≈ (@. vm_i * P / 4)[inw]
 end
 
 @testitem "ambipolar: the electrons conduct with their own coefficient whatever the coupling" setup = [CoulombReference] tags = [:physics] begin
@@ -120,7 +147,7 @@ end
     # the ions' own: the drag of the gas and of the ions born from it at rest, under the thermal ceiling
     i_para = ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))[1]
     vm = @. sqrt(8 * EE * pla.Ti_eV / (π * MH2))
-    own = @. min(EE * pla.Ti_eV / (MH2 * (tp.νi_neutral + tp.νi_birth)) + tp.Dpara0, RAPID2D.wall_step_ceiling(vm, RP.flf.Lc_forward, RP.flf.Lc_backward))
+    own = @. min(EE * pla.Ti_eV / (MH2 * (tp.νi_neutral + tp.νi_birth)) + tp.Dpara0, RAPID2D.wall_step_ceiling(vm, RP.flf.Lc_tot))
     @test channel_D_para(i_para)[inw] ≈ own[inw]
 end
 

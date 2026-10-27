@@ -99,7 +99,7 @@ end
     ch = ion_transport_channels(RP, RP.transport.ion_species[1], shared_turbulent_channel(RP))[1]
     inw = RP.G.nodes.in_wall_nids
     vm = maxwellian_mean_speed.(RP.plasma.Ti_eV, 6mi)
-    want = wall_step_ceiling.(vm, RP.flf.Lc_forward, RP.flf.Lc_backward)
+    want = wall_step_ceiling.(vm, RP.flf.Lc_tot)
     @test all(isfinite, want[inw])
     @test channel_D_para(ch)[inw] ≈ want[inw] rtol = 1.0e-12
 end

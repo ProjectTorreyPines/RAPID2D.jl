@@ -206,19 +206,26 @@ function inv_geometric_diffusivity(vm, L, model::RandomStepModel)
 end
 
 """
-    wall_step_ceiling(vm, Lc_forward, Lc_backward)
+    wall_step_ceiling(vm, L_c)
 
-The largest parallel diffusivity the geometry can carry: `vm·(Lf + Lb)/4`.
+The largest parallel diffusivity the geometry can carry, a random walk's `½vλ` at the free-flight
+speed `vm` (a Maxwellian's mean speed, the speed contract above; `c_s` for the ambipolar pair) with
+the largest step `λ = L_c/2`, `L_c` the connection length (`flf.Lc_tot`): `½vm·(L_c/2)`. The step is
+the mean over the two directions, the same for every node on a line (the SOL's midplane-to-target
+`πqR`). Not the one-way flux `¼v̄n` of the wall and the gradient ceiling.
 
-The two distances bound **disjoint halves of velocity space**, so they enter as
-an arithmetic mean under the along-axis `½` — not harmonically; they are not
-competing events. Symmetric lengths recover `½v̄L`. Either length `Inf` ⟹ that
-half is unbounded and the ceiling is absent; `vm = 0` or both lengths `0` ⟹ `0`.
+- On an open line `L_c = Lf + Lb`, end to end. The two distances bound **disjoint halves of
+  velocity space**, so they enter as an arithmetic mean under the along-axis `½`, not
+  harmonically: they are not competing events.
+- On a closed surface `L_c` is the connection length of one poloidal circuit, `∮ B/B_pol dl ≈ 2πqR`,
+  which each direction runs: a ring's farthest point is half a circuit away, `≈ πqR`, so the step
+  is bounded as on an open line of the same length.
+
+`L_c = Inf` ⟹ unbounded, the ceiling absent; `vm = 0` or `L_c = 0` ⟹ `0`.
 """
-function wall_step_ceiling(vm, Lc_forward, Lc_backward)
-    _check_step_inputs(vm, Lc_forward)
-    _check_step_inputs(vm, Lc_backward)
-    return geometric_diffusivity(vm, (Lc_forward + Lc_backward) / 2, AlongAxisStep())
+function wall_step_ceiling(vm, L_c)
+    _check_step_inputs(vm, L_c)
+    return geometric_diffusivity(vm, L_c / 2, AlongAxisStep())
 end
 
 """

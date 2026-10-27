@@ -74,42 +74,37 @@ end
     @test_throws DomainError inv_geometric_diffusivity(-1.0, 2.0, IsotropicStep())
     @test_throws DomainError geometric_diffusivity(NaN, 2.0, IsotropicStep())
     @test_throws DomainError geometric_diffusivity(2.0, NaN, IsotropicStep())
-    @test_throws DomainError wall_step_ceiling(1.0, -1.0, 2.0)
-    @test_throws DomainError wall_step_ceiling(1.0, 2.0, NaN)
+    @test_throws DomainError wall_step_ceiling(1.0, -1.0)
+    @test_throws DomainError wall_step_ceiling(1.0, NaN)
 end
 
-@testitem "Wall ceiling: forward and backward are disjoint half-populations" begin
+@testitem "Wall ceiling: a quarter of the speed times the connection length, its two directions disjoint half-populations" begin
     using RAPID2D: wall_step_ceiling, geometric_diffusivity, AlongAxisStep
 
     v = 1000.0
 
-    # THE ARITHMETIC MEAN, NOT THE HARMONIC ONE. Lf and Lb bound different halves of
-    # velocity space — a particle moving forward can only be stopped by the forward
-    # wall — so they are not competing termination events. Integrating the one-way flux
-    # over each half separately gives (v̄/4)(Lf + Lb).
-    @test wall_step_ceiling(v, 3.0, 7.0) ≈ v * (3.0 + 7.0) / 4
+    # THE ARITHMETIC MEAN, NOT THE HARMONIC ONE. On an open line L_c = Lf + Lb (the FLF
+    # assembly): Lf and Lb bound different halves of velocity space — a particle moving
+    # forward can only be stopped by the forward wall — so they are not competing
+    # termination events. Integrating the one-way flux over each half gives (v̄/4)(Lf + Lb).
+    @test wall_step_ceiling(v, 3.0 + 7.0) ≈ v * (3.0 + 7.0) / 4
     # A harmonic mean would give 2·3·7/10 = 4.2 ⟹ v·2.1 against the correct v·2.5.
-    # Pin the gap, or the two compositions are indistinguishable at symmetric lengths.
-    @test !isapprox(wall_step_ceiling(v, 3.0, 7.0), v * 4.2 / 2)
+    @test !isapprox(wall_step_ceiling(v, 3.0 + 7.0), v * 4.2 / 2)
 
-    # Symmetric lengths recover the textbook ½v̄L, which is the sanity check that the
-    # ¼ is the ½ applied to a mean rather than a third independent coefficient.
-    @test wall_step_ceiling(v, 5.0, 5.0) ≈ geometric_diffusivity(v, 5.0, AlongAxisStep())
-    # Direction is a labelling choice, so the ceiling cannot depend on the order.
-    @test wall_step_ceiling(v, 3.0, 7.0) === wall_step_ceiling(v, 7.0, 3.0)
+    # Symmetric lengths recover the textbook ½v̄L at L = L_c/2: the ¼ is the ½ applied to a
+    # mean, not a third independent coefficient. A closed line's circuit is bounded alike: its
+    # farthest point is half a circuit away.
+    @test wall_step_ceiling(v, 10.0) ≈ geometric_diffusivity(v, 5.0, AlongAxisStep())
 
-    # One direction already at the wall still lets the other half stream: exactly half
-    # the contribution, not zero and not the full symmetric value.
-    @test wall_step_ceiling(v, 0.0, 8.0) ≈ v * 8.0 / 4
+    # One direction already at the wall still lets the other half stream.
+    @test wall_step_ceiling(v, 0.0 + 8.0) ≈ v * 8.0 / 4
     # Both at the wall is the exterior, where the answer is exactly no transport.
-    @test wall_step_ceiling(v, 0.0, 0.0) === 0.0
+    @test wall_step_ceiling(v, 0.0) === 0.0
     # A dead species does not move however open the geometry is.
-    @test wall_step_ceiling(0.0, Inf, Inf) === 0.0
-    @test wall_step_ceiling(0.0, 5.0, 5.0) === 0.0
-    # One direction never reaching a wall leaves that half-population unbounded, so
-    # there is no ceiling at all — even though the other half is bounded.
-    @test wall_step_ceiling(v, 4.0, Inf) === Inf
-    @test wall_step_ceiling(v, Inf, Inf) === Inf
+    @test wall_step_ceiling(0.0, Inf) === 0.0
+    @test wall_step_ceiling(0.0, 10.0) === 0.0
+    # A direction never reaching a wall leaves that half-population unbounded: no ceiling.
+    @test wall_step_ceiling(v, Inf) === Inf
 end
 
 @testitem "Neutral gas: moving the Knudsen term onto the helper changes no bit" begin
@@ -243,7 +238,7 @@ end
     tp.νi_neutral .= 0.0
 
     vm_s = maxwellian_mean_speed.(pla.Ti_eV, species.mass)
-    D_wall = @. wall_step_ceiling(vm_s, RP.flf.Lc_forward, RP.flf.Lc_backward)
+    D_wall = @. wall_step_ceiling(vm_s, RP.flf.Lc_tot)
     D = ion_Dpara(RP, species)
 
     inw = RP.G.nodes.in_wall_nids
@@ -271,7 +266,7 @@ end
     RP2 = ceiling_RP(; Dpara0 = 1.0e12)
     sp2 = RP2.transport.ion_species[1]
     vm_s = maxwellian_mean_speed.(RP2.plasma.Ti_eV, sp2.mass)
-    D_wall = @. wall_step_ceiling(vm_s, RP2.flf.Lc_forward, RP2.flf.Lc_backward)
+    D_wall = @. wall_step_ceiling(vm_s, RP2.flf.Lc_tot)
     D2 = ion_Dpara(RP2, sp2)
     @test all(n -> D2[n] <= D_wall[n] * (1 + 1.0e-10), RP2.G.nodes.in_wall_nids)
     @test all(n -> isapprox(D2[n], D_wall[n]; rtol = 1.0e-10), RP2.G.nodes.in_wall_nids)
@@ -296,17 +291,18 @@ end
     # The flux closure's own scale, S = ¼v̄n/|∇∥n|.
     S = @. 0.25 * vm_e * pla.ne / abs(∇para_ne)
 
-    # Put the wall EXACTLY at the flux scale: `wall_step_ceiling` with Lf = Lb = 2S/v̄
-    # returns ¼v̄(2·2S/v̄) = S. That is the crossover, and the crossover is where the two
+    # Put the wall EXACTLY at the flux scale: `wall_step_ceiling` with Lf = Lb = 2S/v̄,
+    # L_c = 4S/v̄, returns ¼v̄(4S/v̄) = S. That is the crossover, and the crossover is where the two
     # compositions are furthest apart — the withdrawn sequential form returns S/√2 there,
     # 29.3 % low, because it combines two statements of one free-streaming limit in
     # quadrature.
     @. RP.flf.Lc_forward = 2 * S / vm_e
     @. RP.flf.Lc_backward = 2 * S / vm_e
+    @. RP.flf.Lc_tot = RP.flf.Lc_forward + RP.flf.Lc_backward
     update_transport_quantities!(RP)
 
     D0 = @. tp.Dpara0 + tp.Dpara_e_coll
-    D_geom = @. min(D0, wall_step_ceiling(vm_e, RP.flf.Lc_forward, RP.flf.Lc_backward))
+    D_geom = @. min(D0, wall_step_ceiling(vm_e, RP.flf.Lc_tot))
     D_flux = @. flux_limited_diffusivity(D0, ∇para_ne, pla.ne, vm_e, 0.25)
 
     adopted = @. min(D_geom, D_flux)
@@ -336,6 +332,7 @@ end
     # sees precisely the input it saw before this feature existed.
     RP.flf.Lc_forward .= Inf
     RP.flf.Lc_backward .= Inf
+    RP.flf.Lc_tot .= Inf
     update_transport_quantities!(RP)
 
     @test all(n -> with_geometry[n] === tp.Dpara_cond[n], inw)

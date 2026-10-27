@@ -370,7 +370,7 @@ function ion_transport_channels(RP::RAPID{FT}, species::IonRecord{FT}, shared_tu
     # is the PARALLEL wall distance from the trace, not `L_mixing` (poloidal, ~60×
     # shorter; it now serves the turbulent channel alone — see
     # internal/docs/src/notes/TODO/L-mixing-serves-two-lengths.md).
-    D_own = @. min(D0, wall_step_ceiling(vm_s, RP.flf.Lc_forward, RP.flf.Lc_backward))
+    D_own = @. min(D0, wall_step_ceiling(vm_s, RP.flf.Lc_tot))
     # The species' own share and the ambipolar one, as the electrons mix theirs
     # (`update_transport_quantities!`), and the wall speed mixed alike. The channel carries
     # its wall speed as its own speed as well: with D the primitive, λ∥ = 2D∥/v is derived.

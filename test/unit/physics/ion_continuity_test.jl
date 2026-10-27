@@ -461,7 +461,7 @@ end
     T_J = (RP.plasma.Ti_eV .* ee)[inw]
     ν, L = 3.0e5, 0.37
     # The geometric limb, built from the field-line trace rather than from `L_mixing`.
-    D_wall = wall_step_ceiling.(vm, RP.flf.Lc_forward[inw], RP.flf.Lc_backward[inw])
+    D_wall = wall_step_ceiling.(vm, RP.flf.Lc_tot[inw])
     einstein = T_J ./ (mi .* ν)
 
     # Where the collisions are the tighter of the two, the answer is exactly Einstein —

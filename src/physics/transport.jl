@@ -129,7 +129,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Each coefficient is bounded by the two ceilings of its own speed, from its own D0
     # (internal/docs/src/notes/design/random-step-ceiling.md):
     #
-    #   3a D_geom = min(D0, ¼v(Lf+Lb))   what the GEOMETRY allows
+    #   3a D_geom = min(D0, ¼vL_c)       what the GEOMETRY allows
     #   3b D_flux = F₂(D0, ¼vLₙ)         what the FLUX closure allows
     #   4  D = min(D_geom, D_flux)       the tighter answer wins
     #
@@ -139,20 +139,21 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # ambipolar pair's free flight is at the sound speed c_s (3a), and what it carries across a
     # surface is the Bohm flux c_s n (3b at `bohm_flux_mean_speed`), not a Maxwellian's ¼c_s n.
 
-    # `vm_e`, not the `vp_e` above: both ceilings are ONE-WAY fluxes across a surface,
-    # ⟨v_n θ(v_n)⟩ = ¼v̄, and only the mean speed has that meaning. The pair (½, vp) two
-    # dozen lines up is a different derivation and must not be copied here — see the
-    # speed contract at the top of `transport_channels.jl`.
+    # `vm_e`, not the `vp_e` above: both ceilings are moments of the mean speed. The geometric
+    # one is the speed along one axis, ⟨|v∥|⟩ = v̄/2, over the largest step, half the line on
+    # average (¼v̄L_c); the flux one is the one-way flux across a surface, ⟨v_n θ(v_n)⟩ = ¼v̄.
+    # The pair (½, vp) two dozen lines up is a different derivation and must not be copied
+    # here — see the speed contract at the top of `transport_channels.jl`.
     vm_e = maxwellian_mean_speed.(pla.Te_eV, me)
     c_s = sound_speed.(pla.Te_eV, pla.Ti_eV, mi, Z_mean)
 
     # Stage 3a. The geometric ceiling: a random step cannot be longer than the
     # distance at which the geometry stops being new — wall distance, circuit, or 2πR
     # at a null (`FLF_TERMINATIONS`), so a closed surface binds at its circuit rather
-    # than switching off. Forward/backward bound disjoint halves of velocity space and
-    # enter as an arithmetic mean (`wall_step_ceiling`). Only a failed trace carries
-    # `Inf`, and the FLF validator never lets one reach this line.
-    step_ceiling(v) = @. wall_step_ceiling(v, RP.flf.Lc_forward, RP.flf.Lc_backward)
+    # than switching off: ¼vL_c with the connection length L_c (`wall_step_ceiling`), end to
+    # end on an open line, one poloidal circuit (≈ 2πqR) on a closed surface. Only a failed trace carries `Inf`,
+    # and the FLF validator never lets one reach this line.
+    step_ceiling(v) = @. wall_step_ceiling(v, RP.flf.Lc_tot)
 
     # Stage 3b. The flux ceiling, from the SAME `D0` — never from `D_geom`.
     # `upwind = false`, overriding `flags.upwind`: this gradient describes the PROFILE, not a
