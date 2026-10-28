@@ -26,45 +26,74 @@ of the pattern is rewritten and a stored zero of `A` stays one. `n` is the node 
 scratch (`1/n` and `A n`) comes from the task's array pool, so nothing is allocated after the
 first call.
 """
+per_particle_operator!(
+    M::DiscretizedOperator{FT}, A::DiscretizedOperator{FT}, n::AbstractVecOrMat{FT}; n_floor::FT,
+) where {FT <: AbstractFloat} = per_particle_operator!(M, (A,), (n,), n; n_floor)
+
+"""
+    per_particle_operator!(M, As, ws, w_total; n_floor) -> M
+
+The per-particle operator of a mixture of carriers: groups of particles moved by their own
+operators `As[g]` with densities `ws[g]`, one carried variable counted over `w_total` (which may
+hold particles no group moves). Off the diagonal `Σ_g A_g,kl w_g,l / w_total,k`, on it the zero row
+sum, so `w_total (M f) + f Σ_g A_g w_g = Σ_g A_g (w_g f)` on every row above the floor, and a node
+where one group is absent still takes what it brings in. The floor is on `w_total`. One group whose
+density is the total is the single-operator form, bit for bit. All on one wall pattern, `M` aliasing
+none of `As`; nothing is allocated.
+"""
 function per_particle_operator!(
-        M::DiscretizedOperator{FT}, A::DiscretizedOperator{FT}, n::AbstractVecOrMat{FT};
-        n_floor::FT,
+        M::DiscretizedOperator{FT}, As, ws, w_total::AbstractVecOrMat{FT}; n_floor::FT,
     ) where {FT <: AbstractFloat}
+    (!isempty(As) && length(As) == length(ws)) ||
+        throw(ArgumentError("per_particle_operator!: one density per operator, at least one of each"))
     check_wall_pattern(M)
-    check_wall_pattern(A)
-    C, U = A.matrix, M.matrix
-    (U !== C && nonzeros(U) !== nonzeros(C)) ||
-        throw(ArgumentError("per_particle_operator!: M must not alias A"))
-    (C.colptr == U.colptr && C.rowval == U.rowval) ||
-        throw(ArgumentError("per_particle_operator!: M and A do not share a pattern"))
-    length(n) == size(C, 2) ||
-        throw(DimensionMismatch("per_particle_operator!: n must have one entry per node"))
-    all(isfinite, n) || throw(ArgumentError("per_particle_operator!: n must be finite"))
-    nzU, nzC, rows, k2c = nonzeros(U), nonzeros(C), rowvals(C), A.k2csc
-    Ng = length(n)
+    U = M.matrix
+    Ng = size(U, 2)
+    for (A, w) in zip(As, ws)
+        check_wall_pattern(A)
+        C = A.matrix
+        (U !== C && nonzeros(U) !== nonzeros(C)) ||
+            throw(ArgumentError("per_particle_operator!: M must not alias A"))
+        (C.colptr == U.colptr && C.rowval == U.rowval) ||
+            throw(ArgumentError("per_particle_operator!: M and A do not share a pattern"))
+        length(w) == Ng ||
+            throw(DimensionMismatch("per_particle_operator!: n must have one entry per node"))
+        all(isfinite, w) || throw(ArgumentError("per_particle_operator!: n must be finite"))
+    end
+    length(w_total) == Ng ||
+        throw(DimensionMismatch("per_particle_operator!: the total density must have one entry per node"))
+    all(isfinite, w_total) || throw(ArgumentError("per_particle_operator!: n must be finite"))
+    nzU, rows, k2c = nonzeros(U), rowvals(U), M.k2csc
     # the checks above throw; the pool block below must not, since it has no `finally`
     @with_pool pool begin
-        # 1/n_k once per row, zero on the floor rows
+        # 1/w_k once per row, zero on the floor rows
         inv_n = acquire!(pool, FT, Ng)
         @inbounds for k in 1:Ng
-            inv_n[k] = n[k] > n_floor ? one(FT) / n[k] : zero(FT)
+            inv_n[k] = w_total[k] > n_floor ? one(FT) / w_total[k] : zero(FT)
         end
-        # the off-diagonals A_kl n_l / n_k, and A n accumulated in the same column sweep, with
-        # `muladd` in the order `mul!` adds, so the result is `mul!`'s bit for bit; the diagonal
-        # slots written here are overwritten below
+        # Σ_g A_g,kl w_g,l into every slot, and Σ_g A_g w_g accumulated in the same column sweeps,
+        # with `muladd` in the order `mul!` adds, so one group gives `mul!`'s bit for bit
+        fill!(nzU, zero(FT))
         An = zeros!(pool, FT, Ng)
-        @inbounds for l in 1:Ng
-            nl = n[l]
-            for s in nzrange(C, l)
-                k = rows[s]
-                An[k] = muladd(nzC[s], nl, An[k])
-                nzU[s] = inv_n[k] * (nzC[s] * nl)
+        for (A, w) in zip(As, ws)
+            nzC = nonzeros(A.matrix)
+            @inbounds for l in 1:Ng
+                wl = w[l]
+                for s in nzrange(U, l)
+                    k = rows[s]
+                    An[k] = muladd(nzC[s], wl, An[k])
+                    nzU[s] += nzC[s] * wl
+                end
             end
         end
-        # the diagonal (A_kk n_k − (A n)_k) / n_k
+        # the off-diagonals over the total, and the diagonal (Σ_g A_g,kk w_g,k − (Σ_g A_g w_g)_k) / w_k
+        @inbounds for l in 1:Ng, s in nzrange(U, l)
+            k = rows[s]
+            k == l || (nzU[s] = inv_n[k] * nzU[s])
+        end
         @inbounds for k in 1:Ng
             s = slot_position(k2c, k, SLOT_C)
-            nzU[s] = inv_n[k] * ((nzC[s] * n[k]) - An[k])
+            nzU[s] = inv_n[k] * (nzU[s] - An[k])
         end
         nothing
     end
@@ -72,7 +101,7 @@ function per_particle_operator!(
 end
 
 """
-    add_conduction_correction!(M, A_part, A_cond, n, G; n_floor) -> M
+    add_conduction_correction!(M, A_part, A_cond, n, G; n_floor, n_total = n) -> M
 
 Add to `M`, the per-particle operator of the particle diffusion `A_part`, the correction `C` that
 makes the carried variable conduct (and diffuse momentum) with `A_cond` instead:
@@ -89,11 +118,14 @@ resolution). Where the density is not resolved, `limit_antidiffusive_pairs!` has
 both operators. A pair with a node at or below `n_floor` is skipped, its row being frozen. In a
 uniform plasma with `R ΔA` symmetric (no cross terms) `M + C` is `A_cond`; `A_cond = A_part`
 leaves `M` bit for bit.
+For one group of a mixture (`per_particle_operator!` over several carriers), `n` is the group's
+density and `n_total` the carriers' total: the transfers are the group's, `S (n_k + n_l)/2`, over
+`R_k n_total,k`, and the floor is on the total, so `Σ R n_total f` is kept.
 All three on the wall pattern of `G`, `M` aliasing neither; nothing is allocated.
 """
 function add_conduction_correction!(
         M::DiscretizedOperator{FT}, A_part::DiscretizedOperator{FT}, A_cond::DiscretizedOperator{FT},
-        n::AbstractVecOrMat{FT}, G::GridGeometry{FT}; n_floor::FT,
+        n::AbstractVecOrMat{FT}, G::GridGeometry{FT}; n_floor::FT, n_total::AbstractVecOrMat{FT} = n,
     ) where {FT <: AbstractFloat}
     foreach(check_wall_pattern, (M, A_part, A_cond))
     P, Q, U = A_part.matrix, A_cond.matrix, M.matrix
@@ -101,7 +133,7 @@ function add_conduction_correction!(
         throw(ArgumentError("add_conduction_correction!: M, A_part and A_cond do not share a pattern"))
     (nonzeros(U) !== nonzeros(P) && nonzeros(U) !== nonzeros(Q)) ||
         throw(ArgumentError("add_conduction_correction!: M must not alias A_part or A_cond"))
-    (M.dims_rz == (G.NR, G.NZ) && length(n) == size(U, 1)) ||
+    (M.dims_rz == (G.NR, G.NZ) && length(n) == size(U, 1) == length(n_total)) ||
         throw(DimensionMismatch("add_conduction_correction!: M and n must be on the grid of G"))
     nzU, nzP, nzQ, k2c = nonzeros(U), nonzeros(P), nonzeros(Q), M.k2csc
     NR, R = G.NR, G.Jacob
@@ -111,13 +143,13 @@ function add_conduction_correction!(
         p_kl == 0 && continue
         di, dj = STENCIL_OFFSETS[slot]
         l = k + di + dj * NR
-        (n[k] > n_floor && n[l] > n_floor) || continue
+        (n_total[k] > n_floor && n_total[l] > n_floor) || continue
         p_lk = slot_position(k2c, l, slot_back)     # the pattern is structurally symmetric
         S = half * (R[k] * (nzQ[p_kl] - nzP[p_kl]) + R[l] * (nzQ[p_lk] - nzP[p_lk]))
         iszero(S) && continue
         n_mean = half * (n[k] + n[l])
-        _add_pair_transfer!(nzU, p_kl, slot_position(k2c, k, SLOT_C), S * n_mean / (R[k] * n[k]))
-        _add_pair_transfer!(nzU, p_lk, slot_position(k2c, l, SLOT_C), S * n_mean / (R[l] * n[l]))
+        _add_pair_transfer!(nzU, p_kl, slot_position(k2c, k, SLOT_C), S * n_mean / (R[k] * n_total[k]))
+        _add_pair_transfer!(nzU, p_lk, slot_position(k2c, l, SLOT_C), S * n_mean / (R[l] * n_total[l]))
     end
     return M
 end
