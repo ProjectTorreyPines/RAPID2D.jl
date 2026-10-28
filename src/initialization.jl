@@ -275,6 +275,11 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.operators.A_visc_drift_e = similar(pattern)
     RP.operators.A_cond_e = similar(pattern)
     RP.operators.A_u = similar(pattern)
+    # the ions' carriage buffers, on the same pattern
+    car = RP.operators.ion_carriage
+    car.A_conv = similar(pattern)
+    car.M_rho, car.A_adv_rho = similar(pattern), similar(pattern)
+    car.M_n, car.A_adv_n = similar(pattern), similar(pattern)
 
     # Construct basic differntial operators
     RP.operators.∂R = construct_∂R_operator(RP.G)
@@ -885,6 +890,10 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # Handle non-finite values (NaN, Inf) or non-real values
     not_valid = @. !isfinite(pla.lnΛ) | !isreal(pla.lnΛ)
     @. pla.lnΛ[not_valid] = FT(10.0)  # base value
+    # Floored at 1, as the ion–ion logarithm (`ion_ion_coulomb_log`): the expression goes negative for
+    # cold dense plasma (nₑ = 5e17 m⁻³ at Tₑ = 1 meV gives −0.8), and a negative ν_ei turns the friction
+    # into a cooling and the e–i exchange into a runaway from equilibrium.
+    @. pla.lnΛ = max(pla.lnΛ, one(FT))
 
     # Update collision frequency
     # ν_ei = n_e e^4 lnΛ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)

@@ -40,11 +40,9 @@
         RAPID2D.cache_electron_operators!(RP)   # the cached in-wall operators must see this drift
         RP.fields.E_para_tot .= E_para
         if !coulomb
-            # `ePowers.drag`'s Coulomb half is charged inside `Atomic_Collision`,
-            # not inside `Coulomb_Collision`, so initialization's leftover
-            # sptz_fac·ν_ei survives the flag being off. "Coulomb off" has to mean
-            # the terms are absent, or the Jacobian comparison is against a power
-            # that carries a contribution nobody asked for.
+            # "Coulomb off" means the terms are absent: `ePowers.drag`'s Coulomb half
+            # is gated on the flag, and zeroing the rates initialization left also
+            # keeps any other reader of them out of the Jacobian comparison.
             RP.plasma.sptz_fac .= 0.0
             RP.plasma.ν_ei .= 0.0
         end
@@ -222,23 +220,31 @@ end
     @test all(iszero, off.plasma.exprb.eig_Te)
 end
 
-@testitem "eig_Te: the ν_ei omission is announced, not hidden" setup = [PowerJacobianFixtures] begin
-    using RAPID2D: ExpRB
+@testitem "eig_Te: the e–i friction's heat is the momentum solve's, so nothing of it is left out; a prescribed drift's ν_ei(Tₑ) is, and announced" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse
     const Warn = Base.CoreLogging.Warn      # Logging is stdlib, not a test dependency
 
-    # ∂ν_ei/∂Tₑ is not a table lookup — it is Spitzer-like and lives outside the
-    # RRC path — so P_drag's Coulomb half is left out of the Jacobian (the e–i
-    # exchange is not in it at all). That under-damps rather than over-damps, and the fixed point does
-    # not depend on λ at all, so it is tolerable. It is not tolerable silently:
-    # an omitted term someone later measures as an accuracy loss must be findable.
-    RP = pj_RAPID(; coulomb = true)
-    RP.flags.scheme.atomic = ExpRB
-    @test_logs (:warn,) match_mode = :any eig_at(RP)
-
-    # Coulomb off is the breakdown configuration and warns about nothing.
-    quiet = pj_RAPID(; coulomb = false)
-    quiet.flags.scheme.atomic = ExpRB
-    @test_logs min_level = Warn eig_at(quiet)
+    # P_drag's Coulomb half is the kinetic energy the momentum solve's friction took over the step
+    # (`plasma.ei_friction_heat`): a number the energy equation is handed, with no Tₑ in it for the
+    # Jacobian to miss. Coulomb on or off, nothing is omitted and nothing warns.
+    for coulomb in (true, false)
+        RP = pj_RAPID(; coulomb)
+        RP.flags.scheme.atomic = ExpRB
+        @test_logs min_level = Warn eig_at(RP)
+    end
+    # A prescribed drift (u∥ not evolved) heats at once by mₑ ν_ei^eff(Tₑ)|u_e − u_i|²: the full
+    # response leaves its Tₑ dependence through ν_ei out of eig_Te, and says so (what the partial one
+    # leaves out is its enum's subject); nothing to say without Coulomb.
+    for coulomb in (true, false), depth in (FullLinearResponse, PartialLinearResponse)
+        RP = pj_RAPID(; coulomb, depth)
+        RP.flags.ud_evolve = false
+        RP.flags.scheme.atomic = ExpRB
+        if coulomb && depth === FullLinearResponse
+            @test_logs (:warn, r"∂ν_ei/∂Tₑ") match_mode = :any eig_at(RP)
+        else
+            @test_logs min_level = Warn eig_at(RP)
+        end
+    end
 end
 
 @testitem "eig_Te: the e–i exchange is left to its exact solution, Coulomb on or off" setup = [PowerJacobianFixtures] begin

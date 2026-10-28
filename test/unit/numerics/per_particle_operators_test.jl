@@ -189,6 +189,21 @@
             !any(field.excluded(R[k + di + dj * G.NR], Z[k + di + dj * G.NR]) for di in -1:1, dj in -1:1)
         return maximum(abs(Of[k]) / field.perp_div(R[k], Z[k]) for k in G.nodes.in_wall_nids if inner(k))
     end
+
+    "Two operators on one grid, the second's density a front absent over half the box, and a still third in the total."
+    function carrier_mixture(c)
+        G = c.G
+        R, Z = vec(G.R2D), vec(G.Z2D)
+        inw = G.nodes.in_wall_nids
+        w1 = plasma_density(G)
+        w2 = zeros(length(w1))
+        w2[inw] .= 3.0e13 .* max.(0.0, tanh.(8 .* (Z[inw] .- 0.05)))   # zero below Z ≈ 0.05
+        w_still = zeros(length(w1))
+        w_still[inw] .= 2.0e12 .* (1 .+ 0.3 .* cos.(4 .* R[inw]))
+        A1 = c.A
+        A2 = diffusion_operator(G, tilted_tensor(G; θ = -0.4, Dpara = 30.0, Dperp = 2.0))
+        return (; A1, A2, w1, w2, w_still, w_I = w1 .+ w2 .+ w_still)
+    end
 end
 
 @testitem "per-particle operator: annihilates constants" setup = [PerParticleFixtures] begin
@@ -499,4 +514,102 @@ end
             @test fine <= max(coarse / 3, 1.0e-10)
         end
     end
+end
+
+# ── a mixture of carriers ───────────────────────────────────────────────────────────────
+# Several groups of particles, each moved by its own operator A_g with density w_g, share one
+# carried variable f, counted over all of them, w_I ≥ Σ w_g (a species that does not move is in
+# w_I and in no group). The numerator is the groups' sum and the denominator the total:
+#     M_kl = Σ_g A_g,kl w_g,l / w_I,k  (l ≠ k),   zero row sums,
+# so a node where one group is absent still takes what that group brings in. The floor is on the
+# total. internal/docs/src/notes/plans/PLAN_ion-momentum-energy-transport.md §2.3.
+
+@testitem "mixture per-particle operator: one group whose density is the total is the per-particle operator, bit for bit" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!
+    for c in mixing_cases()
+        n = plasma_density(c.G; floor_nodes = 6)
+        M = per_particle_operator!(similar(c.A), c.A, n; n_floor = 1.0)
+        Mx = per_particle_operator!(similar(c.A), (c.A,), (n,), n; n_floor = 1.0)
+        @test Mx.matrix.nzval == M.matrix.nzval
+        Mr = per_particle_operator!(similar(c.A_robin), (c.A_robin,), (n,), n; n_floor = 1.0)
+        @test Mr.matrix.nzval == per_particle_operator!(similar(c.A_robin), c.A_robin, n; n_floor = 1.0).matrix.nzval
+    end
+end
+
+@testitem "mixture per-particle operator: Σ_g A_g (w_g f) = w_I (M f) + f Σ_g A_g w_g on every row above the total's floor, where a group is absent too" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!
+    for c in mixing_cases()
+        (; A1, A2, w1, w2, w_still, w_I) = carrier_mixture(c)
+        M = per_particle_operator!(similar(A1), (A1, A2), (w1, w2), w_I; n_floor = 1.0)
+        f = smooth_field(c.G)
+        lhs = w_I .* (M * f) .+ f .* (A1 * w1 .+ A2 * w2)
+        rhs = A1 * (w1 .* f) .+ A2 * (w2 .* f)
+        above = findall(>(1.0), w_I)
+        @test lhs[above] ≈ rhs[above] rtol = 1.0e-12
+        # the front: rows where the second group is absent but brings particles in from a neighbour
+        front = [k for k in above if w2[k] == 0 && abs((A2 * w2)[k]) > 0]
+        @test !isempty(front)
+        @test lhs[front] ≈ rhs[front] rtol = 1.0e-12
+        # constants are annihilated, and the rows of nodes the total leaves empty are empty
+        @test maximum(abs, M * ones(length(f))) <= 1.0e-12 * maximum(abs, M.matrix.nzval)
+        w_I_floor = copy(w_I)
+        floor = c.G.nodes.in_wall_nids[1:4]
+        w_I_floor[floor] .= 0.5
+        Mf = per_particle_operator!(similar(A1), (A1, A2), (w1, w2), w_I_floor; n_floor = 1.0)
+        @test all(iszero, Mf.matrix[floor, :])
+    end
+end
+
+@testitem "mixture per-particle operator: Σ V w_I f is kept by conservative operators, the still part included" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!
+    for c in mixing_cases()
+        (; A1, A2, w1, w2, w_I) = carrier_mixture(c)
+        V = c.V
+        M = per_particle_operator!(similar(A1), (A1, A2), (w1, w2), w_I; n_floor = 1.0)
+        f = smooth_field(c.G)
+        carried = sum(V .* w_I .* (M * f))
+        moved = sum(V .* f .* (A1 * w1 .+ A2 * w2))
+        @test abs(carried + moved) <= 1.0e-12 * sum(V .* w_I .* abs.(M * f))
+    end
+end
+
+@testitem "conduction correction over a total: n_total = n is bit for bit; with a group's density it keeps Σ V w_I f and reaches where that group is absent" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!, add_conduction_correction!
+    for c in conduction_cases()
+        M_part, M = with_correction(c)
+        Mn = per_particle_operator!(similar(c.A_part), c.A_part, c.n; n_floor = 1.0)
+        add_conduction_correction!(Mn, c.A_part, c.A_cond, c.n, c.G; n_floor = 1.0, n_total = c.n)
+        @test Mn.matrix.nzval == M.matrix.nzval
+        # one group of a mixture: its pair transfers over the total's density
+        G, V = c.G, c.V
+        inw = G.nodes.in_wall_nids
+        Z = vec(G.Z2D)
+        w_g = zeros(length(c.n))
+        w_g[inw] .= 3.0e13 .* max.(0.0, tanh.(8 .* (Z[inw] .- 0.05)))
+        w_I = c.n .+ w_g
+        Mg = per_particle_operator!(similar(c.A_part), (c.A_part,), (w_g,), w_I; n_floor = 1.0)
+        before = copy(Mg.matrix.nzval)
+        add_conduction_correction!(Mg, c.A_part, c.A_cond, w_g, G; n_floor = 1.0, n_total = w_I)
+        C = similar(Mg)
+        C.matrix.nzval .= Mg.matrix.nzval .- before
+        f = smooth_field(G)
+        @test abs(sum(V .* w_I .* (C * f))) <= 1.0e-12 * sum(V .* w_I .* abs.(C * f))
+        @test maximum(abs, C * ones(length(f))) <= 1.0e-12 * maximum(abs, C.matrix.nzval)
+        # a row where the group is absent takes the correction from a neighbour where it is not
+        Cf = C * f
+        @test any(k -> w_g[k] == 0 && w_I[k] > 1 && Cf[k] != 0, inw)
+    end
+end
+
+@testitem "mixture per-particle operator: allocates nothing after the first call, refuses mismatched groups" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!
+    c = mixing_cases()[1]
+    (; A1, A2, w1, w2, w_I) = carrier_mixture(c)
+    M = similar(A1)
+    ops, ws = (A1, A2), (w1, w2)
+    alloc(M, ops, ws, w_I) = @allocated per_particle_operator!(M, ops, ws, w_I; n_floor = 1.0)
+    alloc(M, ops, ws, w_I)
+    @test alloc(M, ops, ws, w_I) == 0
+    @test_throws ArgumentError per_particle_operator!(M, (A1, A2), (w1,), w_I; n_floor = 1.0)
+    @test_throws ArgumentError per_particle_operator!(A1, (A1, A2), ws, w_I; n_floor = 1.0)
 end

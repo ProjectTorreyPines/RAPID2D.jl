@@ -51,12 +51,9 @@
         RP.plasma.ueZ .= u_para .* RP.fields.bZ
         RAPID2D.cache_electron_operators!(RP)   # the cached in-wall operators must see this drift
         RP.fields.E_para_tot .= E_para
-        # `ePowers.drag` charges its Coulomb half unconditionally — it sits inside
-        # `Atomic_Collision`, not inside `Coulomb_Collision` — so initialization's
-        # leftover sptz_fac·ν_ei keeps contributing even with Coulomb off. It is
-        # 2.6e-6 of the drag here and irrelevant physically, but it is a term in Tₑ
-        # that the closed form below does not model, and this test's whole premise
-        # is that the problem IS the closed form. Zero it explicitly.
+        # The closed form below has no Coulomb term: zero the rates initialization left,
+        # so no e–i friction heat (`ePowers.drag`'s Coulomb half) can enter Tₑ whatever
+        # the Coulomb flag says.
         RP.plasma.sptz_fac .= 0.0
         RP.plasma.ν_ei .= 0.0
         return RP

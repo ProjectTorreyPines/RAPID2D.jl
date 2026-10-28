@@ -117,7 +117,7 @@ function ion_wall_albedo(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    ion_transport_operator(G, group, directions; faces, albedo, cross_terms, discretization, n) -> (A, v_absorb)
+    ion_transport_operator(G, group, directions; faces, albedo, cross_terms, discretization, n, into) -> (A, v_absorb)
 
 Assemble the wall-aware `∇·(𝐃∇·)` a group of ion species will share, and the
 Robin coefficients that go with it.
@@ -136,7 +136,9 @@ Omitting `faces` gives the reflective operator and an empty coefficient vector. 
 assembled by `discretization` ([`assemble_anisotropic_diffusion!`](@ref)), required so no caller
 falls back to a policy other than the run's; a limiting one reads the density `n`, which the step
 passes as the electrons' density at its start (`RP.prev_n`), so the pairs a coupled step moves
-together see one operator.
+together see one operator. With `into`, a `DiscretizedOperator` on the wall pattern, it is assembled
+there and kept, and `A` is its copy without the stored zeros: what the ions' u∥ and Tᵢ are carried
+with is then the operator the densities were moved with (`ion_carriage.jl`).
 """
 function ion_transport_operator(
         G::GridGeometry{FT}, group::IonTransportGroup{FT}, directions;
@@ -145,6 +147,7 @@ function ion_transport_operator(
         cross_terms::Symbol = :drop,
         discretization::AnisotropicDiscretization,
         n::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
+        into::Union{Nothing, DiscretizedOperator{FT}} = nothing,
     ) where {FT <: AbstractFloat}
     length(directions) == length(group.channels) || throw(
         ArgumentError(
@@ -169,12 +172,12 @@ function ion_transport_operator(
     )
 
     v_absorb = isnothing(faces) ? FT[] : wall_absorption_speeds(cwd, faces, albedo)
-    A = build_wall_pattern(G)
+    A = isnothing(into) ? build_wall_pattern(G) : into
     assemble_anisotropic_diffusion!(
         A, G, D_RR, D_RZ, D_ZZ, discretization;
         n, cross_terms, faces, v_absorb = isnothing(faces) ? nothing : v_absorb
     )
-    return dropzeros!(A.matrix), v_absorb
+    return dropzeros!(isnothing(into) ? A.matrix : copy(A.matrix)), v_absorb
 end
 
 """
@@ -513,6 +516,8 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
         dt = RP.dt
         θ = RP.flags.Implicit ? RP.flags.θ_imp.transport : zero(FT)
 
+        # what moved the densities is published once they have moved, and not before
+        retract_ion_carriage!(RP)
         N, S = tp.ion_N, tp.ion_S
         gather_ion_densities!(N, RP)
         fill!(S, zero(FT))
@@ -535,7 +540,7 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
         if !RP.flags.diffu && !RP.flags.convec
             N .+= dt .* S
         else
-            groups, faces, dirs = ion_step_operators(RP)
+            groups, faces, dirs = ion_step_operators(RP; carriage = RP.operators.ion_carriage)
             while length(tp.ion_solvers) < length(groups)
                 push!(tp.ion_solvers, SparseLUSolver{FT}())
             end
@@ -548,6 +553,7 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
                 solve_ion_group!(N, group, A, tp.ion_solvers[gi], dt; θ = θ, S = S)
                 book_ion_wall_loss!(RP, group, faces, v_absorb, N, n_prev, θ; pinch = P)
             end
+            RP.operators.ion_carriage.source = CarriedByIonOperators()
         end
 
         scatter_ion_densities!(RP, N)
@@ -557,7 +563,7 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
 end
 
 """
-    ion_step_operators(RP) -> (Vector{Tuple{group, A, v_absorb}}, faces, directions)
+    ion_step_operators(RP; carriage = nothing) -> (Vector{Tuple{group, A, v_absorb}}, faces, directions)
 
 The operators this step will invert, one per transport group, the wall faces they
 were built against, and the per-mechanism directions they were built from.
@@ -570,8 +576,13 @@ With diffusion off there is nothing for a policy to partition — every species
 sees the same (null) diffusion — so a single group covers them all and carries
 only the convective term. There is no `𝐃` in that case either, hence no pinch:
 the pinch is a friction correction to a diffusive flux, not a flux of its own.
+
+With `carriage` (the run's [`IonCarriage`](@ref)), the operators are also kept there on the wall
+pattern, the ion velocity's face-flux divergence and ∇·u, and each group's diffusion with the ions'
+own conduction along B: the parts the ions' u∥ and Tᵢ are carried with. The caller publishes them
+once the densities have moved with these operators.
 """
-function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
+function ion_step_operators(RP::RAPID{FT}; carriage::Union{Nothing, IonCarriage{FT}} = nothing) where {FT <: AbstractFloat}
     tp, G, pla = RP.transport, RP.G, RP.plasma
     ns = length(tp.ion_species)
     faces = tp.wall_faces
@@ -585,10 +596,25 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Convection is the face-flux operator on the same faces the Robin term uses: its
     # wall-face outflow is a diagonal debit like the diffusive one, so the two speeds add
     # into one ledger coefficient per face. Built from the ION velocities.
-    A_conv, v_conv = if RP.flags.convec
+    A_conv, v_conv = if !RP.flags.convec
+        (nothing, zeros(FT, length(faces)))
+    elseif isnothing(carriage)
         convective_wall_operator(G, faces, pla.uiR, pla.uiZ, albedo; upwind = RP.flags.upwind)
     else
-        (nothing, zeros(FT, length(faces)))
+        # the divergence kept on the wall pattern, and the density moved by its copy
+        build_face_flux_divergence!(carriage.A_conv, G, pla.uiR, pla.uiZ; upwind = RP.flags.upwind)
+        convective_wall_operator(
+            G, faces, pla.uiR, pla.uiZ, albedo; upwind = RP.flags.upwind, A_conv = dropzeros!(copy(carriage.A_conv.matrix)),
+        )
+    end
+    if !isnothing(carriage)
+        empty!(carriage.parts)
+        carriage.convec = RP.flags.convec
+        if carriage.convec
+            wall_divergence!(carriage.div_u, G, pla.uiR, pla.uiZ)
+        else
+            fill!(carriage.div_u, zero(FT))
+        end
     end
 
     if !RP.flags.diffu
@@ -603,12 +629,26 @@ function ion_step_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     dirs = ion_channel_directions(RP)
     weights = [ion_plane(pla, slot) for slot in RP.store_layout.transport_slots]   # the densities, from the store
 
-    ops = map(ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)) do group
+    discretization = RP.flags.anisotropic_discretization
+    groups = ion_transport_groups(RP.flags.ion_transport_policy, per_species, weights)
+    ops = map(enumerate(groups)) do (g, group)
+        buffers = isnothing(carriage) ? nothing : ion_group_buffers!(carriage, G, g)
         # the electrons' discretization at their density at the step's start, so the pairs a
         # coupled step moves together see one operator
         A, v_absorb = ion_transport_operator(
-            G, group, dirs; faces, albedo, discretization = RP.flags.anisotropic_discretization, n = RP.prev_n,
+            G, group, dirs; faces, albedo, discretization, n = RP.prev_n,
+            into = isnothing(buffers) ? nothing : buffers[1],
         )
+        if !isnothing(buffers)
+            # along B the ions conduct with their own coefficient where it exceeds the
+            # collisional channel's (the first), on the same tensor, wall and limiter density
+            cwd = [(group.channels[m], dirs[m][1], dirs[m][2]) for m in eachindex(group.channels)]
+            active = ion_conduction_operator!(
+                buffers[2], G, total_tensor(cwd), dirs[1], channel_D_para(group.channels[1]), tp.Dpara_cond_i,
+                discretization; n = RP.prev_n, faces, v_absorb,
+            )
+            push!(carriage.parts, IonCarriagePart{FT}(copy(group.sids), buffers[1], active ? buffers[2] : nothing))
+        end
         return (group, isnothing(A_conv) ? A : A - A_conv, v_absorb .+ v_conv)
     end
     return ops, faces, dirs
@@ -864,6 +904,8 @@ function layout_ion_species!(RP::RAPID{FT}, species::AbstractVector{IonRecord{FT
     tp.ion_N = zeros(FT, Ng, length(species))
     tp.ion_S = zeros(FT, Ng, length(species))
     empty!(tp.ion_solvers)
+    retract_ion_carriage!(RP)
+    empty!(RP.operators.ion_carriage.group_buffers)
     build_species_store!(RP)
     update_charge_states!(RP)   # the means take the declared species at once
     return RP

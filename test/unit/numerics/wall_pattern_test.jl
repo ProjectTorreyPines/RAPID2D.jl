@@ -93,8 +93,8 @@ end
     @test A.k2csc == P.k2csc && A.k2csc !== P.k2csc
 end
 
-@testitem "wall pattern: identity, scaled add and diagonal add are vector arithmetic on it" setup = [PatternBox] begin
-    using RAPID2D: set_identity!, add_scaled!, add_diagonal!, build_wall_diffusion_matrix, DiscretizedOperator,
+@testitem "wall pattern: identity, scaled add, value copy and diagonal add are vector arithmetic on it" setup = [PatternBox] begin
+    using RAPID2D: set_identity!, add_scaled!, add_diagonal!, copy_values!, build_wall_diffusion_matrix, DiscretizedOperator,
         build_wall_pattern
     using RAPID2D.LinearAlgebra, RAPID2D.SparseArrays
     G = pattern_box().G
@@ -109,9 +109,12 @@ end
     add_diagonal!(A, v; scale = 2.0)
     @test A.matrix ≈ I(Ng) - 0.25 * B.matrix + 2.0 * Diagonal(v) rtol = 1.0e-15
     @test nnz(A.matrix) == nnz(B.matrix)                          # nothing dropped, structure untouched
+    C = copy_values!(build_wall_pattern(G), B)
+    @test C.matrix == B.matrix && nonzeros(C.matrix) !== nonzeros(B.matrix)   # B's values, C's own storage
     D = build_wall_diffusion_matrix(G, ones(G.NR, G.NZ), zeros(G.NR, G.NZ), ones(G.NR, G.NZ))
     off = DiscretizedOperator((G.NR, G.NZ), findnz(D)...)        # the same operator, but not on the pattern
     @test_throws ArgumentError add_scaled!(A, 1.0, off)
+    @test_throws ArgumentError copy_values!(A, off)
     @test_throws ArgumentError set_identity!(off)
     @test_throws ArgumentError add_diagonal!(off, v)
 end

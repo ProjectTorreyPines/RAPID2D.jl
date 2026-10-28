@@ -338,6 +338,9 @@ volumetric power density.
 # Fields
 - `tot`: Total, the sum the temperature update consumes
 - `atomic`: From atomic processes
+- `conv`: Convection and compression of Tᵢ, by the velocity that moved the densities
+- `diffu`: The diffusive carriage and conduction of Tᵢ (`ion_heat_carriage`)
+- `visc_heat`: the viscous heating of u_i∥ per ion, `m̄ᵢ Γ_M(u_i∥)` (`ion_momentum_carriage`)
 - `equi`: Taken from the electrons by Coulomb collisions, the step's mean
   (`ei_exchange_energy!`); applied on its own, not in `tot`
 """
@@ -347,6 +350,9 @@ volumetric power density.
     # Power terms - all in W PER ION (see the docstring), not W/m³
     tot::Matrix{FT} = zeros(FT, dims)        # Total
     atomic::Matrix{FT} = zeros(FT, dims)     # Power from atomic processes
+    conv::Matrix{FT} = zeros(FT, dims)       # Convection and compression
+    diffu::Matrix{FT} = zeros(FT, dims)      # Diffusive carriage and conduction
+    visc_heat::Matrix{FT} = zeros(FT, dims)  # Viscous heating of u_i∥
     equi::Matrix{FT} = zeros(FT, dims)       # Taken from the electrons over the step, not in tot
 end
 
@@ -470,6 +476,9 @@ Contains the plasma state variables including density, temperature, and velocity
     # Δt mₑ nₑ Rue_ei at the density the electron momentum equation saw (before continuity).
     # The ions take −I_ei (`update_ui_para!`), so the exchange cancels exactly.
     I_ei::Matrix{FT} = zeros(FT, dims)
+    # The heat of that friction over the step, per electron [W]: the kinetic energy it took from the
+    # relative drift, −I_ei (ū_e − u_i)/(nₑ Δt) with ū_e the step's mean u∥ (`record_ei_impulse!`)
+    ei_friction_heat::Matrix{FT} = zeros(FT, dims)
     # The energy the electrons gave the ions by Coulomb collisions over the step, per volume
     # [J/m³] (`ei_exchange_energy!`): the ions take +, the electrons −.
     ei_exchange_energy::Matrix{FT} = zeros(FT, dims)
@@ -683,6 +692,7 @@ Fields include diffusion coefficients in different directions.
     # Spatially-varying diffusion coefficients
     Dpara::Matrix{FT} = zeros(FT, dims)  # Parallel diffusion coefficient [m²/s]
     Dpara_cond::Matrix{FT} = zeros(FT, dims)  # what u∥ and Te conduct with along B, ≥ Dpara [m²/s]
+    Dpara_cond_i::Matrix{FT} = zeros(FT, dims)  # the ions' own along B, Tᵢ/(m̄ᵢ(ν_in + ν_birth + ν_ii)) under ¼v̄ᵢL_c [m²/s]
     Dperp::Matrix{FT} = zeros(FT, dims)  # Perpendicular diffusion coefficient [m²/s]
 
     # turbulent diffusion coefficients
@@ -716,6 +726,61 @@ function Transport{FT}(NR::Int, NZ::Int; Dpara0::FT = FT(1.0), Dperp0::FT = FT(0
     return Transport{FT}(dims = (NR, NZ), Dpara0 = Dpara0, Dperp0 = Dperp0)
 end
 
+
+"""
+    IonCarriageSource
+
+What moved the ion densities this step, and so what carries their u∥ and Tᵢ (`ion_carriage.jl`):
+[`NotCarried`](@ref), [`CarriedByIonOperators`](@ref) or [`CarriedByElectronOperators`](@ref).
+"""
+abstract type IonCarriageSource end
+
+"Nothing moved the ion densities this step: u∥ and Tᵢ are not carried."
+struct NotCarried <: IonCarriageSource end
+
+"The ion continuity's own operators moved them: each transport group's diffusion, the ion velocity's convection."
+struct CarriedByIonOperators <: IonCarriageSource end
+
+"The ions are slaved to the electrons (`update_ni_independently = false`): the electrons' operators moved them."
+struct CarriedByElectronOperators <: IonCarriageSource end
+
+"""
+    IonCarriagePart{FT}
+
+One transport group's share of the ion carriage: its species (columns of the transport's list), the
+density diffusion its densities were moved with (`A_part`, on the wall pattern) and, where the ions
+conduct along B with more than that, the same diffusion with their own parallel coefficient
+(`A_cond`; `nothing` where no node differs).
+"""
+struct IonCarriagePart{FT <: AbstractFloat}
+    sids::Vector{Int}
+    A_part::DiscretizedOperator{FT}
+    A_cond::Union{Nothing, DiscretizedOperator{FT}}
+end
+
+"""
+    IonCarriage{FT}
+
+The operators that moved the ion densities this step, published by that move (the ion continuity, or
+the slaved step) and retracted at the start of the next ([`retract_ion_carriage!`](@ref)), with the
+buffers the momentum and heat carriage are written into. `group_buffers` hold the wall-pattern
+operators the parts point to, two per group, kept from step to step.
+"""
+@kwdef mutable struct IonCarriage{FT <: AbstractFloat}
+    dims::Tuple{Int, Int}
+    source::IonCarriageSource = NotCarried()
+    parts::Vector{IonCarriagePart{FT}} = IonCarriagePart{FT}[]
+    A_conv::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)   # the ion velocity's face-flux divergence
+    convec::Bool = false                                               # whether `A_conv` moved them
+    div_u::Matrix{FT} = zeros(FT, dims)                                # ∇·u of that velocity
+    group_buffers::Vector{Tuple{DiscretizedOperator{FT}, DiscretizedOperator{FT}}} =
+        Tuple{DiscretizedOperator{FT}, DiscretizedOperator{FT}}[]
+    M_rho::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)     # what u∥ is carried with, by mass
+    A_adv_rho::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    M_n::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)       # what Tᵢ is carried with, by number
+    A_adv_n::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    div_u_n::Matrix{FT} = zeros(FT, dims)                              # the compression per ion: the moving part's
+end
 
 """
     Operators{FT<:AbstractFloat}
@@ -761,6 +826,10 @@ Fields include various matrices for solving different parts of the model.
     A_cond_e_active::Bool = false
     div_ue::Matrix{FT} = zeros(FT, dims)
 
+    # What moved the ion densities this step, and the buffers the ions' u∥ and Tᵢ are carried with
+    # (`ion_carriage.jl`); allocated on the wall pattern by `initialize_operators!`
+    ion_carriage::IonCarriage{FT} = IonCarriage{FT}(dims = dims)
+
     # Basic differential operators (2nd-order central difference)
     ∂R::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # Radial derivative operator ∂R
     𝐽⁻¹∂R_𝐽::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims) # [(1/𝐽)(∂/∂R)*(𝐽 f)] operator
@@ -783,6 +852,9 @@ Fields include various matrices for solving different parts of the model.
     ne_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
     Te_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
     ue_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+    # the ions' u∥ and Tᵢ, once they are carried (`update_ui_para!`, `update_Ti!`)
+    ui_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
+    Ti_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
     # Neutral fill gas. The sparsity pattern is fixed by the wall geometry and only
     # the values move with D, so the symbolic analysis is reusable every step.
     gas_solver::SparseLUSolver{FT} = SparseLUSolver{FT}()
