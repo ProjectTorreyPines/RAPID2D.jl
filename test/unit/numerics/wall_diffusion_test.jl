@@ -529,6 +529,7 @@ end
 
 @testitem "diffusion assembly: NinePoint is the stencil, LimitedNinePoint the stencil with its pairs limited, bit for bit" setup = [PairLimiterFixtures] begin
     using RAPID2D: assemble_anisotropic_diffusion!
+    using RAPID2D.SparseArrays: nonzeros
     c = tilted_case()
     G = c.G
     v_absorb = fill(40.0, length(c.faces))
