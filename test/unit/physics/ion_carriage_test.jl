@@ -190,6 +190,84 @@ end
     @test vec(heat.div_u)[inw] ≈ (vec(car.div_u) .* n_T ./ n_I)[inw] rtol = 1.0e-12
 end
 
+@testitem "two transport groups: a part each, the conduction raised in one only, the momentum and the heat moved as each group moved its density" setup = [IonCarriageCase] begin
+    using RAPID2D: IonRecord, PerSpeciesTransport, layout_ion_species!, ion_momentum_carriage, ion_heat_carriage,
+        ion_plane, update_ui_para!, ion_transport_channels, shared_turbulent_channel, channel_D_para
+    RP = carriage_case()
+    RP.flags.ion_transport_policy = PerSpeciesTransport()
+    tp, pla, G = RP.transport, RP.plasma, RP.G
+    inw = G.nodes.in_wall_nids
+    layout_ion_species!(RP, [tp.ion_species[1], IonRecord(:C6, 6 * tp.ion_species[1].mass, 6)])
+    slots = RP.store_layout.transport_slots
+    n_C = ion_plane(pla, slots[2])
+    n_C .= 0.0
+    vec(n_C)[inw] .= 0.05 .* vec(pla.ni)[inw] .* (1 .+ 0.5 .* vec(G.Z2D)[inw])
+    update_transport_quantities!(RP)
+    # the ions conduct with the bulk's own particle coefficient: raised for the heavier species where
+    # it diffuses less, nowhere for the bulk
+    turb = shared_turbulent_channel(RP)
+    D_bulk, D_C = (channel_D_para(ion_transport_channels(RP, sp, turb)[1]) for sp in tp.ion_species)
+    @test any(D_bulk[inw] .> D_C[inw])
+    tp.Dpara_cond_i .= D_bulk
+    solve_ion_continuity_equation!(RP)
+    car = RP.operators.ion_carriage
+    @test car.source isa CarriedByIonOperators
+    @test [p.sids for p in car.parts] == [[1], [2]]
+    @test isnothing(car.parts[1].A_cond) && !isnothing(car.parts[2].A_cond)
+    RAPID2D.update_charge_states!(RP)
+    m_bulk = RAPID2D.bulk_ion_mass(RP)
+    n_s = [vec(copy(ion_plane(pla, slot))) for slot in slots]
+    f = vec(smooth_grid(G))
+    V = vec(G.inVol2D)
+    for (op, weight, w_I) in (
+            (ion_momentum_carriage(RP), sp -> sp.mass / m_bulk, vec(pla.mni_tot) ./ m_bulk),
+            (ion_heat_carriage(RP), _ -> 1.0, vec(pla.ni_tot)),
+        )
+        # each group's operator moves its own carriers, the variable counted over the whole fluid,
+        # the conduction's pair transfers in the second group conserving the total
+        ws = [weight(sp) .* n for (sp, n) in zip(tp.ion_species, n_s)]
+        moved = sum(p.A_part * (w .* f) .- f .* (p.A_part * w) for (p, w) in zip(car.parts, ws))
+        @test sum(V .* w_I .* (op.M * f)) ≈ sum(V .* moved) rtol = 1.0e-10
+    end
+    # a uniform drift stays uniform through the momentum update
+    RP.flags.Atomic_Collision = false
+    RP.flags.Coulomb_Collision = false
+    RP.flags.src = false
+    RP.fields.E_para_tot .= 0.0
+    pla.ui_para .= 4.0e3
+    update_ui_para!(RP)
+    @test maximum(abs, vec(pla.ui_para)[inw] .- 4.0e3) <= 1.0e-9 * 4.0e3
+end
+
+@testitem "slaved ions: the electrons' convection carries them, values copied onto the ions' own buffer; a uniform drift stays uniform" setup = [IonCarriageCase] begin
+    using RAPID2D: ion_momentum_carriage, ion_heat_carriage, publish_electron_carriage!, ue_Te_operators, update_ui_para!
+    RP = carriage_case()
+    RP.flags.update_ni_independently = false
+    RP.flags.Atomic_Collision = false
+    RP.flags.Coulomb_Collision = false
+    RP.flags.src = false
+    RP.fields.E_para_tot .= 0.0
+    pla = RP.plasma
+    pla.ue_para .= 2.0e5                                  # the electrons' flow along b̂ moves the density
+    pla.ui_para .= 4.0e3
+    update_transport_quantities!(RP)
+    RAPID2D.cache_electron_operators!(RP)
+    publish_electron_carriage!(RP)
+    car = RP.operators.ion_carriage
+    @test car.source isa CarriedByElectronOperators && car.convec
+    pops = ue_Te_operators(RP)
+    @test any(!iszero, pops.A_adv.matrix.nzval)
+    mom = ion_momentum_carriage(RP)
+    @test mom.A_adv.matrix == pops.A_adv.matrix
+    @test mom.A_adv.matrix.nzval !== pops.A_adv.matrix.nzval
+    heat = ion_heat_carriage(RP)
+    @test heat.A_adv.matrix == pops.A_adv.matrix
+    @test heat.div_u == pops.div_u
+    update_ui_para!(RP)
+    inw = RP.G.nodes.in_wall_nids
+    @test maximum(abs, vec(pla.ui_para)[inw] .- 4.0e3) <= 1.0e-9 * 4.0e3
+end
+
 # ── u_i∥ ─────────────────────────────────────────────────────────────────────────────────
 
 @testitem "u_i∥ with nothing carried: births, field, drag and friction as before, bit for bit" setup = [IonCarriageCase] begin

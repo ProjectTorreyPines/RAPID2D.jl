@@ -142,7 +142,7 @@ function _carried_operators!(M, A_adv, RP::RAPID{FT}, weight) where {FT <: Abstr
             per_particle_operator!(A_adv, (car.A_conv,), (w_moved,), w_total; n_floor)
         elseif car.convec
             # slaved: the electrons' carriage, on their density (nᵢ = nₑ/Z), closed surfaces included
-            copyto!(nonzeros(A_adv.matrix), nonzeros(ue_Te_operators(RP).A_adv.matrix))
+            copy_values!(A_adv, ue_Te_operators(RP).A_adv)
         end
         nothing
     end

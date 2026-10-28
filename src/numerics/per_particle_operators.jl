@@ -57,12 +57,12 @@ function per_particle_operator!(
         (C.colptr == U.colptr && C.rowval == U.rowval) ||
             throw(ArgumentError("per_particle_operator!: M and A do not share a pattern"))
         length(w) == Ng ||
-            throw(DimensionMismatch("per_particle_operator!: n must have one entry per node"))
-        all(isfinite, w) || throw(ArgumentError("per_particle_operator!: n must be finite"))
+            throw(DimensionMismatch("per_particle_operator!: each density must have one entry per node"))
+        all(isfinite, w) || throw(ArgumentError("per_particle_operator!: the densities must be finite"))
     end
     length(w_total) == Ng ||
         throw(DimensionMismatch("per_particle_operator!: the total density must have one entry per node"))
-    all(isfinite, w_total) || throw(ArgumentError("per_particle_operator!: n must be finite"))
+    all(isfinite, w_total) || throw(ArgumentError("per_particle_operator!: the total density must be finite"))
     nzU, rows, k2c = nonzeros(U), rowvals(U), M.k2csc
     # the checks above throw; the pool block below must not, since it has no `finally`
     @with_pool pool begin

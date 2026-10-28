@@ -286,13 +286,15 @@ end
 # friction's heat, per electron: the kinetic energy it took from the relative drift over the step,
 # −I_ei·(ū_e − u_i)/(nₑ Δt), ū_e the mean of `ue_entry` (uⁿ) and the solved u∥. Braginskii's
 # −R·(u_e − u_i): the electrons' own kinetic energy, −u_e·R, plus the moving ions' work on them, u_i·R.
-# Exact for any ν Δt, so a stiff friction gives the drift's energy, not ν Δt times it.
+# Exact for any ν Δt, so a stiff friction gives the drift's energy, not ν Δt times it. Floored at zero:
+# where another force (E∥, the gas) reverses the relative drift within the step, the impulse at u^θ on
+# the step's mean drift would be a cooling no collision makes; without one, nothing reverses it.
 function record_ei_impulse!(RP::RAPID{FT}, ue_entry::AbstractMatrix{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     if RP.flags.Coulomb_Collision
         me = RP.config.constants.me
         @. pla.I_ei = RP.dt * me * pla.ne * pla.Rue_ei
-        @. pla.ei_friction_heat = -me * pla.Rue_ei * (FT(0.5) * (ue_entry + pla.ue_para) - pla.ui_para)
+        @. pla.ei_friction_heat = max(zero(FT), -me * pla.Rue_ei * (FT(0.5) * (ue_entry + pla.ue_para) - pla.ui_para))
     else
         fill!(pla.I_ei, zero(FT))
         fill!(pla.ei_friction_heat, zero(FT))
@@ -898,9 +900,10 @@ Not in `λ` at either depth: `P_visc_heat` depends on u∥, not on Tₑ, so its 
 zero; `P_diffu` and `P_conv` are nonlocal and keep
 `θ_imp.transport`; `P_heat` is nonlocal with no implicit half at all, so it stays
 forward Euler — warned about here, since it is the dispatch's omission and not one
-branch's. `FullLinearResponse` additionally warns about `∂ν_ei/∂Tₑ`, the one
-derivative it declines to take (Spitzer-like, not an RRC surface — it under-damps the
-transient only, since the fixed point does not depend on `λ`); what
+branch's. `FullLinearResponse` additionally warns about `∂ν_ei/∂Tₑ` for a prescribed drift
+(`ud_evolve = false`), the one derivative it declines to take (Spitzer-like, not an RRC
+surface — it under-damps the transient only, since the fixed point does not depend on `λ`);
+with u∥ evolved the friction's heat is the momentum solve's work, with no Tₑ in it. What
 `PartialLinearResponse` leaves out is the enum's subject, not a warning's.
 
 Two traps. `Ē` is built from `ue_para` while `P_drag` and `P_dilution` use
@@ -1076,7 +1079,14 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
 
         # (the e–i exchange is not here: the step applies its exact solution on its own)
 
-        # (`ePowers.drag`'s Coulomb half is the friction's heat the momentum solve recorded: no Tₑ in it)
+        # `ePowers.drag`'s Coulomb half: with u∥ evolved, the friction's heat the momentum solve recorded,
+        # no Tₑ in it; a prescribed drift heats by mₑ ν_ei^eff(Tₑ)|u_e − u_i|² at once, its Tₑ through ν_ei
+        # left out
+        if RP.flags.Coulomb_Collision && !RP.flags.ud_evolve
+            @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from exprb.eig_Te: with u∥ not evolved the " *
+                "friction heats by mₑ ν_ei^eff(Tₑ)|u_e − u_i|², and ν_ei is Spitzer-like, not an RRC " *
+                "surface. This under-damps the transient; the fixed point is unaffected." maxlog = 1
+        end
 
         # No power outside the wall, so no rate of change of it either.
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids

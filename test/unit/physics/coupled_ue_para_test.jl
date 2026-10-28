@@ -69,6 +69,11 @@ end
         @test maximum(abs, Δu) > 1.0e-3 * maximum(abs, u0)  # the step moves u∥
         @test maximum(abs, a.plasma.ue_para .- b.plasma.ue_para) <= 1.0e-12 * maximum(abs, Δu)
         @test maximum(abs, a.plasma.Rue_ei .- b.plasma.Rue_ei) <= 1.0e-12 * maximum(abs, b.plasma.Rue_ei)
+        # the impulse the ions take and the friction's heat, its work on the step's mean drift from uⁿ:
+        # the coupled step keeps uⁿ as update_ue_para! does
+        @test maximum(abs, a.plasma.I_ei .- b.plasma.I_ei) <= 1.0e-12 * maximum(abs, b.plasma.I_ei)
+        heat = b.plasma.ei_friction_heat
+        @test maximum(abs, a.plasma.ei_friction_heat .- heat) <= 1.0e-12 * maximum(abs, heat)
         @test a.coil_system.θimp == 1
     end
 end

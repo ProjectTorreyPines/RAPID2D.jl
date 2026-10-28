@@ -99,6 +99,15 @@ function add_scaled!(A::DiscretizedOperator{FT}, c, B::DiscretizedOperator{FT}) 
     return A
 end
 
+"`A ← B` for two operators on one pattern: `B`'s values into `A`'s own storage."
+function copy_values!(A::DiscretizedOperator{FT}, B::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
+    MA, MB = A.matrix, B.matrix
+    (size(MA) == size(MB) && MA.colptr == MB.colptr && MA.rowval == MB.rowval) ||
+        throw(ArgumentError("copy_values!: the two operators do not share a pattern"))
+    copyto!(nonzeros(MA), nonzeros(MB))
+    return A
+end
+
 "`A ← A + scale·diag(v)` on the wall pattern, `v` indexed by node."
 function add_diagonal!(A::DiscretizedOperator{FT}, v::AbstractVector; scale = one(FT)) where {FT <: AbstractFloat}
     check_wall_pattern(A)

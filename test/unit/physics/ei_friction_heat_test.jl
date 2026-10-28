@@ -122,6 +122,23 @@ end
     @test (pla.ePowers.drag .* dt)[inw] ≈ (0.5 .* me .* (Δu0 .^ 2 .- Δu1 .^ 2))[inw] rtol = 1.0e-3
 end
 
+@testitem "the friction never cools: a field that reverses the relative drift within a step leaves its heat at zero" setup = [EiFrictionCase] begin
+    using RAPID2D: update_electron_heating_powers!, update_ue_para!
+    # Δu from +a to −b, a > b, in one step: the friction's impulse (at u^θ, pointing to +) on the
+    # step's mean drift (+) is positive work, a cooling no collision makes: −R·Δu = mₑν|Δu|² ≥ 0.
+    # The trapezoid's partition between the field and the friction is wrong on such a step.
+    RP = friction_case()
+    pla = RP.plasma
+    inw = RP.G.nodes.in_wall_nids
+    Δu0 = copy(pla.ue_para .- pla.ui_para)
+    RP.fields.E_para_tot .= 600.0                         # e E Δt/mₑ ≈ 1.06e6 m/s against the drift
+    update_ue_para!(RP)
+    update_electron_heating_powers!(RP)
+    Δu1 = pla.ue_para .- pla.ui_para
+    @test all(Δu0[inw] .> 0) && all(Δu1[inw] .< 0) && all(abs.(Δu1[inw]) .< Δu0[inw])   # reversed, smaller
+    @test all(>=(0.0), pla.ePowers.drag[inw])
+end
+
 @testitem "an isolated electron–ion pair keeps its energy: the friction's kinetic energy is the electrons' heat, at every Δt" setup = [EiFrictionCase] begin
     # no gas, no field, no transport: the friction and the temperature exchange alone. The heat is the
     # kinetic energy the friction took over each step, −I_ei·(ū_e − u_i), so the total is kept at any

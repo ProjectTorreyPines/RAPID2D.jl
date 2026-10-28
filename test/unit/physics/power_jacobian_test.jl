@@ -220,8 +220,8 @@ end
     @test all(iszero, off.plasma.exprb.eig_Te)
 end
 
-@testitem "eig_Te: the e–i friction's heat is the momentum solve's, so nothing of it is left out or announced" setup = [PowerJacobianFixtures] begin
-    using RAPID2D: ExpRB
+@testitem "eig_Te: the e–i friction's heat is the momentum solve's, so nothing of it is left out; a prescribed drift's ν_ei(Tₑ) is, and announced" setup = [PowerJacobianFixtures] begin
+    using RAPID2D: ExpRB, PartialLinearResponse, FullLinearResponse
     const Warn = Base.CoreLogging.Warn      # Logging is stdlib, not a test dependency
 
     # P_drag's Coulomb half is the kinetic energy the momentum solve's friction took over the step
@@ -231,6 +231,19 @@ end
         RP = pj_RAPID(; coulomb)
         RP.flags.scheme.atomic = ExpRB
         @test_logs min_level = Warn eig_at(RP)
+    end
+    # A prescribed drift (u∥ not evolved) heats at once by mₑ ν_ei^eff(Tₑ)|u_e − u_i|²: the full
+    # response leaves its Tₑ dependence through ν_ei out of eig_Te, and says so (what the partial one
+    # leaves out is its enum's subject); nothing to say without Coulomb.
+    for coulomb in (true, false), depth in (FullLinearResponse, PartialLinearResponse)
+        RP = pj_RAPID(; coulomb, depth)
+        RP.flags.ud_evolve = false
+        RP.flags.scheme.atomic = ExpRB
+        if coulomb && depth === FullLinearResponse
+            @test_logs (:warn, r"∂ν_ei/∂Tₑ") match_mode = :any eig_at(RP)
+        else
+            @test_logs min_level = Warn eig_at(RP)
+        end
     end
 end
 
