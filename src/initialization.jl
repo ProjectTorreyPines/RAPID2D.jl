@@ -890,6 +890,10 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
     # Handle non-finite values (NaN, Inf) or non-real values
     not_valid = @. !isfinite(pla.lnΛ) | !isreal(pla.lnΛ)
     @. pla.lnΛ[not_valid] = FT(10.0)  # base value
+    # Floored at 1, as the ion–ion logarithm (`ion_ion_coulomb_log`): the expression goes negative for
+    # cold dense plasma (nₑ = 5e17 m⁻³ at Tₑ = 1 meV gives −0.8), and a negative ν_ei turns the friction
+    # into a cooling and the e–i exchange into a runaway from equilibrium.
+    @. pla.lnΛ = max(pla.lnΛ, one(FT))
 
     # Update collision frequency
     # ν_ei = n_e e^4 lnΛ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)

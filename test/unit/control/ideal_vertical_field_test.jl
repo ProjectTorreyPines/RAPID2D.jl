@@ -339,6 +339,9 @@ end
         pla, F = RP.plasma, RP.fields
         on = pla.ne .> 0
         pla.ue_para[on] .= pla.Jϕ[on] ./ (RP.config.constants.qe .* pla.ne[on] .* F.bϕ[on])
+        # the disc carries 10 kA at 1e17 m⁻³: its Ohmic heating, ≈ 17 eV/µs, would move within these
+        # steps the pressure the control balances. Held, the control is what the steps test.
+        RP.flags.Te_evolve = false
         RP.t_end_s = t_end
         RP
     end

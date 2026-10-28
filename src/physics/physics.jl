@@ -107,6 +107,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             a_amb = shares.amb
         end
         u_old = isnothing(a_amb) ? nothing : copy(pla.ue_para)   # for the exchange ledger
+        ue_entry = copy(pla.ue_para)                               # uⁿ, for the friction's heat
 
         # #4: collision drag force  (1-θu)*[-(ν_en_iz_tot + ν_mom + ν_ei_eff)*ue_para]. Under
         # ExpRB uⁿ carries bern(−z) instead, applied to the RHS below.
@@ -174,7 +175,7 @@ function update_ue_para!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
-        record_ei_impulse!(RP)   # before continuity moves nₑ
+        record_ei_impulse!(RP, ue_entry)   # before continuity moves nₑ
 
         # the momentum the near-vacuum relaxation took out
         RP.diagnostics.near_vacuum.relax_momentum +=
@@ -281,13 +282,20 @@ function born_ion_mass(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 # The electrons' momentum from the ions over the step, per volume, at the density their momentum
-# equation saw; zero without Coulomb collisions. The ions take −I_ei (`update_ui_para!`).
-function record_ei_impulse!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+# equation saw; zero without Coulomb collisions. The ions take −I_ei (`update_ui_para!`). And the
+# friction's heat, per electron: the kinetic energy it took from the relative drift over the step,
+# −I_ei·(ū_e − u_i)/(nₑ Δt), ū_e the mean of `ue_entry` (uⁿ) and the solved u∥. Braginskii's
+# −R·(u_e − u_i): the electrons' own kinetic energy, −u_e·R, plus the moving ions' work on them, u_i·R.
+# Exact for any ν Δt, so a stiff friction gives the drift's energy, not ν Δt times it.
+function record_ei_impulse!(RP::RAPID{FT}, ue_entry::AbstractMatrix{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     if RP.flags.Coulomb_Collision
-        @. pla.I_ei = RP.dt * RP.config.constants.me * pla.ne * pla.Rue_ei
+        me = RP.config.constants.me
+        @. pla.I_ei = RP.dt * me * pla.ne * pla.Rue_ei
+        @. pla.ei_friction_heat = -me * pla.Rue_ei * (FT(0.5) * (ue_entry + pla.ue_para) - pla.ui_para)
     else
         fill!(pla.I_ei, zero(FT))
+        fill!(pla.ei_friction_heat, zero(FT))
     end
     return RP
 end
@@ -706,6 +714,19 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
         end
 
 
+        # The e–i friction's heat, Braginskii's −R·(u_e − u_i) → mₑ ν_ei^eff |u_e − u_i|², the sum of two
+        # terms of the electrons' energy: −u_e·R, the kinetic energy the friction takes from them, and
+        # +u_i·R, the work of the moving ions (elastic scattering off a heavy ion keeps |v − u_i|). The
+        # ions get the friction's work and no heat, to order mₑ/mᵢ. With u∥ evolved it is what the
+        # momentum solve's friction took over the step (`record_ei_impulse!`); a prescribed drift's at once.
+        if RP.flags.Coulomb_Collision
+            if RP.flags.ud_evolve
+                ePowers.drag .= pla.ei_friction_heat
+            else
+                @. ePowers.drag = me * ((pla.ueR - pla.uiR)^2 + (pla.ueϕ - pla.uiϕ)^2 + (pla.ueZ - pla.uiZ)^2) * pla.ν_ei_eff
+            end
+        end
+
         if RP.flags.Atomic_Collision
             # Every ν_en_* below is materialized by update_RRCs! at the step-entry state.
             # Reading them rather than re-querying is what makes the frictional heating
@@ -714,12 +735,9 @@ function update_electron_heating_powers!(RP::RAPID{FT}) where {FT <: AbstractFlo
 
             # Calculate velocity magnitudes for drag forces
             ue_mag_sq = @. pla.ueR^2 .+ pla.ueϕ^2 .+ pla.ueZ^2
-            ue_dot_ui = @. pla.ueR * pla.uiR + pla.ueϕ * pla.uiϕ + pla.ueZ * pla.uiZ
 
-            @. ePowers.drag = me * (
-                ue_mag_sq * pla.ν_en_mom_tot
-                    + (ue_mag_sq - ue_dot_ui) * pla.sptz_fac * pla.ν_ei
-            )
+            # the gas's drag heats by mₑ|u_e|²ν_mom: the gas is at rest, so −u_e·R is all of it
+            @. ePowers.drag += me * ue_mag_sq * pla.ν_en_mom_tot
 
             # Elastic recoil. `P_en_ela = n_gas·Kerg_ela` already contains 2mₑ/M and the
             # e — do NOT reapply them. It is a COLD-TARGET coefficient (molecule at rest),
@@ -1058,19 +1076,7 @@ function _eig_Te_from_linear_response!(RP::RAPID{FT}) where {FT <: AbstractFloat
 
         # (the e–i exchange is not here: the step applies its exact solution on its own)
 
-        # Gated on the terms being PRESENT, not on the flag. `ePowers.drag`'s
-        # Coulomb half is charged unconditionally inside `Atomic_Collision`, using
-        # whatever `sptz_fac·ν_ei` initialization left behind — so it survives
-        # `Coulomb_Collision = false`. A flag-gated warning
-        # would stay silent in exactly the case where the omission is unannounced.
-        # Indexed rather than broadcast: one grid-sized temporary per step is a lot
-        # to allocate for a `maxlog = 1` decision.
-        if any(i -> !iszero(pla.sptz_fac[i] * pla.ν_ei[i]), eachindex(pla.sptz_fac))
-            @warn "scheme.atomic = ExpRB omits ∂ν_ei/∂Tₑ from exprb.eig_Te: ν_ei is Spitzer-like, " *
-                "not an RRC surface, so the Tₑ dependence THROUGH ν_ei in P_drag's Coulomb half " *
-                "is left out. This under-damps the transient; the fixed point is " *
-                "λ-independent and unaffected." maxlog = 1
-        end
+        # (`ePowers.drag`'s Coulomb half is the friction's heat the momentum solve recorded: no Tₑ in it)
 
         # No power outside the wall, so no rate of change of it either.
         on_out_wall_nids = RP.G.nodes.on_out_wall_nids
@@ -2367,6 +2373,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             @. pla.Rue_ei = pla.ν_ei_eff * (pla.ui_para - (one(FT) - θu) * pla.ue_para)
         end
         u_old = isnothing(a_amb) ? nothing : copy(pla.ue_para)   # for the exchange ledger
+        ue_entry = copy(pla.ue_para)                               # uⁿ, for the friction's heat
         F.ψ_coils_pla .= ψ_k
         if !closed_surface_active(RP)
             pla.ue_para .= ue_k
@@ -2392,7 +2399,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
         if RP.flags.Coulomb_Collision
             @. pla.Rue_ei += pla.ν_ei_eff * (-θu * pla.ue_para)
         end
-        record_ei_impulse!(RP)   # before continuity moves nₑ
+        record_ei_impulse!(RP, ue_entry)   # before continuity moves nₑ
 
         update_Jϕ!(RP)
 

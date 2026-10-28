@@ -1028,10 +1028,10 @@ end
         @test !isapprox(ν_mid[inw], ν_entry[inw]; rtol = 1.0e-3)   # the state really moved
         @test pla.ν_en_mom_tot == ν_entry                          # ...the field did not
 
-        # ePowers.drag adds a Spitzer term regardless of flags.Coulomb_Collision, and
-        # initialize! leaves nu_ei/sptz_fac populated, so it contributes ~6e-8 of the
-        # total here. Zero it to isolate the neutral drag this item is about.
+        # ePowers.drag adds the e–i friction's heat, mₑ ν_ei^eff |u_e − u_i|², when Coulomb
+        # collisions are on. Zero its rate to isolate the neutral drag this item is about.
         pla.ν_ei .= 0.0
+        pla.ν_ei_eff .= 0.0
 
         update_electron_heating_powers!(RP)
         (; me, ee, iz_erg_eV, diss_iz_erg_eV) = RP.config.constants

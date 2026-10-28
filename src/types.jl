@@ -476,6 +476,9 @@ Contains the plasma state variables including density, temperature, and velocity
     # Δt mₑ nₑ Rue_ei at the density the electron momentum equation saw (before continuity).
     # The ions take −I_ei (`update_ui_para!`), so the exchange cancels exactly.
     I_ei::Matrix{FT} = zeros(FT, dims)
+    # The heat of that friction over the step, per electron [W]: the kinetic energy it took from the
+    # relative drift, −I_ei (ū_e − u_i)/(nₑ Δt) with ū_e the step's mean u∥ (`record_ei_impulse!`)
+    ei_friction_heat::Matrix{FT} = zeros(FT, dims)
     # The energy the electrons gave the ions by Coulomb collisions over the step, per volume
     # [J/m³] (`ei_exchange_energy!`): the ions take +, the electrons −.
     ei_exchange_energy::Matrix{FT} = zeros(FT, dims)
