@@ -175,10 +175,11 @@ function neutral_gas_channel(n_gas, T_gas_eV, ν_iz, L_char)
 end
 
 """
-    build_reflective_diffusion_matrix(G, D) -> SparseMatrixCSC
+    build_isotropic_diffusion_matrix(G, D; faces = nothing, v_absorb = nothing) -> SparseMatrixCSC
 
 Isotropic 5-point diffusion operator `∇·(D∇·)` with a **reflective** (zero-flux)
-wall, on the full `NR·NZ` node indexing.
+wall, on the full `NR·NZ` node indexing; with `faces` (from `wall_faces`) and a per-face
+`v_absorb ≥ 0`, a Robin wall.
 
 ```
     A[p, q] = (1/J_p)·½·(CT_q + CT_p)     q a cardinal neighbour of p, both in-wall
@@ -195,6 +196,12 @@ awareness — still leaves the coefficient `(1/J)·½·CT_inside` on the outward
 and the gas drains into nodes nothing solves for. The fill gas is not consumed by
 the wall; it bounces.
 
+**The Robin wall.** The same debit as the anisotropic operators'
+([`build_wall_diffusion_matrix!`](@ref), "The Robin debit"): each wall face takes
+`(A_f/V_i)·v_absorb_f` off its owning cell's diagonal ([`wall_face_debit`](@ref)). `v_absorb = 0`
+is reflective and gives the matrix above bit for bit, `→ ∞` absorbing, and `(1 − a)·¼v̄` a wall
+returning the fraction `a` (the albedo). Without `faces` nothing is debited.
+
 **What is conserved.** Zero row sums make the stencil a divergence, so constants
 lie in its kernel and no node manufactures gas. Weighting by the Jacobian makes
 `M = J·A` symmetric, hence its column sums vanish too, so `Σ J·n` is conserved
@@ -204,10 +211,22 @@ conserved in cylindrical geometry.
 Ported from `Construct_An_H2_gas_diffu_reflective.m`. The MATLAB splits the sweep
 into deep-in-wall and near-wall passes; that is a performance split only, and the
 uniform neighbour test here produces the same matrix.
+
+**Isotropic, so its own builder.** The anisotropic operators' nine-point kernel
+([`assemble_anisotropic_diffusion!`](@ref)) reduces to this stencil at `D_RZ = 0`, but builds
+slower, and its wider pattern, if stored, adds LU fill-in. Five points have no negative
+couplings, so there is no discretization policy to choose.
 """
-function build_reflective_diffusion_matrix(G, D::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+function build_isotropic_diffusion_matrix(
+        G, D::AbstractMatrix{FT};
+        faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
+        v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
+    ) where {FT <: AbstractFloat}
+    _check_robin_args(faces, v_absorb)
     NR, NZ = G.NR, G.NZ
     Ng = NR * NZ
+    # the Robin debit per owning cell, all zero without faces
+    debit = wall_face_debit(FT, Ng, faces, v_absorb)
     CTRR = @. G.Jacob * D / (G.dR * G.dR)
     CTZZ = @. G.Jacob * D / (G.dZ * G.dZ)
     state, nid = G.nodes.state, G.nodes.nid
@@ -236,9 +255,10 @@ function build_reflective_diffusion_matrix(G, D::AbstractMatrix{FT}) where {FT <
             push!(vals, c)
             diag -= c
         end
+        # v_absorb ≥ 0: the wall drains and never sources
         push!(rows, row)
         push!(cols, row)
-        push!(vals, diag)
+        push!(vals, diag - debit[row])
     end
 
     return sparse(rows, cols, vals, Ng, Ng)
@@ -323,7 +343,7 @@ function update_neutral_H2_gas_density!(RP::RAPID{FT}) where {FT <: AbstractFloa
         end
 
         # ── reflective diffusion, θ-scheme (BE by default) ──────────────────
-        A = build_reflective_diffusion_matrix(G, D)
+        A = build_isotropic_diffusion_matrix(G, D)
         θ = RP.flags.θ_imp.gas
         # rows outside the wall are empty in A, so this leaves them as identity
         M = sparse(I, size(A, 1), size(A, 2)) - θ * dt * A

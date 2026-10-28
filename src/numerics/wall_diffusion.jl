@@ -1,8 +1,49 @@
 # Wall-aware anisotropic diffusion operator.
 #
 # A whole-grid tensor builder that sweeps 2:N-1 with no wall awareness (the retired `∇𝐃∇`)
-# lets material diffuse past the wall to be removed afterwards; `build_reflective_diffusion_matrix`
-# knows about the wall but is 5-point and isotropic. This one is both.
+# lets material diffuse past the wall to be removed afterwards. This one knows the wall and
+# takes the full tensor. Every anisotropic diffusion operator of a run is assembled through
+# `assemble_anisotropic_diffusion!`, so the stencil and its policy on negative couplings live here
+# once. The isotropic gas has its own five-point builder (`build_isotropic_diffusion_matrix`).
+
+"""
+    assemble_anisotropic_diffusion!(A, G, D_RR, D_RZ, D_ZZ, discretization; n = nothing, faces = nothing, v_absorb = nothing, cross_terms = :drop) -> number of limited pairs
+
+`∇·(𝐃∇·)` written into `A`, an operator on the wall pattern, as the
+[`AnisotropicDiscretization`](@ref) `discretization` assembles it. The one entry the run's
+anisotropic diffusion operators are built through (the electrons' particle diffusion and
+conduction, the ions' groups), so they share one stencil and one policy on negative couplings.
+`n` is the density a limiter reads, the node vector or the `(NR, NZ)` grid; `faces` and
+`v_absorb` add the Robin wall and `cross_terms` the stencil's wall rule
+([`build_wall_diffusion_matrix!`](@ref)). Returns the number of pairs the discretization
+limited, 0 when it limits none.
+"""
+function assemble_anisotropic_diffusion!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT},
+        D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT},
+        discretization::LimitedNinePoint;
+        n::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
+        faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
+        v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
+        cross_terms::Symbol = :drop,
+    ) where {FT <: AbstractFloat}
+    isnothing(n) &&
+        throw(ArgumentError("assemble_anisotropic_diffusion!: LimitedNinePoint needs the density its limiter reads (`n`)"))
+    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
+    return limit_antidiffusive_pairs!(A, G, n; max_ratio = FT(discretization.max_ratio))
+end
+
+function assemble_anisotropic_diffusion!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT},
+        D_RR::AbstractMatrix{FT}, D_RZ::AbstractMatrix{FT}, D_ZZ::AbstractMatrix{FT}, ::NinePoint;
+        n::Union{Nothing, AbstractVecOrMat{FT}} = nothing,
+        faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
+        v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
+        cross_terms::Symbol = :drop,
+    ) where {FT <: AbstractFloat}
+    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
+    return 0
+end
 
 """
     build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms = :drop, faces = nothing, v_absorb = nothing) -> A
@@ -273,6 +314,11 @@ end
 function _check_wall_diffusion_args(cross_terms, faces, v_absorb)
     cross_terms in (:drop, :reflect) ||
         throw(ArgumentError("cross_terms must be :drop or :reflect, got :$cross_terms"))
+    return _check_robin_args(faces, v_absorb)
+end
+
+# the Robin wall of the isotropic and the anisotropic operators alike
+function _check_robin_args(faces, v_absorb)
     isnothing(faces) == isnothing(v_absorb) ||
         throw(ArgumentError("`faces` and `v_absorb` must be given together"))
     if !isnothing(faces)

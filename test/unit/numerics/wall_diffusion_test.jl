@@ -22,7 +22,7 @@
 # Σ J·n — which needs J·A symmetric — is measured, not assumed.
 
 @testitem "Wall diffusion: reduces to the reflective 5-point operator when isotropic" begin
-    using RAPID2D: build_wall_diffusion_matrix, build_reflective_diffusion_matrix
+    using RAPID2D: build_wall_diffusion_matrix, build_isotropic_diffusion_matrix
 
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30,
@@ -43,7 +43,9 @@
     # THE regression anchor. With D_RZ = 0 and D_RR = D_ZZ the 9-point stencil
     # collapses to the 5-point one, and the known-good reflective operator — the
     # one whose conservation is already established — must be reproduced.
-    ref = build_reflective_diffusion_matrix(G, D)
+    ref = build_isotropic_diffusion_matrix(G, D)
+    # its own builder keeps the five-point pattern: no cross-term slots for the LU to carry
+    @test all(<=(5), diff(ref.colptr))
     for treatment in (:drop, :reflect)
         A = build_wall_diffusion_matrix(G, D, Z, D; cross_terms = treatment)
         @test size(A) == size(ref)
@@ -507,4 +509,47 @@ end
     @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, n; max_ratio = 0.5)
     @test_throws ArgumentError limit_antidiffusive_pairs!(A, G, n; max_ratio = Inf)
     @test_throws DimensionMismatch limit_antidiffusive_pairs!(A, G, vec(n)[1:(end - 1)]; max_ratio = 20.0)
+end
+
+# ── One assembly ──────────────────────────────────────────────────────────────
+#
+# Every anisotropic diffusion operator of a run is assembled through `assemble_anisotropic_diffusion!` by the
+# run's `AnisotropicDiscretization`: `NinePoint` is the stencil, `LimitedNinePoint` the stencil with
+# its anti-diffusive pairs limited where the density is not resolved.
+
+@testitem "diffusion discretization: the policies check their parameters, and the run default limits at 20" begin
+    @test SimulationFlags{Float64}().anisotropic_discretization == LimitedNinePoint(max_ratio = 20)
+    @test LimitedNinePoint(4).max_ratio === 4.0
+    @test LimitedNinePoint(max_ratio = 1).max_ratio === 1.0
+    for bad in (0.5, Inf, NaN)
+        @test_throws ArgumentError LimitedNinePoint(max_ratio = bad)
+    end
+    @test NinePoint() isa AnisotropicDiscretization
+end
+
+@testitem "diffusion assembly: NinePoint is the stencil, LimitedNinePoint the stencil with its pairs limited, bit for bit" setup = [PairLimiterFixtures] begin
+    using RAPID2D: assemble_anisotropic_diffusion!
+    using RAPID2D.SparseArrays: nonzeros
+    c = tilted_case()
+    G = c.G
+    v_absorb = fill(40.0, length(c.faces))
+    cliff, smooth = cliff_density(G, c.across), smooth_density(G)
+    for kw in ((;), (; faces = c.faces, v_absorb))
+        stencil = diffusion(G, c.D; kw...)
+        A = build_wall_pattern(G)
+        @test assemble_anisotropic_diffusion!(A, G, c.D..., NinePoint(); n = cliff, kw...) == 0
+        @test nonzeros(A.matrix) == nonzeros(stencil.matrix)
+
+        limited = diffusion(G, c.D; kw...)
+        n_limited = limit_antidiffusive_pairs!(limited, G, cliff; max_ratio = 20.0)
+        @test n_limited > 50
+        @test assemble_anisotropic_diffusion!(A, G, c.D..., LimitedNinePoint(); n = cliff, kw...) == n_limited
+        @test nonzeros(A.matrix) == nonzeros(limited.matrix)
+
+        # a resolved density: the two discretizations are one operator
+        @test assemble_anisotropic_diffusion!(A, G, c.D..., LimitedNinePoint(); n = smooth, kw...) == 0
+        @test nonzeros(A.matrix) == nonzeros(stencil.matrix)
+    end
+    # the limiter's density is not optional
+    @test_throws ArgumentError assemble_anisotropic_diffusion!(build_wall_pattern(G), G, c.D..., LimitedNinePoint())
 end

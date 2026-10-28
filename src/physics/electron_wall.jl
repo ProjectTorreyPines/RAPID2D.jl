@@ -57,18 +57,20 @@ function electron_wall_absorption_speeds(RP::RAPID{FT}, faces) where {FT <: Abst
 end
 
 """
-Wall-aware `∇·(𝐃∇·)` for electrons plus its Robin coefficients, from the transport tensor: the
-fresh reference. The continuity solve applies the same Robin wall as a diagonal rate on the
-cached reflective operator (`operators.A_diffu_e`).
+Wall-aware `∇·(𝐃∇·)` for electrons plus its Robin coefficients, from the transport tensor and
+assembled by `flags.anisotropic_discretization` at the current `ne`: the fresh reference. The
+continuity solve applies the same Robin wall as a diagonal rate on the cached reflective
+operator (`operators.A_diffu_e`).
 """
 function electron_transport_operator(RP::RAPID{FT}, faces) where {FT <: AbstractFloat}
     tp = RP.transport
     v_absorb = electron_wall_absorption_speeds(RP, faces)
-    A = build_wall_diffusion_matrix(
-        RP.G, tp.DRR, tp.DRZ, tp.DZZ;
-        cross_terms = :drop, faces = faces, v_absorb = v_absorb
+    A = build_wall_pattern(RP.G)
+    assemble_anisotropic_diffusion!(
+        A, RP.G, tp.DRR, tp.DRZ, tp.DZZ, RP.flags.anisotropic_discretization;
+        n = RP.plasma.ne, faces, v_absorb
     )
-    return A, v_absorb
+    return dropzeros!(A.matrix), v_absorb
 end
 
 "Book what the electron Robin wall took this step, per face, into the electron tracker."

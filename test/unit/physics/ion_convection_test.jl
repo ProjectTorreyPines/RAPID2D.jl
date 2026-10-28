@@ -143,7 +143,8 @@ end
 
     A_diff, _ = ion_transport_operator(
         G, groups[1], ion_channel_directions(RP);
-        faces = wall_faces(G), albedo = RP.config.ion_wall_albedo
+        faces = wall_faces(G), albedo = RP.config.ion_wall_albedo,
+        discretization = RP.flags.anisotropic_discretization, n = RP.prev_n,
     )
     # the same face-flux divergence the electron equation uses, from the ION velocities
     A = A_diff - build_face_flux_divergence(G, RP.plasma.uiR, RP.plasma.uiZ; upwind = RP.flags.upwind)

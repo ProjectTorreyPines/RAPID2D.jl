@@ -8,7 +8,7 @@
 # ── which faces exist ───────────────────────────────────────────────────────
 
 @testitem "Wall faces: one face for every arm the reflective stencil omits" begin
-    using RAPID2D: wall_faces, build_reflective_diffusion_matrix
+    using RAPID2D: wall_faces, build_isotropic_diffusion_matrix
     using RAPID2D.SparseArrays
 
     config = SimulationConfig{Float64}(
@@ -26,7 +26,7 @@
     # The reflective operator is an INDEPENDENT statement of the same geometry: it
     # omits exactly the arms that cross the wall. If the two ever disagree, the
     # Robin debit of step 2 would land on faces the flux terms do not.
-    A = build_reflective_diffusion_matrix(G, fill(50.0, G.NR, G.NZ))
+    A = build_isotropic_diffusion_matrix(G, fill(50.0, G.NR, G.NZ))
 
     for f in faces
         # the owner is in-wall and the cell across the face is not — direction, not
@@ -156,7 +156,7 @@ end
     faces = wall_faces(G)
 
     # The design note writes A_f/V_i = 1/dR for an R-face, which drops the factor
-    # R_{i±½}/R_i. That factor is not decoration: build_reflective_diffusion_matrix
+    # R_{i±½}/R_i. That factor is not decoration: build_isotropic_diffusion_matrix
     # already carries it (invJ·½(CT_out + CT_in) is (1/J_i)·J_face·D/dR², and
     # ½(R_i + R_{i±1}) = R_{i±½} exactly because Jacob = R is linear), and the
     # conserved measure Σ J·n only closes against the true face area. Dropping it

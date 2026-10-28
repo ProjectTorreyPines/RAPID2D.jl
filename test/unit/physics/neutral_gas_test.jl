@@ -123,7 +123,7 @@ end
 # must OMIT the outside neighbour, which is a different stencil.
 
 @testitem "Reflective diffusion operator: rows sum to zero" begin
-    using RAPID2D: build_reflective_diffusion_matrix
+    using RAPID2D: build_isotropic_diffusion_matrix
     using RAPID2D.SparseArrays
 
     config = SimulationConfig{Float64}(
@@ -135,7 +135,7 @@ end
     initialize!(RP)
 
     D = fill(50.0, RP.G.NR, RP.G.NZ)
-    A = build_reflective_diffusion_matrix(RP.G, D)
+    A = build_isotropic_diffusion_matrix(RP.G, D)
 
     # zero row sum is what makes the stencil a divergence: no node manufactures
     # or destroys gas on its own. The residual is pure cancellation round-off, so
@@ -145,7 +145,7 @@ end
 end
 
 @testitem "Reflective diffusion operator: uniform gas produces no flux" begin
-    using RAPID2D: build_reflective_diffusion_matrix
+    using RAPID2D: build_isotropic_diffusion_matrix
 
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30,
@@ -160,7 +160,7 @@ end
         30.0 + 20.0 * sin(3.0 * RP.G.R1D[i]) * cos(2.0 * RP.G.Z1D[j])
             for i in 1:RP.G.NR, j in 1:RP.G.NZ
     ]
-    A = build_reflective_diffusion_matrix(RP.G, D)
+    A = build_isotropic_diffusion_matrix(RP.G, D)
 
     # A·const is the row sum times n, so the tolerance has to carry BOTH factors.
     # A genuine leak (an absorbing wall) lands near 0.25 in these relative units,
@@ -171,7 +171,7 @@ end
 end
 
 @testitem "Reflective diffusion operator: no coupling across the wall" begin
-    using RAPID2D: build_reflective_diffusion_matrix
+    using RAPID2D: build_isotropic_diffusion_matrix
     using RAPID2D.SparseArrays
 
     config = SimulationConfig{Float64}(
@@ -183,7 +183,7 @@ end
     initialize!(RP)
 
     D = fill(50.0, RP.G.NR, RP.G.NZ)
-    A = build_reflective_diffusion_matrix(RP.G, D)
+    A = build_isotropic_diffusion_matrix(RP.G, D)
 
     # THE defining property. An absorbing wall would show non-zero entries here,
     # and the gas would drain into nodes nothing ever solves for.
@@ -196,7 +196,7 @@ end
 end
 
 @testitem "Reflective diffusion operator: conserves Jacobian-weighted particles" begin
-    using RAPID2D: build_reflective_diffusion_matrix
+    using RAPID2D: build_isotropic_diffusion_matrix
 
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30,
@@ -210,7 +210,7 @@ end
         30.0 + 20.0 * sin(3.0 * RP.G.R1D[i]) * cos(2.0 * RP.G.Z1D[j])
             for i in 1:RP.G.NR, j in 1:RP.G.NZ
     ]
-    A = build_reflective_diffusion_matrix(RP.G, D)
+    A = build_isotropic_diffusion_matrix(RP.G, D)
 
     # In cylindrical geometry the conserved quantity is Σ J·n, not Σ n — the same
     # invariant the impurity wall ledger uses. d/dt(Σ J n) = (Jᵀ A) n must vanish
@@ -221,7 +221,7 @@ end
 end
 
 @testitem "Reflective diffusion operator: smooths a peak" begin
-    using RAPID2D: build_reflective_diffusion_matrix
+    using RAPID2D: build_isotropic_diffusion_matrix
 
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30,
@@ -232,7 +232,7 @@ end
     initialize!(RP)
 
     D = fill(50.0, RP.G.NR, RP.G.NZ)
-    A = build_reflective_diffusion_matrix(RP.G, D)
+    A = build_isotropic_diffusion_matrix(RP.G, D)
 
     Rc = (RP.G.R1D[1] + RP.G.R1D[end]) / 2
     Zc = (RP.G.Z1D[1] + RP.G.Z1D[end]) / 2

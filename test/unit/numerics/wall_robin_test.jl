@@ -447,3 +447,44 @@ end
     one_face = 400.0 * first(f.area_per_volume for f in faces if f.nid == corner)
     @test plain[corner, corner] - both[corner, corner] > 1.5 * one_face
 end
+
+# The isotropic operator (the neutral gas's five-point builder) takes the same Robin wall.
+
+@testitem "Robin, isotropic: reflective by default bit for bit, the same debit as the anisotropic kernel, drains and never sources" begin
+    using RAPID2D: build_isotropic_diffusion_matrix, build_wall_diffusion_matrix, wall_faces, wall_face_debit
+    using RAPID2D.LinearAlgebra: Diagonal, I
+    config = SimulationConfig{Float64}(
+        device_Name = "manual", NR = 25, NZ = 30,
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0,
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    G = RP.G
+    faces = wall_faces(G)
+    Ng = G.NR * G.NZ
+    D = [30.0 + 20.0 * sin(3.0 * G.R1D[i]) * cos(2.0 * G.Z1D[j]) for i in 1:G.NR, j in 1:G.NZ]
+    v = [40.0 * (1 + 0.5 * sin(k)) for k in eachindex(faces)]     # a face property, varying
+
+    plain = build_isotropic_diffusion_matrix(G, D)
+    # v_absorb = 0 is the reflective wall, bit for bit
+    @test build_isotropic_diffusion_matrix(G, D; faces, v_absorb = zeros(length(faces))) == plain
+    # the wall takes (A_f/V_i)·v_f off the owning cell's diagonal, and nothing else
+    robin = build_isotropic_diffusion_matrix(G, D; faces, v_absorb = v)
+    debit = wall_face_debit(Float64, Ng, faces, v)
+    @test robin == plain - Diagonal(debit)
+    @test count(>(0), debit) > 0
+    # the anisotropic kernel at D_RZ = 0 with the same wall: one Robin formula for both
+    aniso = build_wall_diffusion_matrix(G, D, zero(D), D; faces, v_absorb = v)
+    @test maximum(abs, aniso - robin) < 1.0e-13 * maximum(abs, robin)
+    # Σ J n falls by what the faces take, never rises: an implicit step from a uniform fill
+    J = vec(G.Jacob)
+    n0 = zeros(Ng)
+    n0[G.nodes.in_wall_nids] .= 1.0e19
+    n1 = (I - 1.0e-4 * robin) \ n0
+    @test J' * n1 < J' * n0
+    @test all(>=(0), n1)
+    @test_throws ArgumentError build_isotropic_diffusion_matrix(G, D; faces)
+    @test_throws ArgumentError build_isotropic_diffusion_matrix(G, D; faces, v_absorb = -v)
+    @test_throws DimensionMismatch build_isotropic_diffusion_matrix(G, D; faces, v_absorb = v[1:(end - 1)])
+end

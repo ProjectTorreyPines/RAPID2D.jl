@@ -12,8 +12,8 @@
 Refresh the electron in-wall operators on `RP.operators` from the current `ueR`, `ueZ`,
 tensor and `flags.upwind`, values only (they were allocated on the wall pattern by
 `initialize!`): `A_conv_e` (face-flux divergence of the electron velocity, the scheme it was
-built with recorded in `A_conv_e_upwind`), `A_diffu_e` (reflective `∇·D∇`, its anti-diffusive
-pairs limited at the current `ne` by `flags.limit_antidiffusive_pairs`) and `div_ue`
+built with recorded in `A_conv_e_upwind`), `A_diffu_e` (reflective `∇·D∇`, assembled by
+`flags.anisotropic_discretization` at the current `ne`) and `div_ue`
 (`∇·u_e`). `update_transport_quantities!` calls this last — at the end of every step and at
 every `run_simulation!` entry; a caller that overwrites the velocities or the flag by hand and
 then steps by hand must call it again, or the step reads the operators of the state it
@@ -41,14 +41,13 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         op.div_ue[mask] .= div⊥[mask]
     end
     op.A_conv_e_upwind = RP.flags.upwind
-    build_wall_diffusion_matrix!(op.A_diffu_e, G, tp.DRR, tp.DRZ, tp.DZZ; cross_terms = :drop)
-    # lagged: the density at the start of the step sets the limiter for the density solve and
-    # for the u∥ and Te operators built from it
-    pair_limiter = RP.flags.limit_antidiffusive_pairs
-    RP.diagnostics.near_vacuum.limited_pairs = pair_limiter.state ?
-        limit_antidiffusive_pairs!(op.A_diffu_e, G, pla.ne; max_ratio = pair_limiter.factor) : 0
+    # lagged: the density at the start of the step is what a limiting discretization reads, for
+    # the density solve and for the u∥ and Te operators built from it
+    discretization = RP.flags.anisotropic_discretization
+    RP.diagnostics.near_vacuum.limited_pairs =
+        assemble_anisotropic_diffusion!(op.A_diffu_e, G, tp.DRR, tp.DRZ, tp.DZZ, discretization; n = pla.ne)
     # what u∥ and Te conduct with, where it is not what the particles diffuse with: the same
-    # tensor with `Dpara_cond` along b̂, limited alike
+    # tensor with `Dpara_cond` along b̂, assembled alike
     op.A_cond_e_active = tp.Dpara_cond != tp.Dpara
     if op.A_cond_e_active
         F = RP.fields
@@ -57,10 +56,9 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             @. DRR = tp.DRR + (tp.Dpara_cond - tp.Dpara) * F.bR^2
             @. DRZ = tp.DRZ + (tp.Dpara_cond - tp.Dpara) * F.bR * F.bZ
             @. DZZ = tp.DZZ + (tp.Dpara_cond - tp.Dpara) * F.bZ^2
-            build_wall_diffusion_matrix!(op.A_cond_e, G, DRR, DRZ, DZZ; cross_terms = :drop)
+            assemble_anisotropic_diffusion!(op.A_cond_e, G, DRR, DRZ, DZZ, discretization; n = pla.ne)
             nothing
         end
-        pair_limiter.state && limit_antidiffusive_pairs!(op.A_cond_e, G, pla.ne; max_ratio = pair_limiter.factor)
     end
     return RP
 end

@@ -11,7 +11,8 @@ end
 
 @testitem "electron wall channels: R = 1 is reflective, ceilings are non-negative, tensor matches legacy" begin
     using RAPID2D: electron_wall_channels, electron_wall_absorption_speeds, electron_transport_operator,
-        wall_faces, total_tensor, build_wall_diffusion_matrix
+        wall_faces, total_tensor, build_wall_pattern, assemble_anisotropic_diffusion!
+    using RAPID2D.SparseArrays: dropzeros!
     config = SimulationConfig{Float64}(
         device_Name = "manual", NR = 25, NZ = 30, prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0,
         dt = 1.0e-6, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Dperp0 = 0.0,
@@ -38,7 +39,12 @@ end
     @test D_ZZ[inw] ≈ tp.DZZ[inw] atol = 1.0e-10 * scale
     A, v2 = electron_transport_operator(RP, faces)
     @test v2 == v
-    @test A == build_wall_diffusion_matrix(RP.G, tp.DRR, tp.DRZ, tp.DZZ; faces = faces, v_absorb = v)
+    # the run's discretization at the current ne, with the Robin wall
+    ref = build_wall_pattern(RP.G)
+    assemble_anisotropic_diffusion!(
+        ref, RP.G, tp.DRR, tp.DRZ, tp.DZZ, RP.flags.anisotropic_discretization; n = RP.plasma.ne, faces, v_absorb = v,
+    )
+    @test A == dropzeros!(ref.matrix)
 end
 
 @testitem "electron Robin wall: what the wall took plus what remains is what there was" begin
