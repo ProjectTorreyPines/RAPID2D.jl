@@ -189,6 +189,21 @@
             !any(field.excluded(R[k + di + dj * G.NR], Z[k + di + dj * G.NR]) for di in -1:1, dj in -1:1)
         return maximum(abs(Of[k]) / field.perp_div(R[k], Z[k]) for k in G.nodes.in_wall_nids if inner(k))
     end
+
+    "Two operators on one grid, the second's density a front absent over half the box, and a still third in the total."
+    function carrier_mixture(c)
+        G = c.G
+        R, Z = vec(G.R2D), vec(G.Z2D)
+        inw = G.nodes.in_wall_nids
+        w1 = plasma_density(G)
+        w2 = zeros(length(w1))
+        w2[inw] .= 3.0e13 .* max.(0.0, tanh.(8 .* (Z[inw] .- 0.05)))   # zero below Z ≈ 0.05
+        w_still = zeros(length(w1))
+        w_still[inw] .= 2.0e12 .* (1 .+ 0.3 .* cos.(4 .* R[inw]))
+        A1 = c.A
+        A2 = diffusion_operator(G, tilted_tensor(G; θ = -0.4, Dpara = 30.0, Dperp = 2.0))
+        return (; A1, A2, w1, w2, w_still, w_I = w1 .+ w2 .+ w_still)
+    end
 end
 
 @testitem "per-particle operator: annihilates constants" setup = [PerParticleFixtures] begin
@@ -509,23 +524,6 @@ end
 # so a node where one group is absent still takes what that group brings in. The floor is on the
 # total. internal/docs/src/notes/plans/PLAN_ion-momentum-energy-transport.md §2.3.
 
-@testsnippet MixtureCarriers begin
-    "Two operators on one grid, the second's density a front absent over half the box, and a still third in the total."
-    function carrier_mixture(c)
-        G = c.G
-        R, Z = vec(G.R2D), vec(G.Z2D)
-        inw = G.nodes.in_wall_nids
-        w1 = plasma_density(G)
-        w2 = zeros(length(w1))
-        w2[inw] .= 3.0e13 .* max.(0.0, tanh.(8 .* (Z[inw] .- 0.05)))   # zero below Z ≈ 0.05
-        w_still = zeros(length(w1))
-        w_still[inw] .= 2.0e12 .* (1 .+ 0.3 .* cos.(4 .* R[inw]))
-        A1 = c.A
-        A2 = diffusion_operator(G, tilted_tensor(G; θ = -0.4, Dpara = 30.0, Dperp = 2.0))
-        return (; A1, A2, w1, w2, w_still, w_I = w1 .+ w2 .+ w_still)
-    end
-end
-
 @testitem "mixture per-particle operator: one group whose density is the total is the per-particle operator, bit for bit" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!
     for c in mixing_cases()
@@ -538,7 +536,7 @@ end
     end
 end
 
-@testitem "mixture per-particle operator: Σ_g A_g (w_g f) = w_I (M f) + f Σ_g A_g w_g on every row above the total's floor, where a group is absent too" setup = [PerParticleFixtures, MixtureCarriers] begin
+@testitem "mixture per-particle operator: Σ_g A_g (w_g f) = w_I (M f) + f Σ_g A_g w_g on every row above the total's floor, where a group is absent too" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!
     for c in mixing_cases()
         (; A1, A2, w1, w2, w_still, w_I) = carrier_mixture(c)
@@ -562,7 +560,7 @@ end
     end
 end
 
-@testitem "mixture per-particle operator: Σ V w_I f is kept by conservative operators, the still part included" setup = [PerParticleFixtures, MixtureCarriers] begin
+@testitem "mixture per-particle operator: Σ V w_I f is kept by conservative operators, the still part included" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!
     for c in mixing_cases()
         (; A1, A2, w1, w2, w_I) = carrier_mixture(c)
@@ -575,7 +573,7 @@ end
     end
 end
 
-@testitem "conduction correction over a total: n_total = n is bit for bit; with a group's density it keeps Σ V w_I f and reaches where that group is absent" setup = [PerParticleFixtures, MixtureCarriers] begin
+@testitem "conduction correction over a total: n_total = n is bit for bit; with a group's density it keeps Σ V w_I f and reaches where that group is absent" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!, add_conduction_correction!
     for c in conduction_cases()
         M_part, M = with_correction(c)
@@ -603,7 +601,7 @@ end
     end
 end
 
-@testitem "mixture per-particle operator: allocates nothing after the first call, refuses mismatched groups" setup = [PerParticleFixtures, MixtureCarriers] begin
+@testitem "mixture per-particle operator: allocates nothing after the first call, refuses mismatched groups" setup = [PerParticleFixtures] begin
     using RAPID2D: per_particle_operator!
     c = mixing_cases()[1]
     (; A1, A2, w1, w2, w_I) = carrier_mixture(c)
