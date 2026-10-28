@@ -186,6 +186,9 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     if total_Ni > 0
         snap0D.Pi_tot = sum(@. iPowers.tot * Ni2D) / total_Ni
         snap0D.Pi_atomic = sum(@. iPowers.atomic * Ni2D) / total_Ni
+        snap0D.Pi_conv = sum(@. iPowers.conv * Ni2D) / total_Ni
+        snap0D.Pi_diffu = sum(@. iPowers.diffu * Ni2D) / total_Ni
+        snap0D.Pi_visc_heat = sum(@. iPowers.visc_heat * Ni2D) / total_Ni
         snap0D.Pi_equi = sum(@. iPowers.equi * Ni2D) / total_Ni
     end
 
@@ -502,6 +505,9 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     # Store ion power components
     snap2D.Pi_tot .= pla.iPowers.tot
     snap2D.Pi_atomic .= pla.iPowers.atomic
+    snap2D.Pi_conv .= pla.iPowers.conv
+    snap2D.Pi_diffu .= pla.iPowers.diffu
+    snap2D.Pi_visc_heat .= pla.iPowers.visc_heat
     snap2D.Pi_equi .= pla.iPowers.equi
 
     # ν_en_iz_tot, not ν_en_iz alone: mirrors the momentum-randomizing sum the

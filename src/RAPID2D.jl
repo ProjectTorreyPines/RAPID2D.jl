@@ -68,6 +68,7 @@ include("physics/species_store.jl")        # every species' density: the store, 
 include("physics/ion_transport.jl")        # which equation the ion species share
 include("physics/electron_wall.jl")
 include("physics/electron_operators.jl")   # the per-step electron in-wall operators; what u∥ and Te solve with
+include("physics/ion_carriage.jl")         # what the ions' u∥ and Tᵢ are carried with: the operators that moved their densities
 include("physics/fields.jl")
 include("physics/transport.jl")
 

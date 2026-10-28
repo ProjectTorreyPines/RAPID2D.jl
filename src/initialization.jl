@@ -275,6 +275,11 @@ function initialize_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.operators.A_visc_drift_e = similar(pattern)
     RP.operators.A_cond_e = similar(pattern)
     RP.operators.A_u = similar(pattern)
+    # the ions' carriage buffers, on the same pattern
+    car = RP.operators.ion_carriage
+    car.A_conv = similar(pattern)
+    car.M_rho, car.A_adv_rho = similar(pattern), similar(pattern)
+    car.M_n, car.A_adv_n = similar(pattern), similar(pattern)
 
     # Construct basic differntial operators
     RP.operators.∂R = construct_∂R_operator(RP.G)

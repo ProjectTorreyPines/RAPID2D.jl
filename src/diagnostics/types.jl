@@ -157,6 +157,9 @@ Contains volume-averaged quantities
 
     # Ion heating powers
     Pi_atomic::FT = zero(FT)      # Atomic processes power
+    Pi_conv::FT = zero(FT)        # Convection and compression of Tᵢ
+    Pi_diffu::FT = zero(FT)       # Diffusive carriage and conduction of Tᵢ
+    Pi_visc_heat::FT = zero(FT)   # Viscous heating of u_i∥, m̄ᵢ Γ_M(u_i∥)
     Pi_equi::FT = zero(FT)        # Taken from the electrons over the step (not in Pi_tot)
     Pi_tot::FT = zero(FT)         # Total ion power
 
@@ -365,6 +368,9 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Ion heating powers
     Pi_atomic::Matrix{FT} = zeros(FT, dims_RZ)      # Atomic processes power
+    Pi_conv::Matrix{FT} = zeros(FT, dims_RZ)        # Convection and compression of Tᵢ
+    Pi_diffu::Matrix{FT} = zeros(FT, dims_RZ)       # Diffusive carriage and conduction of Tᵢ
+    Pi_visc_heat::Matrix{FT} = zeros(FT, dims_RZ)   # Viscous heating of u_i∥, m̄ᵢ Γ_M(u_i∥)
     Pi_equi::Matrix{FT} = zeros(FT, dims_RZ)        # Taken from the electrons over the step (not in Pi_tot)
     Pi_tot::Matrix{FT} = zeros(FT, dims_RZ)          # Total ion power
 
@@ -497,6 +503,8 @@ What the near-vacuum treatments (`near_vacuum.jl`) did over a run, cumulative an
 - `relax_momentum` [kg m/s], `relax_energy` [J]: the parallel momentum and the thermal energy the
   vacuum relaxation took out of the electrons, `Σ V n w (f − f_ref)` with `f = mₑ u∥` and
   `(3/2) e Tₑ`. Exact for the backward-Euler term the solves carry.
+- `relax_momentum_i` [kg m/s], `relax_energy_i` [J]: the same for the ions, `f = u_i∥` with the
+  mass density and `(3/2) e Tᵢ` with the ion density.
 - `floor_nodes`, `floor_Ne`: the negative-density floorings, and the electrons they created.
 - `limited_pairs`: the node pairs the anti-diffusive pair limiter scaled at the latest operator
   refresh (not cumulative).
@@ -506,6 +514,8 @@ A step solved again above the Ampère gate puts it back as it was.
 @kwdef mutable struct NearVacuumLedger{FT <: AbstractFloat}
     relax_momentum::FT = zero(FT)
     relax_energy::FT = zero(FT)
+    relax_momentum_i::FT = zero(FT)
+    relax_energy_i::FT = zero(FT)
     floor_nodes::Int = 0
     floor_Ne::FT = zero(FT)
     limited_pairs::Int = 0

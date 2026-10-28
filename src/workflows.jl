@@ -171,6 +171,8 @@ The step is `RP.dt`, which every solver reads; `dt` must equal it and will be re
 function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFloat}
     check_step_argument(RP, dt)
     @timeit RAPID_TIMER "solve_timestep!" begin
+        # what moved the ion densities last step carries nothing in this one
+        retract_ion_carriage!(RP)
         I_tor = sum(RP.plasma.Jϕ * RP.G.dR * RP.G.dZ)  # Total toroidal current
         I_coils_entry = get_all_currents(RP.coil_system)
 
@@ -228,6 +230,8 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
         else
             # Set ion density from electron density with charge neutrality
             slave_ions_to_electrons!(RP)
+            # the electrons' operators moved them, and carry their u∥ and Tᵢ
+            publish_electron_carriage!(RP)
         end
 
         if RP.flags.ud_evolve

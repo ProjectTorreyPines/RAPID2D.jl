@@ -204,6 +204,24 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # ambipolar field, not the heat and momentum they pass along B.
     D_cond = bounded((@. tp.Dpara0 + tp.Dpara_e_coll), vm_e)
 
+    # What the ions' u∥ and Tᵢ conduct with along B: their own collisional limb, the gas's drag
+    # and their self-collisions, which do not slow the fluid's common motion but do limit how far an
+    # ion's heat and momentum random-walk; under their free flight along the line alone (no flux
+    # ceiling: that one bounds a density flux). Cold ions do not conduct; without collisions the
+    # ceiling binds.
+    vm_i = maxwellian_mean_speed.(pla.Ti_eV, mi)
+    @. tp.Dpara_cond_i = min(
+        tp.Dpara0 + ifelse(
+            pla.Ti_eV > zero(FT),
+            ifelse(
+                tp.νi_neutral + tp.νi_birth + tp.νi_coulomb > zero(FT),
+                EE * pla.Ti_eV / (mi * (tp.νi_neutral + tp.νi_birth + tp.νi_coulomb)), FT(Inf),
+            ),
+            zero(FT),
+        ),
+        wall_step_ceiling(vm_i, RP.flf.Lc_tot),
+    )
+
     # Ions carry no gradient ceiling yet — they have only stage 3a. It is NOT the one
     # line it looks like: an ion ceiling has to bound the total non-convective species
     # flux including the pinch term, it makes otherwise-grouped species operators
@@ -226,6 +244,7 @@ function update_transport_quantities!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # never less than what the particles diffuse with, so the conduction correction is a
     # parallel diffusion
     extrapolate_field_to_boundary_nodes!(RP.G, D_cond)
+    extrapolate_field_to_boundary_nodes!(RP.G, tp.Dpara_cond_i)
     @. tp.Dpara_cond = max(D_cond, tp.Dpara)
 
     # Project the parallel speeds onto (R, ϕ, Z). `"upara"` is the only representation
