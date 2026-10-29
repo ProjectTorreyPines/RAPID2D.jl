@@ -114,3 +114,35 @@ end
         @test all(T⁺[inw] .> 0)
     end
 end
+
+@testitem "compression weight: the local factor keeps half of its diagonal, ExpRB's bern included; a resolved rate is θ's step exactly" setup = [CompressionCase] begin
+    using RAPID2D: add_compression!, build_wall_pattern, set_identity!, add_diagonal!
+    using RAPID2D.SparseArrays: nonzeros
+    RP = compression_RP(; g = 0.0)
+    G = RP.G
+    dt, θ, ee = 1.0e-6, 0.5, 1.602176634e-19
+    Ng = G.NR * G.NZ
+    # a spread of rates, converging and expanding, resolved and far from it
+    d = reshape(collect(range(-8.0e6, 8.0e6; length = Ng)), G.NR, G.NZ)
+    T = fill(20.0, G.NR, G.NZ)
+    diag_of(A) = [A.matrix[k, k] for k in 1:Ng]
+    for b in (nothing, fill(0.313, G.NR, G.NZ))       # bern(2) ≈ 0.313: an atomic response that halves the diagonal
+        A = set_identity!(build_wall_pattern(G))
+        isnothing(b) || add_diagonal!(A, vec(b) .- 1.0)
+        base = diag_of(A)
+        P = zeros(G.NR, G.NZ)
+        add_compression!(A, P, T, d, θ; dt, ee, bern = b)
+        # the local factor (b − (2/3)Δt(1 − θₖ) ∇·u)/(b + (2/3)Δt θₖ ∇·u), its numerator from the explicit power
+        numerator = base .+ (2 / 3) * dt .* vec(P) ./ (ee .* vec(T)) .- (2 / 3) * dt * (1 - θ) .* vec(d)
+        denominator = diag_of(A)
+        @test all(denominator .>= 0.5 .* base .- 1.0e-12) && all(numerator .>= 0.5 .* base .- 1.0e-12)
+        # resolved: the diagonal is θ's own, in the old expression's order, and the power untouched
+        dv = vec(d)
+        x = (2 / 3) * dt .* abs.(dv) ./ base
+        resolved = findall(k -> dv[k] < 0 ? θ * x[k] <= 0.5 : (1 - θ) * x[k] <= 0.5, 1:Ng)
+        @test 0 < length(resolved) < Ng
+        @test denominator[resolved] == base[resolved] .+ (2 / 3 * (dt * θ)) .* dv[resolved]
+        @test all(iszero, vec(P)[resolved])
+    end
+    @test_throws ArgumentError add_compression!(set_identity!(build_wall_pattern(G)), zeros(G.NR, G.NZ), T, fill(NaN, G.NR, G.NZ), θ; dt, ee)
+end

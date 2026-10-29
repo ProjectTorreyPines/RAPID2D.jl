@@ -214,7 +214,7 @@ end
     @test op.A_cond_excess_e_whole
     # and on again: the particles' carriage with the excess along b̂ alone, rebuilt for the changed mode
     RP.flags.diffu = true
-    M_on = ue_Te_operators(RP).A_diffu
+    M_on = copy(ue_Te_operators(RP).A_diffu)          # a buffer: the next call rewrites it
     @test !op.A_cond_excess_e_whole
     @test drift_moves(M_on) > 1.0e-6
     cache_electron_operators!(RP)

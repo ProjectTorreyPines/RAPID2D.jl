@@ -281,7 +281,7 @@ function carry_Ti!(RP::RAPID{FT}, heat, relax_weight::AbstractMatrix{FT}) where 
             # the compression θ-weighted node by node (`add_compression!`)
             @. P_tilde -= θ * iP.conv
             add_scaled!(A, two_thirds * (dt * θ) * FT(1.5), A_adv)
-            add_compression!(A, P_tilde, pla.Ti_eV, heat.div_u, θ; dt, ee)
+            add_compression!(A, P_tilde, pla.Ti_eV, heat.div_u, θ; dt, ee, bern)
         end
         if isnothing(bern)
             @. OP.RHS = pla.Ti_eV + two_thirds * (dt * P_tilde / ee)

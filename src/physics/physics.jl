@@ -472,7 +472,7 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 # LHS as +1.5·c·A_adv, c = (2/3)·Δt·θ; the compression θ-weighted node by node (`add_compression!`)
                 @. ePowers_tilde -= θimp * pla.ePowers.conv
                 add_scaled!(A, two_thirds_FT * (dt * θimp) * FT(1.5), pops.A_adv)
-                add_compression!(A, ePowers_tilde, pla.Te_eV, pops.div_u, θimp; dt, ee)
+                add_compression!(A, ePowers_tilde, pla.Te_eV, pops.div_u, θimp; dt, ee, bern = bern_atomic)
             end
 
             # LHS written as a deviation from the identity, so the sparsity
@@ -526,31 +526,33 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    add_compression!(A, P_tilde, T, div_u, θ; dt, ee) -> A
+    add_compression!(A, P_tilde, T, div_u, θ; dt, ee, bern = nothing) -> A
 
 The compression −(2/3) T ∇·u of a temperature equation onto the LHS `A` and the explicit power
 `P_tilde` (W per particle, `θ` of the whole convection power already taken from it), node by node as
 the θ-step of its local rate, with `θ` where that step keeps a margin and the nearest weight that does
-elsewhere: with x = (2/3) Δt |∇·u|,
+elsewhere. With `b` the node's diagonal before it (one, or ExpRB's `bern`) and x = (2/3) Δt |∇·u| / b,
 
     θₖ = min(θ, 1/(2x)) where the flow converges (a growth),  θₖ = max(θ, 1 − 1/(2x)) where it expands,
 
-so the local factor (1 − (2/3) Δt (1 − θₖ) ∇·u) / (1 + (2/3) Δt θₖ ∇·u) keeps numerator and denominator at
-or above ½: no pole, no sign change. Where θ keeps the margin (a resolved rate) the step is θ's, bit for
-bit, and stays consistent with the density's (Tᵢ ∝ n^{2/3} under a uniform compression); a capped node
-warns once. Grids are `(NR, NZ)`.
+so the local compression factor (b − (2/3) Δt (1 − θₖ) ∇·u) / (b + (2/3) Δt θₖ ∇·u) keeps numerator and
+denominator at or above b/2: no pole, no sign change from the compression (signed transport stays). Where θ
+keeps the margin (a resolved rate) the step is θ's, bit for bit, consistent with the density's (Tᵢ ∝ n^{2/3}
+under a uniform compression). The first capped step of a run warns. `div_u` must be finite.
 """
 function add_compression!(
         A::DiscretizedOperator{FT}, P_tilde::AbstractMatrix{FT}, T::AbstractMatrix{FT}, div_u::AbstractMatrix{FT}, θ;
-        dt, ee,
+        dt, ee, bern::Union{Nothing, AbstractMatrix{FT}} = nothing,
     ) where {FT <: AbstractFloat}
+    all(isfinite, div_u) || throw(ArgumentError("add_compression!: ∇·u must be finite"))
     two_thirds, half = FT(2) / FT(3), FT(0.5)
     capped, x_max = 0, zero(FT)
     @with_pool pool begin
         diagonal = acquire!(pool, FT, length(div_u))
         @inbounds for k in eachindex(diagonal)
             d = div_u[k]
-            x = two_thirds * dt * abs(d)
+            b = isnothing(bern) ? one(FT) : bern[k]
+            x = two_thirds * dt * abs(d) / b
             θk = d < zero(FT) ? min(θ, half / x) : max(θ, one(FT) - half / x)
             diagonal[k] = two_thirds * (dt * θk) * d
             if θk != θ
@@ -563,8 +565,8 @@ function add_compression!(
         add_diagonal!(A, diagonal)
         nothing
     end
-    capped > 0 && @warn "the compression (2/3)Δt|∇·u| reached $(x_max) at $(capped) node(s): their θ is moved so the " *
-        "step stays positive; the rate is not resolved by Δt" maxlog = 1
+    capped > 0 && @warn "the compression (2/3)Δt|∇·u| reached $(x_max) of the diagonal at $(capped) node(s): their θ is " *
+        "moved so the local compression factor keeps a half margin; Δt does not resolve the rate (warned once a run)" maxlog = 1
     return A
 end
 
