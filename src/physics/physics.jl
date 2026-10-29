@@ -286,9 +286,11 @@ end
 # friction's heat, per electron: the kinetic energy it took from the relative drift over the step,
 # −I_ei·(ū_e − u_i)/(nₑ Δt), ū_e the mean of `ue_entry` (uⁿ) and the solved u∥. Braginskii's
 # −R·(u_e − u_i): the electrons' own kinetic energy, −u_e·R, plus the moving ions' work on them, u_i·R.
-# Exact for any ν Δt, so a stiff friction gives the drift's energy, not ν Δt times it. Floored at zero:
-# where another force (E∥, the gas) reverses the relative drift within the step, the impulse at u^θ on
-# the step's mean drift would be a cooling no collision makes; without one, nothing reverses it.
+# With the ions held (they take −I_ei after), it is the electrons' kinetic energy the friction took, for
+# any ν Δt, so a stiff friction gives the drift's energy, not ν Δt times it; a stable step with the
+# friction alone keeps it ≥ 0. Floored at zero: where another force (E∥, the gas) turns the drift back
+# against the impulse within the step, the trapezoid's split would make the friction cool; the floor's
+# increment is then an energy the step's work does not account for.
 function record_ei_impulse!(RP::RAPID{FT}, ue_entry::AbstractMatrix{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     if RP.flags.Coulomb_Collision
