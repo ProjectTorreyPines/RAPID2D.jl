@@ -897,7 +897,9 @@ function update_coulomb_collision_parameters!(RP::RAPID{FT}) where {FT <: Abstra
 
     # Update collision frequency
     # ν_ei = n_e e^4 lnΛ / (4π ε_0^2 m_e^0.5 (kT_e)^1.5)
-    ν_factor_Maxwellian = FT(1.863033936542749e-40)  # sqrt(2)*ee^4/(12π^(1.5)*ϵ0^2*sqrt(me))
+    # √2 e⁴/(12 π^{3/2} ε₀² √mₑ) from the run's constants: the literal it replaced (1.863033936542749e-40) was
+    # computed with e = 1.602e-19 and sat 4.3e-4 below it
+    ν_factor_Maxwellian = sqrt(FT(2)) * ee^4 / (12 * FT(π)^FT(1.5) * eps0^2 * sqrt(me))
     @. pla.ν_ei = ν_factor_Maxwellian * pla.Z2ni_tot *
         pla.lnΛ * (ee * pla.Te_eV)^(-1.5)
 
