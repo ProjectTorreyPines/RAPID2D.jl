@@ -128,13 +128,19 @@ end
 end
 
 @testitem "one species: the momentum and the heat are carried by the per-particle operator of the published one, bit for bit" setup = [IonCarriageCase] begin
-    using RAPID2D: ion_momentum_carriage, ion_heat_carriage, add_conduction_correction!
+    using RAPID2D: ion_momentum_carriage, ion_heat_carriage, conduction_excess_operator!, add_conduction_excess!
     RP = carriage_case()
     solve_ion_continuity_equation!(RP)
     car, pla = RP.operators.ion_carriage, RP.plasma
     part = car.parts[1]
     M = per_particle_operator!(similar(part.A_part), part.A_part, pla.ni; n_floor = 1.0)
-    isnothing(part.A_cond) || add_conduction_correction!(M, part.A_part, part.A_cond, pla.ni, RP.G; n_floor = 1.0)
+    x = part.excess
+    if !isnothing(x)
+        A_x = conduction_excess_operator!(
+            similar(x.A), RP.G, x.Δ, (x.bR, x.bZ), pla.ni, RP.flags.anisotropic_discretization; n_floor = 1.0, n = RP.prev_n,
+        )
+        add_conduction_excess!(M, A_x, pla.ni; n_floor = 1.0)
+    end
     A_adv = per_particle_operator!(similar(car.A_conv), car.A_conv, pla.ni; n_floor = 1.0)
     mom, heat = ion_momentum_carriage(RP), ion_heat_carriage(RP)
     @test mom.M.matrix.nzval == M.matrix.nzval
@@ -146,6 +152,36 @@ end
     RAPID2D.retract_ion_carriage!(RP)
     @test isnothing(ion_momentum_carriage(RP))
     @test isnothing(ion_heat_carriage(RP))
+end
+
+@testitem "uniform ions on a curved field: their heat conducts with the excess's own face-by-face operator, cross terms included" setup = [IonCarriageCase] begin
+    using RAPID2D: ion_heat_carriage, build_wall_diffusion_matrix!, build_wall_pattern, ion_transport_channels,
+        shared_turbulent_channel, channel_D_para
+    RP = carriage_case(; n0 = 0.0)                       # 1e12 m⁻³ on every in-wall node
+    G, F, tp, pla = RP.G, RP.fields, RP.transport, RP.plasma
+    # circles about the box's centre, |b_pol| = 0.1: the direction turns from node to node
+    x, z = G.R2D .- 1.5, G.Z2D
+    ρ = hypot.(x, z)
+    F.bR .= ifelse.(ρ .> 0, -0.1 .* z ./ ρ, 0.0)
+    F.bZ .= ifelse.(ρ .> 0, 0.1 .* x ./ ρ, 0.0)
+    update_transport_quantities!(RP)
+    # the ions conduct with more along B than their particles diffuse with
+    D_part = channel_D_para(ion_transport_channels(RP, tp.ion_species[1], shared_turbulent_channel(RP))[1])
+    tp.Dpara_cond_i .= 2 .* D_part .+ 1.0e3
+    RP.prev_n .= pla.ne
+    solve_ion_continuity_equation!(RP)
+    part = RP.operators.ion_carriage.parts[1]
+    x_ = part.excess
+    @test !isnothing(x_)
+    pla.ni .= pla.ne                                     # the carriers uniform again (the move drained the wall)
+    heat = ion_heat_carriage(RP)
+    M_part = per_particle_operator!(similar(part.A_part), part.A_part, pla.ni; n_floor = 1.0)
+    C = heat.M.matrix .- M_part.matrix
+    A_excess = build_wall_diffusion_matrix!(
+        build_wall_pattern(G), G, x_.Δ .* x_.bR .^ 2, x_.Δ .* x_.bR .* x_.bZ, x_.Δ .* x_.bZ .^ 2,
+    ).matrix
+    @test maximum(abs, A_excess) > 0
+    @test maximum(abs, C .- A_excess) <= 1.0e-12 * maximum(abs, A_excess)
 end
 
 @testitem "a mixture with a species that does not move: momentum by mass, heat by number, over the whole fluid" setup = [IonCarriageCase] begin
@@ -178,8 +214,8 @@ end
         Mf = op.M * f
         moved = part.A_part * (n_T .* f) .- f .* (part.A_part * n_T)
         above = findall(>(1.0), w_I)
-        isnothing(part.A_cond) && @test (w_I .* Mf)[above] ≈ moved[above] rtol = 1.0e-10
-        # in total, with the conduction's pair transfers too: what the moving part's operator does to
+        isnothing(part.excess) && @test (w_I .* Mf)[above] ≈ moved[above] rtol = 1.0e-10
+        # in total, with the conduction excess too: what the moving part's operator does to
         # n f beyond carrying f with the particles it moves (here the absorbing wall's drain)
         @test sum(V .* w_I .* Mf) ≈ sum(V .* moved) rtol = 1.0e-10
         convected = car.A_conv * (n_T .* f) .- f .* (car.A_conv * n_T)
@@ -193,7 +229,7 @@ end
 @testitem "two transport groups: a part each, the conduction raised in one only, the momentum and the heat moved as each group moved its density" setup = [IonCarriageCase] begin
     using RAPID2D: IonRecord, PerSpeciesTransport, layout_ion_species!, ion_momentum_carriage, ion_heat_carriage,
         ion_plane, update_ui_para!, ion_transport_channels, shared_turbulent_channel, channel_D_para,
-        per_particle_operator!, add_conduction_correction!
+        per_particle_operator!, conduction_excess_operator!, add_conduction_excess!
     using RAPID2D.LinearAlgebra: norm
     RP = carriage_case()
     RP.flags.ion_transport_policy = PerSpeciesTransport()
@@ -215,7 +251,7 @@ end
     car = RP.operators.ion_carriage
     @test car.source isa CarriedByIonOperators
     @test [p.sids for p in car.parts] == [[1], [2]]
-    @test isnothing(car.parts[1].A_cond) && !isnothing(car.parts[2].A_cond)
+    @test isnothing(car.parts[1].excess) && !isnothing(car.parts[2].excess)
     RAPID2D.update_charge_states!(RP)
     m_bulk = RAPID2D.bulk_ion_mass(RP)
     n_s = [vec(copy(ion_plane(pla, slot))) for slot in slots]
@@ -226,16 +262,22 @@ end
             (ion_heat_carriage(RP), _ -> 1.0, vec(pla.ni_tot)),
         )
         # each group's operator moves its own carriers, the variable counted over the whole fluid,
-        # the conduction's pair transfers in the second group conserving the total
+        # the conduction excess in the second group conserving the total
         ws = [weight(sp) .* n for (sp, n) in zip(tp.ion_species, n_s)]
         moved = sum(p.A_part * (w .* f) .- f .* (p.A_part * w) for (p, w) in zip(car.parts, ws))
         @test sum(V .* w_I .* (op.M * f)) ≈ sum(V .* moved) rtol = 1.0e-10
         # node by node: the mixture's operator over the groups' own weights and the whole fluid, with
-        # the heavier group's conduction correction, which a constant or a volume sum cannot see
+        # the heavier group's conduction excess, which a constant or a volume sum cannot see
         w_total = ws[1] .+ ws[2]
         M_mix = per_particle_operator!(similar(car.parts[1].A_part), [p.A_part for p in car.parts], ws, w_total; n_floor = 1.0)
         M_cond = per_particle_operator!(similar(car.parts[1].A_part), [p.A_part for p in car.parts], ws, w_total; n_floor = 1.0)
-        add_conduction_correction!(M_cond, car.parts[2].A_part, car.parts[2].A_cond, ws[2], G; n_floor = 1.0, n_total = w_total)
+        x = car.parts[2].excess
+        grid(v) = reshape(v, G.NR, G.NZ)
+        A_x = conduction_excess_operator!(
+            similar(x.A), G, x.Δ, (x.bR, x.bZ), grid(ws[2]), RP.flags.anisotropic_discretization;
+            n_total = grid(w_total), n_floor = 1.0, n = RP.prev_n,
+        )
+        add_conduction_excess!(M_cond, A_x, w_total; n_floor = 1.0)
         @test op.M * f ≈ M_cond * f rtol = 1.0e-12
         @test norm(M_cond * f .- M_mix * f) > 1.0e-3 * norm(M_mix * f)
     end

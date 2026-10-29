@@ -553,3 +553,34 @@ end
     # the limiter's density is not optional
     @test_throws ArgumentError assemble_anisotropic_diffusion!(build_wall_pattern(G), G, c.D..., LimitedNinePoint())
 end
+
+@testitem "diffusion assembly on active nodes: the full mask is the wall alone, bit for bit; an inactive node is a wall, both ways, and Σ J n is kept on the rest" setup = [PairLimiterFixtures] begin
+    using RAPID2D: assemble_anisotropic_diffusion!
+    using RAPID2D.SparseArrays: nonzeros
+    c = tilted_case()
+    G = c.G
+    smooth = smooth_density(G)
+    Ng = G.NR * G.NZ
+    A, B = build_wall_pattern(G), build_wall_pattern(G)
+    for discretization in (NinePoint(), LimitedNinePoint())
+        assemble_anisotropic_diffusion!(A, G, c.D..., discretization; n = smooth)
+        assemble_anisotropic_diffusion!(B, G, c.D..., discretization; n = smooth, active_nodes = trues(Ng))
+        @test nonzeros(B.matrix) == nonzeros(A.matrix)
+    end
+    # inactive: a disc in the middle and a strip along the top of the box
+    inw = falses(Ng)
+    inw[G.nodes.in_wall_nids] .= true
+    R, Z = vec(G.R2D), vec(G.Z2D)
+    active = [inw[k] && hypot(R[k] - 1.5, Z[k]) > 0.06 && Z[k] < 0.22 for k in 1:Ng]
+    off = findall(k -> inw[k] && !active[k], 1:Ng)
+    @test length(off) > 20
+    build_wall_diffusion_matrix!(B, G, c.D...; active_nodes = active)
+    M = B.matrix
+    @test all(iszero, M[off, :]) && all(iszero, M[:, off])         # no row, and nothing reaches them
+    @test maximum(abs, M * ones(Ng)) <= 1.0e-12 * maximum(abs, M)   # constants in the kernel
+    Jv = vec(G.Jacob)
+    @test maximum(abs, vec(Jv' * M)[active]) <= 1.0e-12 * maximum(Jv) * maximum(abs, M)
+    # cross terms survive between active nodes
+    @test any(<(0), [M[k, l] for (k, l, _) in offdiag(M) if active[k] && active[l]])
+    @test_throws DimensionMismatch build_wall_diffusion_matrix!(B, G, c.D...; active_nodes = trues(3))
+end

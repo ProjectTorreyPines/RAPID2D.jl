@@ -10,8 +10,8 @@
 # 2b  The filament of current_diffusion.jl at n = 1e18 m⁻³: its current first steady at fixed temperatures, then Tₑ
 #     and Tᵢ free, against the circuit (L + L_kin) İ = V − R(Tₑ) I with the column's energy balance. As the plasma
 #     heats, R falls and the current turns toward the inductive limit. The skin current and J ∝ E ∝ 1/R heat the
-#     inner edge most; without conduction Tₑ peaks there and the current gathers there, ahead of the uniform model.
-#     Tₑ conduction stays off: on the plasma's own closed surfaces the 9-point stencil would cool the axis.
+#     inner edge most; Tₑ peaks there and the current gathers there, ahead of the uniform model. Tₑ conducts along
+#     the current's own closed surfaces, and the minimum at their axis rises with the rest of the column.
 #
 #   julia --project=examples examples/ohmic_heating.jl
 
@@ -166,7 +166,7 @@ function filament_heating(; t_prep = 40.0e-3, t_heat = 10.0e-3, dt = 25.0e-6)
         Coulomb_Collision = true, Atomic_Collision = false, src = false, convec = false, diffu = false,
         Te_evolve = false, Ti_evolve = false, Gas_evolve = false, update_ni_independently = false,
         Include_ud_convec_term = false, Include_ud_diffu_term = false, Include_ud_pressure_term = false,
-        Include_Te_convec_term = false, Include_Te_diffu_term = false, Include_heat_flux_term = false,
+        Include_Te_convec_term = false, Include_Te_diffu_term = true, Include_heat_flux_term = false,
         charge_sheet_field = false, E_para_cancellation = false, mean_ExB = false,
         turb_ExB_mixing = false, FLF_nstep = 100, vacuum_relaxation = (state = false, factor = 1.0e2),
     )
@@ -179,7 +179,7 @@ function filament_heating(; t_prep = 40.0e-3, t_heat = 10.0e-3, dt = 25.0e-6)
     RP.flags.Ti_evolve = true
     RP.t_end_s = t_prep + t_heat
     w = vec(G.inVol2D)[col] .* N_FIL
-    t, I, Te, Ti, spread = Float64[], Float64[], Float64[], Float64[], Float64[]
+    t, I, Te, Ti, spread, Te_min = Float64[], Float64[], Float64[], Float64[], Float64[], Float64[]
     run_simulation!(
         RP; callback_after_step = function (rp)
             rp.step % 4 == 0 || return nothing
@@ -187,6 +187,7 @@ function filament_heating(; t_prep = 40.0e-3, t_heat = 10.0e-3, dt = 25.0e-6)
             push!(t, rp.time_s - t_prep); push!(I, rp.diagnostics.snaps0D.I_tor[end])
             push!(Te, sum(w .* vec(p.Te_eV)[col]) / sum(w)); push!(Ti, sum(w .* vec(p.Ti_eV)[col]) / sum(w))
             push!(spread, maximum(vec(p.Te_eV)[col]) - minimum(vec(p.Te_eV)[col]))
+            push!(Te_min, minimum(vec(p.Te_eV)[col]))
             return nothing
         end
     )
@@ -208,7 +209,7 @@ function filament_heating(; t_prep = 40.0e-3, t_heat = 10.0e-3, dt = 25.0e-6)
     )
     ode = rk4(rhs, (I0, T_FIL, T_FIL), t; hmax = _ -> 1.0e-6)
     @printf("2b: steady I = %.5g A, the uniform column's %.5g A; L/R = %.2f ms\n", I0, LV / R_p(T_FIL, T_FIL), (L + L_kin) / R_p(T_FIL, T_FIL) * 1.0e3)
-    return (; RP, t, I, Te, Ti, spread, ode, I0, I_sat = LV / R_p(T_FIL, T_FIL), inductive = LV / (L + L_kin))
+    return (; RP, t, I, Te, Ti, spread, Te_min, ode, I0, I_sat = LV / R_p(T_FIL, T_FIL), inductive = LV / (L + L_kin))
 end
 
 fil = filament_heating()
@@ -223,6 +224,7 @@ plot!(q2, tms, getindex.(fil.ode, 2); lw = 1.5, ls = :dash, c = :black, label = 
 plot!(q2, tms, fil.Ti; lw = 2, label = "⟨Tᵢ⟩ RAPID2D")
 plot!(q2, tms, getindex.(fil.ode, 3); lw = 1.5, ls = :dash, c = :black, label = "")
 plot!(q2, tms, fil.spread; lw = 1.2, ls = :dashdot, label = "Tₑ max − min in the column")
+plot!(q2, tms, fil.Te_min; lw = 1.2, ls = :dot, c = :purple, label = "min Tₑ in the column")
 gapI = 100 .* (fil.I .- getindex.(fil.ode, 1)) ./ getindex.(fil.ode, 1)
 gapTe = 100 .* (fil.Te .- getindex.(fil.ode, 2)) ./ getindex.(fil.ode, 2)
 gapTi = 100 .* (fil.Ti .- getindex.(fil.ode, 3)) ./ getindex.(fil.ode, 3)
@@ -242,12 +244,15 @@ q5 = heatmap(
 )
 fig_b = plot(q1, q2, q3, q4, q5; layout = @layout([a b c; d e]), size = (1500, 900), left_margin = 5Plots.mm, bottom_margin = 5Plots.mm)
 win = findall(<=(3.0), tms)
-ok = abs(fil.I0 - fil.I_sat) / fil.I_sat < 5.0e-3 && maximum(abs, gapI[win]) < 5 && maximum(abs, gapTe[win]) < 1 && maximum(abs, gapTi[win]) < 1
+rising = all(diff(fil.Te_min) .>= -1.0e-6)
+ok = abs(fil.I0 - fil.I_sat) / fil.I_sat < 5.0e-3 && maximum(abs, gapI[win]) < 5 && maximum(abs, gapTe[win]) < 1 &&
+    maximum(abs, gapTi[win]) < 1 && rising
 save_with_verdict(
     fig_b, out, "filament", ok,
     @sprintf(
-        "steady current %.2f %% from the uniform column's; over 3 ms of heating I, ⟨Tₑ⟩, ⟨Tᵢ⟩ within %.1f, %.1f, %.1f %% of the 0D circuit (needs 5, 1, 1)",
-        100 * (fil.I0 - fil.I_sat) / fil.I_sat, maximum(abs, gapI[win]), maximum(abs, gapTe[win]), maximum(abs, gapTi[win])
+        "steady current %.2f %% from the uniform column's; over 3 ms of heating I, ⟨Tₑ⟩, ⟨Tᵢ⟩ within %.1f, %.1f, %.1f %% of the 0D circuit (needs 5, 1, 1); with Tₑ conduction on, the column's minimum %s",
+        100 * (fil.I0 - fil.I_sat) / fil.I_sat, maximum(abs, gapI[win]), maximum(abs, gapTe[win]), maximum(abs, gapTi[win]),
+        rising ? "never falls" : "falls"
     ),
 )
 println("outputs in ", out)
