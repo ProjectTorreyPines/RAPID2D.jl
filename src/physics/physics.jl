@@ -468,12 +468,11 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
             end
 
             if RP.flags.Include_Te_convec_term
+                # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮): the advection on the
+                # LHS as +1.5·c·A_adv, c = (2/3)·Δt·θ; the compression by its sign (`add_compression!`)
                 @. ePowers_tilde -= θimp * pla.ePowers.conv
-                # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮): on the LHS
-                # +1.5·c·A_adv and +c·diag(∇⋅𝐮), with c = (2/3)·Δt·θ
-                c_conv = two_thirds_FT * (dt * θimp)
-                add_scaled!(A, c_conv * FT(1.5), pops.A_adv)
-                add_diagonal!(A, vec(pops.div_u); scale = c_conv)
+                add_scaled!(A, two_thirds_FT * (dt * θimp) * FT(1.5), pops.A_adv)
+                add_compression!(A, ePowers_tilde, pla.Te_eV, pops.div_u, θimp; dt, ee)
             end
 
             # LHS written as a deviation from the identity, so the sparsity
@@ -524,6 +523,36 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
         return RP
     end # @timeit
+end
+
+"""
+    add_compression!(A, P_tilde, T, div_u, θ; dt, ee) -> A
+
+The compression −(2/3) T ∇·u of a temperature equation by its sign, onto the LHS `A` (the identity plus
+the step's operators) and the explicit power `P_tilde`, W per particle, from which `θ` of the whole
+convection power was already taken: expansion (∇·u > 0, a decay) backward Euler, compression (∇·u < 0,
+a growth) explicit,
+
+    (1 + (2/3) Δt (∇·u)₊) T⁺ = (1 − (2/3) Δt (∇·u)₋) Tⁿ,
+
+so the diagonal never falls below one: θ-weighted, a converging flow with (2/3) θ Δt |∇·u| > 1 flipped the
+solution's sign. Grids are `(NR, NZ)`; nothing is allocated after the first call.
+"""
+function add_compression!(
+        A::DiscretizedOperator{FT}, P_tilde::AbstractMatrix{FT}, T::AbstractMatrix{FT}, div_u::AbstractMatrix{FT}, θ;
+        dt, ee,
+    ) where {FT <: AbstractFloat}
+    # the compression's θ share left in P_tilde, (1 − θ) of −e T ∇·u, out; its explicit growth in
+    @. P_tilde += (one(FT) - θ) * ee * T * div_u - ee * T * min(div_u, zero(FT))
+    @with_pool pool begin
+        expansion = acquire!(pool, FT, length(div_u))
+        @inbounds for k in eachindex(expansion)
+            expansion[k] = max(div_u[k], zero(FT))
+        end
+        add_diagonal!(A, expansion; scale = FT(2) / FT(3) * dt)
+        nothing
+    end
+    return A
 end
 
 """

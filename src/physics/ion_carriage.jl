@@ -276,11 +276,11 @@ function carry_Ti!(RP::RAPID{FT}, heat, relax_weight::AbstractMatrix{FT}) where 
             add_scaled!(A, -two_thirds * FT(1.5) * (dt * θ), M)
         end
         if !isnothing(A_adv)
-            # P_conv = −1.5 (u·∇)Tᵢ − Tᵢ ∇·u: on the LHS +1.5 c A_adv and + c diag(∇·u), c = (2/3)Δt θ
+            # P_conv = −1.5 (u·∇)Tᵢ − Tᵢ ∇·u: the advection on the LHS as +1.5 c A_adv, c = (2/3)Δt θ;
+            # the compression by its sign (`add_compression!`)
             @. P_tilde -= θ * iP.conv
-            c_conv = two_thirds * (dt * θ)
-            add_scaled!(A, c_conv * FT(1.5), A_adv)
-            add_diagonal!(A, vec(heat.div_u); scale = c_conv)
+            add_scaled!(A, two_thirds * (dt * θ) * FT(1.5), A_adv)
+            add_compression!(A, P_tilde, pla.Ti_eV, heat.div_u, θ; dt, ee)
         end
         if isnothing(bern)
             @. OP.RHS = pla.Ti_eV + two_thirds * (dt * P_tilde / ee)
