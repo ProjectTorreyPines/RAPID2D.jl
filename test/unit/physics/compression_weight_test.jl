@@ -1,7 +1,7 @@
-# Tₑ's and Tᵢ's compression, −(2/3) T ∇·u, split by its sign: expansion (∇·u > 0, a decay) backward Euler, compression
-# (∇·u < 0, a growth) explicit, so the step's diagonal never falls below one and a converging flow heats instead of
-# flipping the solution's sign:
-#     (1 + (2/3) Δt (∇·u)₊) T⁺ = (1 − (2/3) Δt (∇·u)₋) Tⁿ.
+# Tₑ's and Tᵢ's compression, −(2/3) T ∇·u, the θ-step of its local rate node by node: θ where that step keeps a
+# margin, the nearest weight that does elsewhere (x = (2/3) Δt |∇·u|; θₖ = min(θ, 1/(2x)) converging, max(θ, 1 − 1/(2x))
+# expanding), so a converging flow heats instead of flipping the solution's sign and a fast expansion cools without
+# going negative; a resolved rate keeps θ's step.
 # internal/docs/src/notes/issues/compression-implicit-sign-flip.md.
 
 @testsnippet CompressionCase begin
@@ -10,15 +10,20 @@
     using RAPID2D.SparseArrays: sparse, spdiagm
     using RAPID2D.LinearAlgebra: I
 
+    "The weight of node k's compression: θ where its θ-step keeps a margin, the nearest weight that does elsewhere."
+    capped_weight(d, θ, dt) = (x = (2 / 3) * dt * abs(d); d < 0 ? min(θ, 0.5 / x) : max(θ, 1 - 0.5 / x))
+
     """
-    The step a uniform T⁻ takes: the advection θ-weighted (zero on the uniform T⁻, so on the LHS only), the compression
-    by its sign, (I + θ Δt A_adv + (2/3) Δt diag((∇·u)₊)) T⁺ = (1 − (2/3) Δt (∇·u)₋) T⁻.
+    The step from T⁻ with the advection θ-weighted and the compression by `weight(d)`:
+    (I + θ Δt A_adv + (2/3) Δt diag(θₖ ∇·u)) T⁺ = T⁻ − (1 − θ) Δt A_adv T⁻ − (2/3) Δt (1 − θₖ) ∇·u T⁻.
     """
-    function split_step(RP, T⁻)
+    function theta_step(RP, T⁻; weight = d -> capped_weight(d, RP.flags.θ_imp.transport, RP.dt))
         pops = ue_Te_operators(RP)
         d, dt, θ = vec(pops.div_u), RP.dt, RP.flags.θ_imp.transport
-        L = I + θ * dt * sparse(pops.A_adv.matrix) + spdiagm(0 => (2 / 3) * dt .* max.(d, 0.0))
-        return L \ ((1 .- (2 / 3) * dt .* min.(d, 0.0)) .* T⁻), d
+        A = sparse(pops.A_adv.matrix)
+        θk = weight.(d)
+        L = I + θ * dt * A + spdiagm(0 => (2 / 3) * dt .* θk .* d)
+        return L \ (T⁻ .- (1 - θ) * dt .* (A * T⁻) .- (2 / 3) * dt .* (1 .- θk) .* d .* T⁻), d
     end
 
     """
@@ -58,51 +63,54 @@
         return RP
     end
 
-    "One Tₑ stage; returns Tₑ before and after, the split step's own result and the compression ∇·u."
+    "One Tₑ stage; returns Tₑ before and after, the θ-step's own result and the compression ∇·u."
     function te_stage!(RP)
         T⁻ = copy(vec(RP.plasma.Te_eV))
-        expected, div_u = split_step(RP, T⁻)
+        expected, div_u = theta_step(RP, T⁻)
         update_electron_heating_powers!(RP)
         update_Te!(RP)
         return T⁻, copy(vec(RP.plasma.Te_eV)), expected, div_u
     end
 end
 
-@testitem "compression by its sign: a converging flow heats Tₑ explicitly, a diverging one cools it backward Euler" setup = [CompressionCase] begin
-    for g in (2.0e4, -2.0e4)
+@testitem "compression, a resolved rate: θ's own step for a converging and a diverging flow, a non-uniform Tₑ too" setup = [CompressionCase] begin
+    for g in (2.0e4, -2.0e4), uniform in (true, false)
         RP = compression_RP(; g)
         inw = RP.G.nodes.in_wall_nids
+        uniform || (RP.plasma.Te_eV .*= 1 .+ 0.3 .* sin.(4 .* (RP.G.R2D .- 10)) .* cos.(3 .* RP.G.Z2D))
         T⁻, T⁺, expected, d = te_stage!(RP)
         @test sign(g) * sum(d[inw]) < 0
-        @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-10
-        # node by node the compression alone, up to the advection of what it made non-uniform
-        a = (2 / 3) * RP.dt .* d
-        local_only = @. ifelse(d < 0, (1 - a) * T⁻, T⁻ / (1 + a))
-        @test T⁺[inw] ≈ local_only[inw] rtol = 1.0e-5
+        # every rate resolved: the weight is θ itself
+        θ = RP.flags.θ_imp.transport
+        @test all(k -> capped_weight(d[k], θ, RP.dt) == θ, inw)
+        @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-9
+        @test T⁺[inw] ≈ theta_step(RP, T⁻; weight = _ -> θ)[1][inw] rtol = 1.0e-9
     end
 end
 
-@testitem "compression by its sign: where (2/3) θ Δt |∇·u| exceeds one, Tₑ still heats and stays positive" setup = [CompressionCase] begin
-    # g Δt = 6: the θ = ½ diagonal 1 + (2/3) θ Δt ∇·u would be −1, the old solve's sign flipped
-    RP = compression_RP(; g = 6.0e6)
-    inw = RP.G.nodes.in_wall_nids
-    T⁻, T⁺, expected, d = te_stage!(RP)
-    @test minimum(d[inw]) * (2 / 3) * 0.5 * RP.dt < -1
-    @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-10
-    @test all(T⁺[inw] .> T⁻[inw])
-    @test minimum(T⁺[inw]) > 2 * T⁻[inw[1]]
+@testitem "compression beyond a resolved rate: a converging flow heats and an expanding one cools, Tₑ positive both ways" setup = [CompressionCase] begin
+    # g Δt = 6: θ = ½ would give a diagonal of −1 converging, a numerator of −1 expanding
+    for g in (6.0e6, -6.0e6)
+        RP = compression_RP(; g)
+        inw = RP.G.nodes.in_wall_nids
+        T⁻, T⁺, expected, d = te_stage!(RP)
+        @test maximum(abs, d[inw]) * (2 / 3) * 0.5 * RP.dt > 1
+        @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-9
+        @test all(T⁺[inw] .> 0)
+        g > 0 ? @test(all(T⁺[inw] .> T⁻[inw])) : @test(all(T⁺[inw] .< T⁻[inw]))
+    end
 end
 
-@testitem "compression by its sign: Tᵢ alike, carried by the electrons' flow when slaved" setup = [CompressionCase] begin
-    for g in (2.0e4, -2.0e4, 6.0e6)
+@testitem "compression: Tᵢ alike, carried by the electrons' flow when slaved" setup = [CompressionCase] begin
+    for g in (2.0e4, -2.0e4, 6.0e6, -6.0e6)
         RP = compression_RP(; g)
         inw = RP.G.nodes.in_wall_nids
         publish_electron_carriage!(RP)
         T⁻ = copy(vec(RP.plasma.Ti_eV))
-        expected, _ = split_step(RP, T⁻)
+        expected, _ = theta_step(RP, T⁻)
         update_Ti!(RP)
         T⁺ = vec(RP.plasma.Ti_eV)
-        @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-10
+        @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-9
         @test all(T⁺[inw] .> 0)
     end
 end

@@ -173,22 +173,23 @@ end
     RP.t_end_s = t_prep + t_heat
     ode = theory.evolve(I0, T0, T0)
     w = vec(G.inVol2D)[col] .* n
-    samples = (t = Float64[], Te_min = Float64[], I = Float64[], Te = Float64[])
+    Te_min = [minimum(vec(pla.Te_eV)[col])]                               # every step, from the start
+    samples = (t = Float64[], I = Float64[], Te = Float64[])              # the circuit, every fourth
     run_simulation!(
         RP; callback_after_step = function (rp)
-            rp.step % 4 == 0 || return nothing
             p = rp.plasma
+            push!(Te_min, minimum(vec(p.Te_eV)[col]))
+            rp.step % 4 == 0 || return nothing
             I, Te, _ = ode(rp.time_s - t_prep)
             push!(samples.t, rp.time_s - t_prep)
-            push!(samples.Te_min, minimum(vec(p.Te_eV)[col]))
             push!(samples.I, abs(rp.diagnostics.snaps0D.I_tor[end] - I) / I)
             push!(samples.Te, abs(sum(w .* vec(p.Te_eV)[col]) / sum(w) - Te) / Te)
             return nothing
         end,
     )
-    @test length(samples.t) >= 80
-    @test samples.Te_min[end] > 4 * T0                                   # the coldest node heats with the rest
-    @test all(diff(samples.Te_min) .>= -1.0e-6)                          # and never cools
+    @test length(Te_min) >= round(Int, t_heat / dt) && length(samples.t) >= 80
+    @test Te_min[end] > 4 * T0                                           # the coldest node heats with the rest
+    @test all(diff(Te_min) .>= -1.0e-6)                                  # and never cools, step by step
     early = samples.t .<= 3.0e-3
     @test maximum(samples.Te[early]) < 1.0e-2                            # 0.7 % at 3 ms
     @test maximum(samples.Te) < 6.0e-2                                   # 4.6 % at 9 ms: the column is not uniform

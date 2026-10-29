@@ -107,7 +107,7 @@ end
 variable carried by the density `w`, the density inside the coefficient. Assembled by `discretization` like
 every anisotropic operator, its limiter reading `n`, on the nodes whose `n_total` is above `n_floor`: the
 floor is a wall for it, every face and pair reaching a floor node dropped on both sides. Grids are
-`(NR, NZ)`; nothing is allocated after the first call.
+`(NR, NZ)`; the assembly allocates its coefficient arrays (`build_wall_diffusion_matrix!`).
 """
 function density_weighted_diffusion!(
         A::DiscretizedOperator{FT}, G::GridGeometry{FT}, D, w::AbstractMatrix{FT},

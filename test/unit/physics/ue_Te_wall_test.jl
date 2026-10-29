@@ -211,6 +211,14 @@ end
     limit_antidiffusive_pairs!(A, G, pla.ne; max_ratio = 20.0)
     expected = A.matrix ./ max.(n, 1.0)
     @test maximum(abs, M.matrix .- expected) <= 1.0e-12 * maximum(abs, expected)
+    @test op.A_cond_excess_e_whole
+    # and on again: the particles' carriage with the excess along b̂ alone, rebuilt for the changed mode
+    RP.flags.diffu = true
+    M_on = ue_Te_operators(RP).A_diffu
+    @test !op.A_cond_excess_e_whole
+    @test drift_moves(M_on) > 1.0e-6
+    cache_electron_operators!(RP)
+    @test ue_Te_operators(RP).A_diffu.matrix ≈ M_on.matrix rtol = 1.0e-13
 end
 
 @testitem "a discretization defined outside the package reaches both electron diffusion operators through its one method" setup = [UeTeWallDriver] begin

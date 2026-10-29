@@ -469,7 +469,7 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 
             if RP.flags.Include_Te_convec_term
                 # P_conv = -1.5*(𝐮⋅∇)Te − Te*(∇⋅𝐮)   (≡ -1.5*∇⋅(𝐮 Te) + 0.5*Te*∇⋅𝐮): the advection on the
-                # LHS as +1.5·c·A_adv, c = (2/3)·Δt·θ; the compression by its sign (`add_compression!`)
+                # LHS as +1.5·c·A_adv, c = (2/3)·Δt·θ; the compression θ-weighted node by node (`add_compression!`)
                 @. ePowers_tilde -= θimp * pla.ePowers.conv
                 add_scaled!(A, two_thirds_FT * (dt * θimp) * FT(1.5), pops.A_adv)
                 add_compression!(A, ePowers_tilde, pla.Te_eV, pops.div_u, θimp; dt, ee)
@@ -528,30 +528,43 @@ end
 """
     add_compression!(A, P_tilde, T, div_u, θ; dt, ee) -> A
 
-The compression −(2/3) T ∇·u of a temperature equation by its sign, onto the LHS `A` (the identity plus
-the step's operators) and the explicit power `P_tilde`, W per particle, from which `θ` of the whole
-convection power was already taken: expansion (∇·u > 0, a decay) backward Euler, compression (∇·u < 0,
-a growth) explicit,
+The compression −(2/3) T ∇·u of a temperature equation onto the LHS `A` and the explicit power
+`P_tilde` (W per particle, `θ` of the whole convection power already taken from it), node by node as
+the θ-step of its local rate, with `θ` where that step keeps a margin and the nearest weight that does
+elsewhere: with x = (2/3) Δt |∇·u|,
 
-    (1 + (2/3) Δt (∇·u)₊) T⁺ = (1 − (2/3) Δt (∇·u)₋) Tⁿ,
+    θₖ = min(θ, 1/(2x)) where the flow converges (a growth),  θₖ = max(θ, 1 − 1/(2x)) where it expands,
 
-so the diagonal never falls below one: θ-weighted, a converging flow with (2/3) θ Δt |∇·u| > 1 flipped the
-solution's sign. Grids are `(NR, NZ)`; nothing is allocated after the first call.
+so the local factor (1 − (2/3) Δt (1 − θₖ) ∇·u) / (1 + (2/3) Δt θₖ ∇·u) keeps numerator and denominator at
+or above ½: no pole, no sign change. Where θ keeps the margin (a resolved rate) the step is θ's, bit for
+bit, and stays consistent with the density's (Tᵢ ∝ n^{2/3} under a uniform compression); a capped node
+warns once. Grids are `(NR, NZ)`.
 """
 function add_compression!(
         A::DiscretizedOperator{FT}, P_tilde::AbstractMatrix{FT}, T::AbstractMatrix{FT}, div_u::AbstractMatrix{FT}, θ;
         dt, ee,
     ) where {FT <: AbstractFloat}
-    # the compression's θ share left in P_tilde, (1 − θ) of −e T ∇·u, out; its explicit growth in
-    @. P_tilde += (one(FT) - θ) * ee * T * div_u - ee * T * min(div_u, zero(FT))
+    two_thirds, half = FT(2) / FT(3), FT(0.5)
+    capped, x_max = 0, zero(FT)
     @with_pool pool begin
-        expansion = acquire!(pool, FT, length(div_u))
-        @inbounds for k in eachindex(expansion)
-            expansion[k] = max(div_u[k], zero(FT))
+        diagonal = acquire!(pool, FT, length(div_u))
+        @inbounds for k in eachindex(diagonal)
+            d = div_u[k]
+            x = two_thirds * dt * abs(d)
+            θk = d < zero(FT) ? min(θ, half / x) : max(θ, one(FT) - half / x)
+            diagonal[k] = two_thirds * (dt * θk) * d
+            if θk != θ
+                # what θ left explicit, less what θₖ leaves: (θ − θₖ) of −e T ∇·u
+                P_tilde[k] += (θ - θk) * (-ee * T[k] * d)
+                capped += 1
+                x_max = max(x_max, x)
+            end
         end
-        add_diagonal!(A, expansion; scale = FT(2) / FT(3) * dt)
+        add_diagonal!(A, diagonal)
         nothing
     end
+    capped > 0 && @warn "the compression (2/3)Δt|∇·u| reached $(x_max) at $(capped) node(s): their θ is moved so the " *
+        "step stays positive; the rate is not resolved by Δt" maxlog = 1
     return A
 end
 

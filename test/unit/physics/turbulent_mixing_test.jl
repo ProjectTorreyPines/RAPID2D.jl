@@ -178,6 +178,7 @@ end
 
 @testitem "ue_Te_operators: A_diffu is the particle-weighted operator of the density operator and the current ne" setup = [PureMixingRun] begin
     using RAPID2D: ue_Te_operators, is_on_wall_pattern
+    using RAPID2D.SparseArrays: nonzeros
     RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along = 50.0, D_across = 5.0)
     G, pla, op = RP.G, RP.plasma, RP.operators
     inw = G.nodes.in_wall_nids
@@ -216,6 +217,16 @@ end
     @test !op.A_cond_excess_e_nodes[k]
     @test all(iszero, C[k, :]) && all(iszero, C[:, k])
     @test maximum(abs, C) > 0
+    # back above it: assembled again, and it conducts with its neighbours once more
+    pla.ne[k] = 1.0e14
+    C = ue_Te_operators(RP).A_diffu.matrix .- per_particle().matrix
+    @test op.A_cond_excess_e_nodes[k]
+    @test any(!iszero, C[k, :])
+    # a density that moves without crossing the floor keeps the refresh's operator
+    cached = copy(nonzeros(op.A_cond_excess_e.matrix))
+    pla.ne[inw] .*= 1.1
+    ue_Te_operators(RP)
+    @test nonzeros(op.A_cond_excess_e.matrix) == cached
 end
 
 @testitem "mixing along straight field lines: the column momentum converges to first order in Δt" setup = [PureMixingRun] begin

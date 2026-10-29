@@ -243,9 +243,10 @@ end
     carry_Ti!(RP, heat, relax_weight) -> RP
 
 Tᵢ's update with its carriage (`update_Ti!`), as the electrons' Tₑ ([`update_Te!`](@ref)): the
-atomic power (ExpRB's `bern` on the diagonal when `scheme.atomic` is ExpRB), the convection,
-compression and diffusive carriage of [`ion_heat_carriage`](@ref) under `θ_imp.transport`, their
-explicit halves through `iPowers.conv` and `iPowers.diffu`, and the near-vacuum relaxation backward
+atomic power (ExpRB's `bern` on the diagonal when `scheme.atomic` is ExpRB), the convection and
+diffusive carriage of [`ion_heat_carriage`](@ref) under `θ_imp.transport` and its compression by
+[`add_compression!`](@ref), their explicit parts through `iPowers.conv` and `iPowers.diffu`, and the
+near-vacuum relaxation backward
 Euler. Without carriage (the relaxation alone) or with `Implicit = false` the update is diagonal and
 nothing is factorized. The thermal energy the relaxation took out is booked, before the clamp, in
 `diagnostics.near_vacuum.relax_energy_i`.
@@ -277,7 +278,7 @@ function carry_Ti!(RP::RAPID{FT}, heat, relax_weight::AbstractMatrix{FT}) where 
         end
         if !isnothing(A_adv)
             # P_conv = −1.5 (u·∇)Tᵢ − Tᵢ ∇·u: the advection on the LHS as +1.5 c A_adv, c = (2/3)Δt θ;
-            # the compression by its sign (`add_compression!`)
+            # the compression θ-weighted node by node (`add_compression!`)
             @. P_tilde -= θ * iP.conv
             add_scaled!(A, two_thirds * (dt * θ) * FT(1.5), A_adv)
             add_compression!(A, P_tilde, pla.Ti_eV, heat.div_u, θ; dt, ee)
