@@ -85,6 +85,7 @@ end
         @test all(k -> capped_weight(d[k], θ, RP.dt) == θ, inw)
         @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-9
         @test T⁺[inw] ≈ theta_step(RP, T⁻; weight = _ -> θ)[1][inw] rtol = 1.0e-9
+        @test RP.diagnostics.compression_cap_e.nsolve == 0
     end
 end
 
@@ -93,8 +94,13 @@ end
     for g in (6.0e6, -6.0e6)
         RP = compression_RP(; g)
         inw = RP.G.nodes.in_wall_nids
-        T⁻, T⁺, expected, d = te_stage!(RP)
+        # every run warns at its first capped solve (here the second run too) and counts them
+        T⁻, T⁺, expected, d = @test_logs (:warn, r"the Tₑ compression") match_mode = :any te_stage!(RP)
         @test maximum(abs, d[inw]) * (2 / 3) * 0.5 * RP.dt > 1
+        θ, stats = RP.flags.θ_imp.transport, RP.diagnostics.compression_cap_e
+        @test stats.nsolve == 1
+        @test stats.nnodes == count(k -> capped_weight(d[k], θ, RP.dt) != θ, eachindex(d)) > 0
+        @test stats.x_max ≈ (2 / 3) * RP.dt * maximum(abs, d)
         @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-9
         @test all(T⁺[inw] .> 0)
         g > 0 ? @test(all(T⁺[inw] .> T⁻[inw])) : @test(all(T⁺[inw] .< T⁻[inw]))
@@ -108,10 +114,17 @@ end
         publish_electron_carriage!(RP)
         T⁻ = copy(vec(RP.plasma.Ti_eV))
         expected, _ = theta_step(RP, T⁻)
-        update_Ti!(RP)
+        capped = abs(g) > 1.0e6
+        if capped
+            @test_logs (:warn, r"the Tᵢ compression") match_mode = :any update_Ti!(RP)
+        else
+            update_Ti!(RP)
+        end
         T⁺ = vec(RP.plasma.Ti_eV)
         @test T⁺[inw] ≈ expected[inw] rtol = 1.0e-9
         @test all(T⁺[inw] .> 0)
+        # counted as the ions', apart from the electrons'
+        @test RP.diagnostics.compression_cap_i.nsolve == capped && RP.diagnostics.compression_cap_e.nsolve == 0
     end
 end
 
@@ -131,7 +144,7 @@ end
         isnothing(b) || add_diagonal!(A, vec(b) .- 1.0)
         base = diag_of(A)
         P = zeros(G.NR, G.NZ)
-        add_compression!(A, P, T, d, θ; dt, ee, bern = b)
+        cap = add_compression!(A, P, T, d, θ; dt, ee, bern = b)
         # the local factor (b − (2/3)Δt(1 − θₖ) ∇·u)/(b + (2/3)Δt θₖ ∇·u), its numerator from the explicit power
         numerator = base .+ (2 / 3) * dt .* vec(P) ./ (ee .* vec(T)) .- (2 / 3) * dt * (1 - θ) .* vec(d)
         denominator = diag_of(A)
@@ -143,6 +156,7 @@ end
         @test 0 < length(resolved) < Ng
         @test denominator[resolved] == base[resolved] .+ (2 / 3 * (dt * θ)) .* dv[resolved]
         @test all(iszero, vec(P)[resolved])
+        @test cap.capped == Ng - length(resolved) && cap.x_max ≈ maximum(x)
     end
     @test_throws ArgumentError add_compression!(set_identity!(build_wall_pattern(G)), zeros(G.NR, G.NZ), T, fill(NaN, G.NR, G.NZ), θ; dt, ee)
 end

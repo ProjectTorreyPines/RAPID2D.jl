@@ -496,6 +496,19 @@ evaluation, of the induced field [V/m] and of the coil currents [A].
 end
 
 """
+    CompressionCapStats
+
+Counts kept over a run for a temperature's compression ([`add_compression!`](@ref)) where Δt does not
+resolve its rate: the solves whose θ was moved at some node, the nodes summed over them, and the largest
+x = (2/3) Δt |∇·u| / b met.
+"""
+@kwdef mutable struct CompressionCapStats
+    nsolve::Int = 0
+    nnodes::Int = 0
+    x_max::Float64 = 0.0
+end
+
+"""
     NearVacuumLedger{FT}()
 
 What the near-vacuum treatments (`near_vacuum.jl`) did over a run, cumulative and signed:
@@ -556,6 +569,10 @@ No legacy Dictionary compatibility layer
 
     # Picard iterations of the coupled momentum–Ampère solve
     ampere_picard::PicardStats = PicardStats()
+
+    # the Tₑ and Tᵢ compression's θ moved where Δt does not resolve its rate (`add_compression!`)
+    compression_cap_e::CompressionCapStats = CompressionCapStats()
+    compression_cap_i::CompressionCapStats = CompressionCapStats()
 
     # what the near-vacuum treatments did (`near_vacuum.jl`)
     near_vacuum::NearVacuumLedger{FT} = NearVacuumLedger{FT}()

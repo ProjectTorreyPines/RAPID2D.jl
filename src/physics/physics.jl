@@ -472,7 +472,8 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
                 # LHS as +1.5·c·A_adv, c = (2/3)·Δt·θ; the compression θ-weighted node by node (`add_compression!`)
                 @. ePowers_tilde -= θimp * pla.ePowers.conv
                 add_scaled!(A, two_thirds_FT * (dt * θimp) * FT(1.5), pops.A_adv)
-                add_compression!(A, ePowers_tilde, pla.Te_eV, pops.div_u, θimp; dt, ee, bern = bern_atomic)
+                (; capped, x_max) = add_compression!(A, ePowers_tilde, pla.Te_eV, pops.div_u, θimp; dt, ee, bern = bern_atomic)
+                record_compression_cap!(RP.diagnostics.compression_cap_e, "Tₑ", capped, x_max, RP.step)
             end
 
             # LHS written as a deviation from the identity, so the sparsity
@@ -526,7 +527,7 @@ function update_Te!(RP::RAPID{FT}) where {FT <: AbstractFloat}
 end
 
 """
-    add_compression!(A, P_tilde, T, div_u, θ; dt, ee, bern = nothing) -> A
+    add_compression!(A, P_tilde, T, div_u, θ; dt, ee, bern = nothing) -> (; capped, x_max)
 
 The compression −(2/3) T ∇·u of a temperature equation onto the LHS `A` and the explicit power
 `P_tilde` (W per particle, `θ` of the whole convection power already taken from it), node by node as
@@ -538,7 +539,8 @@ elsewhere. With `b` the node's diagonal before it (one, or ExpRB's `bern`) and x
 so the local compression factor (b − (2/3) Δt (1 − θₖ) ∇·u) / (b + (2/3) Δt θₖ ∇·u) keeps numerator and
 denominator at or above b/2: no pole, no sign change from the compression (signed transport stays). Where θ
 keeps the margin (a resolved rate) the step is θ's, bit for bit, consistent with the density's (Tᵢ ∝ n^{2/3}
-under a uniform compression). The first capped step of a run warns. `div_u` must be finite.
+under a uniform compression). Returns the nodes whose θ was moved and the largest x among them
+(`record_compression_cap!` counts them over a run). `div_u` must be finite.
 """
 function add_compression!(
         A::DiscretizedOperator{FT}, P_tilde::AbstractMatrix{FT}, T::AbstractMatrix{FT}, div_u::AbstractMatrix{FT}, θ;
@@ -565,9 +567,20 @@ function add_compression!(
         add_diagonal!(A, diagonal)
         nothing
     end
-    capped > 0 && @warn "the compression (2/3)Δt|∇·u| reached $(x_max) of the diagonal at $(capped) node(s): their θ is " *
-        "moved so the local compression factor keeps a half margin; Δt does not resolve the rate (warned once a run)" maxlog = 1
-    return A
+    return (; capped, x_max)
+end
+
+# Count a compression's capped nodes in `stats` (`RP.diagnostics.compression_cap_e` or `_i`), and warn at the
+# run's first capped solve of that temperature.
+function record_compression_cap!(stats::CompressionCapStats, name::String, capped::Int, x_max::Real, step::Integer)
+    capped > 0 || return nothing
+    stats.nsolve += 1
+    stats.nnodes += capped
+    stats.x_max = max(stats.x_max, x_max)
+    stats.nsolve == 1 && @warn "the $name compression (2/3)Δt|∇·u| reached $(round(x_max; sigdigits = 3)) of the diagonal " *
+        "at $capped node(s) (step $step): Δt does not resolve the rate, and their θ is moved so the step stays positive, " *
+        "not accurate; later ones are only counted in RP.diagnostics (`compression_cap_e`, `compression_cap_i`)"
+    return nothing
 end
 
 """
