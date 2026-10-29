@@ -745,17 +745,32 @@ struct CarriedByIonOperators <: IonCarriageSource end
 struct CarriedByElectronOperators <: IonCarriageSource end
 
 """
+    ConductionExcess{FT}
+
+Where a transport group's ions conduct along B with more than their particles diffuse with: the excess
+coefficient `Δ = max(D_cond, D_part) − D_part` on the grid, the direction `(bR, bZ)` it is along, and the
+wall-pattern buffer `A` its density-weighted operator is assembled into when the carriage is built
+([`conduction_excess_operator!`](@ref)).
+"""
+struct ConductionExcess{FT <: AbstractFloat}
+    Δ::Matrix{FT}
+    bR::Matrix{FT}
+    bZ::Matrix{FT}
+    A::DiscretizedOperator{FT}
+end
+
+"""
     IonCarriagePart{FT}
 
 One transport group's share of the ion carriage: its species (columns of the transport's list), the
 density diffusion its densities were moved with (`A_part`, on the wall pattern) and, where the ions
-conduct along B with more than that, the same diffusion with their own parallel coefficient
-(`A_cond`; `nothing` where no node differs).
+conduct along B with more than that, the excess (`excess`, a [`ConductionExcess`](@ref); `nothing` where
+no node differs).
 """
 struct IonCarriagePart{FT <: AbstractFloat}
     sids::Vector{Int}
     A_part::DiscretizedOperator{FT}
-    A_cond::Union{Nothing, DiscretizedOperator{FT}}
+    excess::Union{Nothing, ConductionExcess{FT}}
 end
 
 """
@@ -763,8 +778,9 @@ end
 
 The operators that moved the ion densities this step, published by that move (the ion continuity, or
 the slaved step) and retracted at the start of the next ([`retract_ion_carriage!`](@ref)), with the
-buffers the momentum and heat carriage are written into. `group_buffers` hold the wall-pattern
-operators the parts point to, two per group, kept from step to step.
+buffers the momentum and heat carriage are written into. `group_buffers` hold what the parts point to,
+per group the density diffusion, the conduction excess's operator and its coefficient, kept from step to
+step.
 """
 @kwdef mutable struct IonCarriage{FT <: AbstractFloat}
     dims::Tuple{Int, Int}
@@ -773,8 +789,8 @@ operators the parts point to, two per group, kept from step to step.
     A_conv::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)   # the ion velocity's face-flux divergence
     convec::Bool = false                                               # whether `A_conv` moved them
     div_u::Matrix{FT} = zeros(FT, dims)                                # ∇·u of that velocity
-    group_buffers::Vector{Tuple{DiscretizedOperator{FT}, DiscretizedOperator{FT}}} =
-        Tuple{DiscretizedOperator{FT}, DiscretizedOperator{FT}}[]
+    group_buffers::Vector{Tuple{DiscretizedOperator{FT}, DiscretizedOperator{FT}, Matrix{FT}}} =
+        Tuple{DiscretizedOperator{FT}, DiscretizedOperator{FT}, Matrix{FT}}[]
     M_rho::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)     # what u∥ is carried with, by mass
     A_adv_rho::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     M_n::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)       # what Tᵢ is carried with, by number
@@ -818,12 +834,14 @@ Fields include various matrices for solving different parts of the model.
     # (conduction for Te), (1/n)∇·(nD∇f), plus advection by the diffusive drift, −v_D·∇f with
     # v_D = −D∇n/n. `A_diffu_e`, ∇·(D∇f), equals the sum only at uniform ne.
     A_visc_drift_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
-    # The reflective ∇·D∇ with the parallel coefficient u∥ and Te conduct with
-    # (`transport.Dpara_cond`), assembled like `A_diffu_e`; built only where it differs from it
-    # (`A_cond_e_active`), when `ue_Te_operators` adds the difference to `A_visc_drift_e`
-    # (`add_conduction_correction!`).
-    A_cond_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
-    A_cond_e_active::Bool = false
+    # What u∥ and Te conduct with beyond what the particles diffuse with: ∇·(nₑ ΔD b̂b̂ ∇·),
+    # ΔD = `Dpara_cond − Dpara`, on the nodes above the floor (`A_cond_excess_e_nodes`), at the ne of
+    # the refresh (`conduction_excess_operator!`); built only where some node differs
+    # (`A_cond_excess_e_active`). `ue_Te_operators` adds it over the CURRENT ne
+    # (`add_conduction_excess!`), refreshing it first if a node crossed the floor since.
+    A_cond_excess_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
+    A_cond_excess_e_active::Bool = false
+    A_cond_excess_e_nodes::BitVector = falses(prod(dims))
     div_ue::Matrix{FT} = zeros(FT, dims)
 
     # What moved the ion densities this step, and the buffers the ions' u∥ and Tᵢ are carried with

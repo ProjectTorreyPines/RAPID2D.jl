@@ -24,50 +24,36 @@ function retract_ion_carriage!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return RP
 end
 
-# The two wall-pattern operators of transport group `g`, allocated on first use and kept
+# Transport group `g`'s buffers, allocated on first use and kept: its density diffusion, the operator
+# of its conduction excess and that excess's coefficient
 function ion_group_buffers!(car::IonCarriage{FT}, G::GridGeometry{FT}, g::Integer) where {FT <: AbstractFloat}
     while length(car.group_buffers) < g
         pattern = build_wall_pattern(G)
-        push!(car.group_buffers, (pattern, similar(pattern)))
+        push!(car.group_buffers, (pattern, similar(pattern), zeros(FT, G.NR, G.NZ)))
     end
     return car.group_buffers[g]
 end
 
 """
-    ion_conduction_operator!(A_cond, G, tensor, b, D_part, D_cond, discretization; n, faces, v_absorb) -> Bool
+    ion_conduction_excess(buffers, b, D_part, D_cond) -> ConductionExcess or nothing
 
-The particles' diffusion `tensor = (D_RR, D_RZ, D_ZZ)` with the parallel coefficient along `b` raised
-from what the particles take, `D_part`, to what the ions conduct with, `max(D_cond, D_part)`
-(reference (4.5)), assembled like the particles' (same discretization, density, wall) into `A_cond`.
-`false`, and nothing assembled, where no node differs.
+Where the ions conduct along `b = (bR, bZ)` with more than their particles diffuse with, `D_part`: the
+excess `max(D_cond, D_part) − D_part` (reference (4.5)) into the group's coefficient buffer, with the
+group's operator buffer it is assembled into when the carriage is built. `nothing` where no node differs.
 """
-function ion_conduction_operator!(
-        A_cond::DiscretizedOperator{FT}, G::GridGeometry{FT}, tensor, b, D_part::AbstractMatrix{FT},
-        D_cond::AbstractMatrix{FT}, discretization::AnisotropicDiscretization;
-        n, faces = nothing, v_absorb = nothing,
-    ) where {FT <: AbstractFloat}
-    any(k -> D_cond[k] > D_part[k], eachindex(D_part)) || return false
-    bR, bZ = b
-    D_RR, D_RZ, D_ZZ = tensor
-    @with_pool pool begin
-        Δ = acquire!(pool, FT, size(D_part)...)
-        @. Δ = max(D_cond, D_part) - D_part
-        RR, RZ, ZZ = acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...)
-        @. RR = D_RR + Δ * bR^2
-        @. RZ = D_RZ + Δ * bR * bZ
-        @. ZZ = D_ZZ + Δ * bZ^2
-        assemble_anisotropic_diffusion!(A_cond, G, RR, RZ, ZZ, discretization; n, faces, v_absorb)
-        nothing
-    end
-    return true
+function ion_conduction_excess(buffers, b, D_part::AbstractMatrix{FT}, D_cond::AbstractMatrix{FT}) where {FT <: AbstractFloat}
+    any(k -> D_cond[k] > D_part[k], eachindex(D_part)) || return nothing
+    _, A, Δ = buffers
+    @. Δ = max(D_cond, D_part) - D_part
+    return ConductionExcess{FT}(Δ, b[1], b[2], A)
 end
 
 """
     publish_electron_carriage!(RP) -> RP
 
 Slaved ions (`update_ni_independently = false`) are moved by the electrons' operators, `nᵢ = nₑ/Z`:
-publish those, the cached density diffusion `A_diffu_e` with the ions' own parallel conduction
-along B, and the electrons' convection, which [`ion_momentum_carriage`](@ref) reads through
+publish those, the cached density diffusion `A_diffu_e` with the ions' own parallel conduction's
+excess along B, and the electrons' convection, which [`ion_momentum_carriage`](@ref) reads through
 `ue_Te_operators` (its closed-surface carriage included).
 """
 function publish_electron_carriage!(RP::RAPID{FT}) where {FT <: AbstractFloat}
@@ -76,12 +62,8 @@ function publish_electron_carriage!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     (flags.diffu || flags.convec) || return RP
     car, op, tp, G = RP.operators.ion_carriage, electron_operator_cache(RP), RP.transport, RP.G
     if flags.diffu
-        A_cond = ion_group_buffers!(car, G, 1)[2]
-        active = ion_conduction_operator!(
-            A_cond, G, (tp.DRR, tp.DRZ, tp.DZZ), (RP.fields.bR, RP.fields.bZ), tp.Dpara, tp.Dpara_cond_i,
-            flags.anisotropic_discretization; n = RP.prev_n,
-        )
-        push!(car.parts, IonCarriagePart{FT}(collect(eachindex(tp.ion_species)), op.A_diffu_e, active ? A_cond : nothing))
+        excess = ion_conduction_excess(ion_group_buffers!(car, G, 1), (RP.fields.bR, RP.fields.bZ), tp.Dpara, tp.Dpara_cond_i)
+        push!(car.parts, IonCarriagePart{FT}(collect(eachindex(tp.ion_species)), op.A_diffu_e, excess))
     end
     car.convec = flags.convec
     car.source = CarriedByElectronOperators()
@@ -119,8 +101,8 @@ function _carrier_densities!(ws, w_moved, w_total, RP::RAPID{FT}, weight) where 
 end
 
 # The carried operators by `weight` into `M` and `A_adv`: per part the per-particle operator over
-# the total and the conduction correction, the convection's over the total of what moves. `nothing`
-# for what did not move the densities.
+# the total and the conduction excess with the part's carriers in its coefficient, the convection's
+# over the total of what moves. `nothing` for what did not move the densities.
 function _carried_operators!(M, A_adv, RP::RAPID{FT}, weight) where {FT <: AbstractFloat}
     car = RP.operators.ion_carriage
     n_floor = FT(ION_CARRIAGE_N_FLOOR)
@@ -134,8 +116,14 @@ function _carried_operators!(M, A_adv, RP::RAPID{FT}, weight) where {FT <: Abstr
         if has_parts
             per_particle_operator!(M, [p.A_part for p in car.parts], ws, w_total; n_floor)
             for (p, w) in zip(car.parts, ws)
-                isnothing(p.A_cond) ||
-                    add_conduction_correction!(M, p.A_part, p.A_cond, w, RP.G; n_floor, n_total = w_total)
+                x = p.excess
+                isnothing(x) && continue
+                # assembled like the densities' move: its discretization, its limiter on the step's density
+                conduction_excess_operator!(
+                    x.A, RP.G, x.Δ, (x.bR, x.bZ), w, RP.flags.anisotropic_discretization; n_total = w_total, n_floor,
+                    n = RP.prev_n,
+                )
+                add_conduction_excess!(M, x.A, w_total; n_floor)
             end
         end
         if car.convec && car.source isa CarriedByIonOperators

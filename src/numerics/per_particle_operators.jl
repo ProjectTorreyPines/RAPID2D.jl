@@ -101,55 +101,64 @@ function per_particle_operator!(
 end
 
 """
-    add_conduction_correction!(M, A_part, A_cond, n, G; n_floor, n_total = n) -> M
+    conduction_excess_operator!(A, G, Δ, b, w, discretization; n_total = w, n_floor, n = n_total) -> A
 
-Add to `M`, the per-particle operator of the particle diffusion `A_part`, the correction `C` that
-makes the carried variable conduct (and diffuse momentum) with `A_cond` instead:
-
-    S_kl = ½ (R_k ΔA_kl + R_l ΔA_lk),   ΔA = A_cond − A_part,
-    (C f)_k = Σ_l S_kl (n_k + n_l)/2 (f_l − f_k) / (R_k n_k),
-
-with `R_k = G.Jacob[k]`. The pair transfers are symmetric, so `Σ R n f` is kept and constants
-stay in the kernel (the cross terms make `R A` asymmetric, so a split of `M` by face densities
-would not keep it). The negative transfers are kept, as `A_part` and `A_cond` keep theirs: on an
-oblique field they are what cancels the diffusion across `b`, so a profile constant along `b`
-stays in the kernel to truncation order (dropping them conducted ≈ ½ΔD across the field at any
-resolution). Where the density is not resolved, `limit_antidiffusive_pairs!` has bounded them in
-both operators. A pair with a node at or below `n_floor` is skipped, its row being frozen. In a
-uniform plasma with `R ΔA` symmetric (no cross terms) `M + C` is `A_cond`; `A_cond = A_part`
-leaves `M` bit for bit.
-For one group of a mixture (`per_particle_operator!` over several carriers), `n` is the group's
-density and `n_total` the carriers' total: the transfers are the group's, `S (n_k + n_l)/2`, over
-`R_k n_total,k`, and the floor is on the total, so `Σ R n_total f` is kept.
-All three on the wall pattern of `G`, `M` aliasing neither; nothing is allocated.
+`∇·(w Δ b̂b̂ ∇·)` into `A`, an operator on the wall pattern: what a variable carried by the density `w`
+conducts (and diffuses momentum) with beyond what its particles diffuse with, `Δ = D_cond − D_part` along
+`b = (b_R, b_Z)`, the density inside the coefficient. Assembled by `discretization` like every
+anisotropic operator, its limiter reading `n`, on the nodes whose `n_total` is above `n_floor`: the floor
+is a wall for it, every face and pair reaching a floor node dropped on both sides. Grids are `(NR, NZ)`.
 """
-function add_conduction_correction!(
-        M::DiscretizedOperator{FT}, A_part::DiscretizedOperator{FT}, A_cond::DiscretizedOperator{FT},
-        n::AbstractVecOrMat{FT}, G::GridGeometry{FT}; n_floor::FT, n_total::AbstractVecOrMat{FT} = n,
+function conduction_excess_operator!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT}, Δ::AbstractMatrix{FT}, b, w::AbstractMatrix{FT},
+        discretization::AnisotropicDiscretization; n_total::AbstractMatrix{FT} = w, n_floor::FT,
+        n::AbstractVecOrMat{FT} = n_total,
     ) where {FT <: AbstractFloat}
-    foreach(check_wall_pattern, (M, A_part, A_cond))
-    P, Q, U = A_part.matrix, A_cond.matrix, M.matrix
-    (P.colptr == Q.colptr == U.colptr && P.rowval == Q.rowval == U.rowval) ||
-        throw(ArgumentError("add_conduction_correction!: M, A_part and A_cond do not share a pattern"))
-    (nonzeros(U) !== nonzeros(P) && nonzeros(U) !== nonzeros(Q)) ||
-        throw(ArgumentError("add_conduction_correction!: M must not alias A_part or A_cond"))
-    (M.dims_rz == (G.NR, G.NZ) && length(n) == size(U, 1) == length(n_total)) ||
-        throw(DimensionMismatch("add_conduction_correction!: M and n must be on the grid of G"))
-    nzU, nzP, nzQ, k2c = nonzeros(U), nonzeros(P), nonzeros(Q), M.k2csc
-    NR, R = G.NR, G.Jacob
-    half = FT(0.5)
-    @inbounds for k in 1:size(U, 1), (slot, slot_back) in PAIR_SLOTS
-        p_kl = slot_position(k2c, k, slot)
-        p_kl == 0 && continue
-        di, dj = STENCIL_OFFSETS[slot]
-        l = k + di + dj * NR
-        (n_total[k] > n_floor && n_total[l] > n_floor) || continue
-        p_lk = slot_position(k2c, l, slot_back)     # the pattern is structurally symmetric
-        S = half * (R[k] * (nzQ[p_kl] - nzP[p_kl]) + R[l] * (nzQ[p_lk] - nzP[p_lk]))
-        iszero(S) && continue
-        n_mean = half * (n[k] + n[l])
-        _add_pair_transfer!(nzU, p_kl, slot_position(k2c, k, SLOT_C), S * n_mean / (R[k] * n_total[k]))
-        _add_pair_transfer!(nzU, p_lk, slot_position(k2c, l, SLOT_C), S * n_mean / (R[l] * n_total[l]))
+    bR, bZ = b
+    @with_pool pool begin
+        active = acquire!(pool, Bool, G.NR * G.NZ)
+        @inbounds for k in eachindex(active)
+            active[k] = n_total[k] > n_floor
+        end
+        χ = acquire!(pool, FT, size(Δ)...)
+        @. χ = w * Δ
+        RR, RZ, ZZ = acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...)
+        @. RR = χ * bR^2
+        @. RZ = χ * bR * bZ
+        @. ZZ = χ * bZ^2
+        assemble_anisotropic_diffusion!(A, G, RR, RZ, ZZ, discretization; n, active_nodes = active)
+        nothing
+    end
+    return A
+end
+
+"""
+    add_conduction_excess!(M, A_excess, n_total; n_floor) -> M
+
+Add to `M`, the per-particle operator of the particles' diffusion, `C = N_total⁻¹ A_excess`: the conduction
+excess ([`conduction_excess_operator!`](@ref)) over the carriers' total density, off the diagonal, with the
+zero row sum on it. Each face flux of `A_excess` is shared by its two rows, so `Σ J n_total f` is kept and
+constants stay in the kernel; at uniform density `M + C` is the conduction operator of the whole tensor,
+face by face (the same cross terms that cancel the diffusion across `b`). `A_excess` must have been assembled
+on the nodes above the floor of the same `n_total`; rows at or below it stay as `M` has them. Both on one wall
+pattern, `M` not aliasing `A_excess`; nothing is allocated.
+"""
+function add_conduction_excess!(
+        M::DiscretizedOperator{FT}, A_excess::DiscretizedOperator{FT}, n_total::AbstractVecOrMat{FT}; n_floor::FT,
+    ) where {FT <: AbstractFloat}
+    check_wall_pattern(M)
+    check_wall_pattern(A_excess)
+    U, X = M.matrix, A_excess.matrix
+    (U.colptr == X.colptr && U.rowval == X.rowval) ||
+        throw(ArgumentError("add_conduction_excess!: M and A_excess do not share a pattern"))
+    nonzeros(U) !== nonzeros(X) || throw(ArgumentError("add_conduction_excess!: M must not alias A_excess"))
+    length(n_total) == size(U, 1) ||
+        throw(DimensionMismatch("add_conduction_excess!: the total density must have one entry per node"))
+    nzU, nzX, rows, k2c = nonzeros(U), nonzeros(X), rowvals(U), M.k2csc
+    @inbounds for l in axes(U, 2), s in nzrange(U, l)
+        k = rows[s]
+        (k == l || !(n_total[k] > n_floor)) && continue
+        _add_pair_transfer!(nzU, s, slot_position(k2c, k, SLOT_C), nzX[s] / n_total[k])
     end
     return M
 end

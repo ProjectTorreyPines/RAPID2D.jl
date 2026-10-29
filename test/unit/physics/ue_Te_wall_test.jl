@@ -131,7 +131,7 @@ end
     end
 end
 
-@testitem "A_diffu_e and A_cond_e are assembled by the discretization flags.anisotropic_discretization sets, at the cached ne" setup = [UeTeWallDriver] begin
+@testitem "A_diffu_e and the conduction excess are assembled by the discretization flags.anisotropic_discretization sets, at the cached ne" setup = [UeTeWallDriver] begin
     using RAPID2D: build_wall_diffusion_matrix!, build_wall_pattern, limit_antidiffusive_pairs!, cache_electron_operators!
     RP = ue_Te_one_step()
     op, tp, G, pla = RP.operators, RP.transport, RP.G, RP.plasma
@@ -145,28 +145,31 @@ end
     for k in G.nodes.in_wall_nids
         pla.ne[k] = -bZ * (G.R2D[k] - Rc) + bR * (G.Z2D[k] - Zc) < 0 ? 1.0e17 : 1.0e5
     end
-    # u∥ and Te conduct with more along b̂, so A_cond_e is built from its own tensor
+    # u∥ and Te conduct with more along b̂, the same tilted direction: the excess ∇·(nₑ ΔD b̂b̂ ∇·), the
+    # density inside its coefficient
     F = RP.fields
+    F.bR .= bR
+    F.bZ .= bZ
     tp.Dpara_cond .= tp.Dpara .+ 50.0
-    ΔD = tp.Dpara_cond .- tp.Dpara
+    χ = (tp.Dpara_cond .- tp.Dpara) .* pla.ne
     stencil(D...) = build_wall_diffusion_matrix!(build_wall_pattern(G), G, D...; cross_terms = :drop)
     raw() = stencil(tp.DRR, tp.DRZ, tp.DZZ)
-    raw_cond() = stencil(tp.DRR .+ ΔD .* F.bR .^ 2, tp.DRZ .+ ΔD .* F.bR .* F.bZ, tp.DZZ .+ ΔD .* F.bZ .^ 2)
-    limited, limited_cond = raw(), raw_cond()
+    raw_excess() = stencil(χ .* F.bR .^ 2, χ .* F.bR .* F.bZ, χ .* F.bZ .^ 2)
+    limited, limited_excess = raw(), raw_excess()
     n_limited = limit_antidiffusive_pairs!(limited, G, pla.ne; max_ratio = 20.0)
-    @test limit_antidiffusive_pairs!(limited_cond, G, pla.ne; max_ratio = 20.0) > 0
+    @test limit_antidiffusive_pairs!(limited_excess, G, pla.ne; max_ratio = 20.0) > 0
     @test RP.flags.anisotropic_discretization == LimitedNinePoint(max_ratio = 20)     # the default
     cache_electron_operators!(RP)
-    @test op.A_cond_e_active
+    @test op.A_cond_excess_e_active
     @test op.A_diffu_e.matrix == limited.matrix
     @test op.A_diffu_e.matrix != raw().matrix
-    @test op.A_cond_e.matrix == limited_cond.matrix                       # limited alike, at the same ne
-    @test op.A_cond_e.matrix != raw_cond().matrix
+    @test op.A_cond_excess_e.matrix == limited_excess.matrix              # limited alike, at the same ne
+    @test op.A_cond_excess_e.matrix != raw_excess().matrix
     @test RP.diagnostics.near_vacuum.limited_pairs == n_limited > 0      # the count reaches the ledger
     RP.flags.anisotropic_discretization = NinePoint()
     cache_electron_operators!(RP)
     @test op.A_diffu_e.matrix == raw().matrix
-    @test op.A_cond_e.matrix == raw_cond().matrix
+    @test op.A_cond_excess_e.matrix == raw_excess().matrix
     @test RP.diagnostics.near_vacuum.limited_pairs == 0
 end
 
@@ -176,23 +179,23 @@ end
     # a stand-in for a future scheme (a monotone stencil, another package's operator): the stencil, halved
     struct HalvedNinePoint <: AnisotropicDiscretization end
     function RAPID2D.assemble_anisotropic_diffusion!(
-            A, G, D_RR, D_RZ, D_ZZ, ::HalvedNinePoint; n = nothing, faces = nothing, v_absorb = nothing, cross_terms = :drop,
+            A, G, D_RR, D_RZ, D_ZZ, ::HalvedNinePoint;
+            n = nothing, faces = nothing, v_absorb = nothing, cross_terms = :drop, active_nodes = nothing,
         )
-        build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
+        build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb, active_nodes)
         nonzeros(A.matrix) .*= 0.5
         return 0
     end
     RP = ue_Te_one_step()
-    op, tp, G, F = RP.operators, RP.transport, RP.G, RP.fields
-    tp.Dpara_cond .= tp.Dpara .+ 50.0             # u∥ and Te conduct with more: A_cond_e is built
+    op, tp, G, F, pla = RP.operators, RP.transport, RP.G, RP.fields, RP.plasma
+    tp.Dpara_cond .= tp.Dpara .+ 50.0             # u∥ and Te conduct with more: the excess is built
     RP.flags.anisotropic_discretization = HalvedNinePoint()
     cache_electron_operators!(RP)
-    @test op.A_cond_e_active
+    @test op.A_cond_excess_e_active
     stencil(D...) = nonzeros(build_wall_diffusion_matrix!(build_wall_pattern(G), G, D...; cross_terms = :drop).matrix)
-    ΔD = tp.Dpara_cond .- tp.Dpara
+    χ = (tp.Dpara_cond .- tp.Dpara) .* pla.ne
     @test nonzeros(op.A_diffu_e.matrix) == 0.5 .* stencil(tp.DRR, tp.DRZ, tp.DZZ)
-    @test nonzeros(op.A_cond_e.matrix) ==
-        0.5 .* stencil(tp.DRR .+ ΔD .* F.bR .^ 2, tp.DRZ .+ ΔD .* F.bR .* F.bZ, tp.DZZ .+ ΔD .* F.bZ .^ 2)
+    @test nonzeros(op.A_cond_excess_e.matrix) == 0.5 .* stencil(χ .* F.bR .^ 2, χ .* F.bR .* F.bZ, χ .* F.bZ .^ 2)
 end
 
 @testitem "in-wall operators: one symbolic analysis per electron solver over a run with reversing flow" begin
