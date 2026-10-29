@@ -122,21 +122,64 @@ end
     @test (pla.ePowers.drag .* dt)[inw] ≈ (0.5 .* me .* (Δu0 .^ 2 .- Δu1 .^ 2))[inw] rtol = 1.0e-3
 end
 
-@testitem "the friction never cools: a field that reverses the relative drift within a step leaves its heat at zero" setup = [EiFrictionCase] begin
+@testitem "the friction never cools: zero where a field turns the drift back against the impulse, the step's work everywhere else" setup = [EiFrictionCase] begin
     using RAPID2D: update_electron_heating_powers!, update_ue_para!
-    # Δu from +a to −b, a > b, in one step: the friction's impulse (at u^θ, pointing to +) on the
-    # step's mean drift (+) is positive work, a cooling no collision makes: −R·Δu = mₑν|Δu|² ≥ 0.
-    # The trapezoid's partition between the field and the friction is wrong on such a step.
-    RP = friction_case()
-    pla = RP.plasma
+    # Q₀ = −mₑ R_ue (ū_e − u_i), the impulse's work on the step's mean drift, the ions held in the electrons'
+    # solve. A field taking the drift from +a to −b, a > b, makes Q₀ < 0: the trapezoid's split of the
+    # kinetic energy between the field and the friction is wrong on such a step, and the heat is zero.
+    # Everywhere else it is Q₀, unchanged.
+    function step_with(E)
+        RP = friction_case()
+        pla = RP.plasma
+        u0 = copy(pla.ue_para)
+        RP.fields.E_para_tot .= E
+        update_ue_para!(RP)
+        update_electron_heating_powers!(RP)
+        Q0 = @. -RP.config.constants.me * pla.Rue_ei * (0.5 * (u0 + pla.ue_para) - pla.ui_para)
+        return RP, u0 .- pla.ui_para, pla.ue_para .- pla.ui_para, Q0
+    end
+    RP, d0, d1, Q0 = step_with(600.0)                     # e E Δt/mₑ ≈ 1.06e6 m/s against the drift
     inw = RP.G.nodes.in_wall_nids
-    Δu0 = copy(pla.ue_para .- pla.ui_para)
-    RP.fields.E_para_tot .= 600.0                         # e E Δt/mₑ ≈ 1.06e6 m/s against the drift
-    update_ue_para!(RP)
-    update_electron_heating_powers!(RP)
-    Δu1 = pla.ue_para .- pla.ui_para
-    @test all(Δu0[inw] .> 0) && all(Δu1[inw] .< 0) && all(abs.(Δu1[inw]) .< Δu0[inw])   # reversed, smaller
-    @test all(>=(0.0), pla.ePowers.drag[inw])
+    @test all(d0[inw] .> 0) && all(d1[inw] .< 0) && all(abs.(d1[inw]) .< d0[inw])   # turned back, smaller
+    @test all(<(0.0), Q0[inw])
+    @test all(iszero, RP.plasma.ePowers.drag[inw])
+    # turned past it (b > a), and driven on without turning: Q₀ > 0, the heat
+    for E in (2000.0, -600.0)
+        RE, d0, d1, Q0 = step_with(E)
+        E > 0 ? (@test all(d1[inw] .< -d0[inw])) : (@test all(d1[inw] .> d0[inw]))
+        @test all(>(0.0), Q0[inw])
+        @test RE.plasma.ePowers.drag[inw] == Q0[inw]
+    end
+    # steady, the field holding the drift against the friction: the Ohmic heat mₑ ν_ei^eff Δu²
+    RS = friction_case()
+    pls = RS.plasma
+    me, qe = RS.config.constants.me, RS.config.constants.qe
+    Δu = pls.ue_para .- pls.ui_para
+    @. RS.fields.E_para_tot = me * pls.ν_ei_eff * Δu / qe
+    update_ue_para!(RS)
+    update_electron_heating_powers!(RS)
+    @test (pls.ue_para .- pls.ui_para)[inw] ≈ Δu[inw] rtol = 1.0e-12
+    @test pls.ePowers.drag[inw] ≈ (me .* pls.ν_ei_eff .* Δu .^ 2)[inw] rtol = 1.0e-12
+end
+
+@testitem "with the friction alone the heat is the kinetic energy the electrons lost, the ions held, at any ν Δt: θ = 1, θ = ½ and ExpRB" setup = [EiFrictionCase] begin
+    using RAPID2D: update_electron_heating_powers!, update_ue_para!, ExpRB
+    # ν_ei Δt ≈ 1e-2, 1 and 1e4. A stable step only takes kinetic energy from the drift, so Q₀ ≥ 0 and
+    # nothing is floored, even where θ = ½ rings the drift through zero at ν Δt ≫ 1.
+    for (dt, n, T) in ((1.0e-8, 1.0e18, 10.0), (1.0e-6, 1.0e18, 10.0), (2.0e-5, 5.0e17, 2.0e-2)), scheme in (:BE, :CN, :ExpRB)
+        RP = friction_case(; dt, n, T, ue = 2.0e5, ui = 0.0)
+        scheme === :CN && (RP.flags.θ_imp.decay = 0.5)
+        scheme === :ExpRB && (RP.flags.scheme.decay = ExpRB)
+        pla = RP.plasma
+        inw = RP.G.nodes.in_wall_nids
+        me = RP.config.constants.me
+        d0 = copy(pla.ue_para .- pla.ui_para)
+        update_ue_para!(RP)
+        update_electron_heating_powers!(RP)
+        d1 = pla.ue_para .- pla.ui_para
+        @test all(>=(0.0), pla.ePowers.drag[inw])
+        @test (pla.ePowers.drag .* dt)[inw] ≈ (0.5 .* me .* (d0 .^ 2 .- d1 .^ 2))[inw] rtol = 1.0e-10
+    end
 end
 
 @testitem "an isolated electron–ion pair keeps its energy: the friction's kinetic energy is the electrons' heat, at every Δt" setup = [EiFrictionCase] begin

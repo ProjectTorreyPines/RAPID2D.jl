@@ -192,7 +192,9 @@ end
 
 @testitem "two transport groups: a part each, the conduction raised in one only, the momentum and the heat moved as each group moved its density" setup = [IonCarriageCase] begin
     using RAPID2D: IonRecord, PerSpeciesTransport, layout_ion_species!, ion_momentum_carriage, ion_heat_carriage,
-        ion_plane, update_ui_para!, ion_transport_channels, shared_turbulent_channel, channel_D_para
+        ion_plane, update_ui_para!, ion_transport_channels, shared_turbulent_channel, channel_D_para,
+        per_particle_operator!, add_conduction_correction!
+    using RAPID2D.LinearAlgebra: norm
     RP = carriage_case()
     RP.flags.ion_transport_policy = PerSpeciesTransport()
     tp, pla, G = RP.transport, RP.plasma, RP.G
@@ -228,6 +230,14 @@ end
         ws = [weight(sp) .* n for (sp, n) in zip(tp.ion_species, n_s)]
         moved = sum(p.A_part * (w .* f) .- f .* (p.A_part * w) for (p, w) in zip(car.parts, ws))
         @test sum(V .* w_I .* (op.M * f)) ≈ sum(V .* moved) rtol = 1.0e-10
+        # node by node: the mixture's operator over the groups' own weights and the whole fluid, with
+        # the heavier group's conduction correction, which a constant or a volume sum cannot see
+        w_total = ws[1] .+ ws[2]
+        M_mix = per_particle_operator!(similar(car.parts[1].A_part), [p.A_part for p in car.parts], ws, w_total; n_floor = 1.0)
+        M_cond = per_particle_operator!(similar(car.parts[1].A_part), [p.A_part for p in car.parts], ws, w_total; n_floor = 1.0)
+        add_conduction_correction!(M_cond, car.parts[2].A_part, car.parts[2].A_cond, ws[2], G; n_floor = 1.0, n_total = w_total)
+        @test op.M * f ≈ M_cond * f rtol = 1.0e-12
+        @test norm(M_cond * f .- M_mix * f) > 1.0e-3 * norm(M_mix * f)
     end
     # a uniform drift stays uniform through the momentum update
     RP.flags.Atomic_Collision = false

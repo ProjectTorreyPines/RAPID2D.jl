@@ -1282,8 +1282,8 @@ end
     # exchange: lowered, so the exchange is all that acts
     RP.config.min_Te = 1.0e-8
 
-    # ne chosen so that ν_ei ≈ 1e5 /s, i.e. τ_ei = 10 µs (asserted below)
-    RP.plasma.ne .= 2.841e15
+    # ne chosen so that ν_ei ≈ 1e5 /s, i.e. τ_ei = 10 µs (asserted below; ν_ei's coefficient from the constants)
+    RP.plasma.ne .= 2.8398e15
     RP.plasma.ni .= RP.plasma.ne
     RP.plasma.Te_eV .= 1.0
     RP.plasma.Ti_eV .= 1.0e-6
