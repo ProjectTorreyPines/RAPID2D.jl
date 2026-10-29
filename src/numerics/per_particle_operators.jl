@@ -101,32 +101,53 @@ function per_particle_operator!(
 end
 
 """
-    conduction_excess_operator!(A, G, Δ, b, w, discretization; n_total = w, n_floor, n = n_total) -> A
+    density_weighted_diffusion!(A, G, D, w, discretization; n_total = w, n_floor, n = n_total) -> A
 
-`∇·(w Δ b̂b̂ ∇·)` into `A`, an operator on the wall pattern: what a variable carried by the density `w`
-conducts (and diffuses momentum) with beyond what its particles diffuse with, `Δ = D_cond − D_part` along
-`b = (b_R, b_Z)`, the density inside the coefficient. Assembled by `discretization` like every
-anisotropic operator, its limiter reading `n`, on the nodes whose `n_total` is above `n_floor`: the floor
-is a wall for it, every face and pair reaching a floor node dropped on both sides. Grids are `(NR, NZ)`.
+`∇·(w 𝐃 ∇·)` into `A`, an operator on the wall pattern, `D = (D_RR, D_RZ, D_ZZ)`: a conduction of a
+variable carried by the density `w`, the density inside the coefficient. Assembled by `discretization` like
+every anisotropic operator, its limiter reading `n`, on the nodes whose `n_total` is above `n_floor`: the
+floor is a wall for it, every face and pair reaching a floor node dropped on both sides. Grids are
+`(NR, NZ)`; nothing is allocated after the first call.
 """
-function conduction_excess_operator!(
-        A::DiscretizedOperator{FT}, G::GridGeometry{FT}, Δ::AbstractMatrix{FT}, b, w::AbstractMatrix{FT},
+function density_weighted_diffusion!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT}, D, w::AbstractMatrix{FT},
         discretization::AnisotropicDiscretization; n_total::AbstractMatrix{FT} = w, n_floor::FT,
         n::AbstractVecOrMat{FT} = n_total,
     ) where {FT <: AbstractFloat}
-    bR, bZ = b
+    D_RR, D_RZ, D_ZZ = D
     @with_pool pool begin
         active = acquire!(pool, Bool, G.NR * G.NZ)
         @inbounds for k in eachindex(active)
             active[k] = n_total[k] > n_floor
         end
-        χ = acquire!(pool, FT, size(Δ)...)
-        @. χ = w * Δ
-        RR, RZ, ZZ = acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...)
-        @. RR = χ * bR^2
-        @. RZ = χ * bR * bZ
-        @. ZZ = χ * bZ^2
+        RR, RZ, ZZ = acquire!(pool, FT, size(w)...), acquire!(pool, FT, size(w)...), acquire!(pool, FT, size(w)...)
+        @. RR = w * D_RR
+        @. RZ = w * D_RZ
+        @. ZZ = w * D_ZZ
         assemble_anisotropic_diffusion!(A, G, RR, RZ, ZZ, discretization; n, active_nodes = active)
+        nothing
+    end
+    return A
+end
+
+"""
+    conduction_excess_operator!(A, G, Δ, b, w, discretization; n_total = w, n_floor, n = n_total) -> A
+
+`∇·(w Δ b̂b̂ ∇·)` ([`density_weighted_diffusion!`](@ref)): what a variable carried by the density `w`
+conducts (and diffuses momentum) with beyond what its particles diffuse with, `Δ = D_cond − D_part` along
+`b = (b_R, b_Z)`.
+"""
+function conduction_excess_operator!(
+        A::DiscretizedOperator{FT}, G::GridGeometry{FT}, Δ::AbstractMatrix{FT}, b, w::AbstractMatrix{FT},
+        discretization::AnisotropicDiscretization; kw...,
+    ) where {FT <: AbstractFloat}
+    bR, bZ = b
+    @with_pool pool begin
+        RR, RZ, ZZ = acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...)
+        @. RR = Δ * bR^2
+        @. RZ = Δ * bR * bZ
+        @. ZZ = Δ * bZ^2
+        density_weighted_diffusion!(A, G, (RR, RZ, ZZ), w, discretization; kw...)
         nothing
     end
     return A

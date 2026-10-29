@@ -834,13 +834,15 @@ Fields include various matrices for solving different parts of the model.
     # (conduction for Te), (1/n)∇·(nD∇f), plus advection by the diffusive drift, −v_D·∇f with
     # v_D = −D∇n/n. `A_diffu_e`, ∇·(D∇f), equals the sum only at uniform ne.
     A_visc_drift_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
-    # What u∥ and Te conduct with beyond what the particles diffuse with: ∇·(nₑ ΔD b̂b̂ ∇·),
-    # ΔD = `Dpara_cond − Dpara`, on the nodes above the floor (`A_cond_excess_e_nodes`), at the ne of
-    # the refresh (`conduction_excess_operator!`); built only where some node differs
-    # (`A_cond_excess_e_active`). `ue_Te_operators` adds it over the CURRENT ne
-    # (`add_conduction_excess!`), refreshing it first if a node crossed the floor since.
+    # What u∥ and Te conduct with beyond what the particles' diffusion carries them with, the density
+    # inside the coefficient, on the nodes above the floor (`A_cond_excess_e_nodes`), at the ne of the
+    # refresh: ∇·(nₑ ΔD b̂b̂ ∇·), ΔD = `Dpara_cond − Dpara`, built only where some node differs
+    # (`A_cond_excess_e_active`); with the particles' diffusion off, the whole tensor's
+    # (`A_cond_excess_e_whole`). `ue_Te_operators` adds it over the CURRENT ne
+    # (`add_conduction_excess!`), refreshing it first if a node crossed the floor or the mode changed.
     A_cond_excess_e::DiscretizedOperator{FT} = DiscretizedOperator{FT}(dims)
     A_cond_excess_e_active::Bool = false
+    A_cond_excess_e_whole::Bool = false
     A_cond_excess_e_nodes::BitVector = falses(prod(dims))
     div_ue::Matrix{FT} = zeros(FT, dims)
 

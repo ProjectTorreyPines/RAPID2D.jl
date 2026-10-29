@@ -173,6 +173,46 @@ end
     @test RP.diagnostics.near_vacuum.limited_pairs == 0
 end
 
+@testitem "with the particles' diffusion off, u∥ and Te conduct with the whole tensor and ride no drift: Σ V n f is kept at the frozen density" setup = [UeTeWallDriver] begin
+    using RAPID2D: build_wall_diffusion_matrix!, build_wall_pattern, limit_antidiffusive_pairs!, cache_electron_operators!,
+        ue_Te_operators
+    RP = ue_Te_one_step()
+    op, tp, G, pla, F = RP.operators, RP.transport, RP.G, RP.plasma, RP.fields
+    inw = G.nodes.in_wall_nids
+    bR, bZ = cos(0.6), sin(0.6)
+    tp.DRR .= 0.1 + 99.9 * bR^2
+    tp.DRZ .= 99.9 * bR * bZ
+    tp.DZZ .= 0.1 + 99.9 * bZ^2
+    F.bR .= bR
+    F.bZ .= bZ
+    tp.Dpara_cond .= tp.Dpara .+ 50.0
+    # a column with an edge the particles' diffusion would move
+    Rc, Zc = (G.R1D[1] + G.R1D[end]) / 2, (G.Z1D[1] + G.Z1D[end]) / 2
+    pla.ne .= 0
+    for k in inw
+        pla.ne[k] = hypot(G.R2D[k] - Rc, G.Z2D[k] - Zc) < 0.25 ? 1.0e17 : 1.0e14
+    end
+    n, V = vec(pla.ne), vec(G.inVol2D)
+    f = 1.0e3 .* (1 .+ 0.5 .* sin.(3 .* vec(G.R2D)) .* cos.(2 .* vec(G.Z2D)))
+    drift_moves(M) = abs(sum(V .* n .* (M * f))) / sum(V .* n .* abs.(M * f))
+    # the particles diffuse: f rides them, and what M moves is what the density's move carries
+    cache_electron_operators!(RP)
+    @test drift_moves(ue_Te_operators(RP).A_diffu) > 1.0e-6
+    # they do not: f only conducts, the density inside the coefficient, N⁻¹ ∇·(n D_cond ∇·)
+    RP.flags.diffu = false
+    M = ue_Te_operators(RP).A_diffu            # the mode changed since the refresh: rebuilt here
+    @test drift_moves(M) <= 1.0e-12
+    @test maximum(abs, M * ones(length(n))) <= 1.0e-12 * maximum(abs, M.matrix)
+    Δ = tp.Dpara_cond .- tp.Dpara
+    χ = pla.ne
+    A = build_wall_diffusion_matrix!(
+        build_wall_pattern(G), G, χ .* (tp.DRR .+ Δ .* F.bR .^ 2), χ .* (tp.DRZ .+ Δ .* F.bR .* F.bZ), χ .* (tp.DZZ .+ Δ .* F.bZ .^ 2),
+    )
+    limit_antidiffusive_pairs!(A, G, pla.ne; max_ratio = 20.0)
+    expected = A.matrix ./ max.(n, 1.0)
+    @test maximum(abs, M.matrix .- expected) <= 1.0e-12 * maximum(abs, expected)
+end
+
 @testitem "a discretization defined outside the package reaches both electron diffusion operators through its one method" setup = [UeTeWallDriver] begin
     using RAPID2D: build_wall_diffusion_matrix!, build_wall_pattern, cache_electron_operators!
     using RAPID2D.SparseArrays: nonzeros

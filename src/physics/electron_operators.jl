@@ -46,25 +46,36 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     discretization = RP.flags.anisotropic_discretization
     RP.diagnostics.near_vacuum.limited_pairs =
         assemble_anisotropic_diffusion!(op.A_diffu_e, G, tp.DRR, tp.DRZ, tp.DZZ, discretization; n = pla.ne)
-    # what u∥ and Te conduct with beyond what the particles diffuse with: Dpara_cond − Dpara along
-    # b̂, the density inside the coefficient
-    op.A_cond_excess_e_active = tp.Dpara_cond != tp.Dpara
-    op.A_cond_excess_e_active && refresh_conduction_excess_e!(RP)
+    # what u∥ and Te conduct with beyond what the particles' diffusion carries them with
+    refresh_conduction_excess_e!(RP)
     return RP
 end
 
 const ELECTRON_CARRIAGE_N_FLOOR = 1.0   # m⁻³, below which a node's u∥ and Te are not carried
 
-# ∇·(nₑ ΔD b̂b̂ ∇·) at the current ne into `A_cond_excess_e`, and which nodes it was assembled on
+# What u∥ and Te conduct with beyond what the particles' diffusion carries them with, at the current ne,
+# into `A_cond_excess_e`: the excess Dpara_cond − Dpara along b̂, or, where the particles do not diffuse
+# (nothing rides their drift), the whole tensor. Records the mode and the nodes it was assembled on.
 function refresh_conduction_excess_e!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op, tp, F = RP.plasma, RP.operators, RP.transport, RP.fields
     n_floor = FT(ELECTRON_CARRIAGE_N_FLOOR)
+    whole = !RP.flags.diffu
+    op.A_cond_excess_e_whole = whole
+    op.A_cond_excess_e_active = whole || tp.Dpara_cond != tp.Dpara
+    op.A_cond_excess_e_active || return RP
+    discretization = RP.flags.anisotropic_discretization
     @with_pool pool begin
         Δ = acquire!(pool, FT, size(tp.Dpara)...)
         @. Δ = tp.Dpara_cond - tp.Dpara
-        conduction_excess_operator!(
-            op.A_cond_excess_e, RP.G, Δ, (F.bR, F.bZ), pla.ne, RP.flags.anisotropic_discretization; n_floor,
-        )
+        if whole
+            RR, RZ, ZZ = acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...)
+            @. RR = tp.DRR + Δ * F.bR^2
+            @. RZ = tp.DRZ + Δ * F.bR * F.bZ
+            @. ZZ = tp.DZZ + Δ * F.bZ^2
+            density_weighted_diffusion!(op.A_cond_excess_e, RP.G, (RR, RZ, ZZ), pla.ne, discretization; n_floor)
+        else
+            conduction_excess_operator!(op.A_cond_excess_e, RP.G, Δ, (F.bR, F.bZ), pla.ne, discretization; n_floor)
+        end
         nothing
     end
     op.A_cond_excess_e_nodes .= vec(pla.ne) .> n_floor
@@ -155,13 +166,18 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
     # A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
     # the second (electron-diffusive-transport.md §4). Where they conduct with more than the
-    # particles diffuse with, the excess is added face by face over the current ne.
+    # particles diffuse with, the excess is added face by face over the current ne; where the
+    # particles do not diffuse, nothing rides a drift and the whole conduction is that excess.
     n_floor = FT(ELECTRON_CARRIAGE_N_FLOOR)
-    per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, pla.ne; n_floor)
-    if op.A_cond_excess_e_active
-        crossed_floor(op.A_cond_excess_e_nodes, pla.ne, n_floor) && refresh_conduction_excess_e!(RP)
-        add_conduction_excess!(op.A_visc_drift_e, op.A_cond_excess_e, pla.ne; n_floor)
+    if RP.flags.diffu
+        per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, pla.ne; n_floor)
+    else
+        set_zero!(op.A_visc_drift_e)       # the density does not diffuse: nothing rides its drift
     end
+    stale = op.A_cond_excess_e_whole == RP.flags.diffu ||
+        (op.A_cond_excess_e_active && crossed_floor(op.A_cond_excess_e_nodes, pla.ne, n_floor))
+    stale && refresh_conduction_excess_e!(RP)
+    op.A_cond_excess_e_active && add_conduction_excess!(op.A_visc_drift_e, op.A_cond_excess_e, pla.ne; n_floor)
     return (A_adv = op.A_adv_e, A_diffu = op.A_visc_drift_e, div_u)
 end
 
