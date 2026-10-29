@@ -139,7 +139,8 @@ conducts (and diffuses momentum) with beyond what its particles diffuse with, `�
 """
 function conduction_excess_operator!(
         A::DiscretizedOperator{FT}, G::GridGeometry{FT}, Δ::AbstractMatrix{FT}, b, w::AbstractMatrix{FT},
-        discretization::AnisotropicDiscretization; kw...,
+        discretization::AnisotropicDiscretization; n_total::AbstractMatrix{FT} = w, n_floor::FT,
+        n::AbstractVecOrMat{FT} = n_total,
     ) where {FT <: AbstractFloat}
     bR, bZ = b
     @with_pool pool begin
@@ -147,7 +148,7 @@ function conduction_excess_operator!(
         @. RR = Δ * bR^2
         @. RZ = Δ * bR * bZ
         @. ZZ = Δ * bZ^2
-        density_weighted_diffusion!(A, G, (RR, RZ, ZZ), w, discretization; kw...)
+        density_weighted_diffusion!(A, G, (RR, RZ, ZZ), w, discretization; n_total, n_floor, n)
         nothing
     end
     return A

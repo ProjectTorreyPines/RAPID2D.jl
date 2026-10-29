@@ -57,8 +57,11 @@
         return sparse(ue_Te_operators(RP).A_diffu.matrix), vec(x), vec(y)
     end
 
-    "Backward Euler with `M` from the exact profile: the errors at t_end and the largest fall of the inner minimum."
-    function evolve_against_exact(RP, M, x, y; dt = 25.0e-6, nsteps = 80)
+    """
+    The θ-step with `M` (backward Euler at θ = 1, the production Crank–Nicolson at ½) from the exact profile: the
+    errors at t_end and the largest fall of the inner minimum.
+    """
+    function evolve_against_exact(RP, M, x, y; θ = 1.0, dt = 25.0e-6, nsteps = 80)
         G = RP.G
         inw = falses(G.NR * G.NZ)
         inw[G.nodes.in_wall_nids] .= true
@@ -66,10 +69,11 @@
         inner = inw .& (r .< 0.25)
         axis = argmin(r .+ .!inw .* 1.0e9)
         T = exact_T.(x, y, 0.0) .* inw
-        F = lu(I - dt * M)
+        F = lu(I - θ * dt * M)
+        E = I + (1 - θ) * dt * M
         lowest, worst_fall = minimum(T[inner]), 0.0
         for _ in 1:nsteps
-            T = F \ T
+            T = F \ (E * T)
             m = minimum(T[inner])
             worst_fall = max(worst_fall, lowest - m)
             lowest = m
@@ -94,19 +98,19 @@ end
 
 @testitem "conduction near an axis: a Tₑ minimum on the axis of a uniform current's surfaces is never deepened, and the profile follows the exact solution" setup = [ConductionAxis] begin
     # h = 0.05 m resolves the axis region like the filament of examples/ohmic_heating.jl; the axis on a node
-    # and between nodes
+    # and between nodes; backward Euler and the production θ = ½, whose explicit half M does not keep monotone
     errs = Dict{Tuple, Any}()
-    for shift in ((0.0, 0.0), (0.37, 0.21)), N in (21, 41)
+    for θ in (1.0, 0.5), shift in ((0.0, 0.0), (0.37, 0.21)), N in (21, 41)
         RP = slab_RP(N)
         h = RP.G.dR
         M, x, y = axis_carriage(RP, 1000.0 + shift[1] * h, shift[2] * h)
-        e = evolve_against_exact(RP, M, x, y)
-        errs[(N, shift)] = e
+        e = evolve_against_exact(RP, M, x, y; θ)
+        errs[(θ, N, shift)] = e
         @test e.worst_fall <= 1.0e-8
         N == 21 && @test e.axis <= 3.5 && e.Linf <= 4.0 && e.rms <= 2.0
         if N == 41
             # refining reduces every error
-            c = errs[(21, shift)]
+            c = errs[(θ, 21, shift)]
             @test e.axis <= 0.45 * c.axis && e.Linf <= 0.45 * c.Linf && e.rms <= 0.45 * c.rms
         end
     end

@@ -14,7 +14,8 @@ tensor and `flags.upwind`, values only (they were allocated on the wall pattern 
 `initialize!`): `A_conv_e` (face-flux divergence of the electron velocity, the scheme it was
 built with recorded in `A_conv_e_upwind`), `A_diffu_e` (reflective `∇·D∇`, assembled by
 `flags.anisotropic_discretization` at the current `ne`), `div_ue` (`∇·u_e`) and, where u∥ and
-Te conduct with more than the particles diffuse with, the excess `A_cond_excess_e` at that `ne`. `update_transport_quantities!` calls this last — at the end of every step and at
+Te conduct with more than the particles diffuse with, the excess `A_cond_excess_e` at that `ne`.
+`update_transport_quantities!` calls this last — at the end of every step and at
 every `run_simulation!` entry; a caller that overwrites the velocities or the flag by hand and
 then steps by hand must call it again, or the step reads the operators of the state it
 replaced ([`electron_operator_cache`](@ref) refuses a changed flag).
@@ -174,6 +175,8 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     else
         set_zero!(op.A_visc_drift_e)       # the density does not diffuse: nothing rides its drift
     end
+    # reassembled within the step only if a node crossed the floor or the mode changed: then at the current ne
+    # and b̂, while A_diffu_e keeps the cached ones
     stale = op.A_cond_excess_e_whole == RP.flags.diffu ||
         (op.A_cond_excess_e_active && crossed_floor(op.A_cond_excess_e_nodes, pla.ne, n_floor))
     stale && refresh_conduction_excess_e!(RP)
