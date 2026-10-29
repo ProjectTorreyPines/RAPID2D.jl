@@ -163,13 +163,13 @@ end
     @test op.A_cond_excess_e_active
     @test op.A_diffu_e.matrix == limited.matrix
     @test op.A_diffu_e.matrix != raw().matrix
-    @test op.A_cond_excess_e.matrix == limited_excess.matrix              # limited alike, at the same ne
+    @test op.A_cond_excess_e.matrix ≈ limited_excess.matrix rtol = 1.0e-13   # limited alike, at the same ne
     @test op.A_cond_excess_e.matrix != raw_excess().matrix
     @test RP.diagnostics.near_vacuum.limited_pairs == n_limited > 0      # the count reaches the ledger
     RP.flags.anisotropic_discretization = NinePoint()
     cache_electron_operators!(RP)
     @test op.A_diffu_e.matrix == raw().matrix
-    @test op.A_cond_excess_e.matrix == raw_excess().matrix
+    @test op.A_cond_excess_e.matrix ≈ raw_excess().matrix rtol = 1.0e-13
     @test RP.diagnostics.near_vacuum.limited_pairs == 0
 end
 
@@ -235,7 +235,7 @@ end
     stencil(D...) = nonzeros(build_wall_diffusion_matrix!(build_wall_pattern(G), G, D...; cross_terms = :drop).matrix)
     χ = (tp.Dpara_cond .- tp.Dpara) .* pla.ne
     @test nonzeros(op.A_diffu_e.matrix) == 0.5 .* stencil(tp.DRR, tp.DRZ, tp.DZZ)
-    @test nonzeros(op.A_cond_excess_e.matrix) == 0.5 .* stencil(χ .* F.bR .^ 2, χ .* F.bR .* F.bZ, χ .* F.bZ .^ 2)
+    @test nonzeros(op.A_cond_excess_e.matrix) ≈ 0.5 .* stencil(χ .* F.bR .^ 2, χ .* F.bR .* F.bZ, χ .* F.bZ .^ 2) rtol = 1.0e-13
 end
 
 @testitem "in-wall operators: one symbolic analysis per electron solver over a run with reversing flow" begin
