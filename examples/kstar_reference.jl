@@ -41,4 +41,5 @@ title = "KSTAR reference, closed-surface constraint + ideal vertical field from 
 plot_run_figures(
     load_run(config.Output_path; prefix = config.Output_prefix); title,
     table_times_ms = vcat(36:2:58, 59), snapshot_times_ms = [30.0, 38.0, 42.0, 46.0, 50.0, 54.0, 59.0],
+    profile_times_ms = vcat(44:4:56, 57:59),
 )

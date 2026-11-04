@@ -17,7 +17,16 @@ To draw a finished run's figures again without running it, from its output folde
 julia --project=examples examples/plot_run.jl examples/output/kstar_reference
 ```
 
-It reads the folder's grid, wall and snapshot files, so the run's input files are not needed.
+It reads the folder's grid, wall, configuration and snapshot files, so the run's input files are
+not needed. One flag draws one set alone:
+
+- `--profiles`: the flux-surface-averaged profiles on the closed surfaces (nₑ, Tₑ, p, jϕ, q,
+  V_loop and the Grad–Shafranov terms) against ψ_N, at the last snapshot and over time, and jϕ
+  and |q| for slides;
+- `--halpha`: the Hα of electron impact on H₂ (the model's only Hα channel: no atomic H, no
+  recycling), as a movie and as the vessel's photon rate against time;
+- `--presentation`: the field movie for slides (the time and the panel titles larger, no run
+  title or legend); with `--halpha`, the Hα movie for slides.
 
 The examples environment develops RAPID2D from the parent directory (the `[sources]` entry
 of `Project.toml`, which needs Julia 1.11 or later). It also adds `Plots`, which activates

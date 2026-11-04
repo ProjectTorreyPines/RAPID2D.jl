@@ -206,10 +206,12 @@ animate2D(RP::RAPID, fields::Vector{Symbol}; kw...) = animate2D(["" => RP], fiel
 # ── a run's files ──────────────────────────────────────────────────────────────────
 # What a finished run wrote to its output folder, read back for plotting without running: the grid
 # with its wall masks (grid.bp), the wall polygon (wall.bp) and the snapshots (snap0D.bp,
-# snap2D.bp). `controlled`: the ideal vertical-field control acted (a nonzero a₁).
+# snap2D.bp), and R0B0 = R Bϕ (config.bp). `controlled`: the ideal vertical-field control acted
+# (a nonzero a₁).
 function load_run(dir::AbstractString; prefix::AbstractString = "")
     path(name) = joinpath(dir, prefix * name)
     grid, wall = RAPID2D.ADIOS2.adios_load(path("grid.bp")), RAPID2D.ADIOS2.adios_load(path("wall.bp"))
+    R0B0 = first(RAPID2D.ADIOS2.adios_load(path("config.bp"))["R0B0"])
     # a one-step file keeps its step axis: drop it
     step(a) = ndims(a) > 1 && size(a, ndims(a)) == 1 ? dropdims(a; dims = ndims(a)) : a
     R1D, Z1D = vec(grid["R1D"]), vec(grid["Z1D"])
@@ -221,7 +223,7 @@ function load_run(dir::AbstractString; prefix::AbstractString = "")
     G.nodes.in_wall_nids = Int.(vec(grid["nodes/in_wall_nids"]))
     s0 = RAPID2D.adiosBP_to_snap0D(path("snap0D.bp"))
     s2 = RAPID2D.adiosBP_to_snap2D(path("snap2D.bp"))
-    return (; dir, G, wall = (; R = vec(wall["R"]), Z = vec(wall["Z"])), snaps0D = s0, snaps2D = s2, controlled = any(x -> x.ctrl_a1 != 0, s0))
+    return (; dir, G, wall = (; R = vec(wall["R"]), Z = vec(wall["Z"])), R0B0, snaps0D = s0, snaps2D = s2, controlled = any(x -> x.ctrl_a1 != 0, s0))
 end
 
 # ── flux-surface frames: nₑ, Tₑ, u∥ and Jϕ side by side ──────────────────────────────
@@ -334,7 +336,8 @@ range_title(name, unit, top, hi) = top < hi ? @sprintf("%s [0, %.3g] %s, max %.3
 
 # The values, colour range, colour map and titles of one panel of a 2D snapshot: `full`
 # names the range, `short` only the quantity in units of its colour bar (nₑ and u∥ scaled by
-# their range's power of ten, `factor`) and the maximum when a spike is clipped.
+# their range's power of ten, `factor`) and the maximum when a spike is clipped, `label` the
+# quantity and unit alone.
 superscript(n::Integer) = map(c -> c == '-' ? '⁻' : "⁰¹²³⁴⁵⁶⁷⁸⁹"[nextind("⁰¹²³⁴⁵⁶⁷⁸⁹", 0, c - '0' + 1)], string(n))
 decade(x) = x > 0 ? floor(Int, log10(x)) : 0
 function panel_scale(snap, kind::Symbol; inside, ne_range)
@@ -342,7 +345,8 @@ function panel_scale(snap, kind::Symbol; inside, ne_range)
     plasma = inside .& isfinite.(ne) .& (ne .> 1.0e-3 * maximum(ne[inside .& isfinite.(ne)]))
     if kind === :log_ne
         v, cl, cm, factor = log10.(max.(ne, 1.0)), ne_range, :inferno, 1.0
-        full, short = @sprintf("log10 nₑ [%.0f, %.0f]", ne_range...), "log10 nₑ [m⁻³]"
+        full, label = @sprintf("log10 nₑ [%.0f, %.0f]", ne_range...), "log10 nₑ [m⁻³]"
+        short = label
     elseif kind in (:ne, :Te)
         v = Float64.(kind === :ne ? ne : snap.Te_eV)
         hi = maximum(v[plasma])
@@ -352,7 +356,8 @@ function panel_scale(snap, kind::Symbol; inside, ne_range)
         factor = 10.0^e
         name, unit = kind === :ne ? ("nₑ", "10" * superscript(e) * " m⁻³") : ("Tₑ", "eV")
         full = range_title(name, kind === :ne ? "m⁻³" : "eV", top, hi)
-        short = top < hi ? @sprintf("%s [%s], max %.3g", name, unit, hi / factor) : @sprintf("%s [%s]", name, unit)
+        label = @sprintf("%s [%s]", name, unit)
+        short = top < hi ? @sprintf("%s, max %.3g", label, hi / factor) : label
     else
         v = Float64.(kind === :J ? snap.Jϕ : snap.ue_para)
         sm = max(maximum(abs, v[plasma]), kind === :J ? 1.0e-3 : 1.0)
@@ -360,16 +365,19 @@ function panel_scale(snap, kind::Symbol; inside, ne_range)
         e = kind === :J && 3 <= decade(sm) <= 5 ? 3 : decade(sm)      # Jϕ in kA/m² in its usual range
         factor = 10.0^e
         full = kind === :J ? @sprintf("Jϕ [±%.2g kA/m²]", 1.0e-3sm) : @sprintf("u∥ [±%.2g m/s]", sm)
-        short = kind === :J ? (e == 3 ? "Jϕ [kA/m²]" : "Jϕ [10" * superscript(e) * " A/m²]") : "u∥ [10" * superscript(e) * " m/s]"
+        label = kind === :J ? (e == 3 ? "Jϕ [kA/m²]" : "Jϕ [10" * superscript(e) * " A/m²]") : "u∥ [10" * superscript(e) * " m/s]"
+        short = label
     end
-    return (; v, cl, cm, full, short, factor)
+    return (; v, cl, cm, full, short, label, factor)
 end
 
 # A thin horizontal colour bar for a panel's scale, three ticks in the units of its short title.
+const LOG_PANELS = (:log_ne, :log_Halpha)
 function colorbar_strip(sc, kind::Symbol)
     x = range(sc.cl...; length = 256)
-    ticks = kind === :log_ne ? collect(ceil(sc.cl[1]):3:sc.cl[2]) : collect(range(sc.cl...; length = 3))
-    label(t) = kind === :log_ne ? @sprintf("%.0f", t) : @sprintf("%.3g", t / sc.factor)
+    logscale = kind in LOG_PANELS
+    ticks = logscale ? collect(ceil(sc.cl[1]):(sc.cl[2] - sc.cl[1] > 6 ? 3 : 1):sc.cl[2]) : collect(range(sc.cl...; length = 3))
+    label(t) = logscale ? @sprintf("%.0f", t) : @sprintf("%.3g", t / sc.factor)
     return heatmap(
         x, [0.0, 1.0], repeat(collect(x)', 2); c = sc.cm, clims = sc.cl, colorbar = false, xlims = sc.cl,
         yticks = false, xticks = (ticks, label.(ticks)), tickfontsize = 7, framestyle = :box,
@@ -382,18 +390,18 @@ function flux_panel(
         run, snap, snap0, kind::Symbol; inside, ne_range, prefix = "", short = false,
         scale = panel_scale(snap, kind; inside, ne_range),
         xpoints = find_x_points(run, snap.ψ; inside), lcfs = snapshot_lcfs(run, snap),
+        title = prefix * (short ? scale.short : scale.full), titlefont = font(8),
     )
     R, Z = run.G.R1D, run.G.Z1D
     v, cl, cm = copy(scale.v), scale.cl, scale.cm
-    ttl = short ? scale.short : scale.full
     v[.!inside] .= NaN
     BOX = (extrema(run.wall.R), extrema(run.wall.Z))
     p = heatmap(
         R, Z, permutedims(v); c = cm, clims = cl, aspect_ratio = :equal, xlims = BOX[1], ylims = BOX[2],
-        title = prefix * ttl, titlefontsize = 8, framestyle = :box, colorbar = false, tickfontsize = 6,
+        title, titlefont, framestyle = :box, colorbar = false, tickfontsize = 6,
         xticks = round.(range(BOX[1]...; length = 4)[2:3]; digits = 1),
     )
-    light = kind in (:log_ne, :ne, :Te)
+    light = kind in (:log_ne, :ne, :Te, :log_Halpha, :Halpha, :n_H2)
     faint, dense = light ? (RGBA(1, 1, 1, 0.45), RGBA(1, 1, 1, 0.85)) : (RGBA(0, 0, 0, 0.4), RGBA(0, 0, 0, 0.8))
     ψ = snap.ψ
     lo, hi = extrema(ψ[inside])
@@ -434,21 +442,30 @@ function frame_ne_range(run)
     return (floor(log10(max(maximum(x for x in ne0 if isfinite(x)), 1.0))), 18.0)
 end
 nearest_snap0D(run, t) = (s0 = run.snaps0D; s0[argmin(abs.(s0.time_s .- t))])
+current_text(I) = abs(I) < 1.0e3 ? @sprintf("%.3g A", abs(I)) : @sprintf("%.2f kA", 1.0e-3abs(I))
 
 # One frame: the panels of 2D snapshot k under a two-line heading (title; currents), each
-# above its colour bar.
-function fields_frame(run, k::Integer; title, inside = in_wall_mask(run), ne_range = frame_ne_range(run))
+# above its colour bar. `presentation`, for slides: the heading is the time alone and each
+# panel is titled with its quantity and unit, both larger; the panels are the same.
+function fields_frame(run, k::Integer; title, inside = in_wall_mask(run), ne_range = frame_ne_range(run), presentation = false)
     snap = run.snaps2D[k]
     snap0 = nearest_snap0D(run, snap.time_s)
-    amps(I) = abs(I) < 1.0e3 ? @sprintf("%.3g A", abs(I)) : @sprintf("%.2f kA", 1.0e-3abs(I))
-    info = "|I_tor| " * amps(snap0.I_tor) * ", on closed lines " * (isnan(snap0.I_closed) ? "none" : amps(snap0.I_closed))
+    info = "|I_tor| " * current_text(snap0.I_tor) * ", on closed lines " * (isnan(snap0.I_closed) ? "none" : current_text(snap0.I_closed))
     run.controlled && (info *= @sprintf(", control a₁ %.2f mT", 1.0e3snap0.ctrl_a1))
     head = plot(; framestyle = :none, xlims = (0, 1), ylims = (0, 1), legend = false)
-    annotate!(head, 0.5, 0.68, text(@sprintf("%s, t = %.2f ms", title, 1.0e3snap.time_s), 11))
-    annotate!(head, 0.5, 0.2, text(info * "   " * MARKER_KEY, 10))
+    if presentation
+        annotate!(head, 0.5, 0.45, text(@sprintf("t = %.2f ms", 1.0e3snap.time_s), 22))
+    else
+        annotate!(head, 0.5, 0.68, text(@sprintf("%s, t = %.2f ms", title, 1.0e3snap.time_s), 11))
+        annotate!(head, 0.5, 0.2, text(info * "   " * MARKER_KEY, 10))
+    end
     xpoints, lcfs = find_x_points(run, snap.ψ; inside), snapshot_lcfs(run, snap)
     scales = [panel_scale(snap, kind; inside, ne_range) for kind in FRAME_PANELS]
-    panels = [flux_panel(run, snap, snap0, kind; inside, ne_range, xpoints, lcfs, scale, short = true) for (kind, scale) in zip(FRAME_PANELS, scales)]
+    titlefont = presentation ? font(15) : font(8)
+    panels = [
+        flux_panel(run, snap, snap0, kind; inside, ne_range, xpoints, lcfs, scale, titlefont, title = presentation ? scale.label : scale.short)
+            for (kind, scale) in zip(FRAME_PANELS, scales)
+    ]
     bars = [colorbar_strip(scale, kind) for (kind, scale) in zip(FRAME_PANELS, scales)]
     n = length(FRAME_PANELS)
     # panels and bars in one grid, so that each bar spans its panel's plot area
@@ -456,13 +473,114 @@ function fields_frame(run, k::Integer; title, inside = in_wall_mask(run), ne_ran
 end
 
 # mp4 of every 2D snapshot as a `fields_frame`.
-function animate_fields(run; file, title, fps = 15)
+function animate_fields(run; file, title, fps = 15, presentation = false)
     inside, ne_range = in_wall_mask(run), frame_ne_range(run)
     anim = @animate for k in eachindex(run.snaps2D)
-        fields_frame(run, k; title, inside, ne_range)
+        fields_frame(run, k; title, inside, ne_range, presentation)
     end
     mp4(anim, file; fps, loop = 0)
     return file
+end
+
+# ── Hα emission ──────────────────────────────────────────────────────────────────
+# The model's Hα: electron impact on H₂ alone, ε_Hα = nₑ ν_en_Hα [photons m⁻³ s⁻¹], with
+# ν_en_Hα = n_H₂ ⟨σv⟩_Hα on a drifting Maxwellian (eRRCs_T_ud.h5 `Halpha`) as the 2D snapshots
+# record it. No atomic H, no recombination, no wall recycling: the emission ends with the gas.
+const HALPHA_PANELS = (:log_Halpha, :Halpha, :n_H2)
+halpha_emissivity(snap) = snap.ne .* snap.ν_en_Hα
+
+# The photons per second from the vessel, ∫ ε_Hα dV with dV = 2πR dR dZ.
+function halpha_photon_rate(run, snap; inside = in_wall_mask(run))
+    ε, R = halpha_emissivity(snap), run.G.R2D
+    return 2π * run.G.dR * run.G.dZ * sum(ε[k] * R[k] for k in findall(inside) if isfinite(ε[k]); init = 0.0)
+end
+
+# log10 ε_Hα over the run: five decades below the run's largest.
+function halpha_log_range(run; inside = in_wall_mask(run))
+    top = maximum(maximum(filter(isfinite, halpha_emissivity(s)[inside]); init = 1.0) for s in run.snaps2D)
+    hi = ceil(log10(top))
+    return (hi - 5, hi)
+end
+halpha_gas_top(run) = maximum(filter(isfinite, run.snaps2D[1].n_H2_gas); init = 1.0)
+
+# The values, colour range, colour map and title of one Hα panel (the fields of `panel_scale`).
+function halpha_scale(snap, kind::Symbol; inside, log_range, gas_top)
+    ε = halpha_emissivity(snap)
+    if kind === :log_Halpha
+        name = "log10 ε_Hα [m⁻³ s⁻¹]"
+        return (; v = log10.(max.(ε, 1.0)), cl = log_range, cm = :inferno, full = name, short = name, label = name, factor = 1.0)
+    elseif kind === :Halpha
+        top = max(robust_top(ε[inside .& isfinite.(ε)]), 1.0)
+        e = decade(top)
+        name = "ε_Hα [10" * superscript(e) * " m⁻³ s⁻¹]"
+        return (; v = Float64.(ε), cl = (0.0, top), cm = :inferno, full = name, short = name, label = name, factor = 10.0^e)
+    else
+        e = decade(gas_top)
+        name = "n_H₂ [10" * superscript(e) * " m⁻³]"
+        return (; v = Float64.(snap.n_H2_gas), cl = (0.0, gas_top), cm = :viridis, full = name, short = name, label = name, factor = 10.0^e)
+    end
+end
+
+# One Hα frame: log10 ε_Hα on the run's five decades, ε_Hα on its own linear range, the H₂ gas on
+# [0, its initial density], each with the flux-surface overlays of `flux_panel` over its colour
+# bar. `presentation`: the time alone as a large heading, and larger titles.
+function halpha_frame(
+        run, k::Integer; title, inside = in_wall_mask(run), log_range = halpha_log_range(run; inside),
+        gas_top = halpha_gas_top(run), presentation = false,
+    )
+    snap = run.snaps2D[k]
+    snap0 = nearest_snap0D(run, snap.time_s)
+    t_ms = 1.0e3snap.time_s
+    head = plot(; framestyle = :none, xlims = (0, 1), ylims = (0, 1), legend = false)
+    if presentation
+        annotate!(head, 0.5, 0.45, text(@sprintf("t = %.2f ms", t_ms), 22))
+    else
+        annotate!(head, 0.5, 0.68, text(@sprintf("%s, t = %.2f ms", title, t_ms), 11))
+        info = @sprintf("Hα from e + H₂ only: %.3g photons/s, |I_tor| %s", halpha_photon_rate(run, snap; inside), current_text(snap0.I_tor))
+        annotate!(head, 0.5, 0.2, text(info, 10))
+    end
+    xpoints, lcfs = find_x_points(run, snap.ψ; inside), snapshot_lcfs(run, snap)
+    scales = [halpha_scale(snap, kind; inside, log_range, gas_top) for kind in HALPHA_PANELS]
+    titlefont = presentation ? font(15) : font(8)
+    panels = [
+        flux_panel(run, snap, snap0, kind; inside, ne_range = nothing, xpoints, lcfs, scale, titlefont, title = scale.label)
+            for (kind, scale) in zip(HALPHA_PANELS, scales)
+    ]
+    bars = [colorbar_strip(scale, kind) for (kind, scale) in zip(HALPHA_PANELS, scales)]
+    n = length(HALPHA_PANELS)
+    return plot(head, panels..., bars...; layout = @layout([a{0.08h}; grid(2, n, heights = [0.955, 0.045])]), size = (300n, 720))
+end
+
+# mp4 of every 2D snapshot as a `halpha_frame`.
+function animate_halpha(run; file, title, fps = 15, presentation = false)
+    inside = in_wall_mask(run)
+    log_range, gas_top = halpha_log_range(run; inside), halpha_gas_top(run)
+    anim = @animate for k in eachindex(run.snaps2D)
+        halpha_frame(run, k; title, inside, log_range, gas_top, presentation)
+    end
+    mp4(anim, file; fps, loop = 0)
+    return file
+end
+
+# The vessel's Hα photon rate against time (2D snapshots), with the gas and electrons (0D means) and
+# the current: the trace to set beside a filterscope's, for timing and shape.
+function plot_halpha_trace(run; file, title)
+    inside = in_wall_mask(run)
+    s0, s2 = run.snaps0D, run.snaps2D
+    t2 = [s.time_s for s in s2] .* 1.0e3
+    t0 = s0.time_s .* 1.0e3
+    rate = [halpha_photon_rate(run, s; inside) for s in s2]
+    p1 = plot(
+        t2, max.(rate, 1.0); lw = 2, yscale = :log10, yticks = 10.0 .^ (0:2:24), ylabel = "Hα (photons/s)", legend = false,
+        title = "Hα from e + H₂ in the vessel",
+    )
+    p2 = plot(t0, s0.n_H2_gas; lw = 2, label = "⟨n_H₂⟩", ylabel = "m⁻³", legend = :right)
+    plot!(p2, t0, s0.ne; lw = 2, label = "⟨nₑ⟩")
+    p3 = plot(t0, 1.0e-3abs.(s0.I_tor); lw = 2, label = "|I_tor|", ylabel = "kA", xlabel = "t (ms)", legend = :topleft)
+    plot!(p3, t0, 1.0e-3abs.(s0.I_closed); lw = 2, label = "on closed lines")
+    fig = plot(p1, p2, p3; layout = (3, 1), size = (700, 850), left_margin = 8Plots.mm, plot_title = title, plot_titlefontsize = 10)
+    savefig(fig, file)
+    return fig
 end
 
 # The panels (rows) at the 2D snapshots nearest to `times_ms` (columns).
@@ -480,6 +598,142 @@ function plot_fields_snapshots(run, times_ms; file, title)
         panels...; layout = (n, length(idx)), size = (250 * length(idx), 470n), plot_titlefontsize = 11,
         plot_title = title * "   " * MARKER_KEY,
     )
+    savefig(fig, file)
+    return fig
+end
+
+# ── closed-surface profiles ─────────────────────────────────────────────────────────
+# Flux-surface averages over the closed lines of a 2D snapshot (`RAPID2D.flux_surface_average`,
+# bicubic contours), on each surface:
+# - ψ_N = (ψ − ψ_axis)/(ψ_LCFS − ψ_axis), to the magnetic LCFS (to the region's edge when there is
+#   none); `ψN_basis` the closed-surface basis's LCFS on that scale;
+# - ⟨nₑ⟩, ⟨nᵢ⟩, the density-weighted Tₑ and Tᵢ, pₑ = e⟨nₑTₑ⟩, pᵢ = e⟨nᵢTᵢ⟩, p = pₑ + pᵢ;
+# - jϕ = ⟨Jϕ/R⟩/⟨1/R⟩ (dI/dA), |q| = |F|⟨1/R²⟩ dV/dψ/(4π²) with F = R0B0, V_loop = ⟨2πR Eϕ⟩;
+# - the Grad–Shafranov balance (ψ per radian, B_pol = ∇ψ × ∇ϕ): ⟨Jϕ/R⟩ = p′ + FF′⟨1/R²⟩/μ₀, with
+#   p′ = dp/dψ of the kinetic pressure. p′/⟨Jϕ/R⟩ is the share of the pinch Jϕ × B_pol the pressure
+#   gradient balances; the rest, ⟨Jϕ/R⟩ − p′ (FF′), the paramagnetic force of the parallel current's
+#   poloidal part (Ohm's law sets ⟨Jϕ/R⟩, so this split is physics, not a model error);
+#   `pressure_share` its volume average.
+# Currents, loop voltage and the balance's terms are signed along the plasma current. And
+# β_p = 2μ₀⟨p⟩_V/B_pol,a², B_pol,a = μ₀|I_closed|/L_LCFS, with `β_p_gradient` its part from
+# p − p_LCFS (a uniform pressure exerts no force; p_LCFS extrapolated from the two outermost
+# surfaces). `nothing` without closed lines.
+const PLASMA_CONSTANTS = RAPID2D.PlasmaConstants{Float64}()
+
+# The derivative of a profile over its levels: centred inside, one-sided at the ends.
+function level_derivative(y, x)
+    n = length(y)
+    return [(y[min(k + 1, n)] - y[max(k - 1, 1)]) / (x[min(k + 1, n)] - x[max(k - 1, 1)]) for k in 1:n]
+end
+
+function surface_profiles(run, snap; nsurf = nothing)
+    # the closed lines inside the magnetic LCFS: a limited one can leave closed lines outside it
+    inside_lcfs(ψ) = isnan(snap.ψ_lcfs_magnetic) || (ψ - snap.ψ_axis) / (snap.ψ_lcfs_magnetic - snap.ψ_axis) < 1
+    region = findall(vec((snap.closed_lines .> 0) .& inside_lcfs.(snap.ψ)))
+    isempty(region) && return nothing
+    G, R = run.G, run.G.R2D
+    # two surfaces per grid spacing: the same data sampled finer, the profiles move by ≲ 2 % from one
+    nsurf = something(nsurf, 2 * RAPID2D.default_surface_count(region))
+    fsa = RAPID2D.flux_surface_average(G, snap.ψ, region; inside = G.cell_state .>= 0, nsurf)
+    (fsa === nothing || !any(fsa.valid)) && return nothing
+    avg(f) = RAPID2D.surface_average(fsa, f)
+    avg(f, weight) = RAPID2D.surface_average(fsa, f, weight)
+    (; ee, μ0) = PLASMA_CONSTANTS
+    ψ_axis = fsa.axis.ψ
+    ψ_lcfs = isnan(snap.ψ_lcfs_magnetic) ? fsa.ψ_edge : snap.ψ_lcfs_magnetic
+    normalized_flux(ψ) = max((ψ - ψ_axis) / (ψ_lcfs - ψ_axis), 0.0)
+    ne, ni = avg(snap.ne), avg(snap.ni_tot)
+    Te, Ti = avg(snap.Te_eV, snap.ne), avg(snap.Ti_eV, snap.ni_tot)
+    J_over_R = avg(snap.Jϕ ./ R)
+    # a surface whose contour reaches a node beyond the wall (no plasma values there) is left out
+    ok = fsa.valid .& isfinite.(Te) .& isfinite.(Ti) .& isfinite.(J_over_R)
+    any(ok) || return nothing
+    for v in (ne, ni, Te, Ti, J_over_R)
+        v[.!ok] .= NaN
+    end
+    pe, p_ion = ee .* ne .* Te, ee .* ni .* Ti
+    p = pe .+ p_ion
+    along = sign(sum(J_over_R[ok]))
+    # the levels sit at the centres of equal steps from the axis to the edge: the midpoint rule
+    dV = fsa.dVdψ .* (abs(fsa.ψ_edge - ψ_axis) / length(fsa.ψ))
+    p_volume = sum((p .* dV)[ok]) / sum(dV[ok])
+    lcfs = snapshot_lcfs(run, snap).magnetic
+    L_lcfs = lcfs === nothing ? NaN : sum(hypot.(diff(vcat(lcfs.R, lcfs.R[1])), diff(vcat(lcfs.Z, lcfs.Z[1]))))
+    I_closed = nearest_snap0D(run, snap.time_s).I_closed
+    dp_dψ = fill(NaN, length(p))
+    dp_dψ[ok] = level_derivative(p[ok], fsa.ψ[ok])
+    outer = findall(ok)[max(end - 1, 1):end]
+    x_lcfs = normalized_flux.(fsa.ψ[outer])
+    p_lcfs = length(outer) == 2 ? p[outer[2]] + (p[outer[2]] - p[outer[1]]) * (1 - x_lcfs[2]) / (x_lcfs[2] - x_lcfs[1]) : p[outer[end]]
+    B_pol_edge = μ0 * abs(I_closed) / L_lcfs
+    on_surfaces(v) = ifelse.(ok, v, NaN)
+    return (;
+        time_s = snap.time_s, configuration = snap.lcfs_configuration,
+        ψN = normalized_flux.(fsa.ψ), ψN_basis = isnan(snap.ψ_lcfs) ? NaN : normalized_flux(snap.ψ_lcfs),
+        ne, ni, Te, Ti, pe, p_ion, p,
+        jϕ = along .* J_over_R ./ avg(1 ./ R),
+        q = on_surfaces(abs.(run.R0B0 .* avg(1 ./ R .^ 2) .* fsa.dVdψ) ./ (4π^2)),
+        V_loop = on_surfaces(along .* avg(snap.LV_tot)),
+        J_over_R = along .* J_over_R,
+        dp_dψ = along .* dp_dψ,
+        pressure_share = sum((dp_dψ .* dV)[ok]) / sum((J_over_R .* dV)[ok]),
+        β_p = 2μ0 * p_volume / B_pol_edge^2,
+        β_p_gradient = 2μ0 * (p_volume - p_lcfs) / B_pol_edge^2,
+    )
+end
+
+# The profiles of the 2D snapshots nearest to `times_ms`, overlaid (one colour per time; ions
+# dashed): densities, temperatures, pressure (pₑ dashed and pᵢ dotted at a single time), jϕ, q and
+# V_loop; the Grad–Shafranov terms at the last time; and the pressure's share p′/⟨Jϕ/R⟩ of the
+# balance at every time (1 where the pressure gradient alone balances the pinch). Times without closed
+# lines are left out.
+function plot_profiles(run, times_ms; file, title)
+    s2 = run.snaps2D
+    t_ms = [s.time_s for s in s2] .* 1.0e3
+    profiles = filter(!isnothing, [surface_profiles(run, s2[k]) for k in unique(argmin(abs.(t_ms .- t)) for t in times_ms)])
+    isempty(profiles) && return nothing
+    single = length(profiles) == 1
+    colors = single ? [:black] : palette(:viridis, length(profiles) + 1)[1:length(profiles)]
+    e = decade(maximum(maximum(filter(isfinite, x.ne)) for x in profiles))
+    panel(ylabel, ttl; bottom = false) = plot(; xlabel = bottom ? "ψ_N" : "", ylabel, title = ttl, titlefontsize = 10, xlims = (0, 1), legend = false, framestyle = :box)
+    pn = panel("10" * superscript(e) * " m⁻³", "nₑ, nᵢ (dashed)")
+    pT = panel("eV", "Tₑ, Tᵢ (dashed)")
+    pp = panel("Pa", single ? "p, pₑ (dashed), pᵢ (dotted)" : "p = pₑ + pᵢ")
+    pj = panel("kA/m²", "jϕ = ⟨Jϕ/R⟩/⟨1/R⟩")
+    pq = panel("", "|q|"; bottom = true)
+    pV = panel("V", "V_loop = ⟨2πR Eϕ⟩"; bottom = true)
+    for (x, c) in zip(profiles, colors)
+        lbl = @sprintf("%.1f ms, β_p %.2f (∇p %.2f)", 1.0e3x.time_s, x.β_p, x.β_p_gradient)
+        mk = (; color = c, lw = 2, marker = :circle, ms = 3, markerstrokewidth = 0)
+        plot!(pn, x.ψN, x.ne ./ 10.0^e; mk..., label = "")
+        plot!(pn, x.ψN, x.ni ./ 10.0^e; mk..., ls = :dash, label = "")
+        plot!(pT, x.ψN, x.Te; mk..., label = lbl)
+        plot!(pT, x.ψN, x.Ti; mk..., ls = :dash, label = "")
+        plot!(pp, x.ψN, x.p; mk..., label = "")
+        single && plot!(pp, x.ψN, x.pe; mk..., ls = :dash, label = "")
+        single && plot!(pp, x.ψN, x.p_ion; mk..., ls = :dot, label = "")
+        plot!(pj, x.ψN, 1.0e-3x.jϕ; mk..., label = "")
+        plot!(pq, x.ψN, x.q; mk..., label = "")
+        plot!(pV, x.ψN, x.V_loop; mk..., label = "")
+    end
+    plot!(pT; legend = :topleft, legendfontsize = 7)
+    last_profile = profiles[end]
+    pGS = panel("kA/m³", @sprintf("Grad–Shafranov terms, %.1f ms", 1.0e3last_profile.time_s); bottom = true)
+    hline!(pGS, [0.0]; color = :gray, lw = 1, label = "")
+    plot!(pGS, last_profile.ψN, 1.0e-3last_profile.J_over_R; color = :black, lw = 2, marker = :circle, ms = 3, label = "⟨Jϕ/R⟩")
+    plot!(pGS, last_profile.ψN, 1.0e-3last_profile.dp_dψ; color = :red3, lw = 2, marker = :circle, ms = 3, label = "p′")
+    plot!(pGS, last_profile.ψN, 1.0e-3(last_profile.J_over_R .- last_profile.dp_dψ); color = :royalblue, lw = 2, ls = :dash, label = "⟨Jϕ/R⟩ − p′ (FF′ part)")
+    plot!(pGS; legend = :best, legendfontsize = 7)
+    pshare = panel("", single ? @sprintf("pressure share p′/⟨Jϕ/R⟩, mean %.2f", last_profile.pressure_share) : "pressure share p′/⟨Jϕ/R⟩"; bottom = true)
+    hline!(pshare, [0.0]; color = :gray, lw = 1, label = "")
+    hline!(pshare, [1.0]; color = :gray, lw = 1, ls = :dash, label = "")
+    for (x, c) in zip(profiles, colors)
+        plot!(pshare, x.ψN, x.dp_dψ ./ x.J_over_R; color = c, lw = 2, marker = :circle, ms = 3, markerstrokewidth = 0, label = "")
+    end
+    panels = [pn, pT, pp, pj, pq, pV, pGS, pshare]
+    single && foreach(p -> isnan(last_profile.ψN_basis) || vline!(p, [last_profile.ψN_basis]; color = :orange, ls = :dot, lw = 0.8, label = ""), panels)
+    heading = single ? @sprintf("%s, t = %.2f ms (%s LCFS)", title, 1.0e3last_profile.time_s, configuration_name(last_profile.configuration)) : title
+    fig = plot(panels...; layout = (2, 4), size = (1500, 720), margin = 4Plots.mm, left_margin = 6Plots.mm, plot_title = heading, plot_titlefontsize = 11)
     savefig(fig, file)
     return fig
 end
@@ -523,10 +777,60 @@ function plot_column(run; file, title)
     return fig
 end
 
+# Profiles for slides, against ψ_N: `kinds` side by side (`PRESENTATION_PROFILES`), one colour per
+# time (black at a single time, under the time as a heading), larger titles, and
+# the closed-surface basis's LCFS as a thin dotted line at a single time.
+const PRESENTATION_PROFILES = (
+    jϕ = (title = "jϕ [kA/m²]", value = x -> 1.0e-3x.jϕ),
+    q = (title = "|q|", value = x -> x.q),
+    Te = (title = "Tₑ [eV]", value = x -> x.Te),
+    p = (title = "p [Pa]", value = x -> x.p),
+    V_loop = (title = "V_loop [V]", value = x -> x.V_loop),
+)
+function plot_profiles_for_presentation(run, times_ms; file, kinds = (:jϕ, :q), nsurf = nothing)
+    s2 = run.snaps2D
+    t_ms = [s.time_s for s in s2] .* 1.0e3
+    profiles = filter(!isnothing, [surface_profiles(run, s2[k]; nsurf) for k in unique(argmin(abs.(t_ms .- t)) for t in times_ms)])
+    isempty(profiles) && return nothing
+    single = length(profiles) == 1
+    colors = single ? [:black] : palette(:viridis, length(profiles) + 1)[1:length(profiles)]
+    panels = map(kinds) do kind
+        spec = PRESENTATION_PROFILES[kind]
+        p = plot(;
+            xlabel = raw"$\psi_N$", title = spec.title, titlefont = font(18), xlims = (0, 1),
+            guidefontsize = 16, tickfontsize = 12, framestyle = :box, legend = false, grid = true, gridalpha = 0.2,
+        )
+        for (x, c) in zip(profiles, colors)
+            plot!(p, x.ψN, spec.value(x); color = c, lw = 3, label = @sprintf("%.0f ms", 1.0e3x.time_s))
+        end
+        single && !isnan(profiles[1].ψN_basis) && vline!(p, [profiles[1].ψN_basis]; color = :orange, ls = :dot, lw = 1, label = "")
+        return p
+    end
+    single || plot!(panels[1]; legend = :topleft, legendfontsize = 12)
+    heading = single ? (; plot_title = @sprintf("t = %.2f ms", 1.0e3profiles[1].time_s), plot_titlefont = font(20), plot_titlevspan = 0.1) : (;)
+    fig = plot(panels...; layout = (1, length(kinds)), size = (600 * length(kinds), 520), margin = 6Plots.mm, heading...)
+    savefig(fig, file)
+    return fig
+end
+
+# The closed-surface profiles of a run: at its last 2D snapshot (profiles.png, and jϕ and |q| for
+# slides, profiles_for_presentation.png) and overlaid at `times_ms` (profiles_evolution.png; by
+# default six times from the first closed region to the end).
+function plot_run_profiles(run; title, times_ms = nothing)
+    t_end = 1.0e3 * run.snaps2D[end].time_s
+    isnan(first_closed_time(run)) && return nothing
+    plot_profiles(run, [t_end]; file = joinpath(run.dir, "profiles.png"), title)
+    plot_profiles_for_presentation(run, [t_end]; file = joinpath(run.dir, "profiles_for_presentation.png"))
+    times = something(times_ms, range(1.0e3 * first_closed_time(run), t_end; length = 6))
+    plot_profiles(run, times; file = joinpath(run.dir, "profiles_evolution.png"), title = title * ", closed-surface profiles")
+    return nothing
+end
+
 # Every figure of a run, from its files, into its folder: the column table (printed) and figure,
-# the 0D traces and dashboard, the snapshot grid and the movie. By default the table runs over
-# twelve times and the grid over seven, from the first closed region (or the start) to the end.
-function plot_run_figures(run; title, table_times_ms = nothing, snapshot_times_ms = nothing, fps = 15)
+# the 0D traces and dashboard, the snapshot grid, the closed-surface profiles and the movie. By
+# default the table runs over twelve times and the grid over seven, from the first closed region
+# (or the start) to the end.
+function plot_run_figures(run; title, table_times_ms = nothing, snapshot_times_ms = nothing, profile_times_ms = nothing, fps = 15)
     t_end = 1.0e3 * run.snaps2D[end].time_s
     t_from = isnan(first_closed_time(run)) ? 0.0 : 1.0e3 * first_closed_time(run)
     print_column_table(run; times_ms = something(table_times_ms, range(t_from, t_end; length = 12)))
@@ -534,6 +838,7 @@ function plot_run_figures(run; title, table_times_ms = nothing, snapshot_times_m
     plot_traces(run; file = joinpath(run.dir, "traces.png"))
     plot_dashboard(run; file = joinpath(run.dir, "dashboard.png"))
     plot_fields_snapshots(run, something(snapshot_times_ms, range(t_from, t_end; length = 7)); file = joinpath(run.dir, "fields_snapshots.png"), title)
+    plot_run_profiles(run; title, times_ms = profile_times_ms)
     animate_fields(run; file = joinpath(run.dir, "fields.mp4"), title, fps)
     println("figures in ", run.dir)
     return nothing
