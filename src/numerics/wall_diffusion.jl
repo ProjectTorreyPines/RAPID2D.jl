@@ -7,16 +7,16 @@
 # once. The isotropic gas has its own five-point builder (`build_isotropic_diffusion_matrix`).
 
 """
-    assemble_anisotropic_diffusion!(A, G, D_RR, D_RZ, D_ZZ, discretization; n = nothing, faces = nothing, v_absorb = nothing, cross_terms = :drop) -> number of limited pairs
+    assemble_anisotropic_diffusion!(A, G, D_RR, D_RZ, D_ZZ, discretization; n = nothing, faces = nothing, v_absorb = nothing, cross_terms = :drop, active_nodes = nothing) -> number of limited pairs
 
 `∇·(𝐃∇·)` written into `A`, an operator on the wall pattern, as the
 [`AnisotropicDiscretization`](@ref) `discretization` assembles it. The one entry the run's
 anisotropic diffusion operators are built through (the electrons' particle diffusion and
 conduction, the ions' groups), so they share one stencil and one policy on negative couplings.
 `n` is the density a limiter reads, the node vector or the `(NR, NZ)` grid; `faces` and
-`v_absorb` add the Robin wall and `cross_terms` the stencil's wall rule
-([`build_wall_diffusion_matrix!`](@ref)). Returns the number of pairs the discretization
-limited, 0 when it limits none.
+`v_absorb` add the Robin wall, `cross_terms` the stencil's wall rule and `active_nodes` the nodes
+that take part ([`build_wall_diffusion_matrix!`](@ref)). Returns the number of pairs the
+discretization limited, 0 when it limits none.
 """
 function assemble_anisotropic_diffusion!(
         A::DiscretizedOperator{FT}, G::GridGeometry{FT},
@@ -26,10 +26,11 @@ function assemble_anisotropic_diffusion!(
         faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
         v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
         cross_terms::Symbol = :drop,
+        active_nodes::Union{Nothing, AbstractVector{Bool}} = nothing,
     ) where {FT <: AbstractFloat}
     isnothing(n) &&
         throw(ArgumentError("assemble_anisotropic_diffusion!: LimitedNinePoint needs the density its limiter reads (`n`)"))
-    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
+    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb, active_nodes)
     return limit_antidiffusive_pairs!(A, G, n; max_ratio = FT(discretization.max_ratio))
 end
 
@@ -40,13 +41,14 @@ function assemble_anisotropic_diffusion!(
         faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
         v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
         cross_terms::Symbol = :drop,
+        active_nodes::Union{Nothing, AbstractVector{Bool}} = nothing,
     ) where {FT <: AbstractFloat}
-    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
+    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb, active_nodes)
     return 0
 end
 
 """
-    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms = :drop, faces = nothing, v_absorb = nothing) -> A
+    build_wall_diffusion_matrix!(A, G, D_RR, D_RZ, D_ZZ; cross_terms = :drop, faces = nothing, v_absorb = nothing, active_nodes = nothing) -> A
     build_wall_diffusion_matrix(G, D_RR, D_RZ, D_ZZ; cross_terms = :drop, faces = nothing, v_absorb = nothing)
 
 Nine-point `∇·(𝐃∇·)` with a **reflective** wall, on the full `NR·NZ` indexing. The `!` form
@@ -62,6 +64,11 @@ take a long time to reach.
 Rows for nodes on or outside the wall are left empty, so those nodes never evolve.
 Nodes off the grid count as not-in-wall, so a wall coinciding with the grid frame
 works with no outside region at all.
+
+`active_nodes` (a `Bool` per node, in node order) narrows the domain further: a node it marks
+`false` is treated as outside the wall, its row empty and every face and pair reaching it dropped
+by the rules below, so the operator keeps `Σ J·n` on the active nodes. `nothing` (the default) is
+the wall alone, bit for bit.
 
 ## The Robin debit
 
@@ -121,8 +128,9 @@ on whole pairs, and both keep constants in the kernel:
 
 ## Measured: `:drop` conserves, `:reflect` does not
 
-Zero row sums do **not** imply `Σ J·n` is conserved — that needs `J·A` symmetric,
-which is exactly what a wall treatment can break. Measured as `max|JᵀA|` over
+Zero row sums do **not** imply `Σ J·n` is conserved — that needs the `J`-weighted column
+sums `Σ_k J_k A_kl` to vanish (each face flux shared by the two cells it separates), which is
+exactly what a wall treatment can break. Measured as `max|JᵀA|` over
 in-wall columns, normalised by `max(J)·max|A|`, at `D∥/D⊥ = 10 / 1000`:
 
 | wall | `:drop` | `:reflect` |
@@ -156,9 +164,12 @@ function build_wall_diffusion_matrix!(
         cross_terms::Symbol = :drop,
         faces::Union{Nothing, AbstractVector{WallFace{FT}}} = nothing,
         v_absorb::Union{Nothing, AbstractVector{FT}} = nothing,
+        active_nodes::Union{Nothing, AbstractVector{Bool}} = nothing,
     ) where {FT <: AbstractFloat}
     check_wall_pattern(A)
     _check_wall_diffusion_args(cross_terms, faces, v_absorb)
+    isnothing(active_nodes) || length(active_nodes) == G.NR * G.NZ ||
+        throw(DimensionMismatch("build_wall_diffusion_matrix!: active_nodes must have one entry per node"))
     NR, NZ = G.NR, G.NZ
     # the Robin debit per owning cell, so the diagonal is written once
     debit = wall_face_debit(FT, NR * NZ, faces, v_absorb)
@@ -170,7 +181,7 @@ function build_wall_diffusion_matrix!(
     fill!(nz, zero(FT))
 
     @inbounds for j in 1:NZ, i in 1:NR
-        is_in_wall(G, i, j) || continue
+        takes_part(G, i, j, active_nodes) || continue
         row = nid[i, j]
         invJ = one(FT) / G.Jacob[i, j]
         diag = zero(FT)
@@ -178,7 +189,7 @@ function build_wall_diffusion_matrix!(
         # ── cardinal arms: the five-point part ──────────────────────────────
         for (di, dj, s) in ((1, 0, SLOT_E), (-1, 0, SLOT_W), (0, 1, SLOT_N), (0, -1, SLOT_S))
             ii, jj = i + di, j + dj
-            is_in_wall(G, ii, jj) || continue     # reflective: omit, do not zero
+            takes_part(G, ii, jj, active_nodes) || continue     # reflective: omit, do not zero
             CT = dj == 0 ? CTRR : CTZZ
             c = invJ * FT(0.5) * (CT[ii, jj] + CT[i, j])
             nz[slot_position(k2c, row, s)] += c
@@ -189,7 +200,7 @@ function build_wall_diffusion_matrix!(
         for (di, dj) in ((1, 0), (-1, 0), (0, 1), (0, -1))
             ii, jj = i + di, j + dj
             # a wall face's flux belongs entirely to the boundary condition
-            is_in_wall(G, ii, jj) || continue
+            takes_part(G, ii, jj, active_nodes) || continue
             sgn = (di + dj) > 0 ? one(FT) : -one(FT)
             c = sgn * invJ * FT(0.125) * (CTRZ[ii, jj] + CTRZ[i, j])
             iszero(c) && continue                 # isotropic tensor: nothing to add
@@ -199,8 +210,8 @@ function build_wall_diffusion_matrix!(
             for (oi, oj) in ((i, j), (ii, jj))
                 pi_, pj_ = oi + ti, oj + tj
                 mi_, mj_ = oi - ti, oj - tj
-                in_p = is_in_wall(G, pi_, pj_)
-                in_m = is_in_wall(G, mi_, mj_)
+                in_p = takes_part(G, pi_, pj_, active_nodes)
+                in_m = takes_part(G, mi_, mj_, active_nodes)
                 if cross_terms === :drop
                     (in_p && in_m) || continue    # the pair goes as a unit
                     nz[slot_position(k2c, row, stencil_slot(pi_ - i, pj_ - j))] += c
@@ -238,6 +249,11 @@ function build_wall_diffusion_matrix(
     A = build_wall_diffusion_matrix!(build_wall_pattern(G), G, D_RR, D_RZ, D_ZZ; cross_terms, faces, v_absorb)
     return dropzeros!(A.matrix)
 end
+
+# whether node (i, j) takes part in an assembly: inside the wall, and active where a mask is given
+@inline takes_part(G::GridGeometry, i::Integer, j::Integer, ::Nothing) = is_in_wall(G, i, j)
+@inline takes_part(G::GridGeometry, i::Integer, j::Integer, active_nodes::AbstractVector{Bool}) =
+    is_in_wall(G, i, j) && @inbounds(active_nodes[i + (j - 1) * G.NR])
 
 # the stencil directions that visit every node pair once, each with the slot that points back
 const PAIR_SLOTS = ((SLOT_E, SLOT_W), (SLOT_N, SLOT_S), (SLOT_NE, SLOT_SW), (SLOT_NW, SLOT_SE))

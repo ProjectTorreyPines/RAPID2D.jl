@@ -14,7 +14,7 @@
 
 @testsnippet PerParticleFixtures begin
     using RAPID2D: build_wall_pattern, build_wall_diffusion_matrix!, limit_antidiffusive_pairs!,
-        per_particle_operator!, add_conduction_correction!
+        per_particle_operator!, conduction_excess_operator!, add_conduction_excess!
 
     "A walled box, or a staircase wall with a re-entrant corner, on a 41 × 47 grid by default."
     function walled_RP(wall::Symbol; NR = 41, NZ = 47)
@@ -112,32 +112,61 @@
         end
     end
 
+    "The tilted field of `tilted_tensor` and an excess ΔD along it, modulated alike."
+    function tilted_excess(G; θ = 0.6, ΔD)
+        s = @. 1 + 0.2 * sin(3 * G.R2D) * cos(2 * G.Z2D)
+        return ΔD .* s, (fill(cos(θ), G.NR, G.NZ), fill(sin(θ), G.NR, G.NZ))
+    end
+
+    "The X-point field of `xpoint_tensor` (no direction at the null) and an excess ΔD along it."
+    function xpoint_excess(G; R0 = 1.5, Z0 = 0.0, ΔD)
+        bR, bZ = zeros(G.NR, G.NZ), zeros(G.NR, G.NZ)
+        for j in 1:G.NZ, i in 1:G.NR
+            BR, BZ = (G.Z2D[i, j] - Z0) / G.R2D[i, j], (G.R2D[i, j] - R0) / G.R2D[i, j]
+            Bp = hypot(BR, BZ)
+            Bp > 0 && ((bR[i, j], bZ[i, j]) = (BR / Bp, BZ / Bp))
+        end
+        return fill(ΔD, G.NR, G.NZ), (bR, bZ)
+    end
+
+    "D + Δ b bᵀ: the whole tensor the carried variable conducts with."
+    with_along(D, Δ, b) = (D[1] .+ Δ .* b[1] .^ 2, D[2] .+ Δ .* b[1] .* b[2], D[3] .+ Δ .* b[2] .^ 2)
+
     """
-    A_part and A_cond along the same tilted or X-point field, A_cond with a larger parallel
-    coefficient, both limited at a density with floor nodes (so the pair limiter acts).
+    The particles' tensor along a tilted or X-point field and an excess Δ along the same b, the particles'
+    operator limited at a density with floor nodes (so the pair limiter acts).
     """
     function conduction_cases()
         box, stair = walled_RP(:box), walled_RP(:lshape)
         specs = (
-            ("tilted tensor, box", box, G -> tilted_tensor(G; Dpara = 100.0), G -> tilted_tensor(G; Dpara = 400.0)),
-            ("X-point tensor, box", box, G -> xpoint_tensor(G; Dpara = 100.0), G -> xpoint_tensor(G; Dpara = 250.0)),
-            ("tilted tensor, staircase", stair, G -> tilted_tensor(G; θ = 0.9, Dpara = 100.0), G -> tilted_tensor(G; θ = 0.9, Dpara = 300.0)),
+            ("tilted tensor, box", box, G -> tilted_tensor(G; Dpara = 100.0), G -> tilted_excess(G; ΔD = 300.0)),
+            ("X-point tensor, box", box, G -> xpoint_tensor(G; Dpara = 100.0), G -> xpoint_excess(G; ΔD = 150.0)),
+            ("tilted tensor, staircase", stair, G -> tilted_tensor(G; θ = 0.9, Dpara = 100.0), G -> tilted_excess(G; θ = 0.9, ΔD = 200.0)),
         )
-        return map(specs) do (name, RP, part, cond)
+        return map(specs) do (name, RP, part, excess)
             G = RP.G
             n = plasma_density(G; floor_nodes = 6)
-            A_part, A_cond = diffusion_operator(G, part(G)), diffusion_operator(G, cond(G))
+            D_part = part(G)
+            A_part = diffusion_operator(G, D_part)
             limited = limit_antidiffusive_pairs!(A_part, G, n; max_ratio = 4.0)
-            limit_antidiffusive_pairs!(A_cond, G, n; max_ratio = 4.0)
-            (; name, G, A_part, A_cond, n, V = cell_volume(G), limited)
+            Δ, b = excess(G)
+            (; name, G, D_part, A_part, Δ, b, n, V = cell_volume(G), limited)
         end
     end
 
-    "The per-particle operator of A_part, and the same with the conduction correction."
-    function with_correction(c; n = c.n)
+    "The excess's operator at density `n`, its limiter at `max_ratio` 4 like the particles'."
+    function excess_operator(c; n = c.n, n_total = n, Δ = c.Δ)
+        grid(v) = reshape(v, c.G.NR, c.G.NZ)
+        return conduction_excess_operator!(
+            similar(c.A_part), c.G, Δ, c.b, grid(n), LimitedNinePoint(max_ratio = 4.0); n_total = grid(n_total), n_floor = 1.0,
+        )
+    end
+
+    "The per-particle operator of A_part, and the same with the conduction excess."
+    function with_excess(c; n = c.n)
         M_part = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
         M = per_particle_operator!(similar(c.A_part), c.A_part, n; n_floor = 1.0)
-        add_conduction_correction!(M, c.A_part, c.A_cond, n, c.G; n_floor = 1.0)
+        add_conduction_excess!(M, excess_operator(c; n), n; n_floor = 1.0)
         return M_part, M
     end
 
@@ -399,39 +428,39 @@ end
     end
 end
 
-# The conduction correction: u∥ and Te ride the particles the density diffusion A_part moves, but
-# conduct (and diffuse momentum) with their own A_cond. C adds the difference as symmetric pair
-# transfers S_kl = ½(R_k ΔA_kl + R_l ΔA_lk), ΔA = A_cond − A_part, weighted by the pair's mean
-# density: (C f)_k = Σ_l S_kl (n_k + n_l)/2 (f_l − f_k) / (R_k n_k). The production matrices are
-# not volume-symmetric (the cross terms), so this, not a split of M by face densities, is what
-# keeps Σ V n f. internal/docs/src/notes/design/ambipolar-gate-criterion-v3.md §3.5.
+# The conduction excess: u∥ and Te ride the particles the density diffusion A_part moves, but conduct (and
+# diffuse momentum) with more along b. The excess ∇·(n Δ b bᵀ ∇·), the density inside the coefficient, is
+# assembled face by face like every anisotropic operator, on the nodes above the floor, and added over the
+# density: C = N⁻¹ A_excess. Each face flux is shared by its two rows, so Σ V n f is kept; at uniform density
+# M + C is the whole tensor's operator, cross terms included. internal/docs/src/reference/electron-diffusive-transport.md §4;
+# internal/docs/src/notes/plans/PLAN_monotone-conduction.md §7.
 
-@testitem "conduction correction: keeps Σ V n f and constants; no difference leaves M bit for bit" setup = [PerParticleFixtures] begin
-    using RAPID2D: per_particle_operator!, add_conduction_correction!
+@testitem "conduction excess: keeps Σ V n f and constants; no excess adds nothing" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!, add_conduction_excess!
     for c in conduction_cases()
         @test c.limited > 0
-        M_part, M = with_correction(c)
+        M_part, M = with_excess(c)
         C = M.matrix - M_part.matrix
         @test maximum(abs, C) > 0
         # constants stay in the kernel
         @test maximum(abs, M * ones(length(c.n))) <= 1.0e-12 * maximum(abs, M.matrix.nzval)
-        # what the correction moves between particles adds up to nothing
+        # what the excess moves between particles adds up to nothing
         f = smooth_field(c.G)
         Cf = C * f
         @test abs(sum(c.V .* c.n .* Cf)) <= 1.0e-12 * sum(c.V .* c.n .* abs.(Cf))
-        # A_cond = A_part: nothing added, bit for bit
+        # Δ = 0: nothing added
         M_same = per_particle_operator!(similar(c.A_part), c.A_part, c.n; n_floor = 1.0)
-        add_conduction_correction!(M_same, c.A_part, deepcopy(c.A_part), c.n, c.G; n_floor = 1.0)
+        add_conduction_excess!(M_same, excess_operator(c; Δ = zero(c.Δ)), c.n; n_floor = 1.0)
         @test M_same.matrix.nzval == M_part.matrix.nzval
     end
 end
 
-@testitem "conduction correction: carries the cross terms, adds dissipation in total, and the heating identity holds for the whole operator" setup = [PerParticleFixtures] begin
-    using RAPID2D: per_particle_operator!, add_conduction_correction!, dissipation_rate!
+@testitem "conduction excess: carries the cross terms, adds dissipation in total, and the heating identity holds for the whole operator" setup = [PerParticleFixtures] begin
+    using RAPID2D: dissipation_rate!
     using RAPID2D.SparseArrays: findnz
     for c in conduction_cases()
-        M_part, M = with_correction(c)
-        # the negative transfers come with it, as in the operators it is built from: they are what
+        M_part, M = with_excess(c)
+        # the negative couplings come with it, as in every anisotropic operator: they are what
         # cancels the diffusion across b (the artificial cross-field diffusivity test)
         C = M.matrix - M_part.matrix
         off = [C[k, l] for (k, l, _) in zip(findnz(C)...) if k != l]
@@ -445,44 +474,57 @@ end
         # above the floor everywhere, what Σ V ½ n u² loses under dn/dt = A_part n, du/dt = M u is
         # what the heating of the whole operator gains (floor rows break it for M_part alone)
         n = plasma_density(c.G)
-        _, M = with_correction(c; n)
+        _, M = with_excess(c; n)
         dK = sum(c.V .* (0.5 .* u .^ 2 .* (c.A_part * n) .+ n .* u .* (M * u)))
         @test sum(c.V .* n .* dissipation_rate!(similar(u), M, u)) ≈ -dK rtol = 1.0e-10
     end
 end
 
-@testitem "conduction correction: a pair with a node on the floor is skipped, both ways" setup = [PerParticleFixtures] begin
-    using RAPID2D: per_particle_operator!, add_conduction_correction!
+@testitem "conduction excess: the floor is a wall for it, both ways" setup = [PerParticleFixtures] begin
     for c in conduction_cases()
-        M_part, M = with_correction(c)
+        M_part, M = with_excess(c)
         C = M.matrix - M_part.matrix
         floor = findall(<=(1.0), c.n)
         @test count(in(floor), c.G.nodes.in_wall_nids) == 6
         @test all(iszero, C[floor, :]) && all(iszero, C[:, floor])
+        A_excess = excess_operator(c)
+        @test all(iszero, A_excess.matrix[floor, :]) && all(iszero, A_excess.matrix[:, floor])
     end
 end
 
-@testitem "conduction correction: in a uniform plasma with no cross terms, the variable conducts with A_cond" setup = [PerParticleFixtures] begin
-    using RAPID2D: per_particle_operator!, add_conduction_correction!
-    RP = walled_RP(:box)
-    G = RP.G
-    A_part = diffusion_operator(G, (fill(5.0, G.NR, G.NZ), zeros(G.NR, G.NZ), fill(50.0, G.NR, G.NZ)))
-    A_cond = diffusion_operator(G, (fill(5.0, G.NR, G.NZ), zeros(G.NR, G.NZ), fill(80.0, G.NR, G.NZ)))
-    n = zeros(G.NR * G.NZ)
-    n[G.nodes.in_wall_nids] .= 3.0e13
-    M = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
-    add_conduction_correction!(M, A_part, A_cond, n, G; n_floor = 1.0)
-    @test M.matrix.nzval ≈ A_cond.matrix.nzval rtol = 1.0e-12
+@testitem "conduction excess: in a uniform plasma the variable conducts with the whole tensor's operator, cross terms included" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!, add_conduction_excess!
+    for c in conduction_cases()
+        G = c.G
+        n = zeros(G.NR * G.NZ)
+        n[G.nodes.in_wall_nids] .= 3.0e13
+        A_part = diffusion_operator(G, c.D_part)
+        M = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
+        add_conduction_excess!(M, excess_operator(merge(c, (; A_part)); n), n; n_floor = 1.0)
+        A_whole = diffusion_operator(G, with_along(c.D_part, c.Δ, c.b))
+        @test maximum(abs, M.matrix .- A_whole.matrix) <= 1.0e-12 * maximum(abs, A_whole.matrix)
+    end
+end
+
+@testitem "conduction excess: allocates nothing after the first call, refuses another pattern or aliasing" setup = [PerParticleFixtures] begin
+    using RAPID2D: add_conduction_excess!, DiscretizedOperator
+    c = conduction_cases()[1]
+    _, M = with_excess(c)
+    A_excess = excess_operator(c)
+    alloc(M, A, n) = @allocated add_conduction_excess!(M, A, n; n_floor = 1.0)
+    alloc(M, A_excess, c.n)
+    @test alloc(M, A_excess, c.n) == 0
+    @test_throws ArgumentError add_conduction_excess!(M, M, c.n; n_floor = 1.0)
+    @test_throws DimensionMismatch add_conduction_excess!(M, A_excess, c.n[1:10]; n_floor = 1.0)
 end
 
 # A profile constant along b must not diffuse: what an operator moves across the field is its
-# truncation error alone, second order. The conduction correction carries the cross terms of
-# A_cond − A_part as its operators do; dropping its negative transfers left ≈ ½ΔD across a
-# diagonal field at every resolution. The loop over discretizations is where a new
-# `AnisotropicDiscretization` joins; at this resolved density `LimitedNinePoint` limits nothing and
-# is `NinePoint`.
+# truncation error alone, second order. The excess carries its cross terms as every anisotropic operator
+# does; dropping its negative couplings left ≈ ½ΔD across a diagonal field at every resolution. The loop over
+# discretizations is where a new `AnisotropicDiscretization` joins; at this resolved density
+# `LimitedNinePoint` limits nothing and is `NinePoint`.
 @testitem "artificial cross-field diffusivity: truncation only, in the diffusion, per-particle and conduction operators" setup = [PerParticleFixtures] begin
-    using RAPID2D: per_particle_operator!, add_conduction_correction!, assemble_anisotropic_diffusion!
+    using RAPID2D: per_particle_operator!, conduction_excess_operator!, add_conduction_excess!, assemble_anisotropic_diffusion!
     # D_art / D at 41 × 47, about ten cells across the box: the diagonal field is exact for the
     # diffusion operator and second order through the density's variation; the circles, second order
     bound = (diagonal = 1.0e-3, circular = 2.0e-2)
@@ -499,8 +541,17 @@ end
             A_part = assembled(G, parallel_tensor(G, field; Dpara = 1.0), discretization, n)
             A_cond = assembled(G, parallel_tensor(G, field; Dpara = 4.0), discretization, n)
             M_part = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
+            # the excess 3 along b, the field's own direction (none where it is excluded)
+            bR, bZ = zeros(NR, NZ), zeros(NR, NZ)
+            for j in 1:NZ, i in 1:NR
+                field.excluded(G.R2D[i, j], G.Z2D[i, j]) && continue
+                bR[i, j], bZ[i, j] = field.b(G.R2D[i, j], G.Z2D[i, j])
+            end
+            A_excess = conduction_excess_operator!(
+                similar(A_part), G, fill(3.0, NR, NZ), (bR, bZ), reshape(n, NR, NZ), discretization; n_floor = 1.0,
+            )
             M = per_particle_operator!(similar(A_part), A_part, n; n_floor = 1.0)
-            add_conduction_correction!(M, A_part, A_cond, n, G; n_floor = 1.0)
+            add_conduction_excess!(M, A_excess, n; n_floor = 1.0)
             # each per its own coefficient along b: 4 for A_cond and for M + C, 1 for M
             (
                 diffusion = artificial_perp_diffusivity(A_cond, G, field) / 4,
@@ -573,14 +624,9 @@ end
     end
 end
 
-@testitem "conduction correction over a total: n_total = n is bit for bit; with a group's density it keeps Σ V w_I f and reaches where that group is absent" setup = [PerParticleFixtures] begin
-    using RAPID2D: per_particle_operator!, add_conduction_correction!
+@testitem "conduction excess over a total: with a group's density in its coefficient it keeps Σ V w_I f and reaches where that group is absent" setup = [PerParticleFixtures] begin
+    using RAPID2D: per_particle_operator!, add_conduction_excess!
     for c in conduction_cases()
-        M_part, M = with_correction(c)
-        Mn = per_particle_operator!(similar(c.A_part), c.A_part, c.n; n_floor = 1.0)
-        add_conduction_correction!(Mn, c.A_part, c.A_cond, c.n, c.G; n_floor = 1.0, n_total = c.n)
-        @test Mn.matrix.nzval == M.matrix.nzval
-        # one group of a mixture: its pair transfers over the total's density
         G, V = c.G, c.V
         inw = G.nodes.in_wall_nids
         Z = vec(G.Z2D)
@@ -589,13 +635,13 @@ end
         w_I = c.n .+ w_g
         Mg = per_particle_operator!(similar(c.A_part), (c.A_part,), (w_g,), w_I; n_floor = 1.0)
         before = copy(Mg.matrix.nzval)
-        add_conduction_correction!(Mg, c.A_part, c.A_cond, w_g, G; n_floor = 1.0, n_total = w_I)
+        add_conduction_excess!(Mg, excess_operator(c; n = w_g, n_total = w_I), w_I; n_floor = 1.0)
         C = similar(Mg)
         C.matrix.nzval .= Mg.matrix.nzval .- before
         f = smooth_field(G)
         @test abs(sum(V .* w_I .* (C * f))) <= 1.0e-12 * sum(V .* w_I .* abs.(C * f))
         @test maximum(abs, C * ones(length(f))) <= 1.0e-12 * maximum(abs, C.matrix.nzval)
-        # a row where the group is absent takes the correction from a neighbour where it is not
+        # a row where the group is absent takes the excess from a neighbour where it is not
         Cf = C * f
         @test any(k -> w_g[k] == 0 && w_I[k] > 1 && Cf[k] != 0, inw)
     end

@@ -640,14 +640,10 @@ function ion_step_operators(RP::RAPID{FT}; carriage::Union{Nothing, IonCarriage{
             into = isnothing(buffers) ? nothing : buffers[1],
         )
         if !isnothing(buffers)
-            # along B the ions conduct with their own coefficient where it exceeds the
-            # collisional channel's (the first), on the same tensor, wall and limiter density
-            cwd = [(group.channels[m], dirs[m][1], dirs[m][2]) for m in eachindex(group.channels)]
-            active = ion_conduction_operator!(
-                buffers[2], G, total_tensor(cwd), dirs[1], channel_D_para(group.channels[1]), tp.Dpara_cond_i,
-                discretization; n = RP.prev_n, faces, v_absorb,
-            )
-            push!(carriage.parts, IonCarriagePart{FT}(copy(group.sids), buffers[1], active ? buffers[2] : nothing))
+            # along B the ions conduct with their own coefficient where it exceeds the collisional
+            # channel's (the first); the excess is assembled when the carriage is built
+            excess = ion_conduction_excess(buffers, dirs[1], channel_D_para(group.channels[1]), tp.Dpara_cond_i)
+            push!(carriage.parts, IonCarriagePart{FT}(copy(group.sids), buffers[1], excess))
         end
         return (group, isnothing(A_conv) ? A : A - A_conv, v_absorb .+ v_conv)
     end

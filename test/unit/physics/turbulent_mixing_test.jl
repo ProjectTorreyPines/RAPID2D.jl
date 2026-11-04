@@ -178,6 +178,7 @@ end
 
 @testitem "ue_Te_operators: A_diffu is the particle-weighted operator of the density operator and the current ne" setup = [PureMixingRun] begin
     using RAPID2D: ue_Te_operators, is_on_wall_pattern
+    using RAPID2D.SparseArrays: nonzeros
     RP = pure_mixing_RP(; t_end_s = 1.0e-6, D_along = 50.0, D_across = 5.0)
     G, pla, op = RP.G, RP.plasma, RP.operators
     inw = G.nodes.in_wall_nids
@@ -197,16 +198,35 @@ end
     pla.ne[inw] .*= 2 .+ sin.(vec(G.Z2D)[inw])
     n2 = vec(pla.ne)
     @test n2 .* (ue_Te_operators(RP).A_diffu * f) .+ f .* (A * n2) ≈ A * (n2 .* f) rtol = 1.0e-12
-    # where u∥ and Te conduct with more than the particles diffuse with, the difference along b̂
-    # is added to it as the conduction correction
+    # where u∥ and Te conduct with more than the particles diffuse with, the excess along b̂, assembled
+    # at the refresh's ne, is added over the current ne
     tp = RP.transport
     tp.Dpara_cond .= tp.Dpara .+ 1.0e3
     RAPID2D.cache_electron_operators!(RP)
-    @test op.A_cond_e_active
-    M = RAPID2D.per_particle_operator!(similar(A), A, pla.ne; n_floor = 1.0)
-    RAPID2D.add_conduction_correction!(M, A, op.A_cond_e, pla.ne, G; n_floor = 1.0)
+    @test op.A_cond_excess_e_active
+    per_particle() = RAPID2D.per_particle_operator!(similar(A), A, pla.ne; n_floor = 1.0)
+    M = per_particle()
+    RAPID2D.add_conduction_excess!(M, op.A_cond_excess_e, pla.ne; n_floor = 1.0)
     @test ue_Te_operators(RP).A_diffu.matrix.nzval == M.matrix.nzval
-    @test M.matrix.nzval != RAPID2D.per_particle_operator!(similar(A), A, pla.ne; n_floor = 1.0).matrix.nzval
+    @test M.matrix.nzval != per_particle().matrix.nzval
+    # a node that falls to the floor within the step: the excess is assembled again at this ne, and
+    # nothing of it reaches that node
+    k = inw[length(inw) ÷ 2]
+    pla.ne[k] = 0.5
+    C = ue_Te_operators(RP).A_diffu.matrix .- per_particle().matrix
+    @test !op.A_cond_excess_e_nodes[k]
+    @test all(iszero, C[k, :]) && all(iszero, C[:, k])
+    @test maximum(abs, C) > 0
+    # back above it: assembled again, and it conducts with its neighbours once more
+    pla.ne[k] = 1.0e14
+    C = ue_Te_operators(RP).A_diffu.matrix .- per_particle().matrix
+    @test op.A_cond_excess_e_nodes[k]
+    @test any(!iszero, C[k, :])
+    # a density that moves without crossing the floor keeps the refresh's operator
+    cached = copy(nonzeros(op.A_cond_excess_e.matrix))
+    pla.ne[inw] .*= 1.1
+    ue_Te_operators(RP)
+    @test nonzeros(op.A_cond_excess_e.matrix) == cached
 end
 
 @testitem "mixing along straight field lines: the column momentum converges to first order in Δt" setup = [PureMixingRun] begin

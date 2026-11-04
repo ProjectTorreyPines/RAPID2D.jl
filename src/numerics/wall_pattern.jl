@@ -75,6 +75,13 @@ function check_wall_pattern(A::DiscretizedOperator)
     return A
 end
 
+"`A ← 0` on the wall pattern: every value zero, the structure kept."
+function set_zero!(A::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
+    check_wall_pattern(A)
+    fill!(nonzeros(A.matrix), zero(FT))
+    return A
+end
+
 "`A ← I` on the wall pattern (every row has its diagonal)."
 function set_identity!(A::DiscretizedOperator{FT}) where {FT <: AbstractFloat}
     check_wall_pattern(A)

@@ -13,8 +13,9 @@ Refresh the electron in-wall operators on `RP.operators` from the current `ueR`,
 tensor and `flags.upwind`, values only (they were allocated on the wall pattern by
 `initialize!`): `A_conv_e` (face-flux divergence of the electron velocity, the scheme it was
 built with recorded in `A_conv_e_upwind`), `A_diffu_e` (reflective `∇·D∇`, assembled by
-`flags.anisotropic_discretization` at the current `ne`) and `div_ue`
-(`∇·u_e`). `update_transport_quantities!` calls this last — at the end of every step and at
+`flags.anisotropic_discretization` at the current `ne`), `div_ue` (`∇·u_e`) and, where u∥ and
+Te conduct with more than the particles diffuse with, the excess `A_cond_excess_e` at that `ne`.
+`update_transport_quantities!` calls this last — at the end of every step and at
 every `run_simulation!` entry; a caller that overwrites the velocities or the flag by hand and
 then steps by hand must call it again, or the step reads the operators of the state it
 replaced ([`electron_operator_cache`](@ref) refuses a changed flag).
@@ -46,26 +47,53 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     discretization = RP.flags.anisotropic_discretization
     RP.diagnostics.near_vacuum.limited_pairs =
         assemble_anisotropic_diffusion!(op.A_diffu_e, G, tp.DRR, tp.DRZ, tp.DZZ, discretization; n = pla.ne)
-    # what u∥ and Te conduct with, where it is not what the particles diffuse with: the same
-    # tensor with `Dpara_cond` along b̂, assembled alike
-    op.A_cond_e_active = tp.Dpara_cond != tp.Dpara
-    if op.A_cond_e_active
-        F = RP.fields
-        @with_pool pool begin
-            DRR, DRZ, DZZ = acquire!(pool, FT, G.NR, G.NZ), acquire!(pool, FT, G.NR, G.NZ), acquire!(pool, FT, G.NR, G.NZ)
-            @. DRR = tp.DRR + (tp.Dpara_cond - tp.Dpara) * F.bR^2
-            @. DRZ = tp.DRZ + (tp.Dpara_cond - tp.Dpara) * F.bR * F.bZ
-            @. DZZ = tp.DZZ + (tp.Dpara_cond - tp.Dpara) * F.bZ^2
-            assemble_anisotropic_diffusion!(op.A_cond_e, G, DRR, DRZ, DZZ, discretization; n = pla.ne)
-            nothing
-        end
-    end
+    # what u∥ and Te conduct with beyond what the particles' diffusion carries them with
+    refresh_conduction_excess_e!(RP)
     return RP
+end
+
+const ELECTRON_CARRIAGE_N_FLOOR = 1.0   # m⁻³, below which a node's u∥ and Te are not carried
+
+# What u∥ and Te conduct with beyond what the particles' diffusion carries them with, at the current ne,
+# into `A_cond_excess_e`: the excess Dpara_cond − Dpara along b̂, or, where the particles do not diffuse
+# (nothing rides their drift), the whole tensor. Records the mode and the nodes it was assembled on.
+function refresh_conduction_excess_e!(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla, op, tp, F = RP.plasma, RP.operators, RP.transport, RP.fields
+    n_floor = FT(ELECTRON_CARRIAGE_N_FLOOR)
+    whole = !RP.flags.diffu
+    op.A_cond_excess_e_whole = whole
+    op.A_cond_excess_e_active = whole || tp.Dpara_cond != tp.Dpara
+    op.A_cond_excess_e_active || return RP
+    discretization = RP.flags.anisotropic_discretization
+    @with_pool pool begin
+        Δ = acquire!(pool, FT, size(tp.Dpara)...)
+        @. Δ = tp.Dpara_cond - tp.Dpara
+        if whole
+            RR, RZ, ZZ = acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...), acquire!(pool, FT, size(Δ)...)
+            @. RR = tp.DRR + Δ * F.bR^2
+            @. RZ = tp.DRZ + Δ * F.bR * F.bZ
+            @. ZZ = tp.DZZ + Δ * F.bZ^2
+            density_weighted_diffusion!(op.A_cond_excess_e, RP.G, (RR, RZ, ZZ), pla.ne, discretization; n_floor)
+        else
+            conduction_excess_operator!(op.A_cond_excess_e, RP.G, Δ, (F.bR, F.bZ), pla.ne, discretization; n_floor)
+        end
+        nothing
+    end
+    op.A_cond_excess_e_nodes .= vec(pla.ne) .> n_floor
+    return RP
+end
+
+# whether a node crossed the floor since the conduction excess was assembled
+function crossed_floor(nodes::BitVector, n::AbstractVecOrMat{FT}, n_floor::FT) where {FT <: AbstractFloat}
+    @inbounds for k in eachindex(nodes)
+        nodes[k] == (n[k] > n_floor) || return true
+    end
+    return false
 end
 
 # The electron operators must have been allocated on the wall pattern by `initialize!`.
 function check_electron_operators(op::Operators)
-    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_visc_drift_e, op.A_cond_e, op.A_LHS)) || throw(
+    all(is_on_wall_pattern, (op.A_conv_e, op.A_diffu_e, op.A_adv_e, op.A_visc_drift_e, op.A_cond_excess_e, op.A_LHS)) || throw(
         ArgumentError(
             "RP.operators was not built by initialize!: the electron in-wall operators " *
                 "are not allocated on the wall pattern"
@@ -121,7 +149,7 @@ All three are buffers, overwritten by the next refresh or call.
 """
 function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla, op = RP.plasma, electron_operator_cache(RP)
-    advection_operator!(op.A_adv_e, op.A_conv_e, pla.ne; n_floor = FT(1.0))
+    advection_operator!(op.A_adv_e, op.A_conv_e, pla.ne; n_floor = FT(ELECTRON_CARRIAGE_N_FLOOR))
     div_u = op.div_ue
     if closed_surface_active(RP) && !isempty(RP.closed_surface.solve.Γe_para_over_B)
         # the parallel carriage on the constraint domain is the stream-function flux, and its
@@ -139,10 +167,20 @@ function ue_Te_operators(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # (conduction for Te) and the drift advection: M_kl = A_kl n_l/n_k splits exactly into
     # A_kl (n_l + n_k)/(2 n_k), the first with the face-mean density, and A_kl (n_l − n_k)/(2 n_k),
     # the second (electron-diffusive-transport.md §4). Where they conduct with more than the
-    # particles diffuse with, the difference is added as symmetric pair transfers.
-    per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, pla.ne; n_floor = FT(1.0))
-    op.A_cond_e_active &&
-        add_conduction_correction!(op.A_visc_drift_e, op.A_diffu_e, op.A_cond_e, pla.ne, RP.G; n_floor = FT(1.0))
+    # particles diffuse with, the excess is added face by face over the current ne; where the
+    # particles do not diffuse, nothing rides a drift and the whole conduction is that excess.
+    n_floor = FT(ELECTRON_CARRIAGE_N_FLOOR)
+    if RP.flags.diffu
+        per_particle_operator!(op.A_visc_drift_e, op.A_diffu_e, pla.ne; n_floor)
+    else
+        set_zero!(op.A_visc_drift_e)       # the density does not diffuse: nothing rides its drift
+    end
+    # reassembled within the step only if a node crossed the floor or the mode changed: then at the current ne
+    # and b̂, while A_diffu_e keeps the cached ones
+    stale = op.A_cond_excess_e_whole == RP.flags.diffu ||
+        (op.A_cond_excess_e_active && crossed_floor(op.A_cond_excess_e_nodes, pla.ne, n_floor))
+    stale && refresh_conduction_excess_e!(RP)
+    op.A_cond_excess_e_active && add_conduction_excess!(op.A_visc_drift_e, op.A_cond_excess_e, pla.ne; n_floor)
     return (A_adv = op.A_adv_e, A_diffu = op.A_visc_drift_e, div_u)
 end
 
