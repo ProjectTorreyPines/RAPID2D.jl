@@ -2388,7 +2388,7 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             end
             RHS_ψ[G.BDY_idx] .= ψ_bdy
             rhs = vcat(RHS_u, vec(RHS_ψ))
-            solve!(sol, solver, sys === nothing ? rhs : constrained_rhs(sys, rhs; ct.extra))
+            solve!(sol, solver, sys === nothing ? rhs : constrained_rhs(sys, rhs; ct.extra, ct.common))
             vec(ue_k) .= view(sol, 1:N)
             vec(ψ_k) .= view(sol, (N + 1):(2N))
             sys === nothing || (Γ_over_B_k .= view(sol, (2N + 1):length(sol)) ./ sys.scale)

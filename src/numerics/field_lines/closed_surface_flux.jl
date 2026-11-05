@@ -693,16 +693,20 @@ function update_constrained_system!(
 end
 
 """
-    constrained_rhs(sys, r; extra = nothing) -> Vector
+    constrained_rhs(sys, r; extra = nothing, common = nothing) -> Vector
 
-The right-hand side of `sys` for S x = r: r with the constrained rows' zero, then the Galerkin
-rows' Q r + `extra`, normalized as their rows are.
+The right-hand side of `sys` for S x = r: r with the constrained rows' `common` (one value per
+constrained row, zero by default: the flow the surface flux is measured from, u_k − (T y)_k = common_k),
+then the Galerkin rows' Q r + `extra`, normalized as their rows are.
 """
-function constrained_rhs(sys::ConstrainedSystem{FT}, r::AbstractVector; extra::Union{Nothing, AbstractVector} = nothing) where {FT}
+function constrained_rhs(
+        sys::ConstrainedSystem{FT}, r::AbstractVector;
+        extra::Union{Nothing, AbstractVector} = nothing, common::Union{Nothing, AbstractVector} = nothing,
+    ) where {FT}
     L = sys.L
     y = zeros(promote_type(FT, eltype(r)), L + length(sys.qs))
     y[1:L] .= r
-    y[sys.cu] .= zero(FT)
+    y[sys.cu] .= common === nothing ? zero(FT) : common
     for g in eachindex(sys.q)
         y[L + sys.basis_col[g]] += sys.q[g] * r[sys.cu[sys.basis_row[g]]]
     end

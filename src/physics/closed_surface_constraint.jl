@@ -1,9 +1,20 @@
 # The closed-surface flux constraint in a run.
 # At the end of each step the basis is rebuilt from the field-line analysis; the next u∥ solve
-# takes n u∥/B a function of ψ on the closed region inside the LCFS, below the Ampère gate in the u∥ step
-# and above it inside the coupled u∥–ψ block (`BlockConstraint`) or after it (`PostProjection`);
-# after continuity u∥ is remapped to the density the step left. The kinetic energy the constraint
-# removes and the remap changes is booked.
+# takes the parallel current over B, J∥/B = e(q_I u_i∥ − n_e u_e∥)/B with q_I = Σ zₛnₛ, a function of ψ
+# on the closed region inside the LCFS: the electrons' parallel flux is the ions' charge flow q_I u_i∥
+# (the common flow, which moves both densities alike) plus the relative flux −J∥/e, the surface
+# function. Below the Ampère gate in the u∥ step, above it inside the coupled u∥–ψ block
+# (`BlockConstraint`) or after it (`PostProjection`); after continuity u∥ is remapped to the
+# densities the step left. The kinetic energy the constraint removes and the remap changes is booked.
+# The ions' u∥ is the step's entry value: their momentum update follows, as it does for the ion
+# current Ampère reads.
+
+# The common parallel flow the electrons' density shares with the ions', per electron:
+# (Σ zₛnₛ) u_i∥ / nₑ on the grid, zero where no electrons are admitted
+function common_parallel_flow(RP::RAPID{FT}) where {FT <: AbstractFloat}
+    pla = RP.plasma
+    return @. ifelse(pla.ne > CLOSED_SURFACE_N_FLOOR, pla.Zni_tot * pla.ui_para / pla.ne, zero(FT))
+end
 
 # the density below which a node is not admitted to the constraint (the per-particle operators' floor)
 const CLOSED_SURFACE_N_FLOOR = 1.0
@@ -77,7 +88,7 @@ function surface_constrained_ue!(RP::RAPID{FT}, A::SparseMatrixCSC{FT}, rhs::Abs
     rhs_c[t.cu] .+= t.ionization
     s.u_system = constrained_system(s.u_system, A, s.basis)
     sys = update_constrained_system!(s.u_system, A, s.basis, pla.ne, RP.fields.Btot; t.shift)
-    y = constrained_rhs(sys, rhs_c; t.extra)
+    y = constrained_rhs(sys, rhs_c; t.extra, t.common)
     x = solve!(similar(y), sys.solver, y)
     commit_surface_flux!(RP, x[(sys.L + 1):end] ./ sys.scale, t.Bp)
     copyto!(pla.ue_para, view(x, 1:sys.L))
@@ -106,13 +117,15 @@ function coupled_block_solver!(RP::RAPID{FT}, A_u_ψ::SparseMatrixCSC{FT}, θu::
 end
 
 """
-    surface_constraint_terms(RP, θu) -> (; cu, shift, ionization, extra, Bp)
+    surface_constraint_terms(RP, θu) -> (; cu, shift, ionization, extra, Bp, common)
 
 What the constrained u∥ rows take that the plain step does not, on the nodes `cu` inside the LCFS:
 - ionization leaves their decay, `shift` on the diagonal and `ionization` on the right-hand
   side: the newborn electrons' dilution is applied once, by the remap after continuity;
 - the pressure enters the Galerkin rows as its generalized force on the stream-function fluxes
-  ([`pressure_operator`](@ref) `Bp`), `extra`, in place of the nodal force of the plain rows.
+  ([`pressure_operator`](@ref) `Bp`), `extra`, in place of the nodal force of the plain rows;
+- the rows measure the surface flux from the common flow, `common` ([`common_parallel_flow`](@ref)):
+  u∥ = common + (B/n) W Γ_over_B, so that the surface function is the relative flux −J∥/(eB).
 """
 function surface_constraint_terms(RP::RAPID{FT}, θu::Real) where {FT <: AbstractFloat}
     pla, b, dt = RP.plasma, RP.closed_surface.basis, RP.dt
@@ -130,22 +143,24 @@ function surface_constraint_terms(RP::RAPID{FT}, θu::Real) where {FT <: Abstrac
         F_p = -keep .* (Bp * (ee .* pla.Te_eV[b.nodes])) ./ me
         extra = dt .* (F_p .- knot_w_in' * (b.V[sel] .* RP.fields.Btot[cu] .* a_p[cu]))
     end
-    return (; cu, shift = -θu * dt .* ν_iz, ionization = (1 - θu) * dt .* ν_iz .* pla.ue_para[cu], extra, Bp)
+    common = common_parallel_flow(RP)[cu]
+    return (; cu, shift = -θu * dt .* ν_iz, ionization = (1 - θu) * dt .* ν_iz .* pla.ue_para[cu], extra, Bp, common)
 end
 
 """
     commit_surface_flux!(RP, Γ_over_B, Bp) -> RP
 
-Keep the step's n u∥/B at the knots, `Γ_over_B`, and what the step's transport reads from it: the
-stream-function fluxes and the compression `Bp`ᵀK that pairs with the pressure force. Called
-while u∥ is still the step's starting drift: the kinetic energy of its part that is not a
-surface flux, which the constraint removes, is booked as activation (no surface flux before),
-basis change, or projection.
+Keep the step's relative flux over B, −J∥/(eB), at the knots, `Γ_over_B`, and what the step's transport
+reads from it: the stream-function fluxes and the compression `Bp`ᵀK that pairs with the pressure
+force. Called while u∥ is still the step's starting drift: the kinetic energy of its part, beyond
+the common flow, that is not a surface flux, which the constraint removes, is booked as activation
+(no surface flux before), basis change, or projection.
 """
 function commit_surface_flux!(RP::RAPID{FT}, Γ_over_B::Vector{FT}, Bp::AbstractMatrix) where {FT <: AbstractFloat}
     s, pla = RP.closed_surface, RP.plasma
     b, sol, led = s.basis, s.solve, s.ledger
-    n, B, u = pla.ne, RP.fields.Btot, pla.ue_para
+    n, B = pla.ne, RP.fields.Btot
+    u = pla.ue_para .- common_parallel_flow(RP)
     sel, cu, knot_w_in = inside_lcfs(b)
     Γ_over_B0 = galerkin_flux(b, n, u, B)
     removed = RP.config.constants.me / 2 * sum(b.V[sel] .* n[cu] .* (u[cu] .- (B[cu] ./ n[cu]) .* (knot_w_in * Γ_over_B0)) .^ 2)
@@ -167,9 +182,10 @@ end
 """
     remap_surface_flux!(RP) -> RP
 
-After continuity, put u∥ on the constrained nodes back on the surface flux of the step,
-u∥ = (n u∥/B) B / n with the density the step left, so the current follows the surfaces and not
-the density; book the kinetic-energy change and update Jϕ.
+After the continuity equations, put u∥ on the constrained nodes back on the surface flux of the
+step, u∥ = common + (−J∥/(eB)) B / nₑ with the densities the step left (both species': the common
+flow is q_I u_i∥/nₑ), so the current follows the surfaces and not the density; book the
+kinetic-energy change and update Jϕ.
 """
 function remap_surface_flux!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     (closed_surface_active(RP) && !isempty(RP.closed_surface.solve.Γe_para_over_B)) || return RP
@@ -177,7 +193,7 @@ function remap_surface_flux!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     b = s.basis
     me = RP.config.constants.me
     sel, cu, knot_w_in = inside_lcfs(b)
-    u_new = (F.Btot[cu] ./ pla.ne[cu]) .* (knot_w_in * s.solve.Γe_para_over_B)
+    u_new = common_parallel_flow(RP)[cu] .+ (F.Btot[cu] ./ pla.ne[cu]) .* (knot_w_in * s.solve.Γe_para_over_B)
     s.ledger.remap += me / 2 * sum(b.V[sel] .* pla.ne[cu] .* (u_new .^ 2 .- pla.ue_para[cu] .^ 2))
     pla.ue_para[cu] .= u_new
     update_Jϕ!(RP)

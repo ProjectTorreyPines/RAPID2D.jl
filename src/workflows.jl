@@ -220,8 +220,6 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
 
         # Update electron density
         solve_electron_continuity_equation!(RP)
-        # the constrained u∥ follows the density it left (SurfaceFluxConstraint)
-        remap_surface_flux!(RP)
 
         # Ion dynamics
         if RP.flags.update_ni_independently
@@ -233,6 +231,8 @@ function solve_timestep!(RP::RAPID{FT}, dt::FT = RP.dt) where {FT <: AbstractFlo
             # the electrons' operators moved them, and carry their u∥ and Tᵢ
             publish_electron_carriage!(RP)
         end
+        # the constrained u∥ follows the densities both species left (SurfaceFluxConstraint)
+        remap_surface_flux!(RP)
 
         if RP.flags.ud_evolve
             update_ui_para!(RP)

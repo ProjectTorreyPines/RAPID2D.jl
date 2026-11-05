@@ -9,8 +9,10 @@
 # null space of the parallel transport being ∇∥n = 0.
 # Under a loop voltage, the open-line test sets the sheets' shape factor to 1, so that they shield
 # E∥ wherever the plasma holds the charge and the parallel physics is all there is; the code's
-# 0.65 stands for an EMF the global potential cannot shield. One fingerprint is red: the ions' own
-# parallel flow escapes the surface-flux constraint on closed surfaces.
+# 0.65 stands for an EMF the global potential cannot shield. On closed surfaces the constraint holds
+# the total current, so the species stay together under the loop voltage. One fingerprint is red:
+# with 0.65 the current the residual E∥ drives moves the electrons' density off the ions on open
+# lines, where nothing closes it.
 # internal/docs/src/notes/ambipolar-parallel-loss.md.
 
 @testsnippet OpenLineBlob begin
@@ -119,12 +121,12 @@ end
     Prescribed elliptic surfaces ψ = C((R − R0)² + ((Z − Z0)/κ)²), B_pol ≈ 0.1 T at ρ = 0.3, with a
     density nine times higher outboard than inboard on every surface, Tₑ 10 eV and Tᵢ 1 eV held.
     """
-    function closed_surfaces(; Eϕ, policy, t_end = 2.0e-3)
+    function closed_surfaces(; Eϕ, policy, t_end = 2.0e-3, dt = 5.0e-6)
         config = SimulationConfig{Float64}(;
             manual = ManualSetup{Float64}(BR = 0.0, BZ = 0.0, Eϕ = Eϕ), NR = 29, NZ = 41,
             R_min = 0.8, R_max = 2.2, Z_min = -1.2, Z_max = 1.2, R0B0 = 3.0, prefilled_gas_pressure = 2.0e-3,
             wall_R = [1.0, 2.0, 2.0, 1.0], wall_Z = [-1.0, -1.0, 1.0, 1.0],
-            dt = 5.0e-6, t_end_s = t_end, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+            dt, t_end_s = t_end, snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
         )
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(;
@@ -234,16 +236,22 @@ end
     @test surface_spread(RP, RP.plasma.ne) < 0.05
     @test species_apart(RP) < 1.0e-3
 
-    # [gap] Under a loop voltage the surface-flux constraint holds the electrons' parallel flux
-    # divergence-free, but the ions' own E∥-driven parallel flow (~10⁴ m/s on the gas drag) is
-    # outside it: the density still evens out, and the species part (0.17 in 2 ms). The
-    # constraint belongs on the total current.
-    RP = closed_surfaces(; Eϕ = 0.3, policy = SurfaceFluxConstraint())
+    # Under a loop voltage the constraint holds the total parallel current, J∥/B, a surface function:
+    # the electrons' density moves with the ions' charge flow (the E∥ drift of the ions on the gas
+    # drag, ~10⁴ m/s, the common flow of this e–n regime) plus the divergence-free relative flux,
+    # so the species stay together (0.4 % at 1 ms; 7 % with the electrons' own flux held instead).
+    # Δt 1 µs: the plasma that leaks across the surfaces numerically (D ≈ |u_i∥ b_pol| h/2, both
+    # species alike) reaches the band outside the basis, where the ellipses cut the inboard wall
+    # and the free electrons run to it at 4e5 m/s; at 5 µs that flow's Courant number is 3.5 and the
+    # negative-density floor creates electrons (`notes/issues/upwind-advection-negative-diagonal.md`).
+    # The band's separation is the open-line current's closure at a wall, not this constraint's
+    # (`notes/plans/PLAN_current-continuity.md` B): by 2 ms it is 3.7 % of the closed region.
+    RP = closed_surfaces(; Eϕ = 0.3, policy = SurfaceFluxConstraint(), dt = 1.0e-6, t_end = 1.0e-3)
     redirect_stdout(devnull) do
         run_simulation!(RP)
     end
     @test surface_spread(RP, RP.plasma.ne) < 0.05
-    @test_broken species_apart(RP) < 0.02
+    @test species_apart(RP) < 0.01
 end
 
 @testitem "open lines under a loop voltage, the sheets shielding E∥ fully: the pair stays together and leaves as without it" tags = [:regression] setup = [OpenLineBlob] begin
@@ -265,4 +273,36 @@ end
     @test driven.Ne ≈ driven.Ni rtol = 0.03
     @test driven.apart < 0.05                   # the rest: the blob's edge, below the density that holds the charge
     @test driven.Ne ≈ free.Ne rtol = 0.05
+end
+
+@testitem "open lines under a loop voltage, the sheets shielding E∥ in part: the residual E∥ drives a current, and the pair stays together and leaves as without it" tags = [:regression] setup = [OpenLineBlob] begin
+    # γ₀ = 0.65, the code's default: 0.35 of E∥ is left (0.1 V/m), and it drives the Spitzer drift
+    # u_e∥ ≈ 1.4e5 m/s against u_i∥ ≈ 40 m/s. That relative motion is the current, J∥ = e n (u_i∥ − u_e∥).
+    # Both densities may change, their difference may not: ∂ₜ e(Σ zₛnₛ − nₑ) = −∇·J, and the blob holds
+    # the sheets' charge everywhere (w_amb = 1 above ~1e8 m⁻³). So the electrons and the ions leave
+    # together. That they leave as the pair without the loop voltage is this fixture's expectation, not
+    # quasineutrality's: Tₑ, Tᵢ held, e–i friction cancels the ions' electric force, and the current's
+    # drag on the gas is negligible at 2e-5 Pa, so the common flow is ≈ 0. The current itself exceeds
+    # e n c_s ~9×: a wall-connected circuit would limit it at the ion-collecting end (no sheath yet).
+    function loss(Eϕ)
+        RP, planes = open_line_blob([H2P], [1.0]; Bpol = 0.1, Eϕ, γ0 = 0.65, t_end = 2.0e-3, dt = 1.0e-6)
+        G, pla = RP.G, RP.plasma
+        inw = G.nodes.in_wall_nids
+        inventory(n) = sum(n[inw] .* G.inVol2D[inw])
+        N0 = inventory(pla.ne)
+        redirect_stdout(devnull) do
+            run_simulation!(RP)
+        end
+        apart = sum(abs.(pla.ne[inw] .- pla.ni[inw]) .* G.inVol2D[inw]) / sum(pla.ni[inw] .* G.inVol2D[inw])
+        return (; Ne = inventory(pla.ne) / N0, Ni = inventory(pla.ni) / N0, apart)
+    end
+    driven, free = loss(0.3), loss(0.0)
+    # [gap] Nothing closes the current on an open line: the electrons' density moves with their own
+    # u_e∥, the current's drift, so the electrons slide off the ions along B at u_e∥ b_Z ≈ 8 km/s
+    # and are gone in 0.2 ms, the ions held (internal/docs/src/notes/issues/kstar-ion-excess-on-open-lines.md;
+    # the fix, current continuity on wall-to-wall ψ-contour segments with a wall end condition,
+    # is internal/docs/src/notes/plans/PLAN_current-continuity.md B).
+    @test_broken driven.Ne ≈ driven.Ni rtol = 0.03
+    @test_broken driven.apart < 0.05
+    @test_broken driven.Ne ≈ free.Ne rtol = 0.05
 end

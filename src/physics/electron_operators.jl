@@ -29,12 +29,16 @@ function cache_electron_operators!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     else
         # SurfaceFluxConstraint: on every face of the constraint domain the density moves with the
         # drifts besides u∥, the perpendicular one and the ambipolar thermal drift u_T b̂ (the ions
-        # take it alike, so the pair stays together); u∥'s flux there is the stream-function flux,
-        # which leaves every control volume as it found it
+        # take it alike, so the pair stays together), and with the common parallel flow
+        # (q_I u_i∥/nₑ) b̂, the ions' charge flow per electron (a donor's nₑ times it is q_I u_i∥:
+        # the face transfer the ions make, where nₑ = q_I); the rest of u∥'s flux there, the
+        # relative flux −J∥/e, is the stream-function flux, which leaves every control volume as it
+        # found it
         F = RP.fields
         mask = falses(G.NR, G.NZ)
         mask[RP.closed_surface.basis.nodes] .= true
-        uR⊥, uZ⊥ = pla.ueR .- pla.ue_para .* F.bR, pla.ueZ .- pla.ue_para .* F.bZ
+        u_rel = pla.ue_para .- common_parallel_flow(RP)
+        uR⊥, uZ⊥ = pla.ueR .- u_rel .* F.bR, pla.ueZ .- u_rel .* F.bZ
         build_face_flux_divergence!(op.A_conv_e, G, pla.ueR, pla.ueZ; upwind = RP.flags.upwind, faces_of = (; mask, uR = uR⊥, uZ = uZ⊥))
         wall_divergence!(op.div_ue, G, pla.ueR, pla.ueZ)
         div⊥ = similar(op.div_ue)

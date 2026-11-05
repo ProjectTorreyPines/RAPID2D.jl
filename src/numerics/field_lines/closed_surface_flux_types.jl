@@ -127,7 +127,8 @@ end
     SurfaceFluxSolve{FT}(NR, NZ)
 
 What the constraint's last u∥ solve leaves for the rest of the step: `Γe_para_over_B`, the
-electron parallel particle flux over B, n u∥/B, a surface function, at the knots of the basis with `signature` (empty: none yet on this
+electrons' relative parallel flux over B, (nₑ u_e∥ − q_I u_i∥)/B = −J∥/(eB) with q_I = Σ zₛnₛ (the
+electron particle flux less the ions' charge flow they share), a surface function, at the knots of the basis with `signature` (empty: none yet on this
 basis), its stream-function face fluxes `ΓR`, `ΓZ` laid out as in [`stream_function_fluxes`](@ref),
 and the `compression` B_pᵀ(n u∥/B) on the grid (the pressure operator's adjoint; zero off its domain).
 """
