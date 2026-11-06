@@ -55,6 +55,31 @@ the clock is the run's time. For comparison.
 struct IonTransit <: SheetShape end
 
 """
+    PotentialTemplate(ℓ_coh)
+
+γ from the potential that would cancel E∥ along every open line, its EMF split evenly between the
+two ends, φ_req = E∥ (L_back − L_fwd)/2 (E∥ at the node), smoothed over the coherence length `ℓ_coh` [m]
+on the open in-wall nodes; γ = b̂·∇φ̄/E∥ clipped to [0, 1]. The sheets' potential structure of
+`design/open-line-shielding-potential.md` (the X-point quadrupole) as a shape; ℓ_coh ≈ 0.2 m matched
+the 2022 PIC's amplitude. For comparison.
+"""
+struct PotentialTemplate{FT <: AbstractFloat} <: SheetShape
+    ℓ_coh::FT
+end
+
+"""
+    LineVoltage(ℓ_coh)
+
+γ = 1 / (1 + Λ_V²), Λ_V = |E∥| L_c / (E_Debye ℓ_coh): the line's EMF against the potential the sheets
+hold, the Debye field the local plasma holds (√(nₑ e Tₑ/ε₀), smoothed as in the weights) across the
+coherence length `ℓ_coh` [m]. Dimensionless in the plasma's own quantities; ℓ_coh ≈ 0.2 m is the
+PIC's coherence scale. For comparison.
+"""
+struct LineVoltage{FT <: AbstractFloat} <: SheetShape
+    ℓ_coh::FT
+end
+
+"""
     ChargeSheetHeuristic(shape = LocalPitch())
 
 **The default.** The sheets' field is the fraction γ (`shape`, a [`SheetShape`](@ref)) of the field

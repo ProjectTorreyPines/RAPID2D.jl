@@ -5,7 +5,7 @@
 @testsnippet LineShielding begin
     using RAPID2D
     using RAPID2D: ManualSetup, SimulationFlags, SimulationConfig, RAPID, initialize!, LineCircuit, ConductingEnds,
-        IonSupplyEnds, ChargeSheetHeuristic, LocalPitch, LinePitch, LineLength, IonTransit, flf_analysis_field_lines_rz_plane!, estimate_electrostatic_field_effects!,
+        IonSupplyEnds, ChargeSheetHeuristic, LocalPitch, LinePitch, LineLength, IonTransit, PotentialTemplate, LineVoltage, flf_analysis_field_lines_rz_plane!, estimate_electrostatic_field_effects!,
         driven_parallel_field, solve_timestep!, calculate_parallel_electric_field!
     using RAPID2D.SparseArrays: rowvals, sparse
 
@@ -158,13 +158,13 @@ end
 end
 
 @testitem "Open-line shielding: the sheet shapes are finite fractions, the default the local pitch" setup = [LineShielding] begin
-    using RAPID2D.Statistics: mean
+    using RAPID2D.Statistics: mean, median
     RP = shielded_RP(ChargeSheetHeuristic())
     G, F = RP.G, RP.fields
     k = G.nodes.in_wall_nids
     γ0 = RP.config.charge_sheet_shape_factor
     @test RP.plasma.γ_shape_fac[k] ≈ min.(1.0, γ0 .* F.Bpol[k] ./ mean(F.Bpol[k]))
-    for shape in (LocalPitch(), LinePitch(), LineLength(100.0), IonTransit())
+    for shape in (LocalPitch(), LinePitch(), LineLength(100.0), IonTransit(), PotentialTemplate(0.1), LineVoltage(0.2))
         RPs = shielded_RP(ChargeSheetHeuristic(shape))
         γ = RPs.plasma.γ_shape_fac
         @test all(isfinite, γ) && all(0 .<= γ .<= 1)
@@ -176,6 +176,18 @@ end
     RPl = shielded_RP(ChargeSheetHeuristic(LineLength(1.0)))
     Lc = RPl.flf.Lc_tot[k]
     @test RPl.plasma.γ_shape_fac[k] ≈ 1 ./ (1 .+ Lc .^ 2)
+    # the potential template on a straight field: φ_req is linear along the lines, its gradient the drive, γ = 1 inside
+    RPp = shielded_RP(ChargeSheetHeuristic(PotentialTemplate(0.05)))
+    γp = RPp.plasma.γ_shape_fac
+    kin = [k for k in RPp.G.nodes.in_wall_nids if abs(RPp.G.Z2D[k]) < 0.5 && 1.4 < RPp.G.R2D[k] < 1.8]
+    @test length(kin) > 50
+    @test all(γp[kin] .> 0.9)
+    # the line-voltage shape: 1/(1 + Λ²), Λ = |E∥| L_c/(E_Debye ℓ); a dense line shields, an empty one does not
+    RPv = shielded_RP(ChargeSheetHeuristic(LineVoltage(0.2)))
+    γv = RPv.plasma.γ_shape_fac
+    @test median(γv[kin]) > 0.5
+    RPv0 = shielded_RP(ChargeSheetHeuristic(LineVoltage(0.2)); ne = 1.0e8)
+    @test all(RPv0.plasma.γ_shape_fac[kin] .< 0.1)
     # the transit shape before any time has passed: nothing is charged
     @test all(shielded_RP(ChargeSheetHeuristic(IonTransit())).plasma.γ_shape_fac[k] .== 0)
 end

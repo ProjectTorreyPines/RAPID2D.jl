@@ -426,6 +426,59 @@ function sheet_shape_factor!(::IonTransit, RP::RAPID{FT}, Bpol_mean) where {FT}
     return RP
 end
 
+function sheet_shape_factor!(shape::LineVoltage, RP::RAPID{FT}, Bpol_mean) where {FT}
+    @unpack ee, eps0 = RP.config.constants
+    pla = RP.plasma
+    Lc = RP.flf.Lc_tot
+    E_drive = driven_parallel_field(RP)
+    ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
+    ℓ = FT(shape.ℓ_coh)
+    @. pla.γ_shape_fac = ifelse(
+        isfinite(Lc) & (ne_SM > 0) & (pla.Te_eV > 0),
+        1 / (1 + (abs(E_drive) * Lc / (sqrt(max(ne_SM, zero(FT)) * ee * max(pla.Te_eV, zero(FT)) / eps0) * ℓ))^2),
+        zero(FT)
+    )
+    return RP
+end
+function sheet_shape_factor!(shape::PotentialTemplate, RP::RAPID{FT}, Bpol_mean) where {FT}
+    G, F, flf, γ = RP.G, RP.fields, RP.flf, RP.plasma.γ_shape_fac
+    NR, NZ = G.NR, G.NZ
+    ℓ = FT(shape.ℓ_coh)
+    fill!(γ, zero(FT))
+    E_drive = driven_parallel_field(RP)
+    @with_pool pool begin
+        φ, φs = acquire!(pool, FT, NR, NZ), acquire!(pool, FT, NR, NZ)
+        ok = acquire!(pool, Bool, NR, NZ)
+        fill!(ok, false)
+        ok[G.nodes.in_wall_nids] .= true
+        @. φ = E_drive * (flf.Lc_backward - flf.Lc_forward) / 2
+        @. ok = ok & !flf.is_closed & isfinite(φ)
+        # the Gaussian smoothing over ℓ, within 3ℓ
+        mi, mj = ceil(Int, 3ℓ / G.dR), ceil(Int, 3ℓ / G.dZ)
+        fill!(φs, zero(FT))
+        for j in 1:NZ, i in 1:NR
+            ok[i, j] || continue
+            num = den = zero(FT)
+            for jj in max(1, j - mj):min(NZ, j + mj), ii in max(1, i - mi):min(NR, i + mi)
+                ok[ii, jj] || continue
+                w = exp(-((G.R1D[ii] - G.R1D[i])^2 + (G.Z1D[jj] - G.Z1D[j])^2) / (2ℓ^2))
+                num += w * φ[ii, jj]
+                den += w
+            end
+            φs[i, j] = num / den
+        end
+        # γ = b̂·∇φ̄ / E∥, clipped; zero where a neighbour is missing or there is no drive
+        for j in 2:(NZ - 1), i in 2:(NR - 1)
+            (ok[i, j] && ok[i + 1, j] && ok[i - 1, j] && ok[i, j + 1] && ok[i, j - 1]) || continue
+            E_drive[i, j] == 0 && continue
+            dR = (φs[i + 1, j] - φs[i - 1, j]) / (2G.dR)
+            dZ = (φs[i, j + 1] - φs[i, j - 1]) / (2G.dZ)
+            γ[i, j] = clamp((F.bR[i, j] * dR + F.bZ[i, j] * dZ) / E_drive[i, j], zero(FT), one(FT))
+        end
+    end
+    return RP
+end
+
 # The sign of the sheets' parallel field: against the driven E∥ (the heuristic; the line circuit
 # overwrites it on the lines it applies to)
 function sheet_field_sign!(RP::RAPID)
