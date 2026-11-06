@@ -84,12 +84,9 @@ function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: Abstract
     # the charge sheets' parallel field, against the applied loop voltage; none left from before
     # when the cancellation is off
     if RP.flags.E_para_cancellation
-        # `ERZ_pla_sign` turns it with the drive where the line circuit piles the EMF on a resistive stretch
-        if control
-            @. F.ERZ_para_pla = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag * F.Bpol / F.Btot
-        else
-            @. F.ERZ_para_pla = sign(-F.Eϕ_presc * F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag * F.Bpol / F.Btot
-        end
+        # the sheets' field is `ERZ_pla_sign ERZ_pla_mag` along b̂_pol: against the drive, or with it where
+        # the line circuit piles the EMF on a resistive stretch (`estimate_electrostatic_field_effects!`)
+        @. F.ERZ_para_pla = F.ERZ_pla_sign * F.ERZ_pla_mag * F.Bpol / F.Btot
     else
         fill!(F.ERZ_para_pla, zero(FT))
     end
@@ -403,6 +400,14 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return ERZ_target, E_Debye
 end
 
+# The sign of the sheets' parallel field: against the driven E∥ (the heuristic; the line circuit
+# overwrites it on the lines it applies to)
+function sheet_field_sign!(RP::RAPID)
+    E_drive = driven_parallel_field(RP)
+    @. RP.fields.ERZ_pla_sign = -sign(E_drive)
+    return RP
+end
+
 """
     estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
@@ -421,7 +426,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     ERZ_target, E_Debye = update_space_charge_weights!(RP)
     if !RP.flags.charge_sheet_field
         fill!(F.ERZ_pla_mag, zero(FT))
-        fill!(F.ERZ_pla_sign, one(FT))
+        sheet_field_sign!(RP)
         fill!(RP.transport.Dpol_turb, zero(FT))
         # E∥ without the sheets' part at once: the transport's refresh reads it
         calculate_parallel_electric_field!(RP)
@@ -433,7 +438,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     @. F.ERZ_pla_mag = ifelse(RP.flf.is_closed, zero(FT), min(ERZ_target, E_Debye))
     extrapolate_field_to_boundary_nodes!(G, F.ERZ_pla_mag)
     F.ERZ_pla_mag[RP.flf.closed_surface_nids] .= zero(FT)
-    fill!(F.ERZ_pla_sign, one(FT))
+    sheet_field_sign!(RP)
 
     # The line circuit (`LineCircuit`): on the lines it applies to, the sheets' field is what leaves
     # the circuit's residual E∥, S = E_drive − E_res along b̂, as an RZ field along b̂_pol; turned with
@@ -456,18 +461,20 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
                 continue
             end
             F.ERZ_pla_mag[k] = needed
-            F.ERZ_pla_sign[k] = (S == 0 || sign(S) == sign(E_drive[k])) ? one(FT) : -one(FT)
+            # the sheets' parallel part is E_res − E_drive = −S
+            S == 0 || (F.ERZ_pla_sign[k] = -sign(S))
         end
     end
 
     calculate_parallel_electric_field!(RP)
 
+    # the sheets' RZ field E_RZ = ERZ_pla_sign ERZ_pla_mag b̂_pol, and its E×B drift (E_RZ × Bϕ φ̂)/B²
     if RP.flags.mean_ExB
-        @. pla.mean_ExB_R = (F.ERZ_pla_sign * F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * F.bpol_Z
-        @. pla.mean_ExB_Z = (F.ERZ_pla_sign * F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
+        @. pla.mean_ExB_R = -sign(F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag / F.Btot * F.bpol_Z
+        @. pla.mean_ExB_Z = sign(F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag / F.Btot * F.bpol_R
 
-        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag * F.bpol_R
-        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag * F.bpol_Z
+        @. F.ER = F.ERZ_pla_sign * F.ERZ_pla_mag * F.bpol_R
+        @. F.EZ = F.ERZ_pla_sign * F.ERZ_pla_mag * F.bpol_Z
     end
 
     # # Turbulent parallel diffusion based on fluctuation levels

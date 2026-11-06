@@ -6,10 +6,11 @@
     using RAPID2D
     using RAPID2D: ManualSetup, SimulationFlags, SimulationConfig, RAPID, initialize!, LineCircuit, ConductingEnds,
         IonSupplyEnds, ChargeSheetHeuristic, flf_analysis_field_lines_rz_plane!, estimate_electrostatic_field_effects!,
-        driven_parallel_field, solve_timestep!
+        driven_parallel_field, solve_timestep!, calculate_parallel_electric_field!
+    using RAPID2D.SparseArrays: rowvals, sparse
 
     "A uniform plasma on straight open lines under Eϕ, with a thin stretch (n/10) near the top wall."
-    function shielded_RP(policy; Eϕ = 0.3, Bpol = 0.1, ne = 1.0e17, thin = true)
+    function shielded_RP(policy; Eϕ = 0.3, Bpol = 0.1, ne = 1.0e17, thin = true, induction = false)
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(; R = (1.2, 2.0), BR = 0.0, BZ = Bpol, Eϕ),
             NR = 17, NZ = 33, R0B0 = 3.0, prefilled_gas_pressure = 2.0e-3,
@@ -18,7 +19,7 @@
         RP = RAPID{Float64}(config)
         RP.flags = SimulationFlags{Float64}(;
             src = false, Te_evolve = false, Ti_evolve = false, Gas_evolve = false, Ampere = false,
-            open_line_shielding = policy,
+            E_para_induction = induction, open_line_shielding = policy,
         )
         redirect_stderr(devnull) do
             initialize!(RP)
@@ -51,9 +52,13 @@ end
     @test all(vec(st.gamma_local)[thin] .< -0.5)
     @test all(0.1 .< vec(st.gamma_local)[dense] .< 1)
     # the sheets' field sign follows: against the drive on the dense part, with it on the thin one
-    @test all(vec(F.ERZ_pla_sign)[dense] .== 1)
-    @test all(vec(F.ERZ_pla_sign)[thin] .== -1)
+    @test all(vec(F.ERZ_pla_sign)[dense] .== -sign.(E[dense]))
+    @test all(vec(F.ERZ_pla_sign)[thin] .== sign.(E[thin]))
     @test all(vec(F.ERZ_pla_mag)[k] .>= 0)
+    # only nodes with a line of their own (a row of the weights) take the circuit
+    W = RP.flf.line_weights
+    rows = unique(rowvals(W))
+    @test all(in(rows), k)
     # the drift turns with the sign
     sgn_dense = sign(sum(vec(RP.plasma.mean_ExB_R)[dense]))
     @test all(sign.(vec(RP.plasma.mean_ExB_R)[dense]) .== sgn_dense)
@@ -70,7 +75,7 @@ end
 @testitem "Open-line shielding: the heuristic is untouched, and an ion-supply end shields the dense line" setup = [LineShielding] begin
     RP = shielded_RP(ChargeSheetHeuristic())
     @test !any(RP.open_line.applies)
-    @test all(RP.fields.ERZ_pla_sign .== 1)
+    @test all(RP.fields.ERZ_pla_sign .== -sign.(driven_parallel_field(RP)))
     # the heuristic's field: γ₀ B_pol/⟨B_pol⟩ of the cancelling field, capped by E_Debye
     F = RP.fields
     k = RP.G.nodes.in_wall_nids
@@ -125,4 +130,29 @@ end
     end
     Nt0 = RP0.diagnostics.Ntracker
     @test sum(Nt0.cum2D_Ne_loss[f.nid] for f in top) > 0.5 * sum(Nt0.cum2D_Ne_loss[f.nid] for f in bottom)
+end
+
+@testitem "Open-line shielding: the sheets' field keeps its sign when the induced field reverses the drive" setup = [LineShielding] begin
+    # the induced field twice the prescribed one and against it: the driven E∥ is reversed
+    function reversed(policy)
+        RP = shielded_RP(policy; induction = true)
+        RP.fields.Eϕ_coils_pla .= -2 .* RP.fields.Eϕ_presc
+        calculate_parallel_electric_field!(RP)
+        estimate_electrostatic_field_effects!(RP)
+        return RP
+    end
+    RP = reversed(LineCircuit(ConductingEnds()))
+    F, st = RP.fields, RP.open_line
+    k = findall(vec(st.applies))
+    @test length(k) > 100
+    E = vec(driven_parallel_field(RP))
+    @test all(E[k] .* vec(F.Eϕ_para_presc)[k] .< 0)
+    # the total parallel field is still the circuit's residual
+    @test maximum(abs.(vec(F.E_para_tot)[k] .- vec(st.E_para_res)[k]) ./ abs.(vec(st.E_para_res)[k])) < 1.0e-9
+    # and the heuristic's field still opposes the (reversed) drive
+    RP0 = reversed(ChargeSheetHeuristic())
+    k0 = findall(vec(RP0.fields.ERZ_pla_mag) .> 0)
+    @test length(k0) > 100
+    @test all(sign.(vec(RP0.fields.ERZ_para_pla)[k0]) .== -sign.(vec(driven_parallel_field(RP0))[k0]))
+    @test all(abs.(vec(RP0.fields.E_para_tot)[k0]) .<= abs.(vec(driven_parallel_field(RP0))[k0]) .+ 1.0e-12)
 end

@@ -117,7 +117,7 @@ function open_line_circuit!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     faces = RP.transport.wall_faces
     by_node = faces_by_node(faces)
     bR, bZ = F.bR, F.bZ
-    rows = unique(rowvals(sparse(transpose(W))))     # the nodes with a row
+    rows = unique(rowvals(W))     # the nodes with a row: a line that ends on the wall both ways
     for k in rows
         i, j = mod1(k, G.NR), cld(k, G.NR)
         plasma[i, j] || continue
