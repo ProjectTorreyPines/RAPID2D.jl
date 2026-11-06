@@ -1382,15 +1382,14 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
         v_e = zeros(FT, length(faces_e))
         robin_e = zeros(FT, Ng)
         returned_e = zeros(FT, Ng)
+        v_absorb = zeros(FT, length(faces_e))
+        v_out = zeros(FT, length(faces_e))
         if RP.flags.diffu
             update_charge_states!(RP)   # the Bohm channel's mean ion mass, as it is now
-            v_absorb = electron_wall_absorption_speeds(RP, faces_e)
-            robin_e .= wall_face_debit(FT, Ng, faces_e, v_absorb)
-            v_e .+= v_absorb
+            v_absorb .= electron_wall_absorption_speeds(RP, faces_e)
         end
         if RP.flags.convec
-            a_e = electron_wall_albedo(RP)
-            v_out = face_outflow_speeds(RP.G, faces_e, pla.ueR, pla.ueZ)
+            v_out .= face_outflow_speeds(RP.G, faces_e, pla.ueR, pla.ueZ)
             # A convective operator never written for these velocities would apply nothing
             # while the ledger books the outflow the faces see: refused.
             iszero(op.A_conv_e) && any(>(zero(FT)), v_out) && throw(
@@ -1399,8 +1398,18 @@ function solve_electron_continuity_equation!(RP::RAPID{FT}) where {FT <: Abstrac
                         "update_transport_quantities! (or cache_electron_operators!) for these velocities"
                 )
             )
-            returned_e .= wall_face_debit(FT, Ng, faces_e, a_e .* v_out)
-            v_e .+= (one(FT) - a_e) .* v_out
+        end
+        # under the line circuit the faces on its lines take the electron loss the circuit leaves,
+        # through their albedo (the electrons the sheath turns back) and their Robin speed
+        albedo_e = fill(electron_wall_albedo(RP), length(faces_e))
+        circuit_wall_speeds!(RP, faces_e, v_absorb, v_out, albedo_e)
+        if RP.flags.diffu
+            robin_e .= wall_face_debit(FT, Ng, faces_e, v_absorb)
+            v_e .+= v_absorb
+        end
+        if RP.flags.convec
+            returned_e .= wall_face_debit(FT, Ng, faces_e, albedo_e .* v_out)
+            v_e .+= (one(FT) .- albedo_e) .* v_out
         end
 
         n_vec, rhs_vec = vec(pla.ne), vec(op.RHS)

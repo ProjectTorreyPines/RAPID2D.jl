@@ -142,3 +142,45 @@ function open_line_circuit!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     return RP
 end
+
+"""
+    circuit_wall_speeds!(RP, faces, v_absorb, v_out, albedo) -> (v_absorb, albedo)
+
+The electrons' wall speeds a face takes under the line circuit: on a face whose owner node is on a
+line the circuit applies to, the sheath passes the ions and turns the electrons back, so the
+electrons leave at the rate the circuit leaves them, `Γ_e = Γ_i − j_out/e` per wall area, with
+`j_out = Jpara_over_B B·n̂_f` the current into the wall (positive at the ion-collecting end, where
+fewer electrons leave; negative at the other, where more do) and `Γ_i` the ions' charge flux of
+their last step. The target speed `Γ_e/nₑ` (at least zero) is met by the face's albedo, which returns
+the convective outflow `v_out` the sheath turns back, and by the Robin speed `v_absorb` for the rest;
+the ledger reads the same speeds. Other faces keep the channels' speeds and the configured albedo.
+With the convective channel alone, a target above the outflow is not reached. The electrons'
+density is the step's entry value: a θ-weighted solve lands near the target, not on it
+(PLAN_open-line-circuit.md §7).
+"""
+function circuit_wall_speeds!(
+        RP::RAPID{FT}, faces, v_absorb::AbstractVector{FT}, v_out::AbstractVector{FT}, albedo::AbstractVector{FT},
+    ) where {FT <: AbstractFloat}
+    RP.flags.open_line_shielding isa LineCircuit || return v_absorb, albedo
+    st, F, pla = RP.open_line, RP.fields, RP.plasma
+    ee = RP.config.constants.ee
+    diffu, convec = RP.flags.diffu, RP.flags.convec
+    for (k, f) in enumerate(faces)
+        st.applies[f.rid, f.zid] || continue
+        n = pla.ne[f.rid, f.zid]
+        n > OPEN_LINE_N_FLOOR || continue
+        nR, nZ = f.outward
+        j_out = st.Jpara_over_B[f.rid, f.zid] * (F.BR[f.rid, f.zid] * nR + F.BZ[f.rid, f.zid] * nZ)
+        v_target = max(zero(FT), (st.ion_wall_charge_flux[k] - j_out) / (ee * n))
+        if convec && v_out[k] > 0
+            # the outflow the sheath lets through, the rest returned; what is still missing, the Robin speed
+            through = min(v_target, v_out[k])
+            albedo[k] = one(FT) - through / v_out[k]
+            v_absorb[k] = diffu ? v_target - through : zero(FT)
+        else
+            albedo[k] = convec ? one(FT) : albedo[k]
+            v_absorb[k] = diffu ? v_target : v_absorb[k]
+        end
+    end
+    return v_absorb, albedo
+end

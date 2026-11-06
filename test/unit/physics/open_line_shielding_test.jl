@@ -92,3 +92,37 @@ end
     kk = findall(vec(RP.open_line.applies))
     @test all(0 .< vec(RP.open_line.gamma_local)[kk] .<= 1)
 end
+
+@testitem "Open-line shielding: the electrons leave the wall as the circuit leaves them, turned back at the ion-collecting end" setup = [LineShielding] begin
+    # conducting ends on the uniform line: the current is far above the ions' supply (≈ 9 e n c_s), so at the
+    # ion-collecting end (+Z: ions leave along J, along +b̂ for Eϕ > 0) no electron may leave, and at the other
+    # end the electrons leave with the current on top of the ions' flux
+    RP = shielded_RP(LineCircuit(ConductingEnds()); thin = false)
+    G, st = RP.G, RP.open_line
+    faces = RP.transport.wall_faces
+    redirect_stdout(devnull) do
+        solve_timestep!(RP)      # the ions record their wall flux; the circuit's first step has none
+        solve_timestep!(RP)
+    end
+    Nt = RP.diagnostics.Ntracker
+    # faces whose owner owns no other face (a corner node also loses through its side face)
+    owners = [f.nid for f in faces]
+    single(f) = count(==(f.nid), owners) == 1
+    top = [f for f in faces if f.outward == (0, 1) && st.applies[f.rid, f.zid] && single(f)]
+    bottom = [f for f in faces if f.outward == (0, -1) && st.applies[f.rid, f.zid] && single(f)]
+    @test length(top) > 5 && length(bottom) > 5
+    @test all(st.Jpara_over_B[f.rid, f.zid] > 0 for f in top)
+    e_loss(fs) = sum(Nt.cum2D_Ne_loss[f.nid] for f in fs)
+    i_loss(fs) = sum(Nt.cum2D_Ni_loss[f.nid] for f in fs)
+    @test i_loss(top) > 0 && i_loss(bottom) > 0
+    # the second step's electron loss: none at the ion end, more than the ions' at the electron end
+    @test e_loss(top) < 0.05 * i_loss(top)
+    @test e_loss(bottom) > 2 * i_loss(bottom)
+    # the heuristic leaves the electrons' own Robin wall: comparable losses at both ends
+    RP0 = shielded_RP(ChargeSheetHeuristic(); thin = false)
+    redirect_stdout(devnull) do
+        solve_timestep!(RP0); solve_timestep!(RP0)
+    end
+    Nt0 = RP0.diagnostics.Ntracker
+    @test sum(Nt0.cum2D_Ne_loss[f.nid] for f in top) > 0.5 * sum(Nt0.cum2D_Ne_loss[f.nid] for f in bottom)
+end

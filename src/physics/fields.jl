@@ -437,8 +437,10 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
 
     # The line circuit (`LineCircuit`): on the lines it applies to, the sheets' field is what leaves
     # the circuit's residual E∥, S = E_drive − E_res along b̂, as an RZ field along b̂_pol; turned with
-    # the drive (sign −1) where the EMF piles up on a resistive stretch. Not capped by E_Debye: the
-    # circuit sets the parallel field, and a capped magnitude would not match it.
+    # the drive (sign −1) where the EMF piles up on a resistive stretch. Capped, like the heuristic's,
+    # at E_Debye, the most the local plasma holds: below that density (the avalanche) the sheets
+    # saturate and the circuit's current is not what flows — a declared regime switch, the 2018
+    # model's, not the circuit's (PLAN_open-line-circuit.md §7).
     if RP.flags.open_line_shielding isa LineCircuit
         open_line_circuit!(RP)
         st = RP.open_line
@@ -446,7 +448,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
         for k in eachindex(st.applies)
             st.applies[k] || continue
             S = E_drive[k] - st.E_para_res[k]
-            F.ERZ_pla_mag[k] = abs(S) * F.Btot[k] / F.Bpol[k]
+            F.ERZ_pla_mag[k] = min(abs(S) * F.Btot[k] / F.Bpol[k], E_Debye[k])
             F.ERZ_pla_sign[k] = (S == 0 || sign(S) == sign(E_drive[k])) ? one(FT) : -one(FT)
         end
     end
