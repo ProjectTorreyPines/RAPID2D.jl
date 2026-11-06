@@ -575,6 +575,7 @@ Fields include components of the magnetic and electric fields.
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims)       # induced by ψ_coils_pla's change over the step; below the Ampère gate, the coils' alone [V/m]
     Eϕ_coils_pla_prev::Matrix{FT} = zeros(FT, dims)  # the same, one step before [V/m]
     ERZ_pla_mag::Matrix{FT} = zeros(FT, dims)        # the open-line charge sheets' (S1) RZ field, magnitude, along ±b̂ in RZ [V/m]
+    ERZ_pla_sign::Matrix{FT} = ones(FT, dims)        # +1 where that field opposes the driven E∥ (shielding), −1 where the line circuit adds to it
     ERZ_para_pla::Matrix{FT} = zeros(FT, dims)       # its parallel projection, against the driven E∥ [V/m]
     Eϕ_para_coils_pla::Matrix{FT} = zeros(FT, dims)  # Eϕ_coils_pla bϕ [V/m]
 

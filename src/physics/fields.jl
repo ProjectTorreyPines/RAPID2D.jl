@@ -84,10 +84,11 @@ function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: Abstract
     # the charge sheets' parallel field, against the applied loop voltage; none left from before
     # when the cancellation is off
     if RP.flags.E_para_cancellation
+        # `ERZ_pla_sign` turns it with the drive where the line circuit piles the EMF on a resistive stretch
         if control
-            @. F.ERZ_para_pla = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.ERZ_pla_mag * F.Bpol / F.Btot
+            @. F.ERZ_para_pla = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag * F.Bpol / F.Btot
         else
-            @. F.ERZ_para_pla = sign(-F.Eϕ_presc * F.Bϕ) * F.ERZ_pla_mag * F.Bpol / F.Btot
+            @. F.ERZ_para_pla = sign(-F.Eϕ_presc * F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag * F.Bpol / F.Btot
         end
     else
         fill!(F.ERZ_para_pla, zero(FT))
@@ -420,6 +421,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     ERZ_target, E_Debye = update_space_charge_weights!(RP)
     if !RP.flags.charge_sheet_field
         fill!(F.ERZ_pla_mag, zero(FT))
+        fill!(F.ERZ_pla_sign, one(FT))
         fill!(RP.transport.Dpol_turb, zero(FT))
         # E∥ without the sheets' part at once: the transport's refresh reads it
         calculate_parallel_electric_field!(RP)
@@ -431,15 +433,32 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     @. F.ERZ_pla_mag = ifelse(RP.flf.is_closed, zero(FT), min(ERZ_target, E_Debye))
     extrapolate_field_to_boundary_nodes!(G, F.ERZ_pla_mag)
     F.ERZ_pla_mag[RP.flf.closed_surface_nids] .= zero(FT)
+    fill!(F.ERZ_pla_sign, one(FT))
+
+    # The line circuit (`LineCircuit`): on the lines it applies to, the sheets' field is what leaves
+    # the circuit's residual E∥, S = E_drive − E_res along b̂, as an RZ field along b̂_pol; turned with
+    # the drive (sign −1) where the EMF piles up on a resistive stretch. Not capped by E_Debye: the
+    # circuit sets the parallel field, and a capped magnitude would not match it.
+    if RP.flags.open_line_shielding isa LineCircuit
+        open_line_circuit!(RP)
+        st = RP.open_line
+        E_drive = driven_parallel_field(RP)
+        for k in eachindex(st.applies)
+            st.applies[k] || continue
+            S = E_drive[k] - st.E_para_res[k]
+            F.ERZ_pla_mag[k] = abs(S) * F.Btot[k] / F.Bpol[k]
+            F.ERZ_pla_sign[k] = (S == 0 || sign(S) == sign(E_drive[k])) ? one(FT) : -one(FT)
+        end
+    end
 
     calculate_parallel_electric_field!(RP)
 
     if RP.flags.mean_ExB
-        @. pla.mean_ExB_R = (F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * F.bpol_Z
-        @. pla.mean_ExB_Z = (F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
+        @. pla.mean_ExB_R = (F.ERZ_pla_sign * F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * F.bpol_Z
+        @. pla.mean_ExB_Z = (F.ERZ_pla_sign * F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
 
-        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_mag * F.bpol_R
-        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_mag * F.bpol_Z
+        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag * F.bpol_R
+        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_sign * F.ERZ_pla_mag * F.bpol_Z
     end
 
     # # Turbulent parallel diffusion based on fluctuation levels

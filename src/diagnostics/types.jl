@@ -271,6 +271,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     Eϕ_para_presc::Matrix{FT} = zeros(FT, dims_RZ)   # Prescribed parallel electric field
     mean_ExB_pol::Matrix{FT} = zeros(FT, dims_RZ)   # ExB drift magnitude
     ERZ_pla_mag::Matrix{FT} = zeros(FT, dims_RZ)    # the open-line charge sheets' RZ field, magnitude
+    ERZ_para_pla::Matrix{FT} = zeros(FT, dims_RZ)   # its parallel part, signed against the driven E∥ (the line circuit's residual is E_para_tot)
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)   # induced by the coils and the plasma over the last step
     Eϕ_coils::Matrix{FT} = zeros(FT, dims_RZ)       # the coils' part, −ψ_coils(ΔI)/(R Δt); NaN without induction
     Eϕ_pla::Matrix{FT} = zeros(FT, dims_RZ)         # the rest, Eϕ_coils_pla − Eϕ_coils (not −Δψ_pla/(R Δt)); NaN without induction

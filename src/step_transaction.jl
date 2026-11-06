@@ -31,7 +31,7 @@ step_verdict(::RAPID) = Accept()
 # The records a step writes, copied whole, and the fields of the other owners it writes (the
 # coils' for each coil). The owners' other fields are constant over a run, rebuilt where they
 # are used, or refreshed from the state after an accepted step.
-const STEP_STATE_RECORDS = (:plasma, :fields, :vertical_field_control)
+const STEP_STATE_RECORDS = (:plasma, :fields, :vertical_field_control, :open_line)
 const STEP_STATE_FIELDS = (
     transport = (),        # its ion columns are gathered from the species store (plasma) at each solve
     reactions = (:counts, :published),
@@ -73,6 +73,7 @@ mutable struct StepState{FT <: AbstractFloat}
     plasma::PlasmaState{FT}
     fields::Fields{FT}
     vertical_field_control::VerticalFieldControlState{FT}
+    open_line::OpenLineCircuitState{FT}
     reactions::ReactionState{FT}
     diagnostics::Diagnostics{FT}
     closed_surface::ClosedSurfaceState{FT}
@@ -86,7 +87,7 @@ function StepState(RP::RAPID{FT}) where {FT <: AbstractFloat}
     NR, NZ = RP.G.NR, RP.G.NZ
     none = Matrix{FT}(undef, 0, 0)
     ck = StepState{FT}(
-        deepcopy(RP.plasma), deepcopy(RP.fields), deepcopy(RP.vertical_field_control),
+        deepcopy(RP.plasma), deepcopy(RP.fields), deepcopy(RP.vertical_field_control), deepcopy(RP.open_line),
         ReactionState{FT}(dims = (NR, NZ)),
         Diagnostics{FT}(NR, NZ), ClosedSurfaceState{FT}(NR, NZ),
         SavedCoilSystem{FT}(zero(FT), FT[], zero(FT), zero(FT), copy(none), copy(none), SavedCoil{FT}[]),
