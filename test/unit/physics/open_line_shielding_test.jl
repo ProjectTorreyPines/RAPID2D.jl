@@ -5,7 +5,7 @@
 @testsnippet LineShielding begin
     using RAPID2D
     using RAPID2D: ManualSetup, SimulationFlags, SimulationConfig, RAPID, initialize!, LineCircuit, ConductingEnds,
-        IonSupplyEnds, ChargeSheetHeuristic, flf_analysis_field_lines_rz_plane!, estimate_electrostatic_field_effects!,
+        IonSupplyEnds, ChargeSheetHeuristic, LocalPitch, LinePitch, LineLength, IonTransit, flf_analysis_field_lines_rz_plane!, estimate_electrostatic_field_effects!,
         driven_parallel_field, solve_timestep!, calculate_parallel_electric_field!
     using RAPID2D.SparseArrays: rowvals, sparse
 
@@ -155,4 +155,27 @@ end
     @test length(k0) > 100
     @test all(sign.(vec(RP0.fields.ERZ_para_pla)[k0]) .== -sign.(vec(driven_parallel_field(RP0))[k0]))
     @test all(abs.(vec(RP0.fields.E_para_tot)[k0]) .<= abs.(vec(driven_parallel_field(RP0))[k0]) .+ 1.0e-12)
+end
+
+@testitem "Open-line shielding: the sheet shapes are finite fractions, the default the local pitch" setup = [LineShielding] begin
+    using RAPID2D.Statistics: mean
+    RP = shielded_RP(ChargeSheetHeuristic())
+    G, F = RP.G, RP.fields
+    k = G.nodes.in_wall_nids
+    γ0 = RP.config.charge_sheet_shape_factor
+    @test RP.plasma.γ_shape_fac[k] ≈ min.(1.0, γ0 .* F.Bpol[k] ./ mean(F.Bpol[k]))
+    for shape in (LocalPitch(), LinePitch(), LineLength(100.0), IonTransit())
+        RPs = shielded_RP(ChargeSheetHeuristic(shape))
+        γ = RPs.plasma.γ_shape_fac
+        @test all(isfinite, γ) && all(0 .<= γ .<= 1)
+        @test all(isfinite, RPs.fields.ERZ_pla_mag)
+    end
+    # a straight field: the line's least B_pol is the local one, the two pitch shapes agree
+    @test shielded_RP(ChargeSheetHeuristic(LinePitch())).plasma.γ_shape_fac[k] ≈ RP.plasma.γ_shape_fac[k]
+    # the length shape: 1/(1 + (L_c/L_ref)²), between 0 and 1, lower on longer lines
+    RPl = shielded_RP(ChargeSheetHeuristic(LineLength(1.0)))
+    Lc = RPl.flf.Lc_tot[k]
+    @test RPl.plasma.γ_shape_fac[k] ≈ 1 ./ (1 .+ Lc .^ 2)
+    # the transit shape before any time has passed: nothing is charged
+    @test all(shielded_RP(ChargeSheetHeuristic(IonTransit())).plasma.γ_shape_fac[k] .== 0)
 end

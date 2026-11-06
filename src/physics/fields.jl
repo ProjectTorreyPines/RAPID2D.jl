@@ -335,7 +335,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # γ₀, the shape factor at the mean B_pol (`config.charge_sheet_shape_factor`)
     γ0 = RP.config.charge_sheet_shape_factor
     if Bpol_mean > 0
-        @. pla.γ_shape_fac = min(FT(1.0), γ0 * (F.Bpol / Bpol_mean))
+        sheet_shape_factor!(sheet_shape(RP.flags.open_line_shielding), RP, Bpol_mean)
     else
         fill!(pla.γ_shape_fac, zero(FT))
     end
@@ -398,6 +398,32 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
 
     return ERZ_target, E_Debye
+end
+
+# The sheets' shape γ_shape_fac under each `SheetShape` (`open_line_circuit_types.jl`), from the
+# field-line following; finite and in [0, 1] on every node
+function sheet_shape_factor!(::LocalPitch, RP::RAPID{FT}, Bpol_mean) where {FT}
+    γ0 = RP.config.charge_sheet_shape_factor
+    @. RP.plasma.γ_shape_fac = min(FT(1.0), γ0 * (RP.fields.Bpol / Bpol_mean))
+    return RP
+end
+function sheet_shape_factor!(::LinePitch, RP::RAPID{FT}, Bpol_mean) where {FT}
+    γ0 = RP.config.charge_sheet_shape_factor
+    mB = RP.flf.min_Bpol
+    @. RP.plasma.γ_shape_fac = ifelse(isfinite(mB), min(FT(1.0), γ0 * (mB / Bpol_mean)), zero(FT))
+    return RP
+end
+function sheet_shape_factor!(shape::LineLength, RP::RAPID{FT}, Bpol_mean) where {FT}
+    Lc = RP.flf.Lc_tot
+    @. RP.plasma.γ_shape_fac = ifelse(isfinite(Lc), 1 / (1 + (Lc / FT(shape.L_ref))^2), zero(FT))
+    return RP
+end
+function sheet_shape_factor!(::IonTransit, RP::RAPID{FT}, Bpol_mean) where {FT}
+    @unpack ee, mi = RP.config.constants
+    Lc = RP.flf.Lc_tot
+    t = RP.time_s
+    @. RP.plasma.γ_shape_fac = ifelse(isfinite(Lc) && Lc > 0, min(FT(1.0), t * sqrt(ee * max(RP.plasma.Te_eV, zero(FT)) / mi) / Lc), zero(FT))
+    return RP
 end
 
 # The sign of the sheets' parallel field: against the driven E∥ (the heuristic; the line circuit

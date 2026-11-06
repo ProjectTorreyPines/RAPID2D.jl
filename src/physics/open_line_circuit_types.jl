@@ -9,13 +9,66 @@ How the open field lines' charge sheets shield the driven E∥ (`notes/plans/PLA
 abstract type OpenLineShielding end
 
 """
-    ChargeSheetHeuristic()
+    SheetShape
 
-**The default.** The sheets' field is a fraction γ = γ₀ B_pol/⟨B_pol⟩ (`config.charge_sheet_shape_factor`)
-of the field that would cancel the driven E∥, capped by the field the local plasma holds, E_Debye
+The shape γ ∈ [0, 1] of the charge sheets' field on the open lines: the fraction of the field that
+would cancel the driven E∥ the sheets set up ([`ChargeSheetHeuristic`](@ref)); the plasma's charge
+capacity E_Debye caps it afterwards. Each shape reads the field-line following alone.
+"""
+abstract type SheetShape end
+
+"""
+    LocalPitch()
+
+**The default.** γ = min(1, γ₀ B_pol/⟨B_pol⟩) with the node's own poloidal field
+(`config.charge_sheet_shape_factor` γ₀ at the in-wall mean): the shielding fails near a null, where
+the RZ field that cancels E∥, |E∥| B/B_pol, is beyond reach.
+"""
+struct LocalPitch <: SheetShape end
+
+"""
+    LinePitch()
+
+γ = min(1, γ₀ min B_pol/⟨B_pol⟩) with the least poloidal field along the node's whole line: a line that
+passes a null shields poorly on all its length, not only near the null.
+"""
+struct LinePitch <: SheetShape end
+
+"""
+    LineLength(L_ref)
+
+γ = 1 / (1 + (L_c/L_ref)²) with the line's connection length `L_c` (wall to wall): the sheets hold the
+line's EMF |E∥| L_c up to the potential a line of `L_ref` [m] carries. `L_ref` is a fitted length
+(1.6 km reproduces the 2018 PIC's half-cancelled point on KSTAR). For comparison.
+"""
+struct LineLength{FT <: AbstractFloat} <: SheetShape
+    L_ref::FT
+end
+
+"""
+    IonTransit()
+
+γ = min(1, t c_s / L_c), c_s = √(e Tₑ/mᵢ): the sheets' ends are charged once the ions have crossed
+the line; before that the line is in its charging phase and shields in proportion. No parameter;
+the clock is the run's time. For comparison.
+"""
+struct IonTransit <: SheetShape end
+
+"""
+    ChargeSheetHeuristic(shape = LocalPitch())
+
+**The default.** The sheets' field is the fraction γ (`shape`, a [`SheetShape`](@ref)) of the field
+that would cancel the driven E∥, capped by the field the local plasma holds, E_Debye
 (`update_space_charge_weights!`).
 """
-struct ChargeSheetHeuristic <: OpenLineShielding end
+struct ChargeSheetHeuristic{S <: SheetShape} <: OpenLineShielding
+    shape::S
+end
+ChargeSheetHeuristic(shape::SheetShape = LocalPitch()) = ChargeSheetHeuristic{typeof(shape)}(shape)
+
+# the shape the heuristic's field takes under each policy (the line circuit keeps the default's where it does not apply)
+sheet_shape(h::ChargeSheetHeuristic) = h.shape
+sheet_shape(::OpenLineShielding) = LocalPitch()
 
 """
     LineEnds
