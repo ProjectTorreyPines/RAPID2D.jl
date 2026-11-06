@@ -43,6 +43,7 @@ include("reactions/rate_closures.jl")   # how a rate is averaged over the collid
 include("numerics/field_lines/field_line_tracer_policies.jl")   # how a field line is followed: the tracer policies the flags hold
 include("numerics/anisotropic_discretization_policies.jl")   # how an anisotropic diffusion tensor becomes a matrix: the policies the flags hold
 include("numerics/field_lines/closed_surface_flux_types.jl")   # the closed-surface flux constraint: policies, basis, state
+include("physics/open_line_circuit_types.jl")   # the open lines' shielding closure: the policies the flags hold
 include("control/ideal_vertical_field_types.jl")   # the vertical-field control the flags hold, and its state
 include("types.jl")
 

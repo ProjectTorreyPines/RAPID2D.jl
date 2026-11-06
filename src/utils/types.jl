@@ -58,6 +58,16 @@ failed trace; see [`FLF_TERMINATIONS`](@ref).
 
     closed_surface_nids::Vector{Int} = Int[]
 
+    # The open lines' quadrature (`field_line_analysis!` with `quadrature = true`, for the line
+    # circuit): row k of `line_weights` holds the weights w of the nodes the line through node k
+    # passes, ∫ f dl along B ≈ Σ w f, over both directions, for a line that ends on the wall both
+    # ways; an empty row otherwise. The points where the two directions ended, NaN without a row.
+    line_weights::SparseMatrixCSC{FT, Int} = spzeros(FT, prod(dims_RZ), prod(dims_RZ))
+    end_R_forward::Matrix{FT} = fill(FT(NaN), dims_RZ)
+    end_Z_forward::Matrix{FT} = fill(FT(NaN), dims_RZ)
+    end_R_backward::Matrix{FT} = fill(FT(NaN), dims_RZ)
+    end_Z_backward::Matrix{FT} = fill(FT(NaN), dims_RZ)
+
     max_Lpol::FT = FT(0.0)
     max_step::Int = 0
 end

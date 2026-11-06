@@ -223,6 +223,69 @@ function visit!(p::StepLengths, R, Z, Bpol, Bϕ)
     return p
 end
 
+"""
+    PathQuadrature(lengths, R1D, Z1D)
+
+A visitor that measures a traced path as `lengths` ([`PathLengths`](@ref) or [`StepLengths`](@ref))
+does and, for each segment between vertices, hands its length along B, ds = dl (B/B_pol) with the
+ratio averaged over the segment, to the four nodes of the cell that holds the segment's midpoint,
+with bilinear weights: the quadrature ∫ f ds ≈ Σ wₖ fₖ of the path over the nodes, in `nodes` and
+`weights` (a node may appear more than once). The grid's lines `R1D`, `Z1D` locate the cells.
+"""
+mutable struct PathQuadrature{FT <: AbstractFloat, P}
+    lengths::P
+    R1D::Vector{FT}
+    Z1D::Vector{FT}
+    nodes::Vector{Int}
+    weights::Vector{FT}
+    n::Int
+    R::FT                                  # the last vertex, and B/B_pol there
+    Z::FT
+    ratio::FT
+end
+PathQuadrature(lengths, R1D::Vector{FT}, Z1D::Vector{FT}) where {FT} =
+    PathQuadrature{FT, typeof(lengths)}(lengths, R1D, Z1D, Int[], FT[], 0, FT(NaN), FT(NaN), FT(NaN))
+
+function reset!(q::PathQuadrature{FT}) where {FT}
+    reset!(q.lengths)
+    empty!(q.nodes)
+    empty!(q.weights)
+    q.n = 0
+    return q
+end
+
+function visit!(q::PathQuadrature{FT}, R, Z, Bpol, Bϕ) where {FT}
+    visit!(q.lengths, R, Z, Bpol, Bϕ)
+    ratio = sqrt(Bpol^2 + Bϕ^2) / Bpol
+    if q.n > 0
+        ds = sqrt((R - q.R)^2 + (Z - q.Z)^2) * (q.ratio + ratio) / 2
+        if ds > 0 && isfinite(ds)
+            R1D, Z1D = q.R1D, q.Z1D
+            NR, NZ = length(R1D), length(Z1D)
+            Rm, Zm = (R + q.R) / 2, (Z + q.Z) / 2
+            i = clamp(floor(Int, (Rm - R1D[1]) / (R1D[2] - R1D[1])) + 1, 1, NR - 1)
+            j = clamp(floor(Int, (Zm - Z1D[1]) / (Z1D[2] - Z1D[1])) + 1, 1, NZ - 1)
+            tr = clamp((Rm - R1D[i]) / (R1D[i + 1] - R1D[i]), zero(FT), one(FT))
+            tz = clamp((Zm - Z1D[j]) / (Z1D[j + 1] - Z1D[j]), zero(FT), one(FT))
+            for (ii, jj, w) in ((i, j, (1 - tr) * (1 - tz)), (i + 1, j, tr * (1 - tz)), (i, j + 1, (1 - tr) * tz), (i + 1, j + 1, tr * tz))
+                w > 0 || continue
+                push!(q.nodes, (jj - 1) * NR + ii)
+                push!(q.weights, w * ds)
+            end
+        end
+    end
+    q.n += 1
+    q.R, q.Z, q.ratio = R, Z, ratio
+    return q
+end
+
+# the lengths a visitor measured, and a fresh visitor of the same kind for another tracer
+lengths_of(v) = v
+lengths_of(q::PathQuadrature) = q.lengths
+fresh_visitor(v, tracer::FieldLineTracer, ::Type{FT}) where {FT} = path_lengths(tracer, FT)
+fresh_visitor(q::PathQuadrature, tracer::FieldLineTracer, ::Type{FT}) where {FT} =
+    PathQuadrature(path_lengths(tracer, FT), q.R1D, q.Z1D)
+
 # The lengths a trace publishes for each way it can end (`FLF_TERMINATIONS`): the measured ones
 # at a wall or after one circuit; at a B_pol null the line closes toroidally, adding 2πR to Lc
 # with Lpol unbounded; when the budget ran out the distance along B is unknown, Lc = Inf.

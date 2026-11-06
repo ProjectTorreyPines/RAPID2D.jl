@@ -73,7 +73,7 @@ follow (`:degenerate`, marching squares next to an O-point) is traced by its fal
 """
 function field_line_analysis!(
         flf::FieldLineFollowingResult{FT}, g::FieldLineGeometry, tracer::FieldLineTracer;
-        max_length::Real = default_max_length(g),
+        max_length::Real = default_max_length(g), quadrature::Bool = false,
     ) where {FT <: AbstractFloat}
     NR, NZ = size(g.ψ)
     flf.max_Lpol = max_length
@@ -84,29 +84,47 @@ function field_line_analysis!(
     # fails to reach cannot pass a topology check on a stale answer.
     fill!(flf.termination_forward, :unset)
     fill!(flf.termination_backward, :unset)
-    Lf_visitor, Lb_visitor = path_lengths(tracer, FT), path_lengths(tracer, FT)
+    for ends in (flf.end_R_forward, flf.end_Z_forward, flf.end_R_backward, flf.end_Z_backward)
+        fill!(ends, FT(NaN))
+    end
+    # With `quadrature`, the visitors also hand each segment's length along B to the nodes around
+    # it ([`PathQuadrature`](@ref)): the row of `line_weights` of every line that ends on the wall both ways.
+    visitor() = quadrature ? PathQuadrature(path_lengths(tracer, FT), g.R1D, g.Z1D) : path_lengths(tracer, FT)
+    Lf_visitor, Lb_visitor = visitor(), visitor()
+    rows_I, rows_J, rows_V = Int[], Int[], FT[]
     for i in 1:NR, j in 1:NZ
         fwd, ef, t = node_trace!(reset!(Lf_visitor), tracer, g, i, j, 1, max_length)
-        Lf = published_lengths(fwd, ef.termination, ef.R)
+        Lf = published_lengths(lengths_of(fwd), ef.termination, ef.R)
         if ef.termination === :closed
             # a closed forward trace already covers the circuit
             bwd, eb, Lb = fwd, ef, Lf
         else
             bwd, eb, t = node_trace!(reset!(Lb_visitor), t, g, i, j, -1, max_length)
-            Lb = published_lengths(bwd, eb.termination, eb.R)
+            Lb = published_lengths(lengths_of(bwd), eb.termination, eb.R)
             # a contour that came back to its node is closed, however the other way ended
             eb.termination === :closed && closes_by_return(t) && ((fwd, ef, Lf) = (bwd, eb, Lb))
         end
         flf.Lpol_forward[i, j], flf.Lpol_backward[i, j] = Lf.Lpol, Lb.Lpol
         flf.Lc_forward[i, j], flf.Lc_backward[i, j] = Lf.Lc, Lb.Lc
         flf.min_Bpol[i, j] = min(Lf.min_Bpol, Lb.min_Bpol)
-        flf.step[i, j] = max(fwd.n - 1, 0) + max(bwd.n - 1, 0)
+        flf.step[i, j] = max(lengths_of(fwd).n - 1, 0) + max(lengths_of(bwd).n - 1, 0)
         flf.termination_forward[i, j], flf.termination_backward[i, j] = ef.termination, eb.termination
         if ef.termination === :closed || eb.termination === :closed
             flf.is_closed[i, j] = true
             push!(flf.closed_surface_nids, (j - 1) * NR + i)
+        elseif quadrature && ef.termination === :wall && eb.termination === :wall
+            k = (j - 1) * NR + i
+            for q in (fwd, bwd)
+                append!(rows_I, fill(k, length(q.nodes)))
+                append!(rows_J, q.nodes)
+                append!(rows_V, q.weights)
+            end
+            flf.end_R_forward[i, j], flf.end_Z_forward[i, j] = ef.R, ef.Z
+            flf.end_R_backward[i, j], flf.end_Z_backward[i, j] = eb.R, eb.Z
         end
     end
+    N = NR * NZ
+    flf.line_weights = sparse(rows_I, rows_J, rows_V, N, N)
     return _finalize_total_lengths!(flf)
 end
 
@@ -117,7 +135,7 @@ function node_trace!(L, tracer, g, i, j, sgn, max_length)
     e = trace_from_node!(L, tracer, g, i, j, sgn; max_length)
     e.termination === :degenerate || return L, e, tracer
     fallback = fallback_tracer(tracer)
-    return node_trace!(path_lengths(fallback, typeof(L.Lpol)), fallback, g, i, j, sgn, max_length)
+    return node_trace!(fresh_visitor(L, fallback, typeof(lengths_of(L).Lpol)), fallback, g, i, j, sgn, max_length)
 end
 
 """
@@ -162,7 +180,9 @@ end
 
 function run_field_line_analysis!(flf::FieldLineFollowingResult{FT}, RP::RAPID{FT}) where {FT}
     tracer = RP.flags.field_line_tracer
-    field_line_analysis!(flf, FieldLineGeometry(RP; nodal_B = needs_nodal_B(tracer)), tracer)
+    # the line circuit reads the open lines' quadrature
+    quadrature = RP.flags.open_line_shielding isa LineCircuit
+    field_line_analysis!(flf, FieldLineGeometry(RP; nodal_B = needs_nodal_B(tracer)), tracer; quadrature)
     flf.min_Bpol[RP.G.nodes.out_wall_nids] .= FT(NaN)
     return flf
 end

@@ -1510,6 +1510,7 @@ Contains boolean flags that control various aspects of the simulation.
     FLF_nstep::Int = 10                       # Steps between field line following updates
     field_line_tracer::FieldLineTracer = MarchingSquaresTracer()   # how field-line following traces: `numerics/field_lines/field_line_tracer_policies.jl`
     closed_surface_flow::ClosedSurfaceFlow = FreeParallelFlow()   # how electrons flow on closed surfaces: `numerics/field_lines/closed_surface_flux_types.jl`
+    open_line_shielding::OpenLineShielding = ChargeSheetHeuristic()   # how the open lines shield the driven E∥: `physics/open_line_circuit_types.jl`
     vertical_field_control::VerticalFieldControl = NoVerticalFieldControl()   # an ideal external vertical field holding the column: `control/ideal_vertical_field_types.jl`
     Implicit::Bool = true                     # Use implicit methods
     # θ of the θ-scheme, one per family of terms, split by the sign and stiffness
