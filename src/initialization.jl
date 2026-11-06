@@ -207,6 +207,7 @@ function initialize_plasma_and_transport!(RP::RAPID{FT}) where {FT <: AbstractFl
     # The wall faces are geometry: built once here, on the object every wall-aware operator
     # and ledger of the run reads them from.
     RP.transport.wall_faces = wall_faces(RP.G)
+    RP.open_line.ion_wall_charge_flux = zeros(FT, length(RP.transport.wall_faces))
 
     # Set base diffusivities
     RP.transport.Dpara0 = FT(RP.config.Dpara0)

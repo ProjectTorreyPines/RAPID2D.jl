@@ -1814,6 +1814,7 @@ mutable struct RAPID{FT <: AbstractFloat}
     # Field-Line-Following analysis
     flf::FieldLineFollowingResult{FT}  # Results of field line following analysis
     closed_surface::ClosedSurfaceState{FT}  # the closed-surface flux constraint's basis, flux and ledger
+    open_line::OpenLineCircuitState{FT}     # the open lines' circuit: line EMF, resistance, current per flux, residual field
 
     # File IO: snapshot files are opened, appended and closed on every write, so only
     # the paths are kept. initialize! moves a previous run's files at these paths aside.
@@ -1858,6 +1859,7 @@ mutable struct RAPID{FT <: AbstractFloat}
 
         flf = FieldLineFollowingResult{FT}(NR, NZ)
         closed_surface = ClosedSurfaceState{FT}(NR, NZ)
+        open_line = OpenLineCircuitState{FT}(NR, NZ, 0)   # sized to the wall faces by initialize!
 
         # abspath: Output_path defaults to the RELATIVE "./output" and a snapshot may be
         # written under a different working directory than the one active here.
@@ -1876,7 +1878,7 @@ mutable struct RAPID{FT <: AbstractFloat}
             config, flags, plasma, fields, transport, operators,
             0, config.t_start_s, config.t_start_s, config.t_end_s, config.dt,
             prev_n, reactions, tElap, diagnostics,
-            flf, closed_surface,
+            flf, closed_surface, open_line,
             snap0D_path, snap2D_path,
             coil_system,
             VerticalFieldControlState{FT}(),

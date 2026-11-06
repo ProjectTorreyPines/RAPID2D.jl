@@ -53,13 +53,41 @@ struct CappedEnds{FT <: AbstractFloat} <: LineEnds
 end
 
 """
-    LineCircuit(; ends = IonSupplyEnds())
+    LineCircuit(ends = IonSupplyEnds(); n_cut = 1e-3)
 
 Each open line is a circuit: `J_para/B` is one value along it, the residual field is `J_para η`, the
 line EMF `∫ E_para,drive dl` against the line resistance `∫ B η dl` and the end condition `ends`.
 The shielding fraction is a result. Field-line following keeps the line → node quadrature it needs.
+Both integrals run over the line's plasma part, the nodes above `n_cut` of the densest in-wall node:
+the gap between the plasma and the wall carries neither (a declared approximation).
 """
 struct LineCircuit{E <: LineEnds} <: OpenLineShielding
     ends::E
+    n_cut::Float64
 end
-LineCircuit(; ends::LineEnds = IonSupplyEnds()) = LineCircuit(ends)
+LineCircuit(ends::LineEnds = IonSupplyEnds(); n_cut::Real = 1.0e-3) = LineCircuit{typeof(ends)}(ends, Float64(n_cut))
+
+"""
+    OpenLineCircuitState{FT}(NR, NZ, n_faces)
+
+The line circuit in a run ([`open_line_circuit!`](@ref)): on every node of an open line that ends
+on the wall both ways, the line's EMF `line_emf` [V], resistance `line_resistance` [Ω m²], current
+per flux `Jpara_over_B` [A/(m² T)], its end limit `Jpara_over_B_limit` (Inf without one), the
+residual field `E_para_res` [V/m] and the shielding `gamma_local = 1 − E_res/E_drive`; NaN
+elsewhere. `applies` marks those nodes. `ion_wall_charge_flux[f]` [A/m²] is what the ions' last
+continuity step carried into wall face `f`, Σ_s Z_s Γ_s, which the ion-supply end reads.
+"""
+mutable struct OpenLineCircuitState{FT <: AbstractFloat}
+    applies::Matrix{Bool}
+    line_emf::Matrix{FT}
+    line_resistance::Matrix{FT}
+    Jpara_over_B::Matrix{FT}
+    Jpara_over_B_limit::Matrix{FT}
+    E_para_res::Matrix{FT}
+    gamma_local::Matrix{FT}
+    ion_wall_charge_flux::Vector{FT}
+end
+OpenLineCircuitState{FT}(NR::Int, NZ::Int, n_faces::Int) where {FT <: AbstractFloat} = OpenLineCircuitState{FT}(
+    falses(NR, NZ), fill(FT(NaN), NR, NZ), fill(FT(NaN), NR, NZ), fill(FT(NaN), NR, NZ), fill(FT(NaN), NR, NZ),
+    fill(FT(NaN), NR, NZ), fill(FT(NaN), NR, NZ), zeros(FT, n_faces),
+)

@@ -518,6 +518,8 @@ function solve_ion_continuity_equation!(RP::RAPID{FT}) where {FT <: AbstractFloa
 
         # what moved the densities is published once they have moved, and not before
         retract_ion_carriage!(RP)
+        # the charge the ions carry into each wall face this step, for the open lines' circuit
+        fill!(RP.open_line.ion_wall_charge_flux, zero(FT))
         N, S = tp.ion_N, tp.ion_S
         gather_ion_densities!(N, RP)
         fill!(S, zero(FT))
@@ -845,6 +847,11 @@ function book_ion_wall_loss!(
             accumulate_wall_absorption!(own, faces, Z_z .* pinch.v_out, view(n_prev, :, c), RP.dt)
         end
         Ntracker.cum0D_Ni_loss_s[s] += sum(own.absorbed)
+        # per wall area and per second, charge-weighted: the ion-supply end of the line circuit reads it
+        ee = RP.config.constants.ee
+        for (k, f) in enumerate(faces)
+            RP.open_line.ion_wall_charge_flux[k] += ee * FT(species[s].charge) * own.absorbed[k] / (f.area * RP.dt)
+        end
     end
     return RP
 end
