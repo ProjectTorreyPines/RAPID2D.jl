@@ -85,9 +85,9 @@ function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: Abstract
     # when the cancellation is off
     if RP.flags.E_para_cancellation
         if control
-            @. F.ERZ_para_pla = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.ERZ_pla_mag * F.Bpol / F.Btot
+            @. F.ERZ_para_pla = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.ERZ_mean_mag * F.Bpol / F.Btot
         else
-            @. F.ERZ_para_pla = sign(-F.Eϕ_presc * F.Bϕ) * F.ERZ_pla_mag * F.Bpol / F.Btot
+            @. F.ERZ_para_pla = sign(-F.Eϕ_presc * F.Bϕ) * F.ERZ_mean_mag * F.Bpol / F.Btot
         end
     else
         fill!(F.ERZ_para_pla, zero(FT))
@@ -408,7 +408,7 @@ end
 The open-line charge sheets' field and its effects on transport, from the present state (MATLAB
 `Estimate_E_self_effects`, c_RAPID.m lines 544–679): the regime and the closures' weights
 ([`update_space_charge_weights!`](@ref)); with `charge_sheet_field`, the sheets' field
-`ERZ_pla_mag = min(γ ERZ_req, E_Debye)`, zero on closed lines, which short-circuit along B; its parallel
+`ERZ_mean_mag = min(γ ERZ_req, E_Debye)`, zero on closed lines, which short-circuit along B; its parallel
 projection `ERZ_para_pla` ([`calculate_parallel_electric_field!`](@ref)), the mean E×B drift and the
 turbulent diffusivity `Dpol_turb` at the turbulence's weight. Without it, no field, parallel part
 or diffusivity, so a run that turns it off keeps none from before.
@@ -419,7 +419,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     G = RP.G
     ERZ_target, E_Debye = update_space_charge_weights!(RP)
     if !RP.flags.charge_sheet_field
-        fill!(F.ERZ_pla_mag, zero(FT))
+        fill!(F.ERZ_mean_mag, zero(FT))
         fill!(RP.transport.Dpol_turb, zero(FT))
         # E∥ without the sheets' part at once: the transport's refresh reads it
         calculate_parallel_electric_field!(RP)
@@ -428,18 +428,18 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
 
     # The open-line charge sheets' field (MATLAB lines 582-620): none on a closed line, before and
     # after the boundary nodes take their neighbours' mean
-    @. F.ERZ_pla_mag = ifelse(RP.flf.is_closed, zero(FT), min(ERZ_target, E_Debye))
-    extrapolate_field_to_boundary_nodes!(G, F.ERZ_pla_mag)
-    F.ERZ_pla_mag[RP.flf.closed_surface_nids] .= zero(FT)
+    @. F.ERZ_mean_mag = ifelse(RP.flf.is_closed, zero(FT), min(ERZ_target, E_Debye))
+    extrapolate_field_to_boundary_nodes!(G, F.ERZ_mean_mag)
+    F.ERZ_mean_mag[RP.flf.closed_surface_nids] .= zero(FT)
 
     calculate_parallel_electric_field!(RP)
 
     if RP.flags.mean_ExB
-        @. pla.mean_ExB_R = (F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * F.bpol_Z
-        @. pla.mean_ExB_Z = (F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
+        @. pla.mean_ExB_R = (F.ERZ_mean_mag / F.Btot) * sign(F.Eϕ) * F.bpol_Z
+        @. pla.mean_ExB_Z = (F.ERZ_mean_mag / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
 
-        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_mag * F.bpol_R
-        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_mag * F.bpol_Z
+        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_mean_mag * F.bpol_R
+        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_mean_mag * F.bpol_Z
     end
 
     # # Turbulent parallel diffusion based on fluctuation levels
@@ -460,13 +460,13 @@ end
     update_turbulent_diffusivity!(RP) -> RP
 
 The turbulent E×B mixing's diffusivity from the charge sheets' present field and the turbulence's
-weight, `Dpol_turb = ½ w_turb (ERZ_pla_mag/B) L_mixing`: the drift speed `shared_turbulent_channel`
+weight, `Dpol_turb = ½ w_turb (ERZ_mean_mag/B) L_mixing`: the drift speed `shared_turbulent_channel`
 takes. Where the weights are refreshed without the field (a run's start, a failed step put back),
 the diffusivity follows them.
 """
 function update_turbulent_diffusivity!(RP::RAPID)
     pla, F, tp = RP.plasma, RP.fields, RP.transport
-    @. tp.Dpol_turb = 0.5 * (pla.turbulence_weight * F.ERZ_pla_mag) / F.Btot * tp.L_mixing
+    @. tp.Dpol_turb = 0.5 * (pla.turbulence_weight * F.ERZ_mean_mag) / F.Btot * tp.L_mixing
     return RP
 end
 

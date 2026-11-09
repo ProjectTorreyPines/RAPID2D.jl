@@ -393,7 +393,7 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.E_para_tot .= F.E_para_tot
     snap2D.E_para_amb .= ambipolar_parallel_field(RP)
     snap2D.Eϕ_para_presc .= F.Eϕ_para_presc
-    snap2D.ERZ_pla_mag .= F.ERZ_pla_mag
+    snap2D.ERZ_mean_mag .= F.ERZ_mean_mag
     snap2D.Eϕ_coils_pla .= F.Eϕ_coils_pla
 
     # Loop voltages

@@ -18,8 +18,8 @@
     @test pla.γ_shape_fac ≈ min.(1.0, 0.65 .* F.Bpol ./ mean(F.Bpol[G.nodes.in_wall_nids]))
     @test all(>(0), pla.γ_shape_fac[closed])
     # the sheets are on open lines only, boundary nodes included
-    @test all(iszero, F.ERZ_pla_mag[closed]) && all(iszero, F.ERZ_para_pla[closed])
-    @test any(>(0), F.ERZ_pla_mag[open_in])
+    @test all(iszero, F.ERZ_mean_mag[closed]) && all(iszero, F.ERZ_para_pla[closed])
+    @test any(>(0), F.ERZ_mean_mag[open_in])
     # an open-line threshold is never reached on a closed line
     @test all(isinf, pla.nc_para[closed]) && all(isinf, pla.nc_perp[closed])
     @test all(isfinite, pla.nc_perp[open_in])
@@ -35,7 +35,7 @@ end
     pla.ne[open_in] .= 1.0e17
     all_finite() = all(
         a -> all(isfinite, a),
-        (F.ERZ_pla_mag, F.ERZ_para_pla, F.E_para_tot, pla.mean_ExB_R, pla.mean_ExB_Z, F.ER, F.EZ, tp.Dpol_turb),
+        (F.ERZ_mean_mag, F.ERZ_para_pla, F.E_para_tot, pla.mean_ExB_R, pla.mean_ExB_Z, F.ER, F.EZ, tp.Dpol_turb),
     )
 
     # an open node where Bpol vanishes: γ ERZ_req at its limit 0.65 |E∥| B/⟨Bpol⟩ (γ → 0, ERZ_req → ∞),
@@ -45,13 +45,13 @@ end
     E_drive = F.Eϕ_para_presc[k] + F.Eϕ_para_coils_pla[k]
     estimate_electrostatic_field_effects!(RP)
     @test all_finite()
-    @test F.ERZ_pla_mag[k] ≈ 0.65 * abs(E_drive) * F.Btot[k] / mean(F.Bpol[G.nodes.in_wall_nids])
+    @test F.ERZ_mean_mag[k] ≈ 0.65 * abs(E_drive) * F.Btot[k] / mean(F.Bpol[G.nodes.in_wall_nids])
     @test isfinite(pla.nc_perp[k])
 
     # no poloidal field at all: no shape, no sheets
     foreach(a -> fill!(a, 0.0), (F.Bpol, F.bpol_R, F.bpol_Z))
     estimate_electrostatic_field_effects!(RP)
-    @test all(iszero, pla.γ_shape_fac) && all(iszero, F.ERZ_pla_mag)
+    @test all(iszero, pla.γ_shape_fac) && all(iszero, F.ERZ_mean_mag)
     @test all(isinf, pla.nc_perp)
     @test all_finite()
 end
@@ -74,15 +74,15 @@ end
     @test all(iszero, w[closed])
     # one speed for the electrons' tensor (`Dpol_turb`), the electron wall, the ions' channels and
     # their wall
-    v = w .* F.ERZ_pla_mag ./ F.Btot
+    v = w .* F.ERZ_mean_mag ./ F.Btot
     @test tp.Dpol_turb ≈ 0.5 .* v .* tp.L_mixing
     turb = shared_turbulent_channel(RP)
     @test turb.v_para ≈ v && turb.v_perp ≈ v
     @test electron_wall_channels(RP)[end][1].v_para ≈ v
     @test ion_transport_channels(RP, tp.ion_species[1], turb)[end] === turb
     # the mean field's effects take no weight
-    @test pla.mean_ExB_R ≈ F.ERZ_pla_mag ./ F.Btot .* sign.(F.Eϕ) .* F.bpol_Z
-    @test F.ERZ_para_pla ≈ sign.(-F.Eϕ_presc .* F.Bϕ) .* F.ERZ_pla_mag .* F.Bpol ./ F.Btot
+    @test pla.mean_ExB_R ≈ F.ERZ_mean_mag ./ F.Btot .* sign.(F.Eϕ) .* F.bpol_Z
+    @test F.ERZ_para_pla ≈ sign.(-F.Eϕ_presc .* F.Bϕ) .* F.ERZ_mean_mag .* F.Bpol ./ F.Btot
 
     # without the mixing, no weight and no turbulent diffusivity
     RP.flags.turb_ExB_mixing = false
@@ -109,7 +109,7 @@ end
     @test any(x -> 0 < x < 1, w[open_in]) && any(==(1), w[open_in])
     # and the sheets' field is that share of what they would need
     estimate_electrostatic_field_effects!(RP)
-    @test F.ERZ_pla_mag[open_in] ≈ w[open_in] .* ERZ_target[open_in]
+    @test F.ERZ_mean_mag[open_in] ≈ w[open_in] .* ERZ_target[open_in]
     # the snapshots carry both weights, the 0D ones as density-weighted means
     s2, s0 = RAPID2D.measure_snap2D(RP), RAPID2D.measure_snap0D(RP)
     @test s2.ambipolar_weight == w && s2.turbulence_weight == pla.turbulence_weight
@@ -145,7 +145,7 @@ end
     initialize!(RP)
     w0 = (copy(RP.plasma.turbulence_weight), copy(RP.plasma.ambipolar_weight))
     @test all(a -> any(>(0), a), w0)
-    @test all(iszero, RP.fields.ERZ_pla_mag)
+    @test all(iszero, RP.fields.ERZ_mean_mag)
     update_space_charge_weights!(RP)
     @test (RP.plasma.turbulence_weight, RP.plasma.ambipolar_weight) == w0
 
@@ -158,10 +158,10 @@ end
     closed = RP.flf.closed_surface_nids
     pla.ne[setdiff(RP.G.nodes.in_wall_nids, closed)] .= 1.0e17
     estimate_electrostatic_field_effects!(RP)
-    @test any(>(0), F.ERZ_pla_mag) && any(>(0), tp.Dpol_turb) && any(!iszero, F.ERZ_para_pla)
+    @test any(>(0), F.ERZ_mean_mag) && any(>(0), tp.Dpol_turb) && any(!iszero, F.ERZ_para_pla)
     RP.flags.charge_sheet_field = false
     estimate_electrostatic_field_effects!(RP)
-    @test all(iszero, F.ERZ_pla_mag) && all(iszero, F.ERZ_para_pla)
+    @test all(iszero, F.ERZ_mean_mag) && all(iszero, F.ERZ_para_pla)
     @test F.E_para_tot ≈ F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla
     @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
     @test all(==(1), pla.ambipolar_weight[closed])

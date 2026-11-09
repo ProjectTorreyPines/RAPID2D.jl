@@ -176,7 +176,7 @@ end
     Adict = Dict{String, Any}("time_s" => [0.1], "Epol_self" => old, "E_para_presc" => 2 .* old)
     snaps = [Snapshot2D{Float64}(; dims_RZ)]
     process_symbol_based_snapshots!(snaps, Adict, create_symbol_path_mapping(Snapshot2D{Float64}, Adict), 1)
-    @test snaps[1].ERZ_pla_mag == old[:, :, 1] && snaps[1].Eϕ_para_presc == 2 .* old[:, :, 1]
+    @test snaps[1].ERZ_mean_mag == old[:, :, 1] && snaps[1].Eϕ_para_presc == 2 .* old[:, :, 1]
     old0D = (
         "Epara_tot" => :E_para_tot, "Epara_presc" => :Eϕ_para_presc, "Epara_ctrl" => :Eϕ_para_ctrl,
         "Epara_self_ES" => :ERZ_para_pla, "Epara_self_EM" => :Eϕ_para_coils_pla,
@@ -184,4 +184,11 @@ end
     Adict0 = Dict{String, Any}("time_s" => [0.1], (k => [1.0] for (k, _) in old0D)...)
     paths0 = create_symbol_path_mapping(Snapshot0D{Float64}, Adict0)
     @test all(paths0[k] == [v] for (k, v) in old0D)
+end
+
+@testitem "snapshot renames: the sheets' mean field under its old names" begin
+    using RAPID2D: RENAMED_SNAPSHOT_FIELDS, Snapshot2D
+    @test RENAMED_SNAPSHOT_FIELDS["ERZ_pla_mag"] == "ERZ_mean_mag"
+    @test RENAMED_SNAPSHOT_FIELDS["Epol_self"] == "ERZ_mean_mag"
+    @test hasfield(Snapshot2D{Float64}, :ERZ_mean_mag) && !hasfield(Snapshot2D{Float64}, :ERZ_pla_mag)
 end
