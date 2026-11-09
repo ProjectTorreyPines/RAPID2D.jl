@@ -588,3 +588,36 @@ end
         @test isequal(getfield(RP.flf, k), getfield(ref, k))
     end
 end
+
+@testitem "FLF: the held connection length sums the pitch capped along the line" begin
+    using RAPID2D: initialize_grid_geometry, FieldLineGeometry, FieldLineFollowingResult, field_line_analysis!,
+        MarchingSquaresTracer, RK4Tracer
+    # a uniform vertical B_pol = 1 mT under Bϕ = 1 T: ψ = B_Z R²/2, every line runs straight up to the
+    # box and B/B_pol ≈ 1000 everywhere
+    G = initialize_grid_geometry(21, 41, (1.0, 2.0), (-1.0, 1.0))
+    Bz = 1.0e-3
+    ψ = @. Bz * G.R2D^2 / 2
+    inside = [1.1 < G.R1D[i] + G.dR / 2 < 1.9 && abs(G.Z1D[j] + G.dZ / 2) < 0.9 for i in 1:G.NR, j in 1:G.NZ]
+    g = FieldLineGeometry(G, ψ; Bϕ = fill(1.0, G.NR, G.NZ), inside, nodal_B = true)
+    in_wall = [LinearIndices(ψ)[i, j] for i in 2:(G.NR - 1), j in 2:(G.NZ - 1) if all(inside[(i - 1):i, (j - 1):j])]
+    run(t; kw...) = field_line_analysis!(FieldLineFollowingResult{Float64}(G.NR, G.NZ), g, t; kw...)
+    for tracer in (MarchingSquaresTracer(), RK4Tracer())
+        f0 = run(tracer)
+        above = run(tracer; pitch_cap = fill(2000.0, G.NR, G.NZ))
+        below = run(tracer; pitch_cap = fill(100.0, G.NR, G.NZ))
+        none = run(tracer; pitch_cap = zeros(G.NR, G.NZ))
+        @test all(in_wall) do k
+            f0.termination_forward[k] === :wall && f0.termination_backward[k] === :wall
+        end
+        # no cap: the same sums, bit for bit
+        @test f0.Lc_held_forward == f0.Lc_forward && f0.Lc_held_backward == f0.Lc_backward && f0.Lc_held_tot == f0.Lc_tot
+        # a cap above the pitch changes nothing; one below replaces the pitch by the cap
+        @test above.Lc_held_tot[in_wall] ≈ above.Lc_tot[in_wall]
+        @test below.Lc_held_tot[in_wall] ≈ 100 .* below.Lpol_tot[in_wall] rtol = 1.0e-6
+        @test all(k -> below.Lc_held_tot[k] < below.Lc_tot[k], in_wall)
+        # a plasma that holds nothing holds no length
+        @test all(iszero, none.Lc_held_tot[in_wall])
+        # the uncapped lengths are what they were
+        @test below.Lc_tot == f0.Lc_tot && below.Lpol_tot == f0.Lpol_tot
+    end
+end

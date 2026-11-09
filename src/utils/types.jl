@@ -26,6 +26,10 @@ Results structure for field line following analysis.
 - `Lc_forward::Matrix{FT}`: Connection length in forward direction
 - `Lc_backward::Matrix{FT}`: Connection length in backward direction
 - `Lc_tot::Matrix{FT}`: Total connection length
+- `Lc_held_forward::Matrix{FT}`, `Lc_held_backward::Matrix{FT}`, `Lc_held_tot::Matrix{FT}`: the connection
+  length with the pitch capped along the line, ∫ min(B/B_pol, pitch_cap) dl_pol — the part of the line's EMF the
+  plasma can hold as a poloidal field (`field_line_analysis!`'s `pitch_cap`); equal to `Lc_*` without a cap, except
+  that a `:null` end adds no 2πR and a `:trace_limit` end keeps the finite sum
 - `min_Bpol::Matrix{FT}`: Minimum poloidal field along field line
 - `step::Array{Int,2}`: Number of integration steps taken
 - `is_closed::Array{Bool,2}`: Whether field line is closed (360° circulation)
@@ -47,6 +51,9 @@ failed trace; see [`FLF_TERMINATIONS`](@ref).
     Lc_forward::Matrix{FT} = zeros(FT, dims_RZ)
     Lc_backward::Matrix{FT} = zeros(FT, dims_RZ)
     Lc_tot::Matrix{FT} = zeros(FT, dims_RZ)
+    Lc_held_forward::Matrix{FT} = zeros(FT, dims_RZ)
+    Lc_held_backward::Matrix{FT} = zeros(FT, dims_RZ)
+    Lc_held_tot::Matrix{FT} = zeros(FT, dims_RZ)
     min_Bpol::Matrix{FT} = zeros(FT, dims_RZ)
     step::Matrix{Int} = zeros(Int, dims_RZ)
     is_closed::Matrix{Bool} = zeros(Bool, dims_RZ)

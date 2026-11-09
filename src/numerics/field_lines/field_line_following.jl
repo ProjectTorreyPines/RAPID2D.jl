@@ -52,6 +52,7 @@ is never touched here.
 function _finalize_total_lengths!(flf::FieldLineFollowingResult)
     @. flf.Lpol_tot = flf.Lpol_forward + flf.Lpol_backward
     @. flf.Lc_tot = flf.Lc_forward + flf.Lc_backward
+    @. flf.Lc_held_tot = flf.Lc_held_forward + flf.Lc_held_backward
 
     both_closed = (flf.termination_forward .=== :closed) .&
         (flf.termination_backward .=== :closed)
@@ -59,22 +60,28 @@ function _finalize_total_lengths!(flf::FieldLineFollowingResult)
         @. arr[both_closed] = flf.Lpol_forward[both_closed]
     end
     @. flf.Lc_tot[both_closed] = (flf.Lc_forward[both_closed] + flf.Lc_backward[both_closed]) / 2
+    @. flf.Lc_held_tot[both_closed] = (flf.Lc_held_forward[both_closed] + flf.Lc_held_backward[both_closed]) / 2
     return flf
 end
 
 """
-    field_line_analysis!(flf, g, tracer; max_length = default_max_length(g)) -> flf
+    field_line_analysis!(flf, g, tracer; max_length = default_max_length(g), pitch_cap = nothing) -> flf
 
 Field-line following on every node of the geometry `g`: the line through each node traced
 forward and backward along B_pol by `tracer` (backward is skipped when forward closed), and the
 lengths, terminations and closed nodes it publishes stored in `flf`. A node the tracer cannot
 follow (`:degenerate`, marching squares next to an O-point) is traced by its fallback,
 [`CubicTracer`](@ref). A contour tracer's line that closes one way is closed both ways.
+
+`pitch_cap`, a node matrix (dimensionless, ≥ 0; `Inf` or a non-finite value is no cap), caps the
+pitch B/B_pol along the line for the held lengths `Lc_held_*` = ∫ min(B/B_pol, cap) dl_pol,
+interpolated linearly between the nodes; without it the held lengths are the connection lengths.
 """
 function field_line_analysis!(
         flf::FieldLineFollowingResult{FT}, g::FieldLineGeometry, tracer::FieldLineTracer;
-        max_length::Real = default_max_length(g),
+        max_length::Real = default_max_length(g), pitch_cap::Union{Nothing, AbstractMatrix} = nothing,
     ) where {FT <: AbstractFloat}
+    cap = pitch_cap === nothing ? nothing : my_interpolation(g.R1D, g.Z1D, Matrix{FT}(pitch_cap); method = :linear)
     NR, NZ = size(g.ψ)
     flf.max_Lpol = max_length
     flf.max_step = 2 * step_budget(tracer, g, max_length)
@@ -84,7 +91,7 @@ function field_line_analysis!(
     # fails to reach cannot pass a topology check on a stale answer.
     fill!(flf.termination_forward, :unset)
     fill!(flf.termination_backward, :unset)
-    Lf_visitor, Lb_visitor = path_lengths(tracer, FT), path_lengths(tracer, FT)
+    Lf_visitor, Lb_visitor = path_lengths(tracer, FT; cap), path_lengths(tracer, FT; cap)
     for i in 1:NR, j in 1:NZ
         fwd, ef, t = node_trace!(reset!(Lf_visitor), tracer, g, i, j, 1, max_length)
         Lf = published_lengths(fwd, ef.termination, ef.R)
@@ -99,6 +106,7 @@ function field_line_analysis!(
         end
         flf.Lpol_forward[i, j], flf.Lpol_backward[i, j] = Lf.Lpol, Lb.Lpol
         flf.Lc_forward[i, j], flf.Lc_backward[i, j] = Lf.Lc, Lb.Lc
+        flf.Lc_held_forward[i, j], flf.Lc_held_backward[i, j] = Lf.Lc_held, Lb.Lc_held
         flf.min_Bpol[i, j] = min(Lf.min_Bpol, Lb.min_Bpol)
         flf.step[i, j] = max(fwd.n - 1, 0) + max(bwd.n - 1, 0)
         flf.termination_forward[i, j], flf.termination_backward[i, j] = ef.termination, eb.termination
@@ -117,7 +125,7 @@ function node_trace!(L, tracer, g, i, j, sgn, max_length)
     e = trace_from_node!(L, tracer, g, i, j, sgn; max_length)
     e.termination === :degenerate || return L, e, tracer
     fallback = fallback_tracer(tracer)
-    return node_trace!(path_lengths(fallback, typeof(L.Lpol)), fallback, g, i, j, sgn, max_length)
+    return node_trace!(path_lengths(fallback, typeof(L.Lpol); cap = L.cap), fallback, g, i, j, sgn, max_length)
 end
 
 """
@@ -132,14 +140,14 @@ function flf_analysis_field_lines_rz_plane!(
         R1D::Vector{FT}, Z1D::Vector{FT}, BR::Matrix{FT}, BZ::Matrix{FT}, Bϕ::Matrix{FT},
         cell_state::AbstractMatrix{Bool};
         dR::Union{FT, Nothing} = nothing, dZ::Union{FT, Nothing} = nothing,
-        out_wall_idx::Union{Vector{Int}, Nothing} = nothing,
+        out_wall_idx::Union{Vector{Int}, Nothing} = nothing, pitch_cap::Union{Nothing, AbstractMatrix} = nothing,
     ) where {FT <: AbstractFloat}
     dR === nothing && (dR = length(R1D) > 1 ? R1D[2] - R1D[1] : one(FT))
     dZ === nothing && (dZ = length(Z1D) > 1 ? Z1D[2] - Z1D[1] : one(FT))
     B = (BR = my_interpolation(R1D, Z1D, BR), BZ = my_interpolation(R1D, Z1D, BZ), Bϕ = my_interpolation(R1D, Z1D, Bϕ))
     # RK4 reads the grid, the wall and these interpolants, not ψ
     g = FieldLineGeometry(R1D, Z1D, dR, dZ, zeros(FT, size(BR)), zero(FT), nothing, Bϕ, cell_state, B)
-    field_line_analysis!(flf, g, RK4Tracer())
+    field_line_analysis!(flf, g, RK4Tracer(); pitch_cap)
     out_wall_idx !== nothing && (flf.min_Bpol[out_wall_idx] .= FT(NaN))
     return flf
 end
@@ -160,9 +168,11 @@ function flf_analysis_field_lines_rz_plane(RP::RAPID{FT}) where {FT}
     return run_field_line_analysis!(flf, RP)
 end
 
-function run_field_line_analysis!(flf::FieldLineFollowingResult{FT}, RP::RAPID{FT}) where {FT}
+function run_field_line_analysis!(
+        flf::FieldLineFollowingResult{FT}, RP::RAPID{FT}; pitch_cap::Union{Nothing, AbstractMatrix} = nothing
+    ) where {FT}
     tracer = RP.flags.field_line_tracer
-    field_line_analysis!(flf, FieldLineGeometry(RP; nodal_B = needs_nodal_B(tracer)), tracer)
+    field_line_analysis!(flf, FieldLineGeometry(RP; nodal_B = needs_nodal_B(tracer)), tracer; pitch_cap)
     flf.min_Bpol[RP.G.nodes.out_wall_nids] .= FT(NaN)
     return flf
 end
@@ -270,8 +280,8 @@ function validate_field_line_terminations!(RP::RAPID; strict::Bool = true)
     return flf
 end
 
-function flf_analysis_field_lines_rz_plane!(RP::RAPID; strict::Bool = true)
-    run_field_line_analysis!(RP.flf, RP)
+function flf_analysis_field_lines_rz_plane!(RP::RAPID; strict::Bool = true, pitch_cap::Union{Nothing, AbstractMatrix} = nothing)
+    run_field_line_analysis!(RP.flf, RP; pitch_cap)
     # Validated HERE so the setup call and every periodic refresh share one gate; the
     # lower-level array API stays unvalidated and separately testable. `strict` picks
     # the failure policy — throw at setup, warn-and-fallback in the step loop.

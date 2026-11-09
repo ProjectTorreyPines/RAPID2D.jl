@@ -78,9 +78,10 @@ step_budget(p::CubicTracer, g::FieldLineGeometry, max_length) = p.max_steps
 step_budget(p::RK4Tracer, g::FieldLineGeometry{FT}, max_length) where {FT} =
     floor(Int, max_length / (FT(p.step_cells) * min(abs(g.dR), abs(g.dZ))))
 
-# the visitor that measures a trace's lengths: RK4 keeps its right-endpoint sums
-path_lengths(::FieldLineTracer, ::Type{FT}) where {FT} = PathLengths{FT}()
-path_lengths(::RK4Tracer, ::Type{FT}) where {FT} = StepLengths{FT}()
+# the visitor that measures a trace's lengths: RK4 keeps its right-endpoint sums. `cap` is the
+# pitch cap's interpolant (R, Z) -> cap, or nothing (see `held_ratio`)
+path_lengths(::FieldLineTracer, ::Type{FT}; cap = nothing) where {FT} = PathLengths{FT}(cap)
+path_lengths(::RK4Tracer, ::Type{FT}; cap = nothing) where {FT} = StepLengths{FT}(cap)
 
 # whether `:closed` means the path came back to its start (a contour tracer), so that one closed
 # direction closes the line; RK4 closes on turning angle, which an open line can reach
@@ -151,71 +152,91 @@ function chord_exit(g::FieldLineGeometry{FT}, x, xn) where {FT}
     return
 end
 
+# The pitch B/B_pol the line's charge sheets can follow at (R, Z): `ratio` itself without a cap,
+# else the smaller of `ratio` and the cap's value there (a non-finite or negative cap value, the
+# interpolant's at a vacuum–plasma edge, is no cap). `cap` is (R, Z) -> cap, dimensionless.
+held_ratio(::Nothing, R, Z, ratio) = ratio
+function held_ratio(cap, R, Z, ratio)
+    c = cap(R, Z)
+    return isfinite(c) ? min(ratio, max(c, zero(c))) : ratio
+end
+
 """
-    PathLengths{FT}()
+    PathLengths{FT}(cap = nothing)
 
 A visitor that measures a traced path: the poloidal length `Lpol` = ∫ dl, the length along B
-`Lc` = ∫ (B/B_pol) dl, the smallest `min_Bpol` met, and the number of vertices `n`. Trapezoidal
+`Lc` = ∫ (B/B_pol) dl, the held length `Lc_held` = ∫ min(B/B_pol, cap) dl ([`held_ratio`](@ref);
+`Lc` without a cap), the smallest `min_Bpol` met, and the number of vertices `n`. Trapezoidal
 between vertices.
 """
-mutable struct PathLengths{FT <: AbstractFloat}
+mutable struct PathLengths{FT <: AbstractFloat, C}
+    cap::C
     Lpol::FT
     Lc::FT
+    Lc_held::FT
     min_Bpol::FT
     n::Int
-    R::FT                                  # the last vertex, and B/B_pol there
+    R::FT                                  # the last vertex, and B/B_pol there, capped too
     Z::FT
     ratio::FT
+    ratio_held::FT
 end
-PathLengths{FT}() where {FT} = PathLengths{FT}(zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN), FT(NaN))
+PathLengths{FT}(cap = nothing) where {FT} =
+    PathLengths{FT, typeof(cap)}(cap, zero(FT), zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN), FT(NaN), FT(NaN))
 
 # back to no path, for the next trace
 function reset!(p::PathLengths{FT}) where {FT}
-    p.Lpol, p.Lc, p.min_Bpol, p.n = zero(FT), zero(FT), FT(Inf), 0
+    p.Lpol, p.Lc, p.Lc_held, p.min_Bpol, p.n = zero(FT), zero(FT), zero(FT), FT(Inf), 0
     return p
 end
 
 function visit!(p::PathLengths, R, Z, Bpol, Bϕ)
     ratio = sqrt(Bpol^2 + Bϕ^2) / Bpol
+    held = held_ratio(p.cap, R, Z, ratio)
     if p.n > 0
         d = sqrt((R - p.R)^2 + (Z - p.Z)^2)
         p.Lpol += d
         p.Lc += d * (p.ratio + ratio) / 2
+        p.Lc_held += d * (p.ratio_held + held) / 2
     end
     p.min_Bpol = min(p.min_Bpol, Bpol)
     p.n += 1
-    p.R, p.Z, p.ratio = R, Z, ratio
+    p.R, p.Z, p.ratio, p.ratio_held = R, Z, ratio, held
     return p
 end
 
 """
-    StepLengths{FT}()
+    StepLengths{FT}(cap = nothing)
 
 [`PathLengths`](@ref) as RAPID2D's first field-line following summed them, kept for
-[`RK4Tracer`](@ref): each step adds its chord times B/B_pol at its end, and the smallest B_pol is
-taken over the step ends, not the start.
+[`RK4Tracer`](@ref): each step adds its chord times B/B_pol at its end (capped too for `Lc_held`),
+and the smallest B_pol is taken over the step ends, not the start.
 """
-mutable struct StepLengths{FT <: AbstractFloat}
+mutable struct StepLengths{FT <: AbstractFloat, C}
+    cap::C
     Lpol::FT
     Lc::FT
+    Lc_held::FT
     min_Bpol::FT
     n::Int
     R::FT
     Z::FT
 end
-StepLengths{FT}() where {FT} = StepLengths{FT}(zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN))
+StepLengths{FT}(cap = nothing) where {FT} =
+    StepLengths{FT, typeof(cap)}(cap, zero(FT), zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN))
 
 function reset!(p::StepLengths{FT}) where {FT}
-    p.Lpol, p.Lc, p.min_Bpol, p.n = zero(FT), zero(FT), FT(Inf), 0
+    p.Lpol, p.Lc, p.Lc_held, p.min_Bpol, p.n = zero(FT), zero(FT), zero(FT), FT(Inf), 0
     return p
 end
 
 function visit!(p::StepLengths, R, Z, Bpol, Bϕ)
     if p.n > 0
         dl_pol = sqrt((R - p.R)^2 + (Z - p.Z)^2)
-        Btot = sqrt(Bpol^2 + Bϕ^2)
+        ratio = sqrt(Bpol^2 + Bϕ^2) / Bpol
         p.Lpol += dl_pol
-        p.Lc += dl_pol * Btot / Bpol
+        p.Lc += dl_pol * ratio
+        p.Lc_held += dl_pol * held_ratio(p.cap, R, Z, ratio)
         p.min_Bpol = min(p.min_Bpol, Bpol)
     end
     p.n += 1
@@ -225,12 +246,14 @@ end
 
 # The lengths a trace publishes for each way it can end (`FLF_TERMINATIONS`): the measured ones
 # at a wall or after one circuit; at a B_pol null the line closes toroidally, adding 2πR to Lc
-# with Lpol unbounded; when the budget ran out the distance along B is unknown, Lc = Inf.
+# with Lpol unbounded; when the budget ran out the distance along B is unknown, Lc = Inf. The
+# held length is the measured sum in every case: a toroidal circle has no poloidal displacement
+# to hold an EMF over, and a sum cut by the budget is a lower bound, which is what a cap wants.
 function published_lengths(p, termination::Symbol, R_end)
     FT = typeof(p.Lpol)
-    termination === :null && return (; Lpol = FT(Inf), Lc = p.Lc + FT(2π) * R_end, min_Bpol = zero(FT))
-    termination === :trace_limit && return (; Lpol = p.Lpol, Lc = FT(Inf), min_Bpol = p.min_Bpol)
-    return (; Lpol = p.Lpol, Lc = p.Lc, min_Bpol = p.min_Bpol)
+    termination === :null && return (; Lpol = FT(Inf), Lc = p.Lc + FT(2π) * R_end, Lc_held = p.Lc_held, min_Bpol = zero(FT))
+    termination === :trace_limit && return (; Lpol = p.Lpol, Lc = FT(Inf), Lc_held = p.Lc_held, min_Bpol = p.min_Bpol)
+    return (; Lpol = p.Lpol, Lc = p.Lc, Lc_held = p.Lc_held, min_Bpol = p.min_Bpol)
 end
 
 # ── marching squares ─────────────────────────────────────────────────────────────────
