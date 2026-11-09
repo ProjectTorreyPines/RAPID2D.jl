@@ -153,8 +153,9 @@ function chord_exit(g::FieldLineGeometry{FT}, x, xn) where {FT}
 end
 
 # The pitch B/B_pol the line's charge sheets can follow at (R, Z): `ratio` itself without a cap,
-# else the smaller of `ratio` and the cap's value there (a non-finite or negative cap value, the
-# interpolant's at a vacuum–plasma edge, is no cap). `cap` is (R, Z) -> cap, dimensionless.
+# else the smaller of `ratio` and the cap's value there. A non-finite cap value (an Inf node next
+# to a finite one under the interpolant) is no cap; a negative one, which a linear interpolant of a
+# non-negative field cannot give, is taken as zero. `cap` is (R, Z) -> cap, dimensionless.
 held_ratio(::Nothing, R, Z, ratio) = ratio
 function held_ratio(cap, R, Z, ratio)
     c = cap(R, Z)

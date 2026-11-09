@@ -621,3 +621,28 @@ end
         @test below.Lc_tot == f0.Lc_tot && below.Lpol_tot == f0.Lpol_tot
     end
 end
+
+@testitem "FLF: a cap that varies along the line is integrated by each tracer's own quadrature" begin
+    using RAPID2D: initialize_grid_geometry, FieldLineGeometry, FieldLineFollowingResult, field_line_analysis!,
+        MarchingSquaresTracer, RK4Tracer
+    # the straight vertical field again, with a cap below the pitch that rises linearly in Z: the held length
+    # of a line from Z₁ to Z₂ is ∫ cap dZ, exact for the trapezoid (marching squares), first order for RK4's
+    # right-endpoint sum
+    G = initialize_grid_geometry(21, 41, (1.0, 2.0), (-1.0, 1.0))
+    ψ = @. 1.0e-3 * G.R2D^2 / 2
+    inside = [1.1 < G.R1D[i] + G.dR / 2 < 1.9 && abs(G.Z1D[j] + G.dZ / 2) < 0.9 for i in 1:G.NR, j in 1:G.NZ]
+    g = FieldLineGeometry(G, ψ; Bϕ = fill(1.0, G.NR, G.NZ), inside, nodal_B = true)
+    cap = @. 100.0 + 50.0 * (G.Z2D + 1.0)
+    in_wall = [LinearIndices(ψ)[i, j] for i in 2:(G.NR - 1), j in 2:(G.NZ - 1) if all(inside[(i - 1):i, (j - 1):j])]
+    for (tracer, tol) in ((MarchingSquaresTracer(), 1.0e-6), (RK4Tracer(), 0.05))
+        f = field_line_analysis!(FieldLineFollowingResult{Float64}(G.NR, G.NZ), g, tracer; pitch_cap = cap)
+        for k in in_wall
+            z = G.Z2D[k]
+            zf, zb = z + f.Lpol_forward[k], z - f.Lpol_backward[k]   # the line's ends, up and down
+            held(z1, z2) = 100.0 * (z2 - z1) + 25.0 * ((z2 + 1.0)^2 - (z1 + 1.0)^2)
+            @test f.Lc_held_forward[k] ≈ held(z, zf) rtol = tol
+            @test f.Lc_held_backward[k] ≈ held(zb, z) rtol = tol
+            @test f.Lc_held_tot[k] <= f.Lc_tot[k]
+        end
+    end
+end

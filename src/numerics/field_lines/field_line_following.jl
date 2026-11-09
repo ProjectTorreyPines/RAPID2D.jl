@@ -232,16 +232,19 @@ function validate_field_line_terminations!(RP::RAPID; strict::Bool = true)
         F = RP.fields
         for n in budget
             ratio = F.Btot[n] / hypot(F.BR[n], F.BZ[n])
-            for (t, Lc, Lpol) in (
-                    (tf, flf.Lc_forward, flf.Lpol_forward),
-                    (tb, flf.Lc_backward, flf.Lpol_backward),
+            for (t, Lc, Lc_held, Lpol) in (
+                    (tf, flf.Lc_forward, flf.Lc_held_forward, flf.Lpol_forward),
+                    (tb, flf.Lc_backward, flf.Lc_held_backward, flf.Lpol_backward),
                 )
                 t[n] === :trace_limit || continue
                 fb = Lpol[n] * ratio
                 # Belt: a degenerate node must not re-inject Inf.
                 Lc[n] = isfinite(fb) ? fb : oftype(Lc[n], 2π) * RP.G.R2D[n]
+                # the held length, a sum along the walked path, never exceeds the substitute
+                Lc_held[n] = min(Lc_held[n], Lc[n])
             end
             flf.Lc_tot[n] = flf.Lc_forward[n] + flf.Lc_backward[n]
+            flf.Lc_held_tot[n] = flf.Lc_held_forward[n] + flf.Lc_held_backward[n]
         end
         # `maxlog`: the same struggling trace would otherwise re-warn every FLF_nstep.
         @warn(

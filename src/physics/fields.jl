@@ -454,7 +454,8 @@ closures' weights ([`update_space_charge_weights!`](@ref)); with `charge_sheet_f
 - the **mixing amplitude** `ERZ_fluc_mag = min(|E∥,drive| L_c,held/L_pol,tot, E_Debye)`, the line's
   EMF capped cell by cell at what the plasma holds (`flf.Lc_held_tot`, [`sheet_pitch_cap`](@ref)) over
   its RZ length: an effective amplitude of the fluctuating sheets, not an rms, read by the turbulent
-  diffusivity `Dpol_turb` alone ([`update_turbulent_diffusivity!`](@ref)). γ does not enter it: how
+  channel alone — `Dpol_turb` ([`update_turbulent_diffusivity!`](@ref)) and `shared_turbulent_channel`
+  (the electron wall, the ion channels and their wall). γ does not enter it: how
   much of the drive the mean field cancels and how hard the sheets fluctuate are separate questions.
 
 Both are zero on closed lines, which short-circuit along B, and take the same boundary extrapolation.
@@ -505,8 +506,9 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     # # Turbulent parallel diffusion based on fluctuation levels
     # # TODO: implement computing length of connection length
     # F.L_mixing .= 10.0;
+    # the mixing length: the line's RZ length; a null's line (L_pol = Inf, toroidal) mixes along nothing
     tp = RP.transport
-    tp.L_mixing .= RP.flf.Lpol_tot
+    @. tp.L_mixing = ifelse(isfinite(flf.Lpol_tot), flf.Lpol_tot, zero(FT))
 
     extrapolate_field_to_boundary_nodes!(RP.G, tp.L_mixing)
     # smooth_data_2D!(tp.L_mixing; num_SM = 3)

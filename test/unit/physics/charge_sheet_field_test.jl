@@ -277,3 +277,26 @@ end
     estimate_electrostatic_field_effects!(RP)
     @test all(iszero, F.ERZ_fluc_mag) && all(iszero, tp.Dpol_turb)
 end
+
+@testitem "mixing amplitude: a null's line, toroidal with no RZ length, mixes nothing and stays finite" begin
+    using RAPID2D: estimate_electrostatic_field_effects!, flf_analysis_field_lines_rz_plane!, sheet_pitch_cap, shared_turbulent_channel
+    # no poloidal field at all: every line ends at a null, L_pol = Inf, and the sheets have no RZ direction
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 0.0, Eϕ = 0.5),
+        NR = 11, NZ = 11, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.plasma.ne .= 1.0e17
+    flf_analysis_field_lines_rz_plane!(RP; strict = false, pitch_cap = sheet_pitch_cap(RP))
+    @test all(t -> t === :null, RP.flf.termination_forward[RP.G.nodes.in_wall_nids])
+    estimate_electrostatic_field_effects!(RP)
+    F, tp = RP.fields, RP.transport
+    @test all(iszero, F.ERZ_fluc_mag) && all(iszero, F.ERZ_mean_mag)
+    @test all(isfinite, tp.L_mixing) && all(iszero, tp.Dpol_turb)
+    turb = shared_turbulent_channel(RP)
+    @test all(isfinite, turb.v_para) && all(iszero, turb.v_para)
+end
