@@ -431,7 +431,9 @@ end
 The pitch B/B_pol the charge sheets can follow at each node, `E_Debye/|E∥,drive|`: the poloidal
 field that cancels the drive over a cell, `|E∥| (B/B_pol)`, may not exceed what the plasma holds. The
 field-line following integrates `min(B/B_pol, cap)` into `flf.Lc_held_*` (`field_line_analysis!`), the
-part of each line's EMF the sheets hold. Without a drive the cap is `E_Debye/eps(FT)`, finite and no cap.
+part of each line's EMF the sheets hold; the step loop passes it at every refresh, the setup (before the
+plasma is set) none, so the held lengths start as the connection lengths. Without a drive the cap is
+`E_Debye/eps(FT)`, finite and no cap.
 """
 function sheet_pitch_cap(RP::RAPID{FT}) where {FT}
     ne_SM = smooth_data_2D(RP.plasma.ne; num_SM = 2, weighting = RP.G.inVol2D)
