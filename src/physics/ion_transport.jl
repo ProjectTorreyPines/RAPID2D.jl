@@ -469,7 +469,7 @@ function shared_turbulent_channel(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.flags.turb_ExB_mixing || return nothing
     f_para = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
     return turbulent_ExB_channel(
-        RP.plasma.turbulence_weight .* RP.fields.ERZ_mean_mag, RP.fields.Btot, RP.transport.L_mixing,
+        RP.plasma.turbulence_weight .* RP.fields.ERZ_fluc_mag, RP.fields.Btot, RP.transport.L_mixing,
         f_para, one(FT) - f_para
     )
 end

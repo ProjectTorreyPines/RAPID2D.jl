@@ -164,7 +164,7 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Measure field-line geometry BEFORE transport is first built: an unmeasured `flf`
     # reads as zero length and would cap D∥ at zero everywhere on step 0. The step-1
     # refresh in `run_simulation!` answers a different question ("has the field moved").
-    flf_analysis_field_lines_rz_plane!(RP)
+    flf_analysis_field_lines_rz_plane!(RP; pitch_cap = sheet_pitch_cap(RP))
     update_closed_surface_basis!(RP)
 
     # Operators first: they depend on the grid alone, and the transport refresh at the end of

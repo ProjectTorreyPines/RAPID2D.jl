@@ -575,7 +575,8 @@ Fields include components of the magnetic and electric fields.
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims)       # induced by ψ_coils_pla's change over the step; below the Ampère gate, the coils' alone [V/m]
     Eϕ_coils_pla_prev::Matrix{FT} = zeros(FT, dims)  # the same, one step before [V/m]
     ERZ_mean_mag::Matrix{FT} = zeros(FT, dims)       # the open-line charge sheets' mean RZ field (E∥ cancellation, mean E×B), magnitude along ±b̂_pol [V/m]
-    ERZ_para_pla::Matrix{FT} = zeros(FT, dims)       # its parallel projection, against the driven E∥ [V/m]
+    ERZ_fluc_mag::Matrix{FT} = zeros(FT, dims)       # the sheets' effective mixing amplitude, the line's held EMF over its RZ length, min(|E∥| L_c,held/L_pol, E_Debye) [V/m]
+    ERZ_para_pla::Matrix{FT} = zeros(FT, dims)       # the mean field's parallel projection, against the driven E∥ [V/m]
     Eϕ_para_coils_pla::Matrix{FT} = zeros(FT, dims)  # Eϕ_coils_pla bϕ [V/m]
 
     # Total fields: prescribed + coils and plasma (+ vertical-field control)
