@@ -426,20 +426,21 @@ function debye_field(RP::RAPID{FT}, ne) where {FT}
 end
 
 """
-    sheet_pitch_cap(RP) -> Matrix
+    sheet_mixing_integrand(RP) -> Matrix
 
-The pitch B/B_pol the charge sheets can follow at each node, `E_Debye/|E∥,drive|`: the poloidal
-field that cancels the drive over a cell, `|E∥| (B/B_pol)`, may not exceed what the plasma holds. The
-field-line following integrates `min(B/B_pol, cap)` into `flf.Lc_held_*` (`field_line_analysis!`), the
-part of each line's EMF the sheets hold; the step loop passes it at every refresh, the setup (before the
-plasma is set) none, so the held lengths start as the connection lengths. Without a drive the cap is
-`E_Debye/eps(FT)`, finite and no cap.
+The field the mixing amplitude averages along each line, at the nodes [V/m]: the RZ field that would
+cancel the driven E∥ there, `|E∥,drive| B/B_pol`, capped at what the plasma holds, `E_Debye` — the same
+cap as the mean field's, applied before the line average so that no cell contributes more than
+`E_Debye Δx` of potential. The field-line following integrates it (`field_line_analysis!`'s
+`integrand`, `flf.integral_tot`); the step loop passes it at every refresh, the setup (before the plasma
+is set) none. Where B_pol vanishes the cap alone remains; an empty or cold cell gives zero.
 """
-function sheet_pitch_cap(RP::RAPID{FT}) where {FT}
+function sheet_mixing_integrand(RP::RAPID{FT}) where {FT}
+    F = RP.fields
     ne_SM = smooth_data_2D(RP.plasma.ne; num_SM = 2, weighting = RP.G.inVol2D)
     E_Debye = debye_field(RP, ne_SM)
     E_drive = driven_parallel_field(RP)
-    return @. E_Debye / max(abs(E_drive), eps(FT))
+    return @. ifelse(F.Bpol > 0, min(abs(E_drive) * F.Btot / F.Bpol, E_Debye), E_Debye)
 end
 
 """
@@ -451,9 +452,10 @@ closures' weights ([`update_space_charge_weights!`](@ref)); with `charge_sheet_f
 - the **mean field** `ERZ_mean_mag = min(γ ERZ_req, E_Debye)`, the time-averaged field the sheets
   sustain: its parallel projection `ERZ_para_pla` cancels the driven E∥
   ([`calculate_parallel_electric_field!`](@ref)) and it drives the mean E×B drift;
-- the **mixing amplitude** `ERZ_fluc_mag = min(|E∥,drive| L_c,held/L_pol,tot, E_Debye)`, the line's
-  EMF capped cell by cell at what the plasma holds (`flf.Lc_held_tot`, [`sheet_pitch_cap`](@ref)) over
-  its RZ length: an effective amplitude of the fluctuating sheets, not an rms, read by the turbulent
+- the **mixing amplitude** `ERZ_fluc_mag = min(⟨min(|E∥,drive| B/B_pol, E_Debye)⟩_line, E_Debye)`, the
+  cancelling field capped cell by cell at what the plasma holds, averaged along the line over its RZ
+  length (`flf.integral_tot/Lpol_tot`, [`sheet_mixing_integrand`](@ref); before the step loop's first
+  following, the uncapped `|E∥| L_c/L_pol`): an effective amplitude of the fluctuating sheets, not an rms, read by the turbulent
   channel alone — `Dpol_turb` ([`update_turbulent_diffusivity!`](@ref)) and `shared_turbulent_channel`
   (the electron wall, the ion channels and their wall). γ does not enter it: how
   much of the drive the mean field cancels and how hard the sheets fluctuate are separate questions.
@@ -482,13 +484,15 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     extrapolate_field_to_boundary_nodes!(G, F.ERZ_mean_mag)
     F.ERZ_mean_mag[RP.flf.closed_surface_nids] .= zero(FT)
 
-    # The mixing amplitude: the line's held EMF |E∥| L_c,held over its RZ length L_pol, the local cap
-    # again (the line's mean must be held here too); nothing where the line was not measured or
-    # there is no poloidal field to follow (a null's line is toroidal: L_pol = Inf gives 0 too)
+    # The mixing amplitude: the capped cancelling field averaged along the line, the local cap again
+    # (the line's mean must be held here too); before the first following with the integrand (the
+    # setup's has no plasma yet) the uncapped line average |E∥| L_c/L_pol; nothing where the line was
+    # not measured or there is no poloidal field (a null's line is toroidal: L_pol = Inf gives 0 too)
     flf = RP.flf
+    line_mean = flf.has_integral ? flf.integral_tot ./ flf.Lpol_tot : abs.(E_para_drive) .* flf.Lc_tot ./ flf.Lpol_tot
     @. F.ERZ_fluc_mag = ifelse(
-        flf.is_closed | !(F.Bpol > 0) | !(flf.Lpol_tot > 0) | !isfinite(flf.Lc_held_tot), zero(FT),
-        min(abs(E_para_drive) * flf.Lc_held_tot / flf.Lpol_tot, E_Debye)
+        flf.is_closed | !(F.Bpol > 0) | !(flf.Lpol_tot > 0) | !isfinite(line_mean), zero(FT),
+        min(line_mean, E_Debye)
     )
     extrapolate_field_to_boundary_nodes!(G, F.ERZ_fluc_mag)
     F.ERZ_fluc_mag[flf.closed_surface_nids] .= zero(FT)

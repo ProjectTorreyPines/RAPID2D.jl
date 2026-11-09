@@ -185,7 +185,7 @@ end
 
 @testitem "mixing amplitude: the line's held EMF over its RZ length, apart from the mean field and its γ" setup = [CurrentDisc] begin
     using RAPID2D: estimate_electrostatic_field_effects!, update_space_charge_weights!, shared_turbulent_channel,
-        flf_analysis_field_lines_rz_plane!, sheet_pitch_cap
+        flf_analysis_field_lines_rz_plane!, sheet_mixing_integrand
     RP, _ = current_disc()
     trace_closed_region!(RP)
     pla, F, G, tp, flf = RP.plasma, RP.fields, RP.G, RP.transport, RP.flf
@@ -193,25 +193,28 @@ end
     open_in = setdiff(G.nodes.in_wall_nids, closed)
     pla.ne[open_in] .= 1.0e17
     pla.ne[closed] .= max.(pla.ne[closed], 1.0e17)   # no empty cell inside the wall: the cap binds only beyond it
-    # the field-line following with the plasma's pitch cap, as the step loop runs it
-    flf_analysis_field_lines_rz_plane!(RP; pitch_cap = sheet_pitch_cap(RP))
+    # the field-line following with the plasma's capped cancelling field, as the step loop runs it
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
     ERZ_target, E_Debye, E_drive = update_space_charge_weights!(RP)
     estimate_electrostatic_field_effects!(RP)
     on_wall = Set(G.nodes.on_wall_nids)
     interior = [k for k in open_in if !(k in on_wall) && flf.Lpol_tot[k] > 0]
     @test !isempty(interior)
-    # the fingerprint: amplitude × RZ length = |E∥| × the held connection length
-    uncapped = [k for k in interior if abs(E_drive[k]) * flf.Lc_held_tot[k] / flf.Lpol_tot[k] < E_Debye[k]]
+    # the fingerprint: amplitude × RZ length = the line integral of the capped cancelling field
+    @test flf.has_integral
+    uncapped = [k for k in interior if flf.integral_tot[k] / flf.Lpol_tot[k] < E_Debye[k]]
     @test !isempty(uncapped)
-    @test F.ERZ_fluc_mag[uncapped] .* flf.Lpol_tot[uncapped] ≈ abs.(E_drive[uncapped]) .* flf.Lc_held_tot[uncapped]
+    @test F.ERZ_fluc_mag[uncapped] .* flf.Lpol_tot[uncapped] ≈ flf.integral_tot[uncapped]
     @test all(k -> F.ERZ_fluc_mag[k] <= E_Debye[k] * (1 + 1.0e-12), interior)
-    # dense: the cell cap binds only where the line meets the empty cells beyond the wall, so the held
-    # length is the connection length on the lines that reach the wall both ways up to that last cell
-    # (a null's line adds 2πR to L_c alone, a budget-cut one has L_c = Inf)
+    # dense: the cell cap binds nowhere inside the wall, so the integral is that of the uncapped cancelling
+    # field (the drive varies as 1/R along a line, so not |E∥| at the node times L_c) on the lines that reach the
+    # wall both ways, up to the last cell before the empty nodes beyond it
     walls = [k for k in interior if flf.termination_forward[k] === :wall && flf.termination_backward[k] === :wall]
     @test !isempty(walls)
-    @test flf.Lc_held_tot[walls] ≈ flf.Lc_tot[walls] rtol = 1.0e-3
-    @test all(k -> flf.Lc_held_tot[k] <= flf.Lc_tot[k], walls)
+    capped = copy(flf.integral_tot)
+    flf_analysis_field_lines_rz_plane!(RP; integrand = abs.(E_drive) .* F.Btot ./ max.(F.Bpol, 1.0e-12))
+    @test capped[walls] ≈ flf.integral_tot[walls] rtol = 1.0e-2
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
     # the mean field is what it was: γ-shaped, capped
     @test F.ERZ_mean_mag[open_in] ≈ min.(ERZ_target[open_in], E_Debye[open_in])
     # the diffusivity and the shared channel read the amplitude, not the mean field
@@ -230,17 +233,18 @@ end
     # the snapshot carries it
     @test RAPID2D.measure_snap2D(RP).ERZ_fluc_mag == F.ERZ_fluc_mag
 
-    # a thin plasma: the cell cap binds along the lines, the held length falls below the connection length
+    # a thin plasma: the cell cap binds along the lines, the integral falls below the uncapped one
+    dense = copy(flf.integral_tot)
     pla.ne[open_in] .= 1.0e12
-    flf_analysis_field_lines_rz_plane!(RP; pitch_cap = sheet_pitch_cap(RP))
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
     estimate_electrostatic_field_effects!(RP)
-    @test any(k -> flf.Lc_held_tot[k] < 0.99 * flf.Lc_tot[k], interior)
-    @test all(k -> flf.Lc_held_tot[k] <= flf.Lc_tot[k] * (1 + 1.0e-12), interior)
+    @test any(k -> flf.integral_tot[k] < 0.99 * dense[k], interior)
+    @test all(k -> flf.integral_tot[k] <= dense[k] * (1 + 1.0e-12), interior)
     @test all(isfinite, F.ERZ_fluc_mag) && all(isfinite, tp.Dpol_turb)
 end
 
 @testitem "mixing amplitude: one value along a straight line, nothing from a cold plasma or without the field" begin
-    using RAPID2D: estimate_electrostatic_field_effects!, flf_analysis_field_lines_rz_plane!, sheet_pitch_cap
+    using RAPID2D: estimate_electrostatic_field_effects!, flf_analysis_field_lines_rz_plane!, sheet_mixing_integrand
     # a vertical field: every R column is one line, the amplitude |E∥| L_c/L_pol = |E∥| B/B_pol is the column's
     config = SimulationConfig{Float64}(;
         device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
@@ -253,7 +257,7 @@ end
     initialize!(RP)
     F, G, tp = RP.fields, RP.G, RP.transport
     RP.plasma.ne .= 1.0e17
-    flf_analysis_field_lines_rz_plane!(RP; pitch_cap = sheet_pitch_cap(RP))
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
     estimate_electrostatic_field_effects!(RP)
     on_wall = Set(G.nodes.on_wall_nids)
     interior = [k for k in G.nodes.in_wall_nids if !(k in on_wall)]
@@ -279,7 +283,7 @@ end
 end
 
 @testitem "mixing amplitude: a null's line, toroidal with no RZ length, mixes nothing and stays finite" begin
-    using RAPID2D: estimate_electrostatic_field_effects!, flf_analysis_field_lines_rz_plane!, sheet_pitch_cap, shared_turbulent_channel
+    using RAPID2D: estimate_electrostatic_field_effects!, flf_analysis_field_lines_rz_plane!, sheet_mixing_integrand, shared_turbulent_channel
     # no poloidal field at all: every line ends at a null, L_pol = Inf, and the sheets have no RZ direction
     config = SimulationConfig{Float64}(;
         device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 0.0, Eϕ = 0.5),
@@ -291,7 +295,7 @@ end
     RP = RAPID{Float64}(config)
     initialize!(RP)
     RP.plasma.ne .= 1.0e17
-    flf_analysis_field_lines_rz_plane!(RP; strict = false, pitch_cap = sheet_pitch_cap(RP))
+    flf_analysis_field_lines_rz_plane!(RP; strict = false, integrand = sheet_mixing_integrand(RP))
     @test all(t -> t === :null, RP.flf.termination_forward[RP.G.nodes.in_wall_nids])
     estimate_electrostatic_field_effects!(RP)
     F, tp = RP.fields, RP.transport
