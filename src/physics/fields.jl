@@ -477,6 +477,11 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
         fill!(F.Epol_mean, zero(FT))
         fill!(F.Erad_fluc, zero(FT))
         fill!(RP.transport.Dpol_turb, zero(FT))
+        # the mean drift and the RZ field are the mean field's: none left from before either
+        fill!(pla.mean_ExB_R, zero(FT))
+        fill!(pla.mean_ExB_Z, zero(FT))
+        fill!(F.ER, zero(FT))
+        fill!(F.EZ, zero(FT))
         # E∥ without the sheets' part at once: the transport's refresh reads it
         calculate_parallel_electric_field!(RP)
         return RP

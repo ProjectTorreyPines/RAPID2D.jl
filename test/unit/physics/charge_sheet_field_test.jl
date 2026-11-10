@@ -159,9 +159,12 @@ end
     pla.ne[setdiff(RP.G.nodes.in_wall_nids, closed)] .= 1.0e17
     estimate_electrostatic_field_effects!(RP)
     @test any(>(0), F.Epol_mean) && any(>(0), tp.Dpol_turb) && any(!iszero, F.Epol_para_pla)
+    @test any(!iszero, pla.mean_ExB_R) || any(!iszero, pla.mean_ExB_Z)
     RP.flags.charge_sheet_field = false
     estimate_electrostatic_field_effects!(RP)
     @test all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc) && all(iszero, F.Epol_para_pla)
+    # the mean drift and the RZ field go with it: the transport would otherwise keep adding the old drift
+    @test all(iszero, pla.mean_ExB_R) && all(iszero, pla.mean_ExB_Z) && all(iszero, F.ER) && all(iszero, F.EZ)
     @test F.E_para_tot ≈ F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla
     @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
     @test all(==(1), pla.ambipolar_weight[closed])
