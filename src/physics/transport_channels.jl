@@ -573,20 +573,19 @@ end
 # reason, and the non-square case is a regression test.
 
 """
-    turbulent_ExB_channel(ERZ, B_tot, L_mixing, f_para, f_perp)
+    turbulent_ExB_channel(E_psi, B_tot, L_mixing)
 
-Anomalous ExB mixing: `D_pol = ½·v_E·L_mixing` with `v_E = ERZ/B_tot`, split
-`f_para : f_perp` along the **poloidal** field.
-
-One speed, two step lengths — `λ∥ = f∥·L_mixing`, `λ⊥ = f⊥·L_mixing` — so at the
-default split the eddy is 9× longer along `b̂_pol` than across it. A field-aligned
-eddy, which is what an ExB mixing model should produce.
+The turbulent E×B mixing: the charge sheets' fluctuating field across the lines, `E_psi` (δE_ψ, along
+∇ψ), drifts the plasma along `b̂_pol` at `v_E = E_psi/B_tot`, and `D = ½·v_E·L_mixing` along `b̂_pol`
+alone — `λ∥ = L_mixing`, `λ⊥ = 0`. Nothing across the lines: a fluctuating component along `b̂_pol`
+would drift across them, and that component is not modelled (it projects onto E∥ instead).
+The wall sees the same: it is reached along `b̂_pol` only (`vm_perp = 0`).
 
 Aligned with `b̂_pol`, **not** the full `b̂`: use the per-channel-direction
 `total_tensor` when combining it with a collisional channel.
 """
-function turbulent_ExB_channel(ERZ, B_tot, L_mixing, f_para, f_perp)
-    v_E = @. ERZ / B_tot
+function turbulent_ExB_channel(E_psi, B_tot, L_mixing)
+    v_E = @. E_psi / B_tot
     # An ExB eddy is not a Maxwellian, so `maxwellian_mean_speed` has nothing to say
     # about how fast it delivers to a wall and `v̄ = √(8/π)·v_E` is a modelling
     # choice, not a theorem. It is written out here rather than inherited from a
@@ -594,8 +593,8 @@ function turbulent_ExB_channel(ERZ, B_tot, L_mixing, f_para, f_perp)
     # delivery model would replace it; see internal/docs/src/notes/TODO/wall-boundary-conditions.md.
     vm_E = @. sqrt(8 / π) * v_E
     return DiffusionChannel(
-        v_E, (@. f_para * L_mixing), v_E, (@. f_perp * L_mixing);
-        vm_para = vm_E, vm_perp = vm_E
+        v_E, L_mixing, v_E, zero.(v_E);
+        vm_para = vm_E, vm_perp = zero.(v_E)
     )
 end
 

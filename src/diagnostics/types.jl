@@ -270,8 +270,8 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     E_para_amb::Matrix{FT} = zeros(FT, dims_RZ)     # the ambipolar field the closure implies, (mₑ/e) w_amb a_p (no part of E_para_tot)
     Eϕ_para_presc::Matrix{FT} = zeros(FT, dims_RZ)   # Prescribed parallel electric field
     mean_ExB_pol::Matrix{FT} = zeros(FT, dims_RZ)   # ExB drift magnitude
-    ERZ_mean_mag::Matrix{FT} = zeros(FT, dims_RZ)   # the open-line charge sheets' mean RZ field, magnitude
-    ERZ_fluc_mag::Matrix{FT} = zeros(FT, dims_RZ)   # their effective mixing amplitude, the turbulent channel's field
+    E_bpol_mean::Matrix{FT} = zeros(FT, dims_RZ)    # Ē_b, the open-line charge sheets' mean field along b̂_pol, magnitude
+    E_psi_fluc::Matrix{FT} = zeros(FT, dims_RZ)     # δE_ψ, their fluctuating field across the lines: the turbulent channel's amplitude
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)   # induced by the coils and the plasma over the last step
     Eϕ_coils::Matrix{FT} = zeros(FT, dims_RZ)       # the coils' part, −ψ_coils(ΔI)/(R Δt); NaN without induction
     Eϕ_pla::Matrix{FT} = zeros(FT, dims_RZ)         # the rest, Eϕ_coils_pla − Eϕ_coils (not −Δψ_pla/(R Δt)); NaN without induction

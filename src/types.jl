@@ -111,8 +111,6 @@ Contains simulation configuration parameters.
     Dpara0::FT = FT(0.0)               # Base parallel diffusivity: a notional background added to every parallel coefficient [m²/s]
     Dperp0::FT = FT(0.0)               # Base perpendicular diffusivity: a notional background added to D⊥ [m²/s]
 
-    turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
-
     # The open-line charge sheets' shape factor at the mean B_pol, γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩):
     # their field reaches at most γ ERZ_req (`update_space_charge_weights!`). The potential is a global
     # solution, and an open line between two points of one wall cannot shield its whole EMF. 1
@@ -574,8 +572,10 @@ Fields include components of the magnetic and electric fields.
     ψ_coils_pla::Matrix{FT} = zeros(FT, dims)        # [Wb/rad]
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims)       # induced by ψ_coils_pla's change over the step; below the Ampère gate, the coils' alone [V/m]
     Eϕ_coils_pla_prev::Matrix{FT} = zeros(FT, dims)  # the same, one step before [V/m]
-    ERZ_mean_mag::Matrix{FT} = zeros(FT, dims)       # the open-line charge sheets' mean RZ field (E∥ cancellation, mean E×B), magnitude along ±b̂_pol [V/m]
-    ERZ_fluc_mag::Matrix{FT} = zeros(FT, dims)       # the sheets' effective mixing amplitude: the cancelling field, capped at E_Debye, averaged along the line, min(∫min(|E∥|B/B_pol, E_Debye)dl_pol/L_pol, E_Debye) [V/m]
+    # The open-line charge sheets' field in the RZ plane, by component in the poloidal frame b̂_pol (along B_pol) and
+    # ψ̂ = φ̂ × b̂_pol (across the lines, along ∇ψ). Ē_b projects onto E∥ and drifts across the lines; δE_ψ drifts along them.
+    E_bpol_mean::Matrix{FT} = zeros(FT, dims)       # Ē_b, the mean component along b̂_pol (E∥ cancellation, mean E×B across the lines): magnitude, the sign is set where it is applied [V/m]
+    E_psi_fluc::Matrix{FT} = zeros(FT, dims)        # δE_ψ, the fluctuating component across the lines (turbulent E×B mixing along b̂_pol): effective amplitude, min(∫min(|E∥|B/B_pol, E_Debye)dl_pol/L_pol, E_Debye) [V/m]
     ERZ_para_pla::Matrix{FT} = zeros(FT, dims)       # the mean field's parallel projection, against the driven E∥ [V/m]
     Eϕ_para_coils_pla::Matrix{FT} = zeros(FT, dims)  # Eϕ_coils_pla bϕ [V/m]
 

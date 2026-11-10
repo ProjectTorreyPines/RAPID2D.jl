@@ -463,14 +463,13 @@ end
 
 """
 The ExB channel every ion species and the electron wall share, or `nothing` when it is switched
-off: the charge sheets' drift speed at the turbulence's weight, as in `Dpol_turb`.
+off: the charge sheets' fluctuating field across the lines at the turbulence's weight, drifting
+along `b̂_pol`, as in `Dpol_turb`.
 """
 function shared_turbulent_channel(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.flags.turb_ExB_mixing || return nothing
-    f_para = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
     return turbulent_ExB_channel(
-        RP.plasma.turbulence_weight .* RP.fields.ERZ_fluc_mag, RP.fields.Btot, RP.transport.L_mixing,
-        f_para, one(FT) - f_para
+        RP.plasma.turbulence_weight .* RP.fields.E_psi_fluc, RP.fields.Btot, RP.transport.L_mixing
     )
 end
 

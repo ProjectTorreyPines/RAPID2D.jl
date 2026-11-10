@@ -250,7 +250,7 @@ end
     st, F = RP.vertical_field_control, RP.fields
     RP.flags.charge_sheet_field = true
     RP.flags.E_para_cancellation = true
-    RP.fields.ERZ_mean_mag .= 1.0                                  # a poloidal self field to project
+    RP.fields.E_bpol_mean .= 1.0                                  # a poloidal self field to project
     st.R_ref = 1.6
     st.dt_applied = 1.0e-6
     st.a .= [1.0e-3, 0.0]                                       # a fast rise: Eϕ,ctrl ≈ −500 R V/m reverses Eϕ,presc
@@ -280,7 +280,7 @@ end
     st.a .= [1.0e-3, 0.0]                                       # Eϕ,ctrl ≈ −500 R V/m
     write_vertical_control_field!(RP)
     combine_field_sources!(RP)
-    estimate!() = (estimate_electrostatic_field_effects!(RP); copy(F.ERZ_mean_mag))
+    estimate!() = (estimate_electrostatic_field_effects!(RP); copy(F.E_bpol_mean))
     with_ctrl = estimate!()
     # the control's part moved into the prescribed one gives the same estimate
     F.Eϕ_para_presc .+= F.Eϕ_para_ctrl

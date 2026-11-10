@@ -345,18 +345,12 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @. tp.DRZ = (tp.Dpara - tp.Dperp) * F.bR * F.bZ
     @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bZ^2
 
-    # Add turbulent diffusion if enabled
+    # the turbulent E×B mixing: the sheets' fluctuating field across the lines (δE_ψ) drifts the plasma along
+    # b̂_pol, so the tensor is 𝐃_turb = D_turb b̂_pol b̂_pol — nothing across the lines
     if RP.flags.turb_ExB_mixing
-        # In a real implementation, turbulent diffusion would be calculated based on
-        # field line connection length, ExB drifts, etc.
-
-        fpara = FT(RP.config.turbulent_diffusion_fraction_along_bpol)
-        fperp = one(FT) - fpara
-
-        # 𝐃 = [ (f⟂ 𝐈) + (f∥ - f⟂) * 𝐛𝐛]
-        @. tp.DRR_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_R^2)
-        @. tp.DRZ_turb = (tp.Dpol_turb) * (fpara - fperp) * (F.bpol_R * F.bpol_Z)
-        @. tp.DZZ_turb = tp.Dpol_turb * (fperp + (fpara - fperp) * F.bpol_Z^2)
+        @. tp.DRR_turb = tp.Dpol_turb * F.bpol_R^2
+        @. tp.DRZ_turb = tp.Dpol_turb * F.bpol_R * F.bpol_Z
+        @. tp.DZZ_turb = tp.Dpol_turb * F.bpol_Z^2
 
         # Add turbulent diffusion to base diffusion
         @. tp.DRR .+= tp.DRR_turb

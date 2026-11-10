@@ -385,7 +385,7 @@ const RENAMED_SNAPSHOT_FIELDS = Dict(
     "BZ_ext_at_cen_by_Jϕ" => "BZ_presc_at_cen_by_Jϕ", "BR_ext_at_cen_by_Jϕ" => "BR_presc_at_cen_by_Jϕ",
     "coils_V_ext" => "coils_V_applied", "ni" => "ni_tot", "ni_max" => "ni_tot_max",
     # the E-field names by component, then para, then source
-    "Epol_self" => "ERZ_mean_mag", "ERZ_pla_mag" => "ERZ_mean_mag", "E_para_presc" => "Eϕ_para_presc", "Epara_tot" => "E_para_tot",
+    "Epol_self" => "E_bpol_mean", "ERZ_pla_mag" => "E_bpol_mean", "E_para_presc" => "Eϕ_para_presc", "Epara_tot" => "E_para_tot",
     "Epara_presc" => "Eϕ_para_presc", "Epara_ctrl" => "Eϕ_para_ctrl", "Epara_self_ES" => "ERZ_para_pla",
     "Epara_self_EM" => "Eϕ_para_coils_pla",
 )
