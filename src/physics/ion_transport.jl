@@ -469,7 +469,7 @@ along `b̂_pol`, as in `Dpol_turb`.
 function shared_turbulent_channel(RP::RAPID{FT}) where {FT <: AbstractFloat}
     RP.flags.turb_ExB_mixing || return nothing
     return turbulent_ExB_channel(
-        RP.plasma.turbulence_weight .* RP.fields.E_psi_fluc, RP.fields.Btot, RP.transport.L_mixing
+        RP.plasma.turbulence_weight .* RP.fields.Erad_fluc, RP.fields.Btot, RP.transport.L_mixing
     )
 end
 

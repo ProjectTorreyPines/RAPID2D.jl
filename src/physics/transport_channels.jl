@@ -573,10 +573,10 @@ end
 # reason, and the non-square case is a regression test.
 
 """
-    turbulent_ExB_channel(E_psi, B_tot, L_mixing)
+    turbulent_ExB_channel(Erad, B_tot, L_mixing)
 
-The turbulent E×B mixing: the charge sheets' fluctuating field across the lines, `E_psi` (δE_ψ, along
-∇ψ), drifts the plasma along `b̂_pol` at `v_E = E_psi/B_tot`, and `D = ½·v_E·L_mixing` along `b̂_pol`
+The turbulent E×B mixing: the charge sheets' fluctuating field across the lines, `Erad` (δE_r, flux-normal,
+along ∇ψ), drifts the plasma along `b̂_pol` in the model's RZ mixing at `v_E = Erad/B_tot`, and `D = ½·v_E·L_mixing` along `b̂_pol`
 alone — `λ∥ = L_mixing`, `λ⊥ = 0`. Nothing across the lines: a fluctuating component along `b̂_pol`
 would drift across them, and that component is not modelled (it projects onto E∥ instead).
 The wall sees the same: it is reached along `b̂_pol` only (`vm_perp = 0`).
@@ -584,8 +584,8 @@ The wall sees the same: it is reached along `b̂_pol` only (`vm_perp = 0`).
 Aligned with `b̂_pol`, **not** the full `b̂`: use the per-channel-direction
 `total_tensor` when combining it with a collisional channel.
 """
-function turbulent_ExB_channel(E_psi, B_tot, L_mixing)
-    v_E = @. E_psi / B_tot
+function turbulent_ExB_channel(Erad, B_tot, L_mixing)
+    v_E = @. Erad / B_tot
     # An ExB eddy is not a Maxwellian, so `maxwellian_mean_speed` has nothing to say
     # about how fast it delivers to a wall and `v̄ = √(8/π)·v_E` is a modelling
     # choice, not a theorem. It is written out here rather than inherited from a

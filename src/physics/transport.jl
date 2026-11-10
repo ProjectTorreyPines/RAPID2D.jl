@@ -345,7 +345,7 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @. tp.DRZ = (tp.Dpara - tp.Dperp) * F.bR * F.bZ
     @. tp.DZZ = tp.Dperp + (tp.Dpara - tp.Dperp) * F.bZ^2
 
-    # the turbulent E×B mixing: the sheets' fluctuating field across the lines (δE_ψ) drifts the plasma along
+    # the turbulent E×B mixing: the sheets' fluctuating flux-normal field (δE_r) drifts the plasma along
     # b̂_pol, so the tensor is 𝐃_turb = D_turb b̂_pol b̂_pol — nothing across the lines
     if RP.flags.turb_ExB_mixing
         @. tp.DRR_turb = tp.Dpol_turb * F.bpol_R^2

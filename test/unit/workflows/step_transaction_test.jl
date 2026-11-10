@@ -309,7 +309,7 @@ end
     using RAPID2D: take_step!, StepTransaction, StepState, Accept, Reject
     RP = transaction_rp()
     entry = StepState(RP)
-    @test all(iszero, RP.fields.E_bpol_mean) && all(iszero, RP.transport.Dpol_turb)
+    @test all(iszero, RP.fields.Epol_mean) && all(iszero, RP.transport.Dpol_turb)
     Dpara = copy(RP.transport.Dpara)
     calls, refreshed = Ref(0), Ref(false)
     verdict = function (rp)

@@ -250,7 +250,7 @@ end
     st, F = RP.vertical_field_control, RP.fields
     RP.flags.charge_sheet_field = true
     RP.flags.E_para_cancellation = true
-    RP.fields.E_bpol_mean .= 1.0                                  # a poloidal self field to project
+    RP.fields.Epol_mean .= 1.0                                  # a poloidal self field to project
     st.R_ref = 1.6
     st.dt_applied = 1.0e-6
     st.a .= [1.0e-3, 0.0]                                       # a fast rise: Eϕ,ctrl ≈ −500 R V/m reverses Eϕ,presc
@@ -260,12 +260,12 @@ end
     @test all(<(0), Eϕ_vacuum) && all(>(0), F.Eϕ_presc)
     @test F.Eϕ ≈ Eϕ_vacuum .+ F.Eϕ_coils_pla
     @test F.Eϕ_para_presc ≈ F.Eϕ_presc .* F.bϕ && F.Eϕ_para_ctrl ≈ F.Eϕ_ctrl .* F.bϕ
-    @test F.E_para_tot ≈ F.Eϕ_para_presc .+ F.Eϕ_para_ctrl .+ F.ERZ_para_pla .+ F.Eϕ_para_coils_pla
+    @test F.E_para_tot ≈ F.Eϕ_para_presc .+ F.Eϕ_para_ctrl .+ F.Epol_para_pla .+ F.Eϕ_para_coils_pla
     @test F.ψ ≈ F.ψ_presc .+ F.ψ_coils_pla .+ F.ψ_ctrl
     @test F.BZ ≈ F.BZ_presc .+ F.BZ_coils_pla .+ F.BZ_ctrl
-    nonzero = F.ERZ_para_pla .!= 0
+    nonzero = F.Epol_para_pla .!= 0
     @test any(nonzero)
-    @test sign.(F.ERZ_para_pla[nonzero]) == sign.(-Eϕ_vacuum[nonzero] .* F.Bϕ[nonzero])
+    @test sign.(F.Epol_para_pla[nonzero]) == sign.(-Eϕ_vacuum[nonzero] .* F.Bϕ[nonzero])
 end
 
 @testitem "ideal vertical field: the electrostatic estimate takes the control's E∥ as a prescribed one" setup = [CurrentDisc] begin
@@ -280,7 +280,7 @@ end
     st.a .= [1.0e-3, 0.0]                                       # Eϕ,ctrl ≈ −500 R V/m
     write_vertical_control_field!(RP)
     combine_field_sources!(RP)
-    estimate!() = (estimate_electrostatic_field_effects!(RP); copy(F.E_bpol_mean))
+    estimate!() = (estimate_electrostatic_field_effects!(RP); copy(F.Epol_mean))
     with_ctrl = estimate!()
     # the control's part moved into the prescribed one gives the same estimate
     F.Eϕ_para_presc .+= F.Eϕ_para_ctrl
@@ -305,7 +305,7 @@ end
     combine_field_sources!(RP)
     @test F.BZ == F.BZ_presc .+ F.BZ_coils_pla
     @test F.Eϕ_para_presc == F.Eϕ_presc .* F.bϕ
-    @test F.E_para_tot == F.Eϕ_para_presc .+ F.ERZ_para_pla .+ F.Eϕ_para_coils_pla
+    @test F.E_para_tot == F.Eϕ_para_presc .+ F.Epol_para_pla .+ F.Eϕ_para_coils_pla
 end
 
 @testitem "ideal vertical field: refused with the global J×B kick, without Ampère, and with coils" setup = [CurrentDisc] begin

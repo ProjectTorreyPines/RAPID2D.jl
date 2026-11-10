@@ -2283,10 +2283,10 @@ function solve_combined_momentum_Ampere_equations_with_coils!(
             accel_para_tilde .+= (one(FT) - θ_op) * (pops.A_diffu * pla.ue_para)
         end
 
-        # Electric field contributions: (qe/me) (Eϕ_para_presc (+ Eϕ_para_ctrl) + ERZ_para_pla); the
+        # Electric field contributions: (qe/me) (Eϕ_para_presc (+ Eϕ_para_ctrl) + Epol_para_pla); the
         # induced part is solved with ψ
         if flags.E_para_cancellation
-            @. accel_para_tilde += qe / me * (F.Eϕ_para_presc + F.ERZ_para_pla)
+            @. accel_para_tilde += qe / me * (F.Eϕ_para_presc + F.Epol_para_pla)
         else
             @. accel_para_tilde += qe / me * (F.Eϕ_para_presc)
         end

@@ -42,11 +42,11 @@ end
 
     # D_turb = ½·v_E·L_mixing along b̂_pol, nothing across the lines: the sheets' fluctuating field across
     # the lines (δE_ψ) drifts along b̂_pol
-    E_psi, B_tot, L_mix = 37.5, 0.63, 1.0
-    ch = turbulent_ExB_channel(fill(E_psi, 1, 1), fill(B_tot, 1, 1), L_mix)
+    Erad, B_tot, L_mix = 37.5, 0.63, 1.0
+    ch = turbulent_ExB_channel(fill(Erad, 1, 1), fill(B_tot, 1, 1), L_mix)
     @test ch isa DiffusionChannel{Float64}
 
-    v_ExB = E_psi / B_tot
+    v_ExB = Erad / B_tot
     @test only(ch.v_para) ≈ v_ExB rtol = 1.0e-14
     @test only(@. 0.5 * ch.v_para * ch.λ_para) ≈ 0.5 * v_ExB * L_mix rtol = 1.0e-14
     @test iszero(only(ch.λ_perp)) && iszero(only(ch.vm_perp))   # no step and no wall delivery across the lines

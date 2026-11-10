@@ -90,7 +90,7 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.E_para_tot = sum(@. F.E_para_tot * Ne2D) / total_Ne
     snap0D.Eϕ_para_presc = sum(@. F.Eϕ_para_presc * Ne2D) / total_Ne
     snap0D.Eϕ_para_ctrl = sum(@. F.Eϕ_para_ctrl * Ne2D) / total_Ne
-    snap0D.ERZ_para_pla = sum(@. F.ERZ_para_pla * Ne2D) / total_Ne
+    snap0D.Epol_para_pla = sum(@. F.Epol_para_pla * Ne2D) / total_Ne
     snap0D.Eϕ_para_coils_pla = sum(@. F.Eϕ_para_coils_pla * Ne2D) / total_Ne
     E_para_amb = ambipolar_parallel_field(RP)
     snap0D.abs_E_para_amb = sum(@. abs(E_para_amb) * Ne2D) / total_Ne
@@ -393,8 +393,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.E_para_tot .= F.E_para_tot
     snap2D.E_para_amb .= ambipolar_parallel_field(RP)
     snap2D.Eϕ_para_presc .= F.Eϕ_para_presc
-    snap2D.E_bpol_mean .= F.E_bpol_mean
-    snap2D.E_psi_fluc .= F.E_psi_fluc
+    snap2D.Epol_mean .= F.Epol_mean
+    snap2D.Erad_fluc .= F.Erad_fluc
     snap2D.Eϕ_coils_pla .= F.Eϕ_coils_pla
 
     # Loop voltages
