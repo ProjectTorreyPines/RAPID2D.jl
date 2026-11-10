@@ -304,3 +304,31 @@ end
     turb = shared_turbulent_channel(RP)
     @test all(isfinite, turb.v_para) && all(iszero, turb.v_para)
 end
+
+@testitem "mixing amplitude: the step loop passes the integrand; before it, the uncapped line average" begin
+    using RAPID2D: estimate_electrostatic_field_effects!, run_simulation!
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
+        NR = 17, NZ = 17, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.plasma.ne .= 1.0e17
+    F, G, flf = RP.fields, RP.G, RP.flf
+    on_wall = Set(G.nodes.on_wall_nids)
+    interior = [k for k in G.nodes.in_wall_nids if !(k in on_wall)]
+    # the setup's following carried no integrand: the amplitude is the uncapped line average |E∥| L_c/L_pol
+    @test !flf.has_integral && all(iszero, flf.integral_tot)
+    estimate_electrostatic_field_effects!(RP)
+    E_drive = abs.(F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla)
+    @test F.ERZ_fluc_mag[interior] ≈ (E_drive .* flf.Lc_tot ./ flf.Lpol_tot)[interior]
+    # one step of the run: its first refresh passes the plasma's capped field, and the amplitude reads it
+    RP.t_end_s = RP.time_s + RP.dt
+    run_simulation!(RP)
+    @test flf.has_integral && any(>(0), flf.integral_tot[interior])
+    @test F.ERZ_fluc_mag[interior] ≈ min.((flf.integral_tot ./ flf.Lpol_tot)[interior], 1.0e30)
+    @test all(k -> F.ERZ_fluc_mag[k] * flf.Lpol_tot[k] ≈ flf.integral_tot[k], interior)
+end

@@ -527,8 +527,8 @@ end
 
 The turbulent E×B mixing's diffusivity from the charge sheets' mixing amplitude and the turbulence's
 weight, `Dpol_turb = ½ w_turb (ERZ_fluc_mag/B) L_mixing`: the drift speed `shared_turbulent_channel`
-takes. With `L_mixing = L_pol,tot` the length cancels: `Dpol_turb = ½ w_turb |E∥| L_c,held/B` before
-the Debye cap, one value along a line. Where the weights are refreshed without the field (a run's
+takes. With `L_mixing = L_pol,tot` the length cancels: `Dpol_turb = ½ w_turb ∫min(|E∥|B/B_pol, E_Debye)dl_pol/B`
+up to the outer cap, one value along a line. Where the weights are refreshed without the field (a run's
 start, a failed step put back), the diffusivity follows them.
 """
 function update_turbulent_diffusivity!(RP::RAPID)

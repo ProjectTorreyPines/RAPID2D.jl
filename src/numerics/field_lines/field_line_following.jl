@@ -157,16 +157,16 @@ function flf_analysis_field_lines_rz_plane(
         R1D::Vector{FT}, Z1D::Vector{FT}, BR::Matrix{FT}, BZ::Matrix{FT}, Bϕ::Matrix{FT},
         cell_state::AbstractMatrix{Bool};
         dR::Union{FT, Nothing} = nothing, dZ::Union{FT, Nothing} = nothing,
-        out_wall_idx::Union{Vector{Int}, Nothing} = nothing,
+        out_wall_idx::Union{Vector{Int}, Nothing} = nothing, integrand::Union{Nothing, AbstractMatrix} = nothing,
     ) where {FT <: AbstractFloat}
     flf = FieldLineFollowingResult{FT}(; dims_RZ = (length(R1D), length(Z1D)))
-    return flf_analysis_field_lines_rz_plane!(flf, R1D, Z1D, BR, BZ, Bϕ, cell_state; dR, dZ, out_wall_idx)
+    return flf_analysis_field_lines_rz_plane!(flf, R1D, Z1D, BR, BZ, Bϕ, cell_state; dR, dZ, out_wall_idx, integrand)
 end
 
 # The analysis of a run's field by its own tracer, into a new result.
-function flf_analysis_field_lines_rz_plane(RP::RAPID{FT}) where {FT}
+function flf_analysis_field_lines_rz_plane(RP::RAPID{FT}; integrand::Union{Nothing, AbstractMatrix} = nothing) where {FT}
     flf = FieldLineFollowingResult{FT}(RP.G.NR, RP.G.NZ)
-    return run_field_line_analysis!(flf, RP)
+    return run_field_line_analysis!(flf, RP; integrand)
 end
 
 function run_field_line_analysis!(
