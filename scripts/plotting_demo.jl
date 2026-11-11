@@ -66,7 +66,7 @@ for i in 1:5
         amp = 1.0e19 * (1 + 0.2 * sin(i))
         snap2D.ne[ir, iz] = amp * exp(-((r - r_center)^2 + (z - z_center)^2) / (2 * σ^2))
         snap2D.Te_eV[ir, iz] = 10.0 + 5.0 * sin(i + r + z)
-        snap2D.B_pol[ir, iz] = 0.1 * r * (1 + 0.1 * cos(i + z))
+        snap2D.Bpol[ir, iz] = 0.1 * r * (1 + 0.1 * cos(i + z))
     end
     push!(RP.diagnostics.snaps2D, snap2D)
 end

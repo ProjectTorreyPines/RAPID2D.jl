@@ -96,8 +96,8 @@ function measure_snap0D!(RP::RAPID{FT}, snap0D::Snapshot0D{FT}) where {FT <: Abs
     snap0D.abs_E_para_amb = sum(@. abs(E_para_amb) * Ne2D) / total_Ne
 
     # Transport quantities
-    snap0D.abs_ue_para_RZ = sum(@. abs(pla.ue_para) * F.Bpol / F.Btot * Ne2D) / total_Ne
-    snap0D.D_RZ = sum(@. sqrt(RP.transport.DRR^2 + RP.transport.DZZ^2) * Ne2D) / total_Ne
+    snap0D.ue_para_RZ_mag = sum(@. abs(pla.ue_para) * F.Bpol / F.Btot * Ne2D) / total_Ne
+    snap0D.Dpol = sum(diffusivity_along_bpol(RP) .* Ne2D) / total_Ne
     snap0D.turbulence_weight = sum(@. pla.turbulence_weight * Ne2D) / total_Ne
     snap0D.ambipolar_weight = sum(@. pla.ambipolar_weight * Ne2D) / total_Ne
     snap0D.ambipolar_exchange = RP.diagnostics.ambipolar_exchange
@@ -379,13 +379,13 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.ue_para .= pla.ue_para
 
     # Calculate derived quantities
-    @. snap2D.u_pol = sqrt(pla.ueR^2 + pla.ueZ^2)
-    @. snap2D.D_pol = sqrt(tp.DRR^2 + tp.DZZ^2)
+    @. snap2D.ue_RZ_mag = sqrt(pla.ueR^2 + pla.ueZ^2)
+    snap2D.Dpol .= diffusivity_along_bpol(RP)
 
     # Magnetic fields
     snap2D.BR .= F.BR
     snap2D.BZ .= F.BZ
-    snap2D.B_pol .= F.Bpol
+    snap2D.Bpol .= F.Bpol
     snap2D.BR_coils_pla .= F.BR_coils_pla
     snap2D.BZ_coils_pla .= F.BZ_coils_pla
 
@@ -401,8 +401,8 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.LV_presc .= F.LV_presc
     @. snap2D.LV_tot = F.LV_presc + 2π * RP.G.R2D * (F.Eϕ_coils_pla + F.Eϕ_ctrl)
 
-    # Calculate ExB drift magnitude
-    @. snap2D.mean_ExB_pol = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
+    # The mean E×B drift's magnitude
+    @. snap2D.mean_ExB_RZ_mag = sqrt(pla.mean_ExB_R^2 + pla.mean_ExB_Z^2)
 
     # Source/loss rates from cumulative trackers
     Ntracker = RP.diagnostics.Ntracker

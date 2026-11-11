@@ -329,7 +329,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # =========================================================================
     # A closed line has no sheets; that is the source's topology, not a value of γ. Without a
     # poloidal field there is no shape.
-    Bpol_mean = mean(F.Bpol[G.nodes.in_wall_nids])
+    Bpol_in_wall_avg = mean(F.Bpol[G.nodes.in_wall_nids])
     # tan_θB = F.Bpol ./ F.Bϕ
     # tan_θB_norm = tan_θB ./ maximum(tan_θB[G.nodes.in_wall_nids])
 
@@ -338,10 +338,10 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # term2 = my_sigmf(tan_θB_norm, FT(5.0), FT(0.4))
     # pla.γ_shape_fac = @. term1 * term2
 
-    # γ₀, the shape factor at the mean B_pol (`config.charge_sheet_shape_factor`)
+    # γ₀, the shape factor at ⟨B_pol⟩, the in-wall average (`config.charge_sheet_shape_factor`)
     γ0 = RP.config.charge_sheet_shape_factor
-    if Bpol_mean > 0
-        @. pla.γ_shape_fac = min(FT(1.0), γ0 * (F.Bpol / Bpol_mean))
+    if Bpol_in_wall_avg > 0
+        @. pla.γ_shape_fac = min(FT(1.0), γ0 * (F.Bpol / Bpol_in_wall_avg))
     else
         fill!(pla.γ_shape_fac, zero(FT))
     end
@@ -353,10 +353,10 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # - Epol_target = γ Epol_req: shaped by γ; where Bpol vanishes, its limit γ₀ |E∥,drive| B/⟨Bpol⟩
     # - E_Debye = √(n e Tₑ/ε₀): the most the local plasma holds
     E_para_drive = driven_parallel_field(RP)
-    Epol_target = if Bpol_mean > 0
+    Epol_target = if Bpol_in_wall_avg > 0
         @. ifelse(
             F.Bpol > 0, pla.γ_shape_fac * (abs(E_para_drive) * (F.Btot / F.Bpol)),
-            γ0 * abs(E_para_drive) * F.Btot / Bpol_mean
+            γ0 * abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
         )
     else
         zero(E_para_drive)
@@ -372,7 +372,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * Epol_target^2 / (ee * pla.Te_eV))
     # Bpol/γ = max(Bpol, ⟨Bpol⟩/γ₀), finite where Bpol vanishes
     @. pla.nc_perp = ifelse(
-        closed | (Bpol_mean <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_mean / γ0))^2
+        closed | (Bpol_in_wall_avg <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_in_wall_avg / γ0))^2
     )
 
     # =========================================================================
@@ -495,10 +495,10 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     # setup's has no plasma yet) the uncapped line average |E∥| L_c/L_pol; nothing where the line was
     # not measured or there is no poloidal field (a null's line is toroidal: L_pol = Inf gives 0 too)
     flf = RP.flf
-    line_mean = flf.has_integral ? flf.integral_tot ./ flf.Lpol_tot : abs.(E_para_drive) .* flf.Lc_tot ./ flf.Lpol_tot
+    line_avg = flf.has_integral ? flf.integral_tot ./ flf.Lpol_tot : abs.(E_para_drive) .* flf.Lc_tot ./ flf.Lpol_tot
     @. F.Erad_fluc = ifelse(
-        flf.is_closed | !(F.Bpol > 0) | !(flf.Lpol_tot > 0) | !isfinite(line_mean), zero(FT),
-        min(line_mean, E_Debye)
+        flf.is_closed | !(F.Bpol > 0) | !(flf.Lpol_tot > 0) | !isfinite(line_avg), zero(FT),
+        min(line_avg, E_Debye)
     )
     extrapolate_field_to_boundary_nodes!(G, F.Erad_fluc)
     F.Erad_fluc[flf.closed_surface_nids] .= zero(FT)

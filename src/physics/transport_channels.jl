@@ -311,7 +311,7 @@ no default that is right for more than one channel. A default would have to be
 `v̄ = c·v`, and the whole reason this field exists is that no such `c` exists.
 
 Mixing is the normal case rather than a convenience: a channel's speed is a field
-(`v_E = ERZ/B_tot`) while its step length is usually a configuration scalar
+(`v_E = Erad/B_tot`) while its step length is usually a configuration scalar
 (`L_mixing`), and a cross-field channel's parallel quantities are identically
 zero. Broadcasting decides the shape, so a genuine mismatch raises
 `DimensionMismatch` from Julia itself rather than being silently reshaped.
@@ -470,7 +470,7 @@ rather than merely cheap and close.
 ## What is exact and what is not
 
 `D` is reproduced exactly whenever the species agree on it — which covers Bohm
-(`D_B = T_e/16B`, mass cancels) and ExB mixing (`v_E = ERZ/B_tot`), leaving
+(`D_B = T_e/16B`, mass cancels) and ExB mixing (`v_E = Erad/B_tot`), leaving
 `D∥` as the only mechanism the mixture actually approximates.
 
 The wall ceiling is exact only at the two limits. `¼v̄_n` interpolates in
@@ -567,7 +567,7 @@ end
 # pinned by a round-trip test against the diffusivity the solver already computes.
 #
 # All arithmetic here is elementwise. These take fields, and `/` between two
-# matrices is right-division, not division — `ERZ / B_tot` on a square grid
+# matrices is right-division, not division — `Erad / B_tot` on a square grid
 # throws `SingularException`, and on a non-square one it silently returns an
 # array of the wrong shape. Every expression below is written under `@.` for that
 # reason, and the non-square case is a regression test.

@@ -111,7 +111,7 @@ Contains simulation configuration parameters.
     Dpara0::FT = FT(0.0)               # Base parallel diffusivity: a notional background added to every parallel coefficient [m²/s]
     Dperp0::FT = FT(0.0)               # Base perpendicular diffusivity: a notional background added to D⊥ [m²/s]
 
-    # The open-line charge sheets' shape factor at the mean B_pol, γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩):
+    # The open-line charge sheets' shape factor at the in-wall average B_pol, γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩):
     # their field reaches at most γ Epol_req (`update_space_charge_weights!`). The potential is a global
     # solution, and an open line between two points of one wall cannot shield its whole EMF. 1
     # shields E∥ fully wherever the plasma holds the charge: tests of the parallel physics alone.

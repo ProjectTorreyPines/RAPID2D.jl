@@ -277,7 +277,7 @@ policy at all:
 |---|---|---|
 | collisional | `b̂` | **yes** — `1/D∥ = mν/T + 2/(vm·L)`, Einstein plus a free-streaming bound |
 | Bohm | `b̂` | `D⊥ = T_e/16B` is mass-free; only the `v`/`λ` split moves |
-| turbulent ExB | `b̂_pol` | no — `v_E = ERZ/B_tot` has neither mass nor charge in it |
+| turbulent ExB | `b̂_pol` | no — `v_E = Erad/B_tot` has neither mass nor charge in it |
 
 The ExB channel is therefore built once and handed to every species as the same
 object, which is what lets the mixture return it untouched.

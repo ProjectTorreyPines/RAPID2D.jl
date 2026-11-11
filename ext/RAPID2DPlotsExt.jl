@@ -178,7 +178,7 @@ module RAPID2DPlotsExt
     # Available fields
     - `:ne` - Electron density
     - `:Te_eV` - Electron temperature
-    - `:B_pol` - Poloidal magnetic field
+    - `:Bpol` - Poloidal magnetic field
     - `:E_para_tot` - Total parallel electric field
     - `:Jϕ` - Toroidal current density
     """
@@ -291,7 +291,7 @@ module RAPID2DPlotsExt
             :ni_tot => "ni_tot (m⁻³)",
             :Te_eV => "Te (eV)",
             :Ti_eV => "Ti (eV)",
-            :B_pol => "Bpol (T)",
+            :Bpol => "Bpol (T)",
             :BR => "BR (T)",
             :BZ => "BZ (T)",
             :E_para_tot => "E∥ (V/m)",

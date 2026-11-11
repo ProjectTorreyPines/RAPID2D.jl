@@ -367,6 +367,25 @@ function update_diffusion_tensor!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     return RP
 end
 
+"""
+    diffusivity_along_bpol(DRR, DRZ, DZZ, bpol_R, bpol_Z) -> Matrix
+    diffusivity_along_bpol(RP) -> Matrix
+
+The tensor's component along `b̂_pol`, `b̂_pol·𝐃·b̂_pol` [m²/s]: how fast the electrons spread along the
+lines' RZ projection, `Dpara (B_pol/B)² + Dperp (Bϕ/B)² + Dpol_turb` for the model's tensor (across the
+lines it gives `Dperp` alone). Rotation-invariant in the RZ plane, unlike any combination of `DRR` and
+`DZZ` alone. Where `b̂_pol` is not defined (stored as zero at a poloidal null), half the RZ trace, the
+isotropic `Dperp` there.
+"""
+function diffusivity_along_bpol(DRR, DRZ, DZZ, bpol_R, bpol_Z)
+    return @. ifelse(
+        bpol_R^2 + bpol_Z^2 > 0, DRR * bpol_R^2 + 2 * DRZ * bpol_R * bpol_Z + DZZ * bpol_Z^2, (DRR + DZZ) / 2
+    )
+end
+
+diffusivity_along_bpol(RP::RAPID) =
+    diffusivity_along_bpol(RP.transport.DRR, RP.transport.DRZ, RP.transport.DZZ, RP.fields.bpol_R, RP.fields.bpol_Z)
+
 
 """
     calculate_particle_fluxes!(RP::RAPID{FT}) where {FT<:AbstractFloat}
