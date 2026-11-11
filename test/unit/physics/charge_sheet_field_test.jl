@@ -161,10 +161,11 @@ end
     @test any(>(0), F.Epol_mean) && any(>(0), tp.Dpol_turb) && any(!iszero, F.Epol_para_pla)
     @test any(!iszero, pla.mean_ExB_R) || any(!iszero, pla.mean_ExB_Z)
     RP.flags.charge_sheet_field = false
+    drift = (copy(pla.mean_ExB_R), copy(pla.mean_ExB_Z))
     estimate_electrostatic_field_effects!(RP)
     @test all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc) && all(iszero, F.Epol_para_pla)
-    # the mean drift and the RZ field go with it: the transport would otherwise keep adding the old drift
-    @test all(iszero, pla.mean_ExB_R) && all(iszero, pla.mean_ExB_Z) && all(iszero, F.ER) && all(iszero, F.EZ)
+    # the drift is not written without the sheets' field: it is then an input, a prescribed drift
+    @test (pla.mean_ExB_R, pla.mean_ExB_Z) == drift
     @test F.E_para_tot ≈ F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla
     @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
     @test all(==(1), pla.ambipolar_weight[closed])
@@ -306,6 +307,50 @@ end
     @test all(isfinite, tp.L_mixing) && all(iszero, tp.Dpol_turb)
     turb = shared_turbulent_channel(RP)
     @test all(isfinite, turb.v_para) && all(iszero, turb.v_para)
+end
+
+@testitem "charge-sheet field: one sign, the drive's, orients the projection, the RZ field and the drift" setup = [CurrentDisc] begin
+    using RAPID2D: estimate_electrostatic_field_effects!, combine_field_sources!
+    # an induced field that reverses the drive on part of the open region: the sheets' mean field
+    # turns with it everywhere it acts, and not at all when the induction is switched off
+    RP, _ = current_disc()
+    trace_closed_region!(RP)
+    pla, F, G = RP.plasma, RP.fields, RP.G
+    open_in = setdiff(G.nodes.in_wall_nids, RP.flf.closed_surface_nids)
+    pla.ne[open_in] .= 1.0e17
+    reversed = [k for k in open_in if G.Z2D[k] > Z0 + 0.1]
+    kept = [k for k in open_in if G.Z2D[k] < Z0 - 0.1]
+    @assert !isempty(reversed) && !isempty(kept)
+    fill!(F.Eϕ_coils_pla, 0.0)
+    F.Eϕ_coils_pla[reversed] .= -3 .* F.Eϕ_presc[reversed]
+    s_of(E_drive) = -sign.(E_drive)
+    function check(E_drive)
+        s = s_of(E_drive)
+        live = [k for k in open_in if F.Epol_mean[k] > 0]
+        @test !isempty(live)
+        @test F.Epol_para_pla == s .* F.Epol_mean .* F.Bpol ./ F.Btot
+        @test (F.ER .* F.bpol_R .+ F.EZ .* F.bpol_Z)[live] ≈ (s .* F.Epol_mean)[live]
+        # the drift runs along −s sgn(B_ϕ)(b_Z, −b_R): across the lines
+        along_r = @. pla.mean_ExB_R * F.bpol_Z - pla.mean_ExB_Z * F.bpol_R
+        @test all(k -> sign(along_r[k]) == -s[k] * sign(F.Bϕ[k]), live)
+        return s
+    end
+    RP.flags.E_para_induction = true
+    combine_field_sources!(RP)
+    estimate_electrostatic_field_effects!(RP)
+    E_drive = F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla
+    s = check(E_drive)
+    @test all(k -> s[k] == -s_of(F.Eϕ_para_presc)[k], reversed) && all(k -> s[k] == s_of(F.Eϕ_para_presc)[k], kept)
+    @test all(k -> sign(F.Eϕ[k]) == -sign(F.Eϕ_presc[k]), reversed)   # the total is reversed there
+
+    # the induction off: the same induced field moves no sign, although the total toroidal field still carries it
+    RP.flags.E_para_induction = false
+    fill!(F.Eϕ_para_coils_pla, 0.0)
+    combine_field_sources!(RP)
+    estimate_electrostatic_field_effects!(RP)
+    s0 = check(F.Eϕ_para_presc)
+    @test all(k -> s0[k] == s_of(F.Eϕ_para_presc)[k], open_in)
+    @test all(k -> sign(F.Eϕ[k]) == -sign(F.Eϕ_presc[k]), reversed)
 end
 
 @testitem "mixing amplitude: the step loop passes the integrand; before it, the uncapped line average" begin

@@ -70,30 +70,29 @@ end
     calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Calculate the parallel electric field: the prescribed field's, the vertical-field control's,
-and the self-generated ones.
+and the self-generated ones. The sheets' part is their mean poloidal field projected with the
+sign that opposes the drive it answers ([`driven_parallel_field`](@ref), the same drive that
+sizes it), so the projection, `ER`/`EZ` and the mean drift read one sign.
 """
 function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     F = RP.fields
-    # the prescribed field's parallel electric field, and the vertical-field control's
+    # the prescribed field's parallel electric field, the vertical-field control's and the induced
     control = _vertical_field_control_on(RP)
     @. F.Eϕ_para_presc = F.Eϕ_presc * F.bϕ
     if control
         @. F.Eϕ_para_ctrl = F.Eϕ_ctrl * F.bϕ
     end
-
-    # the charge sheets' parallel field, against the applied loop voltage; none left from before
-    # when the cancellation is off
-    if RP.flags.E_para_cancellation
-        if control
-            @. F.Epol_para_pla = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.Epol_mean * F.Bpol / F.Btot
-        else
-            @. F.Epol_para_pla = sign(-F.Eϕ_presc * F.Bϕ) * F.Epol_mean * F.Bpol / F.Btot
-        end
-    else
-        fill!(F.Epol_para_pla, zero(FT))
-    end
     if RP.flags.E_para_induction
         @. F.Eϕ_para_coils_pla = F.Eϕ_coils_pla * F.bϕ
+    end
+
+    # the charge sheets' parallel field, against the drive; none left from before when the
+    # cancellation is off
+    if RP.flags.E_para_cancellation
+        E_drive = driven_parallel_field(RP)
+        @. F.Epol_para_pla = -sign(E_drive) * F.Epol_mean * F.Bpol / F.Btot
+    else
+        fill!(F.Epol_para_pla, zero(FT))
     end
 
     combine_E_para!(RP)
@@ -466,7 +465,8 @@ by component — "pol" along `b̂_pol` (the poloidal direction), "rad" along the
 
 Both are zero on closed lines, which short-circuit along B, and take the same boundary extrapolation.
 Without `charge_sheet_field` no field, parallel part or diffusivity, so a run that turns it off keeps
-none from before.
+none from before; the mean drift `mean_ExB_R/Z` and `ER`/`EZ` are then not written at all — whatever
+is set stands, a prescribed drift.
 """
 function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
@@ -477,11 +477,8 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
         fill!(F.Epol_mean, zero(FT))
         fill!(F.Erad_fluc, zero(FT))
         fill!(RP.transport.Dpol_turb, zero(FT))
-        # the mean drift and the RZ field are the mean field's: none left from before either
-        fill!(pla.mean_ExB_R, zero(FT))
-        fill!(pla.mean_ExB_Z, zero(FT))
-        fill!(F.ER, zero(FT))
-        fill!(F.EZ, zero(FT))
+        # `mean_ExB_R/Z` and `ER/EZ` are left as they are: without the sheets' field they are an
+        # input, a prescribed drift (the wall and convection tests set one)
         # E∥ without the sheets' part at once: the transport's refresh reads it
         calculate_parallel_electric_field!(RP)
         return RP
@@ -509,11 +506,15 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     calculate_parallel_electric_field!(RP)
 
     if RP.flags.mean_ExB
-        @. pla.mean_ExB_R = (F.Epol_mean / F.Btot) * sign(F.Eϕ) * F.bpol_Z
-        @. pla.mean_ExB_Z = (F.Epol_mean / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
+        # the mean field is s Ē_pol b̂_pol with s = −sgn(E∥,drive), the sign that cancels the drive it
+        # answers (the one `Epol_para_pla` takes); its drift s Ē_pol b̂_pol × B_ϕ φ̂ / B² runs along
+        # −s sgn(B_ϕ) (b_Z, −b_R): across the lines, toward the downstream wall
+        s_drive = @. -sign(E_para_drive)
+        @. pla.mean_ExB_R = (F.Epol_mean / F.Btot) * (-(s_drive * sign(F.Bϕ))) * F.bpol_Z
+        @. pla.mean_ExB_Z = (F.Epol_mean / F.Btot) * (s_drive * sign(F.Bϕ)) * F.bpol_R
 
-        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.Epol_mean * F.bpol_R
-        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.Epol_mean * F.bpol_Z
+        @. F.ER = s_drive * F.Epol_mean * F.bpol_R
+        @. F.EZ = s_drive * F.Epol_mean * F.bpol_Z
     end
 
     # # Turbulent parallel diffusion based on fluctuation levels
