@@ -139,9 +139,9 @@ module RAPID2DPlotsExt
 
         @series begin
             subplot := 7
-            label := L"\mathrm{E_{RZ,pla}}" * label_postfix
+            label := L"\mathrm{E_{\parallel,pol,pla}}" * label_postfix
             linewidth := 2
-            times_ms, [s.ERZ_para_pla for s in snaps0D]
+            times_ms, [s.Epol_para_pla for s in snaps0D]
         end
 
         @series begin

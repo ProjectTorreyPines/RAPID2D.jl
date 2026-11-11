@@ -37,26 +37,20 @@
     end
 end
 
-@testitem "Channel adapter: the turbulent ExB channel round-trips, 9:1 elongated" begin
+@testitem "Channel adapter: the turbulent ExB channel lies along b̂_pol" begin
     using RAPID2D: turbulent_ExB_channel, DiffusionChannel
 
-    # D_pol_turb = ½·v_ExB·L_mixing, split f∥ : f⊥ along b̂_pol
-    E_pol, B_tot, L_mix = 37.5, 0.63, 1.0
-    f_para, f_perp = 0.9, 0.1
-    ch = turbulent_ExB_channel(fill(E_pol, 1, 1), fill(B_tot, 1, 1), L_mix, f_para, f_perp)
+    # D_turb = ½·v_E·L_mixing along b̂_pol, nothing across the lines: the sheets' fluctuating field across
+    # the lines (δE_ψ) drifts along b̂_pol
+    Erad, B_tot, L_mix = 37.5, 0.63, 1.0
+    ch = turbulent_ExB_channel(fill(Erad, 1, 1), fill(B_tot, 1, 1), L_mix)
     @test ch isa DiffusionChannel{Float64}
 
-    v_ExB = E_pol / B_tot
-    D_pol = 0.5 * v_ExB * L_mix
+    v_ExB = Erad / B_tot
     @test only(ch.v_para) ≈ v_ExB rtol = 1.0e-14
-    @test only(ch.v_perp) ≈ v_ExB rtol = 1.0e-14          # one speed, two step lengths
-    @test only(@. 0.5 * ch.v_para * ch.λ_para) ≈ D_pol * f_para rtol = 1.0e-14
-    @test only(@. 0.5 * ch.v_perp * ch.λ_perp) ≈ D_pol * f_perp rtol = 1.0e-14
-
-    # the eddy is 9× longer along b̂_pol than across it — a field-aligned eddy,
-    # which is what an ExB mixing model should produce
-    @test only(@. ch.λ_para / ch.λ_perp) ≈ f_para / f_perp rtol = 1.0e-14
-    @test only(@. ch.λ_para / ch.λ_perp) ≈ 9.0 rtol = 1.0e-14
+    @test only(@. 0.5 * ch.v_para * ch.λ_para) ≈ 0.5 * v_ExB * L_mix rtol = 1.0e-14
+    @test iszero(only(ch.λ_perp)) && iszero(only(ch.vm_perp))   # no step and no wall delivery across the lines
+    @test only(ch.vm_para) ≈ sqrt(8 / π) * v_ExB rtol = 1.0e-14
 end
 
 @testitem "Channel adapter: the parallel collisional channel has no cross-field part" begin
@@ -178,7 +172,7 @@ end
     m_i = 1.673e-27
 
     channels = (
-        turbulent_ExB_channel(E, B, 1.0, 0.9, 0.1),
+        turbulent_ExB_channel(E, B, 1.0),
         parallel_collisional_channel(fill(1.5e6, NR, NZ), fill(1.125e5, NR, NZ)),
         bohm_channel(Te, B, m_i),
         neutral_gas_channel(fill(6.4e17, NR, NZ), 0.026, 0.0, 1.2),
@@ -250,10 +244,8 @@ end
     base_T = diffusion_tensor(base, F.bR, F.bZ)
 
     if RP.flags.turb_ExB_mixing
-        fpara = RP.config.turbulent_diffusion_fraction_along_bpol
-        fperp = 1 - fpara
         v_t = fill(1.0e3, NR, NZ)
-        turb = DiffusionChannel(v_t, @.(2 * tp.Dpol_turb * fpara / v_t), v_t, @.(2 * tp.Dpol_turb * fperp / v_t); vm_para = v_t, vm_perp = v_t)
+        turb = DiffusionChannel(v_t, @.(2 * tp.Dpol_turb / v_t), v_t, zero(v_t); vm_para = v_t, vm_perp = zero(v_t))
         turb_T = diffusion_tensor(turb, F.bpol_R, F.bpol_Z)
         DRR = base_T[1] .+ turb_T[1]
         DRZ = base_T[2] .+ turb_T[2]

@@ -18,8 +18,8 @@
     @test pla.γ_shape_fac ≈ min.(1.0, 0.65 .* F.Bpol ./ mean(F.Bpol[G.nodes.in_wall_nids]))
     @test all(>(0), pla.γ_shape_fac[closed])
     # the sheets are on open lines only, boundary nodes included
-    @test all(iszero, F.ERZ_pla_mag[closed]) && all(iszero, F.ERZ_para_pla[closed])
-    @test any(>(0), F.ERZ_pla_mag[open_in])
+    @test all(iszero, F.Epol_mean[closed]) && all(iszero, F.Epol_para_pla[closed])
+    @test any(>(0), F.Epol_mean[open_in])
     # an open-line threshold is never reached on a closed line
     @test all(isinf, pla.nc_para[closed]) && all(isinf, pla.nc_perp[closed])
     @test all(isfinite, pla.nc_perp[open_in])
@@ -35,23 +35,23 @@ end
     pla.ne[open_in] .= 1.0e17
     all_finite() = all(
         a -> all(isfinite, a),
-        (F.ERZ_pla_mag, F.ERZ_para_pla, F.E_para_tot, pla.mean_ExB_R, pla.mean_ExB_Z, F.ER, F.EZ, tp.Dpol_turb),
+        (F.Epol_mean, F.Erad_fluc, F.Epol_para_pla, F.E_para_tot, pla.mean_ExB_R, pla.mean_ExB_Z, F.ER, F.EZ, tp.Dpol_turb),
     )
 
-    # an open node where Bpol vanishes: γ ERZ_req at its limit 0.65 |E∥| B/⟨Bpol⟩ (γ → 0, ERZ_req → ∞),
+    # an open node where Bpol vanishes: γ Epol_req at its limit 0.65 |E∥| B/⟨Bpol⟩ (γ → 0, Epol_req → ∞),
     # below the Debye field here
     k = open_in[length(open_in) ÷ 2]
     F.Bpol[k] = F.bpol_R[k] = F.bpol_Z[k] = 0.0
     E_drive = F.Eϕ_para_presc[k] + F.Eϕ_para_coils_pla[k]
     estimate_electrostatic_field_effects!(RP)
     @test all_finite()
-    @test F.ERZ_pla_mag[k] ≈ 0.65 * abs(E_drive) * F.Btot[k] / mean(F.Bpol[G.nodes.in_wall_nids])
+    @test F.Epol_mean[k] ≈ 0.65 * abs(E_drive) * F.Btot[k] / mean(F.Bpol[G.nodes.in_wall_nids])
     @test isfinite(pla.nc_perp[k])
 
     # no poloidal field at all: no shape, no sheets
     foreach(a -> fill!(a, 0.0), (F.Bpol, F.bpol_R, F.bpol_Z))
     estimate_electrostatic_field_effects!(RP)
-    @test all(iszero, pla.γ_shape_fac) && all(iszero, F.ERZ_pla_mag)
+    @test all(iszero, pla.γ_shape_fac) && all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc)
     @test all(isinf, pla.nc_perp)
     @test all_finite()
 end
@@ -74,15 +74,15 @@ end
     @test all(iszero, w[closed])
     # one speed for the electrons' tensor (`Dpol_turb`), the electron wall, the ions' channels and
     # their wall
-    v = w .* F.ERZ_pla_mag ./ F.Btot
+    v = w .* F.Erad_fluc ./ F.Btot
     @test tp.Dpol_turb ≈ 0.5 .* v .* tp.L_mixing
     turb = shared_turbulent_channel(RP)
     @test turb.v_para ≈ v && turb.v_perp ≈ v
     @test electron_wall_channels(RP)[end][1].v_para ≈ v
     @test ion_transport_channels(RP, tp.ion_species[1], turb)[end] === turb
     # the mean field's effects take no weight
-    @test pla.mean_ExB_R ≈ F.ERZ_pla_mag ./ F.Btot .* sign.(F.Eϕ) .* F.bpol_Z
-    @test F.ERZ_para_pla ≈ sign.(-F.Eϕ_presc .* F.Bϕ) .* F.ERZ_pla_mag .* F.Bpol ./ F.Btot
+    @test pla.mean_ExB_R ≈ F.Epol_mean ./ F.Btot .* sign.(F.Eϕ) .* F.bpol_Z
+    @test F.Epol_para_pla ≈ sign.(-F.Eϕ_presc .* F.Bϕ) .* F.Epol_mean .* F.Bpol ./ F.Btot
 
     # without the mixing, no weight and no turbulent diffusivity
     RP.flags.turb_ExB_mixing = false
@@ -98,18 +98,18 @@ end
     closed = RP.flf.closed_surface_nids
     open_in = setdiff(G.nodes.in_wall_nids, closed)
     pla.ne[open_in] .= [G.R2D[k] < R0 ? 1.0e10 : 1.0e17 for k in open_in]   # below and above nc_para
-    ERZ_target, E_Debye = update_space_charge_weights!(RP)
+    Epol_target, E_Debye = update_space_charge_weights!(RP)
     w = pla.ambipolar_weight
     n_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D)
 
     @test all(==(1), w[closed])
     # on open lines the share of the cancelling field the sheets hold, as the threshold gives it too
-    @test w[open_in] ≈ min.(1, E_Debye[open_in] ./ ERZ_target[open_in])
+    @test w[open_in] ≈ min.(1, E_Debye[open_in] ./ Epol_target[open_in])
     @test w[open_in] ≈ min.(1, sqrt.(n_SM[open_in] ./ pla.nc_para[open_in]))
     @test any(x -> 0 < x < 1, w[open_in]) && any(==(1), w[open_in])
     # and the sheets' field is that share of what they would need
     estimate_electrostatic_field_effects!(RP)
-    @test F.ERZ_pla_mag[open_in] ≈ w[open_in] .* ERZ_target[open_in]
+    @test F.Epol_mean[open_in] ≈ w[open_in] .* Epol_target[open_in]
     # the snapshots carry both weights, the 0D ones as density-weighted means
     s2, s0 = RAPID2D.measure_snap2D(RP), RAPID2D.measure_snap0D(RP)
     @test s2.ambipolar_weight == w && s2.turbulence_weight == pla.turbulence_weight
@@ -145,7 +145,7 @@ end
     initialize!(RP)
     w0 = (copy(RP.plasma.turbulence_weight), copy(RP.plasma.ambipolar_weight))
     @test all(a -> any(>(0), a), w0)
-    @test all(iszero, RP.fields.ERZ_pla_mag)
+    @test all(iszero, RP.fields.Epol_mean)
     update_space_charge_weights!(RP)
     @test (RP.plasma.turbulence_weight, RP.plasma.ambipolar_weight) == w0
 
@@ -158,10 +158,14 @@ end
     closed = RP.flf.closed_surface_nids
     pla.ne[setdiff(RP.G.nodes.in_wall_nids, closed)] .= 1.0e17
     estimate_electrostatic_field_effects!(RP)
-    @test any(>(0), F.ERZ_pla_mag) && any(>(0), tp.Dpol_turb) && any(!iszero, F.ERZ_para_pla)
+    @test any(>(0), F.Epol_mean) && any(>(0), tp.Dpol_turb) && any(!iszero, F.Epol_para_pla)
+    @test any(!iszero, pla.mean_ExB_R) || any(!iszero, pla.mean_ExB_Z)
     RP.flags.charge_sheet_field = false
+    drift = (copy(pla.mean_ExB_R), copy(pla.mean_ExB_Z))
     estimate_electrostatic_field_effects!(RP)
-    @test all(iszero, F.ERZ_pla_mag) && all(iszero, F.ERZ_para_pla)
+    @test all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc) && all(iszero, F.Epol_para_pla)
+    # the drift is not written without the sheets' field: it is then an input, a prescribed drift
+    @test (pla.mean_ExB_R, pla.mean_ExB_Z) == drift
     @test F.E_para_tot ≈ F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla
     @test all(iszero, pla.turbulence_weight) && all(iszero, tp.Dpol_turb)
     @test all(==(1), pla.ambipolar_weight[closed])
@@ -181,4 +185,198 @@ end
     for γ0 in (0.0, -0.65, Inf, NaN)
         @test_throws ArgumentError validate_config!(config(γ0))
     end
+end
+
+@testitem "mixing amplitude: the line's held EMF over its RZ length, apart from the mean field and its γ" setup = [CurrentDisc] begin
+    using RAPID2D: estimate_electrostatic_field_effects!, update_space_charge_weights!, shared_turbulent_channel,
+        flf_analysis_field_lines_rz_plane!, sheet_mixing_integrand
+    RP, _ = current_disc()
+    trace_closed_region!(RP)
+    pla, F, G, tp, flf = RP.plasma, RP.fields, RP.G, RP.transport, RP.flf
+    closed = RP.flf.closed_surface_nids
+    open_in = setdiff(G.nodes.in_wall_nids, closed)
+    pla.ne[open_in] .= 1.0e17
+    pla.ne[closed] .= max.(pla.ne[closed], 1.0e17)   # no empty cell inside the wall: the cap binds only beyond it
+    # the field-line following with the plasma's capped cancelling field, as the step loop runs it
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
+    Epol_target, E_Debye, E_drive = update_space_charge_weights!(RP)
+    estimate_electrostatic_field_effects!(RP)
+    on_wall = Set(G.nodes.on_wall_nids)
+    interior = [k for k in open_in if !(k in on_wall) && flf.Lpol_tot[k] > 0]
+    @test !isempty(interior)
+    # the fingerprint: amplitude × RZ length = the line integral of the capped cancelling field
+    @test flf.has_integral
+    uncapped = [k for k in interior if flf.integral_tot[k] / flf.Lpol_tot[k] < E_Debye[k]]
+    @test !isempty(uncapped)
+    @test F.Erad_fluc[uncapped] .* flf.Lpol_tot[uncapped] ≈ flf.integral_tot[uncapped]
+    @test all(k -> F.Erad_fluc[k] <= E_Debye[k] * (1 + 1.0e-12), interior)
+    # dense: the cell cap binds nowhere inside the wall, so the integral is that of the uncapped cancelling
+    # field (the drive varies as 1/R along a line, so not |E∥| at the node times L_c) on the lines that reach the
+    # wall both ways, up to the last cell before the empty nodes beyond it
+    walls = [k for k in interior if flf.termination_forward[k] === :wall && flf.termination_backward[k] === :wall]
+    @test !isempty(walls)
+    capped = copy(flf.integral_tot)
+    flf_analysis_field_lines_rz_plane!(RP; integrand = abs.(E_drive) .* F.Btot ./ max.(F.Bpol, 1.0e-12))
+    @test capped[walls] ≈ flf.integral_tot[walls] rtol = 1.0e-2
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
+    # the mean field is what it was: γ-shaped, capped
+    @test F.Epol_mean[open_in] ≈ min.(Epol_target[open_in], E_Debye[open_in])
+    # the diffusivity and the shared channel read the amplitude, not the mean field
+    v = pla.turbulence_weight .* F.Erad_fluc ./ F.Btot
+    @test tp.Dpol_turb ≈ 0.5 .* v .* tp.L_mixing
+    @test shared_turbulent_channel(RP).v_para ≈ v
+    @test any(k -> F.Erad_fluc[k] > 1.5 * F.Epol_mean[k], open_in)   # the amplitude exceeds the mean somewhere
+    # γ₀ moves the mean field only
+    mean0, fluc0 = copy(F.Epol_mean), copy(F.Erad_fluc)
+    RP.config.charge_sheet_shape_factor = 0.4
+    estimate_electrostatic_field_effects!(RP)
+    @test F.Erad_fluc == fluc0
+    @test any(k -> F.Epol_mean[k] != mean0[k], open_in)
+    # closed lines carry neither
+    @test all(iszero, F.Erad_fluc[closed]) && all(iszero, tp.Dpol_turb[closed])
+    # the snapshot carries it
+    @test RAPID2D.measure_snap2D(RP).Erad_fluc == F.Erad_fluc
+
+    # a thin plasma: the cell cap binds along the lines, the integral falls below the uncapped one
+    dense = copy(flf.integral_tot)
+    pla.ne[open_in] .= 1.0e12
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
+    estimate_electrostatic_field_effects!(RP)
+    @test any(k -> flf.integral_tot[k] < 0.99 * dense[k], interior)
+    @test all(k -> flf.integral_tot[k] <= dense[k] * (1 + 1.0e-12), interior)
+    @test all(isfinite, F.Erad_fluc) && all(isfinite, tp.Dpol_turb)
+end
+
+@testitem "mixing amplitude: one value along a straight line, nothing from a cold plasma or without the field" begin
+    using RAPID2D: estimate_electrostatic_field_effects!, flf_analysis_field_lines_rz_plane!, sheet_mixing_integrand
+    # a vertical field: every R column is one line, the amplitude |E∥| L_c/L_pol = |E∥| B/B_pol is the column's
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
+        NR = 17, NZ = 17, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    F, G, tp = RP.fields, RP.G, RP.transport
+    RP.plasma.ne .= 1.0e17
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
+    estimate_electrostatic_field_effects!(RP)
+    on_wall = Set(G.nodes.on_wall_nids)
+    interior = [k for k in G.nodes.in_wall_nids if !(k in on_wall)]
+    cols = unique(CartesianIndices(F.Bpol)[k][1] for k in interior)
+    @test length(cols) > 1
+    for i in cols
+        col = [k for k in interior if CartesianIndices(F.Bpol)[k][1] == i]
+        @test all(k -> F.Erad_fluc[k] ≈ F.Erad_fluc[col[1]], col)
+        @test F.Erad_fluc[col[1]] ≈ abs(F.Eϕ_para_presc[col[1]]) * F.Btot[col[1]] / F.Bpol[col[1]] rtol = 0.05
+    end
+    @test all(isfinite, F.Erad_fluc) && all(isfinite, tp.Dpol_turb)
+    # a cold plasma holds nothing
+    RP.plasma.Te_eV .= 0.0
+    estimate_electrostatic_field_effects!(RP)
+    @test all(iszero, F.Erad_fluc) && all(iszero, tp.Dpol_turb)
+    # without the field, none is left
+    RP.plasma.Te_eV .= 5.0
+    estimate_electrostatic_field_effects!(RP)
+    @test any(>(0), F.Erad_fluc)
+    RP.flags.charge_sheet_field = false
+    estimate_electrostatic_field_effects!(RP)
+    @test all(iszero, F.Erad_fluc) && all(iszero, tp.Dpol_turb)
+end
+
+@testitem "mixing amplitude: a null's line, toroidal with no RZ length, mixes nothing and stays finite" begin
+    using RAPID2D: estimate_electrostatic_field_effects!, flf_analysis_field_lines_rz_plane!, sheet_mixing_integrand, shared_turbulent_channel
+    # no poloidal field at all: every line ends at a null, L_pol = Inf, and the sheets have no RZ direction
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 0.0, Eϕ = 0.5),
+        NR = 11, NZ = 11, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.plasma.ne .= 1.0e17
+    flf_analysis_field_lines_rz_plane!(RP; strict = false, integrand = sheet_mixing_integrand(RP))
+    @test all(t -> t === :null, RP.flf.termination_forward[RP.G.nodes.in_wall_nids])
+    estimate_electrostatic_field_effects!(RP)
+    F, tp = RP.fields, RP.transport
+    @test all(iszero, F.Erad_fluc) && all(iszero, F.Epol_mean)
+    @test all(isfinite, tp.L_mixing) && all(iszero, tp.Dpol_turb)
+    turb = shared_turbulent_channel(RP)
+    @test all(isfinite, turb.v_para) && all(iszero, turb.v_para)
+end
+
+@testitem "charge-sheet field: one sign, the drive's, orients the projection, the RZ field and the drift" setup = [CurrentDisc] begin
+    using RAPID2D: estimate_electrostatic_field_effects!, combine_field_sources!
+    # an induced field that reverses the drive on part of the open region: the sheets' mean field
+    # turns with it everywhere it acts, and not at all when the induction is switched off
+    RP, _ = current_disc()
+    trace_closed_region!(RP)
+    pla, F, G = RP.plasma, RP.fields, RP.G
+    open_in = setdiff(G.nodes.in_wall_nids, RP.flf.closed_surface_nids)
+    pla.ne[open_in] .= 1.0e17
+    reversed = [k for k in open_in if G.Z2D[k] > Z0 + 0.1]
+    kept = [k for k in open_in if G.Z2D[k] < Z0 - 0.1]
+    @assert !isempty(reversed) && !isempty(kept)
+    fill!(F.Eϕ_coils_pla, 0.0)
+    F.Eϕ_coils_pla[reversed] .= -3 .* F.Eϕ_presc[reversed]
+    s_of(E_drive) = -sign.(E_drive)
+    function check(E_drive)
+        s = s_of(E_drive)
+        live = [k for k in open_in if F.Epol_mean[k] > 0]
+        @test !isempty(live)
+        @test F.Epol_para_pla == s .* F.Epol_mean .* F.Bpol ./ F.Btot
+        @test (F.ER .* F.bpol_R .+ F.EZ .* F.bpol_Z)[live] ≈ (s .* F.Epol_mean)[live]
+        # the drift runs along −s sgn(B_ϕ)(b_Z, −b_R): across the lines
+        along_r = @. pla.mean_ExB_R * F.bpol_Z - pla.mean_ExB_Z * F.bpol_R
+        @test all(k -> sign(along_r[k]) == -s[k] * sign(F.Bϕ[k]), live)
+        return s
+    end
+    RP.flags.E_para_induction = true
+    combine_field_sources!(RP)
+    estimate_electrostatic_field_effects!(RP)
+    E_drive = F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla
+    s = check(E_drive)
+    @test all(k -> s[k] == -s_of(F.Eϕ_para_presc)[k], reversed) && all(k -> s[k] == s_of(F.Eϕ_para_presc)[k], kept)
+    @test all(k -> sign(F.Eϕ[k]) == -sign(F.Eϕ_presc[k]), reversed)   # the total is reversed there
+
+    # the induction off: the same induced field moves no sign, although the total toroidal field still carries it
+    RP.flags.E_para_induction = false
+    fill!(F.Eϕ_para_coils_pla, 0.0)
+    combine_field_sources!(RP)
+    estimate_electrostatic_field_effects!(RP)
+    s0 = check(F.Eϕ_para_presc)
+    @test all(k -> s0[k] == s_of(F.Eϕ_para_presc)[k], open_in)
+    @test all(k -> sign(F.Eϕ[k]) == -sign(F.Eϕ_presc[k]), reversed)
+end
+
+@testitem "mixing amplitude: the step loop passes the integrand; before it, the uncapped line average" begin
+    using RAPID2D: estimate_electrostatic_field_effects!, run_simulation!
+    config = SimulationConfig{Float64}(;
+        device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
+        NR = 17, NZ = 17, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
+        wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
+        prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+    )
+    RP = RAPID{Float64}(config)
+    initialize!(RP)
+    RP.plasma.ne .= 1.0e17
+    F, G, flf = RP.fields, RP.G, RP.flf
+    on_wall = Set(G.nodes.on_wall_nids)
+    interior = [k for k in G.nodes.in_wall_nids if !(k in on_wall)]
+    # the setup's following carried no integrand: the amplitude is the uncapped line average |E∥| L_c/L_pol
+    @test !flf.has_integral && all(iszero, flf.integral_tot)
+    estimate_electrostatic_field_effects!(RP)
+    E_drive = abs.(F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla)
+    @test F.Erad_fluc[interior] ≈ (E_drive .* flf.Lc_tot ./ flf.Lpol_tot)[interior]
+    # one step of the run: its first refresh passes the plasma's capped field, and the amplitude reads it
+    RP.t_end_s = RP.time_s + RP.dt
+    run_simulation!(RP)
+    @test flf.has_integral && any(>(0), flf.integral_tot[interior])
+    @test F.Erad_fluc[interior] ≈ min.((flf.integral_tot ./ flf.Lpol_tot)[interior], 1.0e30)
+    @test all(k -> F.Erad_fluc[k] * flf.Lpol_tot[k] ≈ flf.integral_tot[k], interior)
 end

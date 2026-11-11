@@ -111,10 +111,8 @@ Contains simulation configuration parameters.
     Dpara0::FT = FT(0.0)               # Base parallel diffusivity: a notional background added to every parallel coefficient [m²/s]
     Dperp0::FT = FT(0.0)               # Base perpendicular diffusivity: a notional background added to D⊥ [m²/s]
 
-    turbulent_diffusion_fraction_along_bpol::FT = FT(0.9)  # Fraction of turbulent diffusion along poloidal field lines
-
     # The open-line charge sheets' shape factor at the mean B_pol, γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩):
-    # their field reaches at most γ ERZ_req (`update_space_charge_weights!`). The potential is a global
+    # their field reaches at most γ Epol_req (`update_space_charge_weights!`). The potential is a global
     # solution, and an open line between two points of one wall cannot shield its whole EMF. 1
     # shields E∥ fully wherever the plasma holds the charge: tests of the parallel physics alone.
     charge_sheet_shape_factor::FT = FT(0.65)
@@ -574,8 +572,11 @@ Fields include components of the magnetic and electric fields.
     ψ_coils_pla::Matrix{FT} = zeros(FT, dims)        # [Wb/rad]
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims)       # induced by ψ_coils_pla's change over the step; below the Ampère gate, the coils' alone [V/m]
     Eϕ_coils_pla_prev::Matrix{FT} = zeros(FT, dims)  # the same, one step before [V/m]
-    ERZ_pla_mag::Matrix{FT} = zeros(FT, dims)        # the open-line charge sheets' (S1) RZ field, magnitude, along ±b̂ in RZ [V/m]
-    ERZ_para_pla::Matrix{FT} = zeros(FT, dims)       # its parallel projection, against the driven E∥ [V/m]
+    # The open-line charge sheets' field by component: "pol" along b̂_pol (the poloidal direction), "rad" along the
+    # flux-normal ∇ψ/|∇ψ| = φ̂ × b̂_pol (across the lines). E_pol projects onto E∥ and drifts across the lines; E_rad drifts along them.
+    Epol_mean::Matrix{FT} = zeros(FT, dims)         # Ē_pol, the mean poloidal component (E∥ cancellation, mean E×B across the lines): magnitude, the sign is set where it is applied [V/m]
+    Erad_fluc::Matrix{FT} = zeros(FT, dims)         # δE_r, the fluctuating flux-normal component (turbulent E×B mixing along b̂_pol): effective amplitude, min(∫min(|E∥|B/B_pol, E_Debye)dl_pol/L_pol, E_Debye) [V/m]
+    Epol_para_pla::Matrix{FT} = zeros(FT, dims)     # the signed parallel projection of the sheets' mean poloidal field, against the driven E∥ [V/m]
     Eϕ_para_coils_pla::Matrix{FT} = zeros(FT, dims)  # Eϕ_coils_pla bϕ [V/m]
 
     # Total fields: prescribed + coils and plasma (+ vertical-field control)
@@ -592,8 +593,8 @@ Fields include components of the magnetic and electric fields.
     bZ::Matrix{FT} = zeros(FT, dims)            # Vertical unit vector
     bϕ::Matrix{FT} = zeros(FT, dims)            # Toroidal unit vector
 
-    bpol_R::Matrix{FT} = zeros(FT, dims)        # Radial component of poloidal unit vector
-    bpol_Z::Matrix{FT} = zeros(FT, dims)        # Radial component of poloidal unit vector
+    bpol_R::Matrix{FT} = zeros(FT, dims)        # R component of b̂_pol, the poloidal unit vector (0 at a poloidal null)
+    bpol_Z::Matrix{FT} = zeros(FT, dims)        # Z component of b̂_pol
 
     # Electric field components
     ER::Matrix{FT} = zeros(FT, dims)            # Radial electric field [V/m]
@@ -697,7 +698,7 @@ Fields include diffusion coefficients in different directions.
 
     # turbulent diffusion coefficients
     L_mixing::Matrix{FT} = zeros(FT, dims)          # Length of field line mixing [m]
-    Dpol_turb::Matrix{FT} = zeros(FT, dims)       # Turbulent diffusion coefficient on poloidal plane [m²/s]
+    Dpol_turb::Matrix{FT} = zeros(FT, dims)       # the turbulent E×B mixing's diffusivity along b̂_pol, the one entry of its tensor [m²/s]
 
     DRR_turb::Matrix{FT} = zeros(FT, dims)  # R-R component of turbulent diffusion tensor
     DRZ_turb::Matrix{FT} = zeros(FT, dims)  # R-Z component of turbulent diffusion tensor

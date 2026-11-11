@@ -164,6 +164,8 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # Measure field-line geometry BEFORE transport is first built: an unmeasured `flf`
     # reads as zero length and would cap D∥ at zero everywhere on step 0. The step-1
     # refresh in `run_simulation!` answers a different question ("has the field moved").
+    # No mixing integrand here: the plasma it reads is set below; the step loop's first refresh
+    # passes it (`sheet_mixing_integrand`), and until then the amplitude takes the uncapped line average.
     flf_analysis_field_lines_rz_plane!(RP)
     update_closed_surface_basis!(RP)
 

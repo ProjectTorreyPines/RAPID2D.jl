@@ -433,7 +433,7 @@ function run_simulation!(
                         # `strict = false`: a mid-run refresh warns and substitutes a
                         # conservative length instead of killing the run; setup
                         # (`initialize!`) keeps the strict default.
-                        flf_analysis_field_lines_rz_plane!(RP; strict = false)
+                        flf_analysis_field_lines_rz_plane!(RP; strict = false, integrand = sheet_mixing_integrand(RP))
                         update_closed_surface_basis!(RP)
                         # if !isempty(RP.flf.closed_surface_nids)
                         #     RP.flags.FLF_nstep=1;

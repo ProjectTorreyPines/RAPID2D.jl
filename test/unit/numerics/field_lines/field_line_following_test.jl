@@ -588,3 +588,37 @@ end
         @test isequal(getfield(RP.flf, k), getfield(ref, k))
     end
 end
+
+@testitem "FLF: a node field is integrated along the line by each tracer's own quadrature" begin
+    using RAPID2D: initialize_grid_geometry, FieldLineGeometry, FieldLineFollowingResult, field_line_analysis!,
+        MarchingSquaresTracer, RK4Tracer
+    # a uniform vertical B_pol = 1 mT under Bϕ = 1 T: ψ = B_Z R²/2, every line runs straight up to the box; a field
+    # rising linearly in Z integrates to ∫ f dZ between the line's ends, exact for the trapezoid (marching squares),
+    # first order for RK4's right-endpoint sum
+    G = initialize_grid_geometry(21, 41, (1.0, 2.0), (-1.0, 1.0))
+    ψ = @. 1.0e-3 * G.R2D^2 / 2
+    inside = [1.1 < G.R1D[i] + G.dR / 2 < 1.9 && abs(G.Z1D[j] + G.dZ / 2) < 0.9 for i in 1:G.NR, j in 1:G.NZ]
+    g = FieldLineGeometry(G, ψ; Bϕ = fill(1.0, G.NR, G.NZ), inside, nodal_B = true)
+    f = @. 100.0 + 50.0 * (G.Z2D + 1.0)
+    in_wall = [LinearIndices(ψ)[i, j] for i in 2:(G.NR - 1), j in 2:(G.NZ - 1) if all(inside[(i - 1):i, (j - 1):j])]
+    run(t; kw...) = field_line_analysis!(FieldLineFollowingResult{Float64}(G.NR, G.NZ), g, t; kw...)
+    for (tracer, tol) in ((MarchingSquaresTracer(), 1.0e-6), (RK4Tracer(), 0.05))
+        none = run(tracer)
+        @test !none.has_integral && all(iszero, none.integral_tot)
+        r = run(tracer; integrand = f)
+        @test r.has_integral
+        for k in in_wall
+            z = G.Z2D[k]
+            zf, zb = z + r.Lpol_forward[k], z - r.Lpol_backward[k]   # the line's ends, up and down
+            F(z1, z2) = 100.0 * (z2 - z1) + 25.0 * ((z2 + 1.0)^2 - (z1 + 1.0)^2)
+            @test r.integral_forward[k] ≈ F(z, zf) rtol = tol
+            @test r.integral_backward[k] ≈ F(zb, z) rtol = tol
+            @test r.integral_tot[k] ≈ r.integral_forward[k] + r.integral_backward[k]
+        end
+        # the lengths are what they were
+        @test r.Lc_tot == none.Lc_tot && r.Lpol_tot == none.Lpol_tot
+        # a constant field integrates to itself times the poloidal length
+        c = run(tracer; integrand = fill(7.0, G.NR, G.NZ))
+        @test c.integral_tot[in_wall] ≈ 7.0 .* c.Lpol_tot[in_wall] rtol = 1.0e-6
+    end
+end

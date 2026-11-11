@@ -176,12 +176,29 @@ end
     Adict = Dict{String, Any}("time_s" => [0.1], "Epol_self" => old, "E_para_presc" => 2 .* old)
     snaps = [Snapshot2D{Float64}(; dims_RZ)]
     process_symbol_based_snapshots!(snaps, Adict, create_symbol_path_mapping(Snapshot2D{Float64}, Adict), 1)
-    @test snaps[1].ERZ_pla_mag == old[:, :, 1] && snaps[1].Eϕ_para_presc == 2 .* old[:, :, 1]
+    @test snaps[1].Epol_mean == old[:, :, 1] && snaps[1].Eϕ_para_presc == 2 .* old[:, :, 1]
     old0D = (
         "Epara_tot" => :E_para_tot, "Epara_presc" => :Eϕ_para_presc, "Epara_ctrl" => :Eϕ_para_ctrl,
-        "Epara_self_ES" => :ERZ_para_pla, "Epara_self_EM" => :Eϕ_para_coils_pla,
+        "Epara_self_ES" => :Epol_para_pla, "Epara_self_EM" => :Eϕ_para_coils_pla,
     )
     Adict0 = Dict{String, Any}("time_s" => [0.1], (k => [1.0] for (k, _) in old0D)...)
     paths0 = create_symbol_path_mapping(Snapshot0D{Float64}, Adict0)
     @test all(paths0[k] == [v] for (k, v) in old0D)
+end
+
+@testitem "snapshot renames: the sheets' fields under their old names, each straight to the final one" begin
+    using RAPID2D: RENAMED_SNAPSHOT_FIELDS, Snapshot2D, Snapshot0D
+    for old in ("ERZ_pla_mag", "Epol_self", "ERZ_mean_mag", "E_bpol_mean")
+        @test RENAMED_SNAPSHOT_FIELDS[old] == "Epol_mean"
+    end
+    for old in ("ERZ_fluc_mag", "E_psi_fluc")
+        @test RENAMED_SNAPSHOT_FIELDS[old] == "Erad_fluc"
+    end
+    for old in ("Epara_self_ES", "ERZ_para_pla")
+        @test RENAMED_SNAPSHOT_FIELDS[old] == "Epol_para_pla"
+    end
+    # one lookup resolves every alias: no alias points at another alias
+    @test all(!haskey(RENAMED_SNAPSHOT_FIELDS, v) for v in values(RENAMED_SNAPSHOT_FIELDS))
+    @test hasfield(Snapshot2D{Float64}, :Epol_mean) && hasfield(Snapshot2D{Float64}, :Erad_fluc) && !hasfield(Snapshot2D{Float64}, :ERZ_pla_mag)
+    @test hasfield(Snapshot0D{Float64}, :Epol_para_pla) && !hasfield(Snapshot0D{Float64}, :ERZ_para_pla)
 end

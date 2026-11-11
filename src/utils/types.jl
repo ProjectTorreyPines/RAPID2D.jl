@@ -26,6 +26,10 @@ Results structure for field line following analysis.
 - `Lc_forward::Matrix{FT}`: Connection length in forward direction
 - `Lc_backward::Matrix{FT}`: Connection length in backward direction
 - `Lc_tot::Matrix{FT}`: Total connection length
+- `integral_forward::Matrix{FT}`, `integral_backward::Matrix{FT}`, `integral_tot::Matrix{FT}`: the line integral
+  ∫ f dl_pol of the node field `integrand` given to `field_line_analysis!` (`has_integral`), per direction and in
+  total (a closed pair: the circuit's mean, as `Lc_tot`); zero without one. A `:null` end adds nothing, a
+  `:trace_limit` end keeps the sum walked
 - `min_Bpol::Matrix{FT}`: Minimum poloidal field along field line
 - `step::Array{Int,2}`: Number of integration steps taken
 - `is_closed::Array{Bool,2}`: Whether field line is closed (360° circulation)
@@ -47,6 +51,10 @@ failed trace; see [`FLF_TERMINATIONS`](@ref).
     Lc_forward::Matrix{FT} = zeros(FT, dims_RZ)
     Lc_backward::Matrix{FT} = zeros(FT, dims_RZ)
     Lc_tot::Matrix{FT} = zeros(FT, dims_RZ)
+    integral_forward::Matrix{FT} = zeros(FT, dims_RZ)
+    integral_backward::Matrix{FT} = zeros(FT, dims_RZ)
+    integral_tot::Matrix{FT} = zeros(FT, dims_RZ)
+    has_integral::Bool = false
     min_Bpol::Matrix{FT} = zeros(FT, dims_RZ)
     step::Matrix{Int} = zeros(Int, dims_RZ)
     is_closed::Matrix{Bool} = zeros(Bool, dims_RZ)

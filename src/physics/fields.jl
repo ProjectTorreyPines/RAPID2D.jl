@@ -70,30 +70,29 @@ end
     calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
 Calculate the parallel electric field: the prescribed field's, the vertical-field control's,
-and the self-generated ones.
+and the self-generated ones. The sheets' part is their mean poloidal field projected with the
+sign that opposes the drive it answers ([`driven_parallel_field`](@ref), the same drive that
+sizes it), so the projection, `ER`/`EZ` and the mean drift read one sign.
 """
 function calculate_parallel_electric_field!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     F = RP.fields
-    # the prescribed field's parallel electric field, and the vertical-field control's
+    # the prescribed field's parallel electric field, the vertical-field control's and the induced
     control = _vertical_field_control_on(RP)
     @. F.Eϕ_para_presc = F.Eϕ_presc * F.bϕ
     if control
         @. F.Eϕ_para_ctrl = F.Eϕ_ctrl * F.bϕ
     end
-
-    # the charge sheets' parallel field, against the applied loop voltage; none left from before
-    # when the cancellation is off
-    if RP.flags.E_para_cancellation
-        if control
-            @. F.ERZ_para_pla = sign(-(F.Eϕ_presc + F.Eϕ_ctrl) * F.Bϕ) * F.ERZ_pla_mag * F.Bpol / F.Btot
-        else
-            @. F.ERZ_para_pla = sign(-F.Eϕ_presc * F.Bϕ) * F.ERZ_pla_mag * F.Bpol / F.Btot
-        end
-    else
-        fill!(F.ERZ_para_pla, zero(FT))
-    end
     if RP.flags.E_para_induction
         @. F.Eϕ_para_coils_pla = F.Eϕ_coils_pla * F.bϕ
+    end
+
+    # the charge sheets' parallel field, against the drive; none left from before when the
+    # cancellation is off
+    if RP.flags.E_para_cancellation
+        E_drive = driven_parallel_field(RP)
+        @. F.Epol_para_pla = -sign(E_drive) * F.Epol_mean * F.Bpol / F.Btot
+    else
+        fill!(F.Epol_para_pla, zero(FT))
     end
 
     combine_E_para!(RP)
@@ -105,9 +104,9 @@ end
 function combine_E_para!(RP::RAPID)
     F = RP.fields
     if _vertical_field_control_on(RP)
-        @. F.E_para_tot = F.Eϕ_para_presc + F.Eϕ_para_ctrl + F.ERZ_para_pla + F.Eϕ_para_coils_pla
+        @. F.E_para_tot = F.Eϕ_para_presc + F.Eϕ_para_ctrl + F.Epol_para_pla + F.Eϕ_para_coils_pla
     else
-        @. F.E_para_tot = F.Eϕ_para_presc + F.ERZ_para_pla + F.Eϕ_para_coils_pla
+        @. F.E_para_tot = F.Eϕ_para_presc + F.Epol_para_pla + F.Eϕ_para_coils_pla
     end
     return RP
 end
@@ -293,13 +292,13 @@ function my_sigmf(x, a, c)
 end
 
 """
-    update_space_charge_weights!(RP::RAPID{FT}) -> (ERZ_target, E_Debye) where {FT<:AbstractFloat}
+    update_space_charge_weights!(RP::RAPID{FT}) -> (Epol_target, E_Debye) where {FT<:AbstractFloat}
 
 The space charge's regime from the present state: the shape factor `γ_shape_fac` (the field's shape
 alone, on closed lines too), the critical densities of the open-line charge sheets (infinite on a
 closed line, which carries none) and the weights of the two closures that model what the code does
 not resolve:
-- `nc_para = ε₀ (γ ERZ_req)²/(e Tₑ)`, where the sheets' Debye field reaches the field that cancels
+- `nc_para = ε₀ (γ Epol_req)²/(e Tₑ)`, where the sheets' Debye field reaches the field that cancels
   the driven E∥; `nc_perp`, where their E×B drift outruns the parallel streaming projected on the
   RZ plane (Yoo et al. 2018);
 - `turbulence_weight = min(1, √(n/nc_perp))`, the onset of the turbulent E×B mixing; zero without
@@ -308,10 +307,15 @@ not resolve:
   lines, `min(1, √(n/nc_para))` on open ones; zero without `ambipolar_coupling`. It splits the
   electron pressure drive between u∥ and the ambipolar diffusion ([`electron_pressure_shares`](@ref)).
 
-Returns the two fields from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets'
-field:
-- `ERZ_target = γ ERZ_req`, the RZ field that cancels the driven E∥, shaped by γ;
-- `E_Debye`, the Debye field, the most the local plasma holds.
+Returns the fields from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets'
+mean field and mixing amplitude:
+- `Epol_target = γ Epol_req`, the RZ field that cancels the driven E∥, shaped by γ;
+- `E_Debye`, the Debye field, the most the local plasma holds;
+- `E_para_drive`, the driven parallel field ([`driven_parallel_field`](@ref)).
+
+The Debye cap on the mean field is the density gate `min(1, √(n/nc_para))` written as a field: a
+plasma that holds the shaped target cancels its share γ of the drive, and on an open line that
+share is `ambipolar_weight`.
 """
 function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
@@ -345,16 +349,11 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # =========================================================================
     # 2. What the sheets would need, and what they can hold
     # =========================================================================
-    # - ERZ_req = |E∥,drive| B/Bpol: the RZ field whose parallel part cancels the driven E∥
-    # - ERZ_target = γ ERZ_req: shaped by γ; where Bpol vanishes, its limit γ₀ |E∥,drive| B/⟨Bpol⟩
+    # - Epol_req = |E∥,drive| B/Bpol: the RZ field whose parallel part cancels the driven E∥
+    # - Epol_target = γ Epol_req: shaped by γ; where Bpol vanishes, its limit γ₀ |E∥,drive| B/⟨Bpol⟩
     # - E_Debye = √(n e Tₑ/ε₀): the most the local plasma holds
-    EM = RP.flags.E_para_induction
-    E_para_drive = if _vertical_field_control_on(RP)
-        @. F.Eϕ_para_presc + F.Eϕ_para_ctrl + EM * F.Eϕ_para_coils_pla
-    else
-        @. F.Eϕ_para_presc + EM * F.Eϕ_para_coils_pla
-    end
-    ERZ_target = if Bpol_mean > 0
+    E_para_drive = driven_parallel_field(RP)
+    Epol_target = if Bpol_mean > 0
         @. ifelse(
             F.Bpol > 0, pla.γ_shape_fac * (abs(E_para_drive) * (F.Btot / F.Bpol)),
             γ0 * abs(E_para_drive) * F.Btot / Bpol_mean
@@ -364,13 +363,13 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
 
     ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
-    E_Debye = @. sqrt(max(ne_SM, zero(FT)) * ee * max(pla.Te_eV, zero(FT)) / eps0)
+    E_Debye = debye_field(RP, ne_SM)
 
     # =========================================================================
     # 3. Critical densities of the open-line sheets
     # =========================================================================
-    # E_Debye reaches ERZ_target at nc_para: none where the plasma is cold, any where nothing is needed
-    @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * ERZ_target^2 / (ee * pla.Te_eV))
+    # E_Debye reaches Epol_target at nc_para: none where the plasma is cold, any where nothing is needed
+    @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * Epol_target^2 / (ee * pla.Te_eV))
     # Bpol/γ = max(Bpol, ⟨Bpol⟩/γ₀), finite where Bpol vanishes
     @. pla.nc_perp = ifelse(
         closed | (Bpol_mean <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_mean / γ0))^2
@@ -388,39 +387,98 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     # The parallel pressure-driven flow of one species alone charges the plasma wherever its
     # divergence does not vanish, so the ambipolar field couples the species: always on a closed
-    # line; on an open line as far as the sheets' charge reaches, f∥ = min(1, E_Debye/ERZ_target) — a
+    # line; on an open line as far as the sheets' charge reaches, f∥ = min(1, E_Debye/Epol_target) — a
     # plasma that holds the sheets' charge holds the far smaller ambipolar charge
     if RP.flags.ambipolar_coupling
         @. pla.ambipolar_weight = ifelse(
             closed, one(FT),
-            ifelse(E_Debye > 0, ifelse(ERZ_target > 0, min(one(FT), E_Debye / ERZ_target), one(FT)), zero(FT))
+            ifelse(E_Debye > 0, ifelse(Epol_target > 0, min(one(FT), E_Debye / Epol_target), one(FT)), zero(FT))
         )
     else
         fill!(pla.ambipolar_weight, zero(FT))
     end
 
-    return ERZ_target, E_Debye
+    return Epol_target, E_Debye, E_para_drive
+end
+
+"""
+    driven_parallel_field(RP) -> Matrix
+
+The parallel field the charge sheets answer: the prescribed, the control's (when the vertical-field
+control is on) and, with `E_para_induction`, the induced parallel field.
+"""
+function driven_parallel_field(RP::RAPID)
+    F = RP.fields
+    EM = RP.flags.E_para_induction
+    return if _vertical_field_control_on(RP)
+        @. F.Eϕ_para_presc + F.Eϕ_para_ctrl + EM * F.Eϕ_para_coils_pla
+    else
+        @. F.Eϕ_para_presc + EM * F.Eϕ_para_coils_pla
+    end
+end
+
+# The Debye field √(n e Tₑ/ε₀) [V/m] of the density `ne` (the weights' smoothed one), the most the
+# local plasma holds; zero where it is empty or cold
+function debye_field(RP::RAPID{FT}, ne) where {FT}
+    @unpack ee, eps0 = RP.config.constants
+    return @. sqrt(max(ne, zero(FT)) * ee * max(RP.plasma.Te_eV, zero(FT)) / eps0)
+end
+
+"""
+    sheet_mixing_integrand(RP) -> Matrix
+
+The field the mixing amplitude averages along each line, at the nodes [V/m]: the RZ field that would
+cancel the driven E∥ there, `|E∥,drive| B/B_pol`, capped at what the plasma holds, `E_Debye` — the same
+cap as the mean field's, applied before the line average so that no cell contributes more than
+`E_Debye Δx` of potential. The field-line following integrates it (`field_line_analysis!`'s
+`integrand`, `flf.integral_tot`); the step loop passes it at every refresh, the setup (before the plasma
+is set) none. Where B_pol vanishes the cap alone remains; an empty or cold cell gives zero.
+"""
+function sheet_mixing_integrand(RP::RAPID{FT}) where {FT}
+    F = RP.fields
+    ne_SM = smooth_data_2D(RP.plasma.ne; num_SM = 2, weighting = RP.G.inVol2D)
+    E_Debye = debye_field(RP, ne_SM)
+    E_drive = driven_parallel_field(RP)
+    return @. ifelse(F.Bpol > 0, min(abs(E_drive) * F.Btot / F.Bpol, E_Debye), E_Debye)
 end
 
 """
     estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT<:AbstractFloat}
 
-The open-line charge sheets' field and its effects on transport, from the present state (MATLAB
-`Estimate_E_self_effects`, c_RAPID.m lines 544–679): the regime and the closures' weights
-([`update_space_charge_weights!`](@ref)); with `charge_sheet_field`, the sheets' field
-`ERZ_pla_mag = min(γ ERZ_req, E_Debye)`, zero on closed lines, which short-circuit along B; its parallel
-projection `ERZ_para_pla` ([`calculate_parallel_electric_field!`](@ref)), the mean E×B drift and the
-turbulent diffusivity `Dpol_turb` at the turbulence's weight. Without it, no field, parallel part
-or diffusivity, so a run that turns it off keeps none from before.
+The open-line charge sheets' two fields and their effects on transport, from the present state
+(MATLAB `Estimate_E_self_effects`, c_RAPID.m lines 544–679, which had one): the regime and the
+closures' weights ([`update_space_charge_weights!`](@ref)); with `charge_sheet_field`,
+by component — "pol" along `b̂_pol` (the poloidal direction), "rad" along the flux-normal `∇ψ/|∇ψ| = φ̂ × b̂_pol` (across the lines) —
+- the **mean poloidal component**, `Epol_mean = min(γ Epol_req, E_Debye)` (Ē_pol, a magnitude; the
+  sign is set where it is applied): the time-averaged field the sheets sustain. It is the one
+  component that projects onto E∥ — `Epol_para_pla` cancels the driven E∥
+  ([`calculate_parallel_electric_field!`](@ref)) — and its E×B drift is the mean drift **across** the lines;
+- the **fluctuating flux-normal component**, `Erad_fluc = min(⟨min(|E∥,drive| B/B_pol, E_Debye)⟩_line, E_Debye)`
+  (δE_r): the cancelling field capped cell by cell at what the plasma holds, averaged along the line over
+  its RZ length (`flf.integral_tot/Lpol_tot`, [`sheet_mixing_integrand`](@ref); before the step loop's
+  first following, the uncapped `|E∥| L_c/L_pol`). An effective amplitude, not an rms; its E×B drift is
+  **along** `b̂_pol`, the turbulent mixing — `Dpol_turb` ([`update_turbulent_diffusivity!`](@ref)) and
+  `shared_turbulent_channel` (the electron wall, the ion channels and their wall) read it, nothing
+  else. γ does not enter it: how much of the drive the mean field cancels and how hard the sheets
+  fluctuate are separate questions. The other two components, a fluctuating one along `b̂_pol`
+  (a fluctuating E∥) and a mean one across the lines (a mean flow along `b̂_pol`), are not modelled.
+
+Both are zero on closed lines, which short-circuit along B, and take the same boundary extrapolation.
+Without `charge_sheet_field` no field, parallel part or diffusivity, so a run that turns it off keeps
+none from before; the mean drift `mean_ExB_R/Z` and `ER`/`EZ` are then not written at all — whatever
+is set stands, a prescribed drift.
 """
 function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
     F = RP.fields
     G = RP.G
-    ERZ_target, E_Debye = update_space_charge_weights!(RP)
+    Epol_target, E_Debye, E_para_drive = update_space_charge_weights!(RP)
     if !RP.flags.charge_sheet_field
-        fill!(F.ERZ_pla_mag, zero(FT))
+        fill!(F.Epol_mean, zero(FT))
+        fill!(F.Erad_fluc, zero(FT))
         fill!(RP.transport.Dpol_turb, zero(FT))
+        # `mean_ExB_R/Z` and `ER/EZ` are left as they are: without the sheets' field they are an
+        # input, a prescribed drift (the wall and convection tests set one)
         # E∥ without the sheets' part at once: the transport's refresh reads it
         calculate_parallel_electric_field!(RP)
         return RP
@@ -428,25 +486,43 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
 
     # The open-line charge sheets' field (MATLAB lines 582-620): none on a closed line, before and
     # after the boundary nodes take their neighbours' mean
-    @. F.ERZ_pla_mag = ifelse(RP.flf.is_closed, zero(FT), min(ERZ_target, E_Debye))
-    extrapolate_field_to_boundary_nodes!(G, F.ERZ_pla_mag)
-    F.ERZ_pla_mag[RP.flf.closed_surface_nids] .= zero(FT)
+    @. F.Epol_mean = ifelse(RP.flf.is_closed, zero(FT), min(Epol_target, E_Debye))
+    extrapolate_field_to_boundary_nodes!(G, F.Epol_mean)
+    F.Epol_mean[RP.flf.closed_surface_nids] .= zero(FT)
+
+    # The mixing amplitude: the capped cancelling field averaged along the line, the local cap again
+    # (the line's mean must be held here too); before the first following with the integrand (the
+    # setup's has no plasma yet) the uncapped line average |E∥| L_c/L_pol; nothing where the line was
+    # not measured or there is no poloidal field (a null's line is toroidal: L_pol = Inf gives 0 too)
+    flf = RP.flf
+    line_mean = flf.has_integral ? flf.integral_tot ./ flf.Lpol_tot : abs.(E_para_drive) .* flf.Lc_tot ./ flf.Lpol_tot
+    @. F.Erad_fluc = ifelse(
+        flf.is_closed | !(F.Bpol > 0) | !(flf.Lpol_tot > 0) | !isfinite(line_mean), zero(FT),
+        min(line_mean, E_Debye)
+    )
+    extrapolate_field_to_boundary_nodes!(G, F.Erad_fluc)
+    F.Erad_fluc[flf.closed_surface_nids] .= zero(FT)
 
     calculate_parallel_electric_field!(RP)
 
     if RP.flags.mean_ExB
-        @. pla.mean_ExB_R = (F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * F.bpol_Z
-        @. pla.mean_ExB_Z = (F.ERZ_pla_mag / F.Btot) * sign(F.Eϕ) * (-F.bpol_R)
+        # the mean field is s Ē_pol b̂_pol with s = −sgn(E∥,drive), the sign that cancels the drive it
+        # answers (the one `Epol_para_pla` takes); its drift s Ē_pol b̂_pol × B_ϕ φ̂ / B² runs along
+        # −s sgn(B_ϕ) (b_Z, −b_R): across the lines, toward the downstream wall
+        s_drive = @. -sign(E_para_drive)
+        @. pla.mean_ExB_R = (F.Epol_mean / F.Btot) * (-(s_drive * sign(F.Bϕ))) * F.bpol_Z
+        @. pla.mean_ExB_Z = (F.Epol_mean / F.Btot) * (s_drive * sign(F.Bϕ)) * F.bpol_R
 
-        @. F.ER = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_mag * F.bpol_R
-        @. F.EZ = -sign(F.Eϕ .* F.Bϕ) * F.ERZ_pla_mag * F.bpol_Z
+        @. F.ER = s_drive * F.Epol_mean * F.bpol_R
+        @. F.EZ = s_drive * F.Epol_mean * F.bpol_Z
     end
 
     # # Turbulent parallel diffusion based on fluctuation levels
     # # TODO: implement computing length of connection length
     # F.L_mixing .= 10.0;
+    # the mixing length: the line's RZ length; a null's line (L_pol = Inf, toroidal) mixes along nothing
     tp = RP.transport
-    tp.L_mixing .= RP.flf.Lpol_tot
+    @. tp.L_mixing = ifelse(isfinite(flf.Lpol_tot), flf.Lpol_tot, zero(FT))
 
     extrapolate_field_to_boundary_nodes!(RP.G, tp.L_mixing)
     # smooth_data_2D!(tp.L_mixing; num_SM = 3)
@@ -459,14 +535,17 @@ end
 """
     update_turbulent_diffusivity!(RP) -> RP
 
-The turbulent E×B mixing's diffusivity from the charge sheets' present field and the turbulence's
-weight, `Dpol_turb = ½ w_turb (ERZ_pla_mag/B) L_mixing`: the drift speed `shared_turbulent_channel`
-takes. Where the weights are refreshed without the field (a run's start, a failed step put back),
-the diffusivity follows them.
+The turbulent E×B mixing's diffusivity along `b̂_pol` from the charge sheets' fluctuating field across
+the lines and the turbulence's weight, `Dpol_turb = ½ w_turb (Erad_fluc/B) L_mixing`: the drift speed
+`shared_turbulent_channel` takes, and the one entry of the tensor `Dpol_turb b̂_pol b̂_pol`
+(`update_diffusion_tensor!`). With `L_mixing = L_pol,tot` the length cancels:
+`Dpol_turb = ½ w_turb ∫min(|E∥|B/B_pol, E_Debye)dl_pol/B` up to the outer cap, one value along a line.
+Where the weights are refreshed without the field (a run's start, a failed step put back), the
+diffusivity follows them.
 """
 function update_turbulent_diffusivity!(RP::RAPID)
     pla, F, tp = RP.plasma, RP.fields, RP.transport
-    @. tp.Dpol_turb = 0.5 * (pla.turbulence_weight * F.ERZ_pla_mag) / F.Btot * tp.L_mixing
+    @. tp.Dpol_turb = 0.5 * (pla.turbulence_weight * F.Erad_fluc) / F.Btot * tp.L_mixing
     return RP
 end
 

@@ -78,9 +78,10 @@ step_budget(p::CubicTracer, g::FieldLineGeometry, max_length) = p.max_steps
 step_budget(p::RK4Tracer, g::FieldLineGeometry{FT}, max_length) where {FT} =
     floor(Int, max_length / (FT(p.step_cells) * min(abs(g.dR), abs(g.dZ))))
 
-# the visitor that measures a trace's lengths: RK4 keeps its right-endpoint sums
-path_lengths(::FieldLineTracer, ::Type{FT}) where {FT} = PathLengths{FT}()
-path_lengths(::RK4Tracer, ::Type{FT}) where {FT} = StepLengths{FT}()
+# the visitor that measures a trace's lengths: RK4 keeps its right-endpoint sums. `f` is the
+# interpolant (R, Z) -> value of a node field to integrate along the path, or nothing
+path_lengths(::FieldLineTracer, ::Type{FT}; f = nothing) where {FT} = PathLengths{FT}(f)
+path_lengths(::RK4Tracer, ::Type{FT}; f = nothing) where {FT} = StepLengths{FT}(f)
 
 # whether `:closed` means the path came back to its start (a contour tracer), so that one closed
 # direction closes the line; RK4 closes on turning angle, which an open line can reach
@@ -151,71 +152,89 @@ function chord_exit(g::FieldLineGeometry{FT}, x, xn) where {FT}
     return
 end
 
+# The integrand's value at a vertex: nothing to integrate without a field; a non-finite sample
+# (the interpolant between a finite node and an Inf one) contributes nothing
+sample(::Nothing, R, Z, FT) = zero(FT)
+function sample(f, R, Z, FT)
+    v = FT(f(R, Z))
+    return isfinite(v) ? v : zero(FT)
+end
+
 """
-    PathLengths{FT}()
+    PathLengths{FT}(f = nothing)
 
 A visitor that measures a traced path: the poloidal length `Lpol` = ∫ dl, the length along B
-`Lc` = ∫ (B/B_pol) dl, the smallest `min_Bpol` met, and the number of vertices `n`. Trapezoidal
-between vertices.
+`Lc` = ∫ (B/B_pol) dl, the line integral `integral` = ∫ f dl of the node field `f` ((R, Z) -> value,
+[`sample`](@ref); 0 without one), the smallest `min_Bpol` met, and the number of vertices `n`.
+Trapezoidal between vertices.
 """
-mutable struct PathLengths{FT <: AbstractFloat}
+mutable struct PathLengths{FT <: AbstractFloat, F}
+    f::F
     Lpol::FT
     Lc::FT
+    integral::FT
     min_Bpol::FT
     n::Int
-    R::FT                                  # the last vertex, and B/B_pol there
+    R::FT                                  # the last vertex, B/B_pol and f there
     Z::FT
     ratio::FT
+    value::FT
 end
-PathLengths{FT}() where {FT} = PathLengths{FT}(zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN), FT(NaN))
+PathLengths{FT}(f = nothing) where {FT} =
+    PathLengths{FT, typeof(f)}(f, zero(FT), zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN), FT(NaN), FT(NaN))
 
 # back to no path, for the next trace
 function reset!(p::PathLengths{FT}) where {FT}
-    p.Lpol, p.Lc, p.min_Bpol, p.n = zero(FT), zero(FT), FT(Inf), 0
+    p.Lpol, p.Lc, p.integral, p.min_Bpol, p.n = zero(FT), zero(FT), zero(FT), FT(Inf), 0
     return p
 end
 
-function visit!(p::PathLengths, R, Z, Bpol, Bϕ)
+function visit!(p::PathLengths{FT}, R, Z, Bpol, Bϕ) where {FT}
     ratio = sqrt(Bpol^2 + Bϕ^2) / Bpol
+    value = sample(p.f, R, Z, FT)
     if p.n > 0
         d = sqrt((R - p.R)^2 + (Z - p.Z)^2)
         p.Lpol += d
         p.Lc += d * (p.ratio + ratio) / 2
+        p.integral += d * (p.value + value) / 2
     end
     p.min_Bpol = min(p.min_Bpol, Bpol)
     p.n += 1
-    p.R, p.Z, p.ratio = R, Z, ratio
+    p.R, p.Z, p.ratio, p.value = R, Z, ratio, value
     return p
 end
 
 """
-    StepLengths{FT}()
+    StepLengths{FT}(f = nothing)
 
 [`PathLengths`](@ref) as RAPID2D's first field-line following summed them, kept for
-[`RK4Tracer`](@ref): each step adds its chord times B/B_pol at its end, and the smallest B_pol is
-taken over the step ends, not the start.
+[`RK4Tracer`](@ref): each step adds its chord times B/B_pol (and times `f`) at its end, and the
+smallest B_pol is taken over the step ends, not the start.
 """
-mutable struct StepLengths{FT <: AbstractFloat}
+mutable struct StepLengths{FT <: AbstractFloat, F}
+    f::F
     Lpol::FT
     Lc::FT
+    integral::FT
     min_Bpol::FT
     n::Int
     R::FT
     Z::FT
 end
-StepLengths{FT}() where {FT} = StepLengths{FT}(zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN))
+StepLengths{FT}(f = nothing) where {FT} =
+    StepLengths{FT, typeof(f)}(f, zero(FT), zero(FT), zero(FT), FT(Inf), 0, FT(NaN), FT(NaN))
 
 function reset!(p::StepLengths{FT}) where {FT}
-    p.Lpol, p.Lc, p.min_Bpol, p.n = zero(FT), zero(FT), FT(Inf), 0
+    p.Lpol, p.Lc, p.integral, p.min_Bpol, p.n = zero(FT), zero(FT), zero(FT), FT(Inf), 0
     return p
 end
 
-function visit!(p::StepLengths, R, Z, Bpol, Bϕ)
+function visit!(p::StepLengths{FT}, R, Z, Bpol, Bϕ) where {FT}
     if p.n > 0
         dl_pol = sqrt((R - p.R)^2 + (Z - p.Z)^2)
-        Btot = sqrt(Bpol^2 + Bϕ^2)
         p.Lpol += dl_pol
-        p.Lc += dl_pol * Btot / Bpol
+        p.Lc += dl_pol * sqrt(Bpol^2 + Bϕ^2) / Bpol
+        p.integral += dl_pol * sample(p.f, R, Z, FT)
         p.min_Bpol = min(p.min_Bpol, Bpol)
     end
     p.n += 1
@@ -225,12 +244,14 @@ end
 
 # The lengths a trace publishes for each way it can end (`FLF_TERMINATIONS`): the measured ones
 # at a wall or after one circuit; at a B_pol null the line closes toroidally, adding 2πR to Lc
-# with Lpol unbounded; when the budget ran out the distance along B is unknown, Lc = Inf.
+# with Lpol unbounded; when the budget ran out the distance along B is unknown, Lc = Inf. The
+# line integral is the measured sum in every case: a toroidal circle has no poloidal path to
+# integrate over, and a sum cut by the budget is what was walked.
 function published_lengths(p, termination::Symbol, R_end)
     FT = typeof(p.Lpol)
-    termination === :null && return (; Lpol = FT(Inf), Lc = p.Lc + FT(2π) * R_end, min_Bpol = zero(FT))
-    termination === :trace_limit && return (; Lpol = p.Lpol, Lc = FT(Inf), min_Bpol = p.min_Bpol)
-    return (; Lpol = p.Lpol, Lc = p.Lc, min_Bpol = p.min_Bpol)
+    termination === :null && return (; Lpol = FT(Inf), Lc = p.Lc + FT(2π) * R_end, integral = p.integral, min_Bpol = zero(FT))
+    termination === :trace_limit && return (; Lpol = p.Lpol, Lc = FT(Inf), integral = p.integral, min_Bpol = p.min_Bpol)
+    return (; Lpol = p.Lpol, Lc = p.Lc, integral = p.integral, min_Bpol = p.min_Bpol)
 end
 
 # ── marching squares ─────────────────────────────────────────────────────────────────
