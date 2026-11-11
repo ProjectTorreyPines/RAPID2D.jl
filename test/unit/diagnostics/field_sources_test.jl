@@ -202,3 +202,25 @@ end
     @test hasfield(Snapshot2D{Float64}, :Epol_mean) && hasfield(Snapshot2D{Float64}, :Erad_fluc) && !hasfield(Snapshot2D{Float64}, :ERZ_pla_mag)
     @test hasfield(Snapshot0D{Float64}, :Epol_para_pla) && !hasfield(Snapshot0D{Float64}, :ERZ_para_pla)
 end
+
+@testitem "snapshot renames: the diagnostics by the poloidal frame, and the redefined diffusivity left unread" begin
+    using RAPID2D: create_symbol_path_mapping, process_symbol_based_snapshots!, RENAMED_SNAPSHOT_FIELDS
+    renamed = ("mean_ExB_pol" => :mean_ExB_RZ_mag, "u_pol" => :ue_RZ_mag, "B_pol" => :Bpol)
+    @test all(RENAMED_SNAPSHOT_FIELDS[k] == String(v) for (k, v) in renamed)
+    @test RENAMED_SNAPSHOT_FIELDS["abs_ue_para_RZ"] == "ue_para_RZ_mag"
+    @test all(!haskey(RENAMED_SNAPSHOT_FIELDS, v) for v in values(RENAMED_SNAPSHOT_FIELDS))
+    # an older file: the renamed fields are read into the new names; D_pol (√(D_RR² + D_ZZ²)) has no alias
+    # and no field, so it is skipped, not read as Dpol
+    dims_RZ = (4, 5)
+    old = reshape(collect(1.0:20.0), dims_RZ..., 1)
+    Adict = Dict{String, Any}("time_s" => [0.1], "D_pol" => 9 .* old, (k => i .* old for (i, (k, _)) in enumerate(renamed))...)
+    snaps = [Snapshot2D{Float64}(; dims_RZ)]
+    paths = create_symbol_path_mapping(Snapshot2D{Float64}, Adict)
+    @test !haskey(paths, "D_pol")
+    process_symbol_based_snapshots!(snaps, Adict, paths, 1)
+    @test all(getfield(snaps[1], v) == i .* old[:, :, 1] for (i, (_, v)) in enumerate(renamed))
+    @test all(iszero, snaps[1].Dpol)
+    Adict0 = Dict{String, Any}("time_s" => [0.1], "abs_ue_para_RZ" => [2.0], "D_RZ" => [3.0])
+    paths0 = create_symbol_path_mapping(Snapshot0D{Float64}, Adict0)
+    @test paths0["abs_ue_para_RZ"] == [:ue_para_RZ_mag] && !haskey(paths0, "D_RZ")
+end

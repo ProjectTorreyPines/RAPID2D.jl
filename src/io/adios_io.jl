@@ -390,6 +390,8 @@ const RENAMED_SNAPSHOT_FIELDS = Dict(
     "E_para_presc" => "Eϕ_para_presc", "Epara_tot" => "E_para_tot",
     "Epara_presc" => "Eϕ_para_presc", "Epara_ctrl" => "Eϕ_para_ctrl", "Epara_self_ES" => "Epol_para_pla",
     "Epara_self_EM" => "Eϕ_para_coils_pla",
+    # the diagnostics by the poloidal frame: in-plane magnitudes `X_RZ_mag`, frame components `Xpol`
+    "mean_ExB_pol" => "mean_ExB_RZ_mag", "u_pol" => "ue_RZ_mag", "abs_ue_para_RZ" => "ue_para_RZ_mag", "B_pol" => "Bpol",
 )
 
 """

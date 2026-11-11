@@ -131,7 +131,7 @@ module RAPID2DMakieExt
             :ni_tot => "ni_tot (m⁻³)",
             :Te_eV => "Te (eV)",
             :Ti_eV => "Ti (eV)",
-            :B_pol => "Bpol (T)",
+            :Bpol => "Bpol (T)",
             :BR => "BR (T)",
             :BZ => "BZ (T)",
             :E_para_tot => "E∥ (V/m)",

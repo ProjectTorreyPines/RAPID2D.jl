@@ -30,5 +30,5 @@ out = config.Output_path
 plot_traces(RP; file = joinpath(out, "traces.png"))
 plot_dashboard(RP; file = joinpath(out, "dashboard.png"))
 plot_snapshots2D(RP, :ne, [0.0, 1.0, 2.0, 4.0]; file = joinpath(out, "ne_snapshots.png"))
-animate2D(RP, [:ne, :Te_eV, :E_para_tot, :D_pol]; file = joinpath(out, "snaps2D.mp4"))
+animate2D(RP, [:ne, :Te_eV, :E_para_tot, :Dpol]; file = joinpath(out, "snaps2D.mp4"))
 println("outputs in ", out)

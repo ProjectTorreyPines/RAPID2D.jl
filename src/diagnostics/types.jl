@@ -42,8 +42,8 @@ Contains volume-averaged quantities
     abs_E_para_amb::FT = zero(FT)     # ⟨|E∥,amb|⟩, the ambipolar field the closure implies (no part of E_para_tot)
 
     # Transport quantities
-    abs_ue_para_RZ::FT = zero(FT)     # Average parallel velocity
-    D_RZ::FT = zero(FT)         # Average diffusion coefficient
+    ue_para_RZ_mag::FT = zero(FT)     # ⟨|uₑ∥| B_pol/B⟩, the magnitude of the parallel flow's RZ projection
+    Dpol::FT = zero(FT)               # ⟨b̂_pol·𝐃·b̂_pol⟩, the electrons' diffusivity along b̂_pol
     turbulence_weight::FT = zero(FT)  # ⟨w_turb⟩, the turbulent E×B mixing's onset
     ambipolar_weight::FT = zero(FT)   # ⟨w_amb⟩, the ambipolar coupling's weight in [0, 1]
     ambipolar_exchange::FT = zero(FT)     # what the ambipolar field passed from the electrons' pressure to the ions, cumulative [J]
@@ -235,9 +235,9 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
 
     # Transport coefficients
     Dpara::Matrix{FT} = zeros(FT, dims_RZ)          # Parallel diffusion
-    D_pol::Matrix{FT} = zeros(FT, dims_RZ)          # Poloidal diffusion
+    Dpol::Matrix{FT} = zeros(FT, dims_RZ)           # b̂_pol·𝐃·b̂_pol, the electrons' diffusivity along b̂_pol (`diffusivity_along_bpol`)
     ue_para::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel electron velocity
-    u_pol::Matrix{FT} = zeros(FT, dims_RZ)          # Poloidal velocity magnitude
+    ue_RZ_mag::Matrix{FT} = zeros(FT, dims_RZ)      # √(ueR² + ueZ²), the electron flow's magnitude in the RZ plane
 
     # Electron properties
     Te_eV::Matrix{FT} = zeros(FT, dims_RZ)          # Electron temperature
@@ -257,7 +257,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     # Magnetic field
     BR::Matrix{FT} = zeros(FT, dims_RZ)             # Radial magnetic field
     BZ::Matrix{FT} = zeros(FT, dims_RZ)             # Vertical magnetic field
-    B_pol::Matrix{FT} = zeros(FT, dims_RZ)          # Poloidal magnetic field magnitude
+    Bpol::Matrix{FT} = zeros(FT, dims_RZ)           # Poloidal magnetic field magnitude
     BR_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)   # of the coils (walls included) and the plasma together
     BZ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)
     BR_pla::Matrix{FT} = zeros(FT, dims_RZ)         # of the plasma alone, from the stored Jϕ
@@ -269,7 +269,7 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     E_para_tot::Matrix{FT} = zeros(FT, dims_RZ)     # Total parallel electric field
     E_para_amb::Matrix{FT} = zeros(FT, dims_RZ)     # the ambipolar field the closure implies, (mₑ/e) w_amb a_p (no part of E_para_tot)
     Eϕ_para_presc::Matrix{FT} = zeros(FT, dims_RZ)   # Prescribed parallel electric field
-    mean_ExB_pol::Matrix{FT} = zeros(FT, dims_RZ)   # ExB drift magnitude
+    mean_ExB_RZ_mag::Matrix{FT} = zeros(FT, dims_RZ) # |mean_ExB_R, mean_ExB_Z|, the mean E×B drift's magnitude in the RZ plane
     Epol_mean::Matrix{FT} = zeros(FT, dims_RZ)     # Ē_pol, the open-line charge sheets' mean poloidal field, magnitude
     Erad_fluc::Matrix{FT} = zeros(FT, dims_RZ)     # δE_r, their fluctuating flux-normal field: the turbulent channel's amplitude
     Eϕ_coils_pla::Matrix{FT} = zeros(FT, dims_RZ)   # induced by the coils and the plasma over the last step
