@@ -1,5 +1,5 @@
 # How the open-line charge sheets' mean field is shaped, as types only. They sit here, before
-# `types.jl`, so the flags can hold them; the methods are in `fields.jl` (`mean_sheet_target`).
+# `types.jl`, so the flags can hold them; the methods are in `fields.jl` (`mean_sheet_saturation`).
 
 """
     MeanSheetFieldPolicy
@@ -12,27 +12,26 @@ the residual E∥ (the heating) and the mean E×B drift across the lines; the ca
 γ = Ē_pol B_pol/(|E∥,drive| B) is a result, not an input.
 
 The policy shapes the mean field alone: the critical densities `nc_para`, `nc_perp`, the closures'
-weights, the mixing amplitude `Erad_fluc` and `γ_shape_fac` keep the local pitch's reference under
-every policy.
+weights and the mixing amplitude `Erad_fluc` keep the local pitch's reference under every policy.
 """
 abstract type MeanSheetFieldPolicy end
 
 """
     LocalPitch()
 
-**The default.** Ceiling `γ₀ E₀`, uniform in the field's geometry: `E₀ = |E∥,drive| B/⟨B_pol⟩` is the
-node's requirement at the in-wall mean ⟨B_pol⟩ and γ₀ `config.charge_sheet_shape_factor`. Written as
-`γ Epol_req` with γ = min(1, γ₀ B_pol/⟨B_pol⟩): the cancellation fails in a round pocket around a
-poloidal null and is complete wherever B_pol exceeds ⟨B_pol⟩/γ₀.
+**The default.** Ceiling `γ₀ E₀`, the same share of `E₀` everywhere: `E₀ = |E∥,drive| B/⟨B_pol⟩` is the
+node's requirement at the in-wall mean ⟨B_pol⟩ and γ₀ `config.charge_sheet_shape_factor`. The
+cancellation fails in a round pocket around a poloidal null, where the requirement exceeds the
+ceiling, and is complete wherever B_pol exceeds ⟨B_pol⟩/γ₀.
 """
 struct LocalPitch <: MeanSheetFieldPolicy end
 
 """
     LineMinPitch()
 
-The local pitch's shape with the least poloidal field met along the node's whole line
-(`flf.min_Bpol`): `min(1, γ₀ min B_pol/⟨B_pol⟩) Epol_req`, never above the local pitch's ceiling
-`γ₀ E₀`. One share along a line, so a line that passes a null is poorly cancelled all the way to the
+Ceiling `γ₀ E₀ min B_pol/B_pol`: the local ceiling lowered by the least poloidal field met along the
+node's whole line (`flf.min_Bpol`) against the node's own, so never above the local one. The cancelled
+share is one value along a line: a line that passes a null is poorly cancelled all the way to the
 wall, a band along the separatrix. Sensitive to how close a traced line comes to the null.
 """
 struct LineMinPitch <: MeanSheetFieldPolicy end

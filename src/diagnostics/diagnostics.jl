@@ -444,7 +444,6 @@ function measure_snap2D!(RP::RAPID{FT}, snap2D::Snapshot2D{FT}) where {FT <: Abs
     snap2D.nc_para .= pla.nc_para
     snap2D.nc_perp .= pla.nc_perp
 
-    snap2D.γ_shape_fac .= pla.γ_shape_fac
     snap2D.turbulence_weight .= pla.turbulence_weight
     snap2D.ambipolar_weight .= pla.ambipolar_weight
 

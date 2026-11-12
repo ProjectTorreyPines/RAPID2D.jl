@@ -111,10 +111,11 @@ Contains simulation configuration parameters.
     Dpara0::FT = FT(0.0)               # Base parallel diffusivity: a notional background added to every parallel coefficient [m²/s]
     Dperp0::FT = FT(0.0)               # Base perpendicular diffusivity: a notional background added to D⊥ [m²/s]
 
-    # The open-line charge sheets' shape factor at the in-wall average B_pol, γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩):
-    # their field reaches at most γ Epol_req (`update_space_charge_weights!`). The potential is a global
-    # solution, and an open line between two points of one wall cannot shield its whole EMF. 1
-    # shields E∥ fully wherever the plasma holds the charge: tests of the parallel physics alone.
+    # γ₀: the local saturation ceiling of the open-line charge sheets' mean field, as a share of E₀, the field
+    # that would cancel the driven E∥ at the in-wall average B_pol (`update_space_charge_weights!`): the mean field
+    # reaches at most γ₀ E₀ under the default policy, and the critical densities read that ceiling under every
+    # policy. The potential is a global solution, and an open line between two points of one wall cannot shield its
+    # whole EMF. Tests of the parallel physics alone set 1.
     charge_sheet_shape_factor::FT = FT(0.65)
 
     # Fraction of ions the wall returns to the plasma. 0 = fully absorbing,
@@ -417,7 +418,6 @@ Contains the plasma state variables including density, temperature, and velocity
     # The space charge's regime (`update_space_charge_weights!`)
     nc_para::Matrix{FT} = zeros(FT, dims) # density at which the charge sheets' Debye field cancels the driven E∥ [m^-3]
     nc_perp::Matrix{FT} = zeros(FT, dims) # density at which their E×B drift outruns the parallel streaming in RZ [m^-3]
-    γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
     # how much of what the code does not resolve a closure carries
     turbulence_weight::Matrix{FT} = zeros(FT, dims) # w_turb: the turbulent E×B mixing's onset, min(1, √(n/nc_perp))
     ambipolar_weight::Matrix{FT} = zeros(FT, dims)  # w_amb ∈ [0, 1]: the ambipolar coupling, 1 on closed lines, min(1, √(n/nc_para)) on open ones

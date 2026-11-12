@@ -1,9 +1,9 @@
-# The open-line charge sheets' field (`estimate_electrostatic_field_effects!`): γ is the field's
-# shape alone, a closed line carries no sheets, and every case of the field and its thresholds is
+# The open-line charge sheets' field (`estimate_electrostatic_field_effects!`): the least of three
+# ceilings, a closed line carries no sheets, and every case of the field and its thresholds is
 # finite. A current disc's self field gives closed lines around the disc and open ones out to the
 # wall; plasma is put on the open lines so the sheets have charge to hold.
 
-@testitem "charge-sheet field: γ keeps its shape on closed lines, which carry no sheets" setup = [CurrentDisc] begin
+@testitem "charge-sheet field: the least of three ceilings; closed lines carry no sheets" setup = [CurrentDisc] begin
     using RAPID2D: estimate_electrostatic_field_effects!
     using RAPID2D.Statistics: mean
     RP, _ = current_disc()
@@ -15,8 +15,16 @@
     estimate_electrostatic_field_effects!(RP)
 
     @test !isempty(closed) && !isempty(open_in)
-    @test pla.γ_shape_fac ≈ min.(1.0, 0.65 .* F.Bpol ./ mean(F.Bpol[G.nodes.in_wall_nids]))
-    @test all(>(0), pla.γ_shape_fac[closed])
+    # the mean field is the least of three ceilings: the requirement, the saturation (the local one by default,
+    # γ₀ times the requirement at the in-wall mean B_pol, on closed lines too) and what the plasma holds
+    ceilings = RAPID2D.update_space_charge_weights!(RP)
+    E_drive_abs = abs.(ceilings.E_para_drive)
+    @test ceilings.Epol_req ≈ E_drive_abs .* F.Btot ./ F.Bpol
+    @test ceilings.Epol_sat ≈ 0.65 .* E_drive_abs .* F.Btot ./ mean(F.Bpol[G.nodes.in_wall_nids])
+    @test all(>(0), ceilings.Epol_sat[closed])
+    on_wall = Set(G.nodes.on_wall_nids)
+    interior = [k for k in open_in if !(k in on_wall)]
+    @test F.Epol_mean[interior] ≈ min.(ceilings.Epol_req, ceilings.Epol_sat, ceilings.E_Debye)[interior]
     # the sheets are on open lines only, boundary nodes included
     @test all(iszero, F.Epol_mean[closed]) && all(iszero, F.Epol_para_pla[closed])
     @test any(>(0), F.Epol_mean[open_in])
@@ -51,7 +59,7 @@ end
     # no poloidal field at all: no shape, no sheets
     foreach(a -> fill!(a, 0.0), (F.Bpol, F.bpol_R, F.bpol_Z))
     estimate_electrostatic_field_effects!(RP)
-    @test all(iszero, pla.γ_shape_fac) && all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc)
+    @test all(iszero, RAPID2D.update_space_charge_weights!(RP).Epol_sat) && all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc)
     @test all(isinf, pla.nc_perp)
     @test all_finite()
 end
@@ -98,7 +106,8 @@ end
     closed = RP.flf.closed_surface_nids
     open_in = setdiff(G.nodes.in_wall_nids, closed)
     pla.ne[open_in] .= [G.R2D[k] < R0 ? 1.0e10 : 1.0e17 for k in open_in]   # below and above nc_para
-    Epol_target, E_Debye = update_space_charge_weights!(RP)
+    ceilings = update_space_charge_weights!(RP)
+    Epol_target, E_Debye = min.(ceilings.Epol_req, ceilings.Epol_sat), ceilings.E_Debye
     w = pla.ambipolar_weight
     n_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D)
 
@@ -199,7 +208,8 @@ end
     pla.ne[closed] .= max.(pla.ne[closed], 1.0e17)   # no empty cell inside the wall: the cap binds only beyond it
     # the field-line following with the plasma's capped cancelling field, as the step loop runs it
     flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
-    Epol_target, E_Debye, E_drive = update_space_charge_weights!(RP)
+    ceilings = update_space_charge_weights!(RP)
+    Epol_target, E_Debye, E_drive = min.(ceilings.Epol_req, ceilings.Epol_sat), ceilings.E_Debye, ceilings.E_para_drive
     estimate_electrostatic_field_effects!(RP)
     on_wall = Set(G.nodes.on_wall_nids)
     interior = [k for k in open_in if !(k in on_wall) && flf.Lpol_tot[k] > 0]

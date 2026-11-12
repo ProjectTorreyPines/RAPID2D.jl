@@ -1,6 +1,6 @@
 # The policies of the open-line charge sheets' mean field (`flags.mean_sheet_field`): the local pitch
 # (the default), the line's least pitch, and the line-averaged saturation ceiling. A policy sets the mean field
-# alone; the shape factor, the critical densities, the closures' weights and the mixing amplitude do not follow it.
+# alone; the critical densities, the closures' weights and the mixing amplitude do not follow it.
 
 @testitem "mean sheet field: the default is the local pitch, and a policy moves the mean field alone" setup = [CurrentDisc] begin
     using RAPID2D: estimate_electrostatic_field_effects!, LocalPitch, LineMinPitch, LineAvgSaturation, smooth_data_2D, debye_field
@@ -14,12 +14,11 @@
     on_wall = Set(G.nodes.on_wall_nids)
     interior = [k for k in open_in if !(k in on_wall)]
     Bpol_avg = mean(F.Bpol[G.nodes.in_wall_nids])
-    kept() = map(copy, (pla.γ_shape_fac, pla.nc_para, pla.nc_perp, pla.ambipolar_weight, pla.turbulence_weight, F.Erad_fluc, RP.transport.Dpol_turb))
+    kept() = map(copy, (pla.nc_para, pla.nc_perp, pla.ambipolar_weight, pla.turbulence_weight, F.Erad_fluc, RP.transport.Dpol_turb))
 
     @test RP.flags.mean_sheet_field isa LocalPitch
     estimate_electrostatic_field_effects!(RP)
-    mean0, γ0_map, kept0 = copy(F.Epol_mean), copy(pla.γ_shape_fac), kept()
-    @test γ0_map ≈ min.(1.0, 0.65 .* F.Bpol ./ Bpol_avg)
+    mean0, kept0 = copy(F.Epol_mean), kept()
 
     E_Debye = debye_field(RP, smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D))
     E_req = abs.(F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla) .* F.Btot ./ F.Bpol
@@ -45,7 +44,7 @@
     # back to the default: bit for bit what it was
     RP.flags.mean_sheet_field = LocalPitch()
     estimate_electrostatic_field_effects!(RP)
-    @test F.Epol_mean == mean0 && pla.γ_shape_fac == γ0_map && all(kept() .== kept0)
+    @test F.Epol_mean == mean0 && all(kept() .== kept0)
 end
 
 @testitem "mean sheet field: the saturation ceiling is the requirement at the mean B_pol times the line's factor" setup = [CurrentDisc] begin
@@ -148,7 +147,6 @@ end
     line = vertical(LineMinPitch())
     estimate_electrostatic_field_effects!(line)
     @test line.fields.Epol_mean[k] ≈ ref.fields.Epol_mean[k]
-    @test line.plasma.γ_shape_fac == ref.plasma.γ_shape_fac
     # every line's B_pol is the device's mean: the ceiling is coefficient/2 of the requirement, the requirement
     # itself from coefficient 2 on; at the setup's following and after a step's
     cancelled(RP) = (F = RP.fields; (F.Epol_mean .* F.Bpol ./ (abs.(F.Eϕ_para_presc) .* F.Btot))[k])
@@ -158,7 +156,6 @@ end
         soft.plasma.ne .= 1.0e22                   # the Debye cap out of the way
         estimate_electrostatic_field_effects!(soft)
         @test all(x -> isapprox(x, min(1, coefficient / 2); rtol = 1.0e-6), cancelled(soft))
-        @test soft.plasma.γ_shape_fac == ref.plasma.γ_shape_fac
         soft.t_end_s = soft.time_s + soft.dt
         run_simulation!(soft)
         @test soft.flf.has_second_integral
