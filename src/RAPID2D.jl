@@ -44,6 +44,7 @@ include("numerics/field_lines/field_line_tracer_policies.jl")   # how a field li
 include("numerics/anisotropic_discretization_policies.jl")   # how an anisotropic diffusion tensor becomes a matrix: the policies the flags hold
 include("numerics/field_lines/closed_surface_flux_types.jl")   # the closed-surface flux constraint: policies, basis, state
 include("control/ideal_vertical_field_types.jl")   # the vertical-field control the flags hold, and its state
+include("physics/mean_sheet_field_policies.jl")   # how the charge sheets' mean field is shaped: the policies the flags hold
 include("types.jl")
 
 include("diagnostics/diagnostics.jl")

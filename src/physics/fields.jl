@@ -292,12 +292,13 @@ function my_sigmf(x, a, c)
 end
 
 """
-    update_space_charge_weights!(RP::RAPID{FT}) -> (Epol_target, E_Debye) where {FT<:AbstractFloat}
+    update_space_charge_weights!(RP::RAPID{FT}) -> (Epol_target, E_Debye, E_para_drive) where {FT<:AbstractFloat}
 
 The space charge's regime from the present state: the shape factor `γ_shape_fac` (the field's shape
-alone, on closed lines too), the critical densities of the open-line charge sheets (infinite on a
-closed line, which carries none) and the weights of the two closures that model what the code does
-not resolve:
+alone, on closed lines too; the mean field's, under `flags.mean_sheet_field`), the critical densities of
+the open-line charge sheets (infinite on a closed line, which carries none) and the weights of the two
+closures that model what the code does not resolve, all three from the local pitch's shape
+γ = min(1, γ₀ B_pol/⟨B_pol⟩) whatever the mean field's policy:
 - `nc_para = ε₀ (γ Epol_req)²/(e Tₑ)`, where the sheets' Debye field reaches the field that cancels
   the driven E∥; `nc_perp`, where their E×B drift outruns the parallel streaming projected on the
   RZ plane (Yoo et al. 2018);
@@ -309,7 +310,8 @@ not resolve:
 
 Returns the fields from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets'
 mean field and mixing amplitude:
-- `Epol_target = γ Epol_req`, the RZ field that cancels the driven E∥, shaped by γ;
+- `Epol_target = γ Epol_req`, the RZ field that cancels the driven E∥, shaped by the mean field's γ
+  ([`mean_sheet_target`](@ref); the local pitch's by default);
 - `E_Debye`, the Debye field, the most the local plasma holds;
 - `E_para_drive`, the driven parallel field ([`driven_parallel_field`](@ref)).
 
@@ -398,8 +400,71 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         fill!(pla.ambipolar_weight, zero(FT))
     end
 
-    return Epol_target, E_Debye, E_para_drive
+    # =========================================================================
+    # 5. The mean field's own target and shape: the local pitch's above unless the policy says otherwise
+    # =========================================================================
+    Epol_mean_target = mean_sheet_target(RP.flags.mean_sheet_field, RP, Epol_target, E_para_drive, Bpol_in_wall_avg)
+
+    return Epol_mean_target, E_Debye, E_para_drive
 end
+
+"""
+    mean_sheet_target(policy, RP, Epol_local, E_para_drive, Bpol_in_wall_avg) -> Matrix
+
+The mean field's target before the Debye cap, `γ Epol_req` [V/m, a magnitude], under the
+[`MeanSheetFieldPolicy`](@ref) `policy`, with its shape written to `γ_shape_fac`. `Epol_local` is the
+local pitch's target, which the default returns as it is. Without a poloidal field there is no shape
+and no target.
+"""
+mean_sheet_target(::LocalPitch, RP::RAPID, Epol_local, E_para_drive, Bpol_in_wall_avg) = Epol_local
+
+function mean_sheet_target(::LineMinPitch, RP::RAPID{FT}, Epol_local, E_para_drive, Bpol_in_wall_avg) where {FT}
+    F, γ, flf = RP.fields, RP.plasma.γ_shape_fac, RP.flf
+    γ0 = RP.config.charge_sheet_shape_factor
+    if !(Bpol_in_wall_avg > 0)
+        fill!(γ, zero(FT))
+        return zero(Epol_local)
+    end
+    # the least B_pol met along the node's line; the node's own where no line was followed (outside the wall)
+    @. γ = min(one(FT), γ0 * (ifelse(isfinite(flf.min_Bpol), flf.min_Bpol, F.Bpol) / Bpol_in_wall_avg))
+    # where B_pol vanishes the line's least is the node's: the local pitch's limit
+    return @. ifelse(
+        F.Bpol > 0, γ * (abs(E_para_drive) * (F.Btot / F.Bpol)), γ0 * abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
+    )
+end
+
+function mean_sheet_target(policy::LineAvgPitch, RP::RAPID{FT}, Epol_local, E_para_drive, Bpol_in_wall_avg) where {FT}
+    F, γ, flf = RP.fields, RP.plasma.γ_shape_fac, RP.flf
+    if !(Bpol_in_wall_avg > 0)
+        fill!(γ, zero(FT))
+        return zero(Epol_local)
+    end
+    p = FT(policy.p)
+    # the line's effective B_pol: ⟨B_pol⁻ᵖ⟩^(-1/p) from the following's second integral, or the mean of B/B_pol
+    # its lengths hold (p = 1) when the following did not carry it
+    if flf.has_second_integral
+        @. γ = (flf.second_integral_tot / flf.Lpol_tot)^(-1 / p)
+    else
+        @. γ = F.Btot * flf.Lpol_tot / flf.Lc_tot
+    end
+    # a line that was not measured: one that ends on a null (no RZ length to average over) has none, a node
+    # no line was followed from keeps its own
+    @. γ = ifelse(isfinite(γ) & (γ > 0), γ, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT)))
+    @. γ = γ / (γ + Bpol_in_wall_avg)
+    return @. ifelse(F.Bpol > 0, γ * (abs(E_para_drive) * (F.Btot / F.Bpol)), zero(FT))
+end
+
+"""
+    mean_sheet_line_integrand(RP) -> Union{Nothing, Matrix}
+
+The node field the mean field's policy has the field-line following integrate along every line
+(`second_integrand`, `flf.second_integral_tot`): `B_pol⁻ᵖ` for [`LineAvgPitch`](@ref), nothing for
+the others. The field's geometry alone, so the setup's following carries it too. Infinite on a node
+where B_pol vanishes, which the following's linear interpolation leaves out of the cells around it.
+"""
+mean_sheet_line_integrand(RP::RAPID) = mean_sheet_line_integrand(RP.flags.mean_sheet_field, RP)
+mean_sheet_line_integrand(::MeanSheetFieldPolicy, RP::RAPID) = nothing
+mean_sheet_line_integrand(policy::LineAvgPitch, RP::RAPID) = RP.fields.Bpol .^ (-eltype(RP.fields.Bpol)(policy.p))
 
 """
     driven_parallel_field(RP) -> Matrix
@@ -450,7 +515,8 @@ The open-line charge sheets' two fields and their effects on transport, from the
 closures' weights ([`update_space_charge_weights!`](@ref)); with `charge_sheet_field`,
 by component — "pol" along `b̂_pol` (the poloidal direction), "rad" along the flux-normal `∇ψ/|∇ψ| = φ̂ × b̂_pol` (across the lines) —
 - the **mean poloidal component**, `Epol_mean = min(γ Epol_req, E_Debye)` (Ē_pol, a magnitude; the
-  sign is set where it is applied): the time-averaged field the sheets sustain. It is the one
+  sign is set where it is applied): the time-averaged field the sheets sustain, its shape γ from
+  `flags.mean_sheet_field` ([`MeanSheetFieldPolicy`](@ref)). It is the one
   component that projects onto E∥ — `Epol_para_pla` cancels the driven E∥
   ([`calculate_parallel_electric_field!`](@ref)) — and its E×B drift is the mean drift **across** the lines;
 - the **fluctuating flux-normal component**, `Erad_fluc = min(⟨min(|E∥,drive| B/B_pol, E_Debye)⟩_line, E_Debye)`

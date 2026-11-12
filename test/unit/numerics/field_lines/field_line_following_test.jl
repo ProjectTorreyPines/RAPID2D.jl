@@ -620,5 +620,15 @@ end
         # a constant field integrates to itself times the poloidal length
         c = run(tracer; integrand = fill(7.0, G.NR, G.NZ))
         @test c.integral_tot[in_wall] ≈ 7.0 .* c.Lpol_tot[in_wall] rtol = 1.0e-6
+        # a second field beside it: its own total, the first one bit for bit what it was
+        @test !r.has_second_integral && all(iszero, r.second_integral_tot)
+        two = run(tracer; integrand = f, second_integrand = fill(3.0, G.NR, G.NZ))
+        @test two.has_second_integral
+        @test two.second_integral_tot[in_wall] ≈ 3.0 .* two.Lpol_tot[in_wall] rtol = 1.0e-6
+        @test two.integral_tot == r.integral_tot && two.Lc_tot == r.Lc_tot
+        # the second alone
+        alone = run(tracer; second_integrand = f)
+        @test !alone.has_integral && all(iszero, alone.integral_tot)
+        @test alone.second_integral_tot[in_wall] ≈ r.integral_tot[in_wall]
     end
 end

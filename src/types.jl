@@ -1512,6 +1512,7 @@ Contains boolean flags that control various aspects of the simulation.
     field_line_tracer::FieldLineTracer = MarchingSquaresTracer()   # how field-line following traces: `numerics/field_lines/field_line_tracer_policies.jl`
     closed_surface_flow::ClosedSurfaceFlow = FreeParallelFlow()   # how electrons flow on closed surfaces: `numerics/field_lines/closed_surface_flux_types.jl`
     vertical_field_control::VerticalFieldControl = NoVerticalFieldControl()   # an ideal external vertical field holding the column: `control/ideal_vertical_field_types.jl`
+    mean_sheet_field::MeanSheetFieldPolicy = LocalPitch()   # how the open-line charge sheets' mean field is shaped: `physics/mean_sheet_field_policies.jl`
     Implicit::Bool = true                     # Use implicit methods
     # θ of the θ-scheme, one per family of terms, split by the sign and stiffness
     # of the operator — see `ImplicitWeights`. Replaces the single `Implicit_weight`

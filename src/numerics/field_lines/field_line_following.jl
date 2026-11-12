@@ -65,7 +65,7 @@ function _finalize_total_lengths!(flf::FieldLineFollowingResult)
 end
 
 """
-    field_line_analysis!(flf, g, tracer; max_length = default_max_length(g), integrand = nothing) -> flf
+    field_line_analysis!(flf, g, tracer; max_length = default_max_length(g), integrand = nothing, second_integrand = nothing) -> flf
 
 Field-line following on every node of the geometry `g`: the line through each node traced
 forward and backward along B_pol by `tracer` (backward is skipped when forward closed), and the
@@ -75,14 +75,18 @@ follow (`:degenerate`, marching squares next to an O-point) is traced by its fal
 
 `integrand`, a node matrix, is integrated along every line into `integral_*` = ∫ f dl_pol
 (interpolated linearly between the nodes; a non-finite sample contributes nothing); without it the
-integrals are zero and `has_integral` is false.
+integrals are zero and `has_integral` is false. `second_integrand`, another node matrix, is integrated
+beside it into `second_integral_tot` (`has_second_integral`), the total alone, by the same rules.
 """
 function field_line_analysis!(
         flf::FieldLineFollowingResult{FT}, g::FieldLineGeometry, tracer::FieldLineTracer;
         max_length::Real = default_max_length(g), integrand::Union{Nothing, AbstractMatrix} = nothing,
+        second_integrand::Union{Nothing, AbstractMatrix} = nothing,
     ) where {FT <: AbstractFloat}
     f = integrand === nothing ? nothing : my_interpolation(g.R1D, g.Z1D, Matrix{FT}(integrand); method = :linear)
+    f2 = second_integrand === nothing ? nothing : my_interpolation(g.R1D, g.Z1D, Matrix{FT}(second_integrand); method = :linear)
     flf.has_integral = integrand !== nothing
+    flf.has_second_integral = second_integrand !== nothing
     NR, NZ = size(g.ψ)
     flf.max_Lpol = max_length
     flf.max_step = 2 * step_budget(tracer, g, max_length)
@@ -92,7 +96,7 @@ function field_line_analysis!(
     # fails to reach cannot pass a topology check on a stale answer.
     fill!(flf.termination_forward, :unset)
     fill!(flf.termination_backward, :unset)
-    Lf_visitor, Lb_visitor = path_lengths(tracer, FT; f), path_lengths(tracer, FT; f)
+    Lf_visitor, Lb_visitor = path_lengths(tracer, FT; f, f2), path_lengths(tracer, FT; f, f2)
     for i in 1:NR, j in 1:NZ
         fwd, ef, t = node_trace!(reset!(Lf_visitor), tracer, g, i, j, 1, max_length)
         Lf = published_lengths(fwd, ef.termination, ef.R)
@@ -108,6 +112,9 @@ function field_line_analysis!(
         flf.Lpol_forward[i, j], flf.Lpol_backward[i, j] = Lf.Lpol, Lb.Lpol
         flf.Lc_forward[i, j], flf.Lc_backward[i, j] = Lf.Lc, Lb.Lc
         flf.integral_forward[i, j], flf.integral_backward[i, j] = Lf.integral, Lb.integral
+        # the second field's total, as `_finalize_total_lengths!` forms the first's: a closed pair's mean
+        both_closed = ef.termination === :closed && eb.termination === :closed
+        flf.second_integral_tot[i, j] = both_closed ? (Lf.integral2 + Lb.integral2) / 2 : Lf.integral2 + Lb.integral2
         flf.min_Bpol[i, j] = min(Lf.min_Bpol, Lb.min_Bpol)
         flf.step[i, j] = max(fwd.n - 1, 0) + max(bwd.n - 1, 0)
         flf.termination_forward[i, j], flf.termination_backward[i, j] = ef.termination, eb.termination
@@ -126,7 +133,7 @@ function node_trace!(L, tracer, g, i, j, sgn, max_length)
     e = trace_from_node!(L, tracer, g, i, j, sgn; max_length)
     e.termination === :degenerate || return L, e, tracer
     fallback = fallback_tracer(tracer)
-    return node_trace!(path_lengths(fallback, typeof(L.Lpol); f = L.f), fallback, g, i, j, sgn, max_length)
+    return node_trace!(path_lengths(fallback, typeof(L.Lpol); f = L.f, f2 = L.f2), fallback, g, i, j, sgn, max_length)
 end
 
 """
@@ -142,13 +149,14 @@ function flf_analysis_field_lines_rz_plane!(
         cell_state::AbstractMatrix{Bool};
         dR::Union{FT, Nothing} = nothing, dZ::Union{FT, Nothing} = nothing,
         out_wall_idx::Union{Vector{Int}, Nothing} = nothing, integrand::Union{Nothing, AbstractMatrix} = nothing,
+        second_integrand::Union{Nothing, AbstractMatrix} = nothing,
     ) where {FT <: AbstractFloat}
     dR === nothing && (dR = length(R1D) > 1 ? R1D[2] - R1D[1] : one(FT))
     dZ === nothing && (dZ = length(Z1D) > 1 ? Z1D[2] - Z1D[1] : one(FT))
     B = (BR = my_interpolation(R1D, Z1D, BR), BZ = my_interpolation(R1D, Z1D, BZ), Bϕ = my_interpolation(R1D, Z1D, Bϕ))
     # RK4 reads the grid, the wall and these interpolants, not ψ
     g = FieldLineGeometry(R1D, Z1D, dR, dZ, zeros(FT, size(BR)), zero(FT), nothing, Bϕ, cell_state, B)
-    field_line_analysis!(flf, g, RK4Tracer(); integrand)
+    field_line_analysis!(flf, g, RK4Tracer(); integrand, second_integrand)
     out_wall_idx !== nothing && (flf.min_Bpol[out_wall_idx] .= FT(NaN))
     return flf
 end
@@ -158,22 +166,26 @@ function flf_analysis_field_lines_rz_plane(
         cell_state::AbstractMatrix{Bool};
         dR::Union{FT, Nothing} = nothing, dZ::Union{FT, Nothing} = nothing,
         out_wall_idx::Union{Vector{Int}, Nothing} = nothing, integrand::Union{Nothing, AbstractMatrix} = nothing,
+        second_integrand::Union{Nothing, AbstractMatrix} = nothing,
     ) where {FT <: AbstractFloat}
     flf = FieldLineFollowingResult{FT}(; dims_RZ = (length(R1D), length(Z1D)))
-    return flf_analysis_field_lines_rz_plane!(flf, R1D, Z1D, BR, BZ, Bϕ, cell_state; dR, dZ, out_wall_idx, integrand)
+    return flf_analysis_field_lines_rz_plane!(flf, R1D, Z1D, BR, BZ, Bϕ, cell_state; dR, dZ, out_wall_idx, integrand, second_integrand)
 end
 
 # The analysis of a run's field by its own tracer, into a new result.
-function flf_analysis_field_lines_rz_plane(RP::RAPID{FT}; integrand::Union{Nothing, AbstractMatrix} = nothing) where {FT}
+function flf_analysis_field_lines_rz_plane(
+        RP::RAPID{FT}; integrand::Union{Nothing, AbstractMatrix} = nothing, second_integrand::Union{Nothing, AbstractMatrix} = nothing
+    ) where {FT}
     flf = FieldLineFollowingResult{FT}(RP.G.NR, RP.G.NZ)
-    return run_field_line_analysis!(flf, RP; integrand)
+    return run_field_line_analysis!(flf, RP; integrand, second_integrand)
 end
 
 function run_field_line_analysis!(
-        flf::FieldLineFollowingResult{FT}, RP::RAPID{FT}; integrand::Union{Nothing, AbstractMatrix} = nothing
+        flf::FieldLineFollowingResult{FT}, RP::RAPID{FT}; integrand::Union{Nothing, AbstractMatrix} = nothing,
+        second_integrand::Union{Nothing, AbstractMatrix} = nothing,
     ) where {FT}
     tracer = RP.flags.field_line_tracer
-    field_line_analysis!(flf, FieldLineGeometry(RP; nodal_B = needs_nodal_B(tracer)), tracer; integrand)
+    field_line_analysis!(flf, FieldLineGeometry(RP; nodal_B = needs_nodal_B(tracer)), tracer; integrand, second_integrand)
     flf.min_Bpol[RP.G.nodes.out_wall_nids] .= FT(NaN)
     return flf
 end
@@ -281,8 +293,11 @@ function validate_field_line_terminations!(RP::RAPID; strict::Bool = true)
     return flf
 end
 
-function flf_analysis_field_lines_rz_plane!(RP::RAPID; strict::Bool = true, integrand::Union{Nothing, AbstractMatrix} = nothing)
-    run_field_line_analysis!(RP.flf, RP; integrand)
+function flf_analysis_field_lines_rz_plane!(
+        RP::RAPID; strict::Bool = true, integrand::Union{Nothing, AbstractMatrix} = nothing,
+        second_integrand::Union{Nothing, AbstractMatrix} = nothing,
+    )
+    run_field_line_analysis!(RP.flf, RP; integrand, second_integrand)
     # Validated HERE so the setup call and every periodic refresh share one gate; the
     # lower-level array API stays unvalidated and separately testable. `strict` picks
     # the failure policy — throw at setup, warn-and-fallback in the step loop.
