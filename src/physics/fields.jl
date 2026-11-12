@@ -454,17 +454,51 @@ function mean_sheet_target(policy::LineAvgPitch, RP::RAPID{FT}, Epol_local, E_pa
     return @. ifelse(F.Bpol > 0, γ * (abs(E_para_drive) * (F.Btot / F.Bpol)), zero(FT))
 end
 
+function mean_sheet_target(policy::LineAvgRequirement, RP::RAPID{FT}, Epol_local, E_para_drive, Bpol_in_wall_avg) where {FT}
+    F, γ, flf = RP.fields, RP.plasma.γ_shape_fac, RP.flf
+    if !(Bpol_in_wall_avg > 0)
+        fill!(γ, zero(FT))
+        return zero(Epol_local)
+    end
+    p = FT(policy.p)
+    # the node's requirement, Epol_req = |E∥,drive| B/B_pol, and the same at the device's mean B_pol, E₀
+    Epol_req = @. abs(E_para_drive) * (F.Btot / F.Bpol)
+    @with_pool pool begin
+        # the line's requirement: the p-mean of Epol_req the following integrated, or |E∥| L_c/L_pol (p = 1 with the
+        # node's drive, the mixing amplitude's own fallback) when the following did not carry it
+        line_req = acquire!(pool, FT, size(γ)...)
+        if flf.has_second_integral
+            @. line_req = (flf.second_integral_tot / flf.Lpol_tot)^(1 / p)
+        else
+            @. line_req = abs(E_para_drive) * flf.Lc_tot / flf.Lpol_tot
+        end
+        # a line that was not measured: one that ends on a null (no RZ length to average over) is not cancelled, a
+        # node no line was followed from takes its own requirement
+        @. line_req = ifelse(isfinite(line_req), line_req, ifelse(isfinite(flf.Lpol_tot), Epol_req, FT(Inf)))
+        # γ = E₀/(E₀ + line_req); nothing to shape where nothing is driven
+        @. γ = abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
+        @. γ = ifelse(γ > 0, γ / (γ + line_req), zero(FT))
+    end
+    return @. ifelse(F.Bpol > 0, γ * Epol_req, zero(FT))
+end
+
 """
     mean_sheet_line_integrand(RP) -> Union{Nothing, Matrix}
 
 The node field the mean field's policy has the field-line following integrate along every line
-(`second_integrand`, `flf.second_integral_tot`): `B_pol⁻ᵖ` for [`LineAvgPitch`](@ref), nothing for
-the others. The field's geometry alone, so the setup's following carries it too. Infinite on a node
-where B_pol vanishes, which the following's linear interpolation leaves out of the cells around it.
+(`second_integrand`, `flf.second_integral_tot`): `B_pol⁻ᵖ` for [`LineAvgPitch`](@ref) (the field's
+geometry alone), `Epol_reqᵖ = (|E∥,drive| B/B_pol)ᵖ` for [`LineAvgRequirement`](@ref) (without the Debye
+cap the mixing's integrand carries), nothing for the others. Infinite on a node where B_pol vanishes,
+which the following's linear interpolation leaves out of the cells around it.
 """
 mean_sheet_line_integrand(RP::RAPID) = mean_sheet_line_integrand(RP.flags.mean_sheet_field, RP)
 mean_sheet_line_integrand(::MeanSheetFieldPolicy, RP::RAPID) = nothing
 mean_sheet_line_integrand(policy::LineAvgPitch, RP::RAPID) = RP.fields.Bpol .^ (-eltype(RP.fields.Bpol)(policy.p))
+function mean_sheet_line_integrand(policy::LineAvgRequirement, RP::RAPID)
+    F = RP.fields
+    return @. (abs($(driven_parallel_field(RP))) * F.Btot / F.Bpol)^$(eltype(F.Bpol)(policy.p))
+end
+
 
 """
     driven_parallel_field(RP) -> Matrix

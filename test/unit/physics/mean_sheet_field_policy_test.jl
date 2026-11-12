@@ -3,7 +3,7 @@
 # field alone; the critical densities, the closures' weights and the mixing amplitude do not follow it.
 
 @testitem "mean sheet field: the default is the local pitch, and a policy moves the mean field alone" setup = [CurrentDisc] begin
-    using RAPID2D: estimate_electrostatic_field_effects!, LocalPitch, LineMinPitch, LineAvgPitch, smooth_data_2D, debye_field
+    using RAPID2D: estimate_electrostatic_field_effects!, LocalPitch, LineMinPitch, LineAvgPitch, LineAvgRequirement, smooth_data_2D, debye_field
     using RAPID2D.Statistics: mean
     RP, _ = current_disc()
     trace_closed_region!(RP)
@@ -23,7 +23,7 @@
 
     E_Debye = debye_field(RP, smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D))
     E_req = abs.(F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla) .* F.Btot ./ F.Bpol
-    for policy in (LineMinPitch(), LineAvgPitch(), LineAvgPitch(p = 4.0))
+    for policy in (LineMinPitch(), LineAvgPitch(), LineAvgPitch(p = 4.0), LineAvgRequirement(), LineAvgRequirement(p = 4.0))
         RP.flags.mean_sheet_field = policy
         estimate_electrostatic_field_effects!(RP)
         γ = pla.γ_shape_fac
@@ -49,7 +49,7 @@
     @test F.Epol_mean == mean0 && pla.γ_shape_fac == γ0_map && all(kept() .== kept0)
 end
 
-@testitem "mean sheet field: the soft line average is the line's effective B_pol against the device's mean" setup = [CurrentDisc] begin
+@testitem "mean sheet field: the averaged pitch is the line's effective B_pol against the device's mean" setup = [CurrentDisc] begin
     using RAPID2D: estimate_electrostatic_field_effects!, LineAvgPitch, flf_analysis_field_lines_rz_plane!,
         sheet_mixing_integrand, mean_sheet_line_integrand
     using RAPID2D.Statistics: mean
@@ -96,8 +96,67 @@ end
     @test pla.γ_shape_fac[measured] ≈ (B_len ./ (B_len .+ Bpol_avg))[measured]
 end
 
-@testitem "mean sheet field: in a uniform poloidal field the line policies are the local one, and the soft average is one half" begin
-    using RAPID2D: estimate_electrostatic_field_effects!, run_simulation!, LocalPitch, LineMinPitch, LineAvgPitch
+@testitem "mean sheet field: the averaged requirement is the node's at the mean B_pol against the line's" setup = [CurrentDisc] begin
+    using RAPID2D: estimate_electrostatic_field_effects!, LineAvgRequirement, flf_analysis_field_lines_rz_plane!,
+        sheet_mixing_integrand, mean_sheet_line_integrand
+    using RAPID2D.Statistics: mean
+    RP, _ = current_disc()
+    trace_closed_region!(RP)
+    pla, F, G, flf = RP.plasma, RP.fields, RP.G, RP.flf
+    open_in = setdiff(G.nodes.in_wall_nids, flf.closed_surface_nids)
+    pla.ne[open_in] .= 1.0e17
+    on_wall = Set(G.nodes.on_wall_nids)
+    measured = [k for k in open_in if !(k in on_wall) && isfinite(flf.Lpol_tot[k]) && flf.Lpol_tot[k] > 0 && isfinite(flf.Lc_tot[k])]
+    Bpol_avg = mean(F.Bpol[G.nodes.in_wall_nids])
+    follow!() = flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP), second_integrand = mean_sheet_line_integrand(RP))
+    E_drive() = abs.(F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla)
+    γ_of = Dict{Float64, Matrix{Float64}}()
+    for p in (2.0, 4.0)
+        RP.flags.mean_sheet_field = LineAvgRequirement(; p)
+        # the following integrates the uncapped requirement to the power p along every line, beside the mixing's field
+        follow!()
+        @test flf.has_second_integral
+        estimate_electrostatic_field_effects!(RP)
+        M = (flf.second_integral_tot ./ flf.Lpol_tot) .^ (1 / p)
+        E0 = E_drive() .* F.Btot ./ Bpol_avg
+        @test pla.γ_shape_fac[measured] ≈ (E0 ./ (E0 .+ M))[measured]
+        @test all(k -> 0 < pla.γ_shape_fac[k] < 1, measured)
+        γ_of[p] = copy(pla.γ_shape_fac)
+    end
+    # a larger p weighs the line's weakest stretch more: less cancelled, toward the least pitch
+    @test all(k -> γ_of[4.0][k] <= γ_of[2.0][k] * (1 + 1.0e-9), measured)
+    @test any(k -> γ_of[4.0][k] < 0.99 * γ_of[2.0][k], measured)
+
+    # the second integral is the requirement's own, not the mixing's capped one: a thin plasma lowers the mixing's
+    # integral and leaves this one and the shape as they were
+    second, mixing, γ_dense = copy(flf.second_integral_tot), copy(flf.integral_tot), copy(pla.γ_shape_fac)
+    pla.ne[open_in] .= 1.0e12
+    follow!()
+    estimate_electrostatic_field_effects!(RP)
+    @test flf.second_integral_tot == second && pla.γ_shape_fac == γ_dense
+    @test any(k -> flf.integral_tot[k] < 0.99 * mixing[k], measured)
+
+    # the drive's size does not enter the shape once the following has seen it; the mean field scales with it
+    pla.ne[open_in] .= 1.0e22                   # the Debye cap out of the way
+    estimate_electrostatic_field_effects!(RP)
+    mean_before = copy(F.Epol_mean)
+    F.Eϕ_para_presc .*= 2
+    follow!()
+    estimate_electrostatic_field_effects!(RP)
+    @test pla.γ_shape_fac[measured] ≈ γ_dense[measured]
+    @test F.Epol_mean[measured] ≈ 2 .* mean_before[measured]
+
+    # a following without the second field: the line's EMF over its RZ length with the node's drive (p = 1)
+    flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
+    @test !flf.has_second_integral && all(iszero, flf.second_integral_tot)
+    estimate_electrostatic_field_effects!(RP)
+    E0 = E_drive() .* F.Btot ./ Bpol_avg
+    M1 = E_drive() .* flf.Lc_tot ./ flf.Lpol_tot
+    @test pla.γ_shape_fac[measured] ≈ (E0 ./ (E0 .+ M1))[measured]
+end
+
+@testitem "mean sheet field: in a uniform poloidal field the least pitch is the local one, and both averages give one half" begin
+    using RAPID2D: estimate_electrostatic_field_effects!, run_simulation!, LocalPitch, LineMinPitch, LineAvgPitch, LineAvgRequirement
     function vertical(policy)
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
@@ -121,9 +180,10 @@ end
     estimate_electrostatic_field_effects!(line)
     @test line.plasma.γ_shape_fac[k] ≈ ref.plasma.γ_shape_fac[k]
     @test line.fields.Epol_mean[k] ≈ ref.fields.Epol_mean[k]
-    # the line's effective B_pol is the device's mean: half the requirement, at the setup's following and after a step's
-    for p in (2.0, 4.0)
-        soft = vertical(LineAvgPitch(; p))
+    # every line's requirement is its nodes' own, and B_pol the device's mean: half the requirement, at the setup's
+    # following and after a step's
+    for policy in (LineAvgPitch, LineAvgRequirement), p in (2.0, 4.0)
+        soft = vertical(policy(; p))
         @test soft.flf.has_second_integral
         estimate_electrostatic_field_effects!(soft)
         @test all(x -> isapprox(x, 0.5; rtol = 1.0e-6), soft.plasma.γ_shape_fac[k])
@@ -137,10 +197,11 @@ end
 end
 
 @testitem "mean sheet field: finite and empty where there is no poloidal field, and p must be at least one" begin
-    using RAPID2D: estimate_electrostatic_field_effects!, LineMinPitch, LineAvgPitch
+    using RAPID2D: estimate_electrostatic_field_effects!, LineMinPitch, LineAvgPitch, LineAvgRequirement
     @test_throws ArgumentError LineAvgPitch(p = 0.5)
     @test_throws ArgumentError LineAvgPitch(p = Inf)
-    for policy in (LineMinPitch(), LineAvgPitch())
+    @test_throws ArgumentError LineAvgRequirement(p = 0.5)
+    for policy in (LineMinPitch(), LineAvgPitch(), LineAvgRequirement())
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 0.0, Eϕ = 0.5),
             NR = 11, NZ = 11, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
