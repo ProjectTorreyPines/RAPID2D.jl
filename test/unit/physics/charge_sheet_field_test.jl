@@ -20,11 +20,12 @@
     ceilings = RAPID2D.update_space_charge_weights!(RP)
     E_drive_abs = abs.(ceilings.E_para_drive)
     @test ceilings.Epol_req ≈ E_drive_abs .* F.Btot ./ F.Bpol
-    @test ceilings.Epol_sat ≈ 0.65 .* E_drive_abs .* F.Btot ./ mean(F.Bpol[G.nodes.in_wall_nids])
-    @test all(>(0), ceilings.Epol_sat[closed])
+    @test ceilings.Epol_ref ≈ E_drive_abs .* F.Btot ./ mean(F.Bpol[G.nodes.in_wall_nids])
+    @test ceilings.Epol_sat_local ≈ 0.65 .* ceilings.Epol_ref
+    @test all(>(0), ceilings.Epol_sat_local[closed])
     on_wall = Set(G.nodes.on_wall_nids)
     interior = [k for k in open_in if !(k in on_wall)]
-    @test F.Epol_mean[interior] ≈ min.(ceilings.Epol_req, ceilings.Epol_sat, ceilings.E_Debye)[interior]
+    @test F.Epol_mean[interior] ≈ min.(ceilings.Epol_req, ceilings.Epol_sat_local, ceilings.E_Debye)[interior]
     # the sheets are on open lines only, boundary nodes included
     @test all(iszero, F.Epol_mean[closed]) && all(iszero, F.Epol_para_pla[closed])
     @test any(>(0), F.Epol_mean[open_in])
@@ -59,7 +60,7 @@ end
     # no poloidal field at all: no shape, no sheets
     foreach(a -> fill!(a, 0.0), (F.Bpol, F.bpol_R, F.bpol_Z))
     estimate_electrostatic_field_effects!(RP)
-    @test all(iszero, RAPID2D.update_space_charge_weights!(RP).Epol_sat) && all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc)
+    @test all(iszero, RAPID2D.update_space_charge_weights!(RP).Epol_sat_local) && all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc)
     @test all(isinf, pla.nc_perp)
     @test all_finite()
 end
@@ -107,7 +108,7 @@ end
     open_in = setdiff(G.nodes.in_wall_nids, closed)
     pla.ne[open_in] .= [G.R2D[k] < R0 ? 1.0e10 : 1.0e17 for k in open_in]   # below and above nc_para
     ceilings = update_space_charge_weights!(RP)
-    Epol_target, E_Debye = min.(ceilings.Epol_req, ceilings.Epol_sat), ceilings.E_Debye
+    Epol_target, E_Debye = min.(ceilings.Epol_req, ceilings.Epol_sat_local), ceilings.E_Debye
     w = pla.ambipolar_weight
     n_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D)
 
@@ -209,7 +210,7 @@ end
     # the field-line following with the plasma's capped cancelling field, as the step loop runs it
     flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
     ceilings = update_space_charge_weights!(RP)
-    Epol_target, E_Debye, E_drive = min.(ceilings.Epol_req, ceilings.Epol_sat), ceilings.E_Debye, ceilings.E_para_drive
+    Epol_target, E_Debye, E_drive = min.(ceilings.Epol_req, ceilings.Epol_sat_local), ceilings.E_Debye, ceilings.E_para_drive
     estimate_electrostatic_field_effects!(RP)
     on_wall = Set(G.nodes.on_wall_nids)
     interior = [k for k in open_in if !(k in on_wall) && flf.Lpol_tot[k] > 0]

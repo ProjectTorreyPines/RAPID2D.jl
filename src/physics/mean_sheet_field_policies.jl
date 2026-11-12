@@ -30,9 +30,9 @@ struct LocalPitch <: MeanSheetFieldPolicy end
     LineMinPitch()
 
 Ceiling `γ₀ E₀ min B_pol/B_pol`: the local ceiling lowered by the least poloidal field met along the
-node's whole line (`flf.min_Bpol`) against the node's own, so never above the local one. The cancelled
-share is one value along a line: a line that passes a null is poorly cancelled all the way to the
-wall, a band along the separatrix. Sensitive to how close a traced line comes to the null.
+node's whole line (`flf.min_Bpol`) against the node's own, so never above the local one. Where it
+binds the cancelled share is one value along a line: a line that passes a null is poorly cancelled all
+the way to the wall, a band along the separatrix. Sensitive to how close a traced line comes to the null.
 """
 struct LineMinPitch <: MeanSheetFieldPolicy end
 
@@ -45,14 +45,15 @@ Ceiling `coefficient E₀ B_eff/(B_eff + ⟨B_pol⟩)`: the node's requirement a
 factor γ₀. A line that passes a weak poloidal field saturates low all the way to the wall (a smooth band along
 the separatrix), and the field stays finite at a null, where it is the ceiling itself.
 
-- `p ≥ 1` weighs the line's weakest stretch: 1 is the mean of B/B_pol the connection length holds, a
-  large `p` approaches the least pitch.
+- `p ≥ 1` weighs the line's weakest stretch: 1 is the harmonic mean, a large `p` approaches the least
+  pitch.
 - `coefficient > 0` scales the ceiling: with 1 a uniform poloidal field cancels one half of a uniform
   drive, by construction; the requirement and the Debye field still bound the field above.
 
 Both are choices of the model, not constants of the physics. The field-line following integrates
-`B_pol⁻ᵖ` (`mean_sheet_line_integrand`); a following that did not carry it gives `p = 1` from the
-lengths.
+`(⟨B_pol⟩/B_pol)ᵖ` (`mean_sheet_line_integrand`). Until a following has carried it the lengths give
+`B/⟨B/B_pol⟩` in its place: the `p = 1` mean where B is uniform along the line, an approximation
+otherwise.
 """
 struct LineAvgSaturation <: MeanSheetFieldPolicy
     p::Float64

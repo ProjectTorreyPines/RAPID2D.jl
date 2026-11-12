@@ -66,11 +66,11 @@ end
     mean_of = Dict{Float64, Matrix{Float64}}()
     for p in (2.0, 4.0)
         RP.flags.mean_sheet_field = LineAvgSaturation(; p)
-        # the following integrates B_pol^-p along every line, beside the mixing's field
+        # the following integrates (⟨B_pol⟩/B_pol)^p along every line, beside the mixing's field
         follow!()
         @test flf.has_second_integral
         estimate_electrostatic_field_effects!(RP)
-        B_eff = (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / p)
+        B_eff = Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / p)
         ceiling = E0() .* B_eff ./ (B_eff .+ Bpol_avg)
         @test F.Epol_mean[measured] ≈ min.(E_req(), ceiling)[measured]
         # a mean of 1/B_pol weighs the weak stretches: never below the line's least B_pol
@@ -97,7 +97,7 @@ end
     for coefficient in (0.5, 3.0)
         RP.flags.mean_sheet_field = LineAvgSaturation(; coefficient)
         estimate_electrostatic_field_effects!(RP)
-        @test F.Epol_mean[measured] ≈ min.(E_req(), coefficient .* E0() .* ((flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)) ./ (((flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)) .+ Bpol_avg))[measured]
+        @test F.Epol_mean[measured] ≈ min.(E_req(), coefficient .* E0() .* (Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)) ./ ((Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)) .+ Bpol_avg))[measured]
         monotone = coefficient < 1 ? (<=) : (>=)
         @test all(k -> monotone(F.Epol_mean[k], mean_one[k] * (coefficient < 1 ? 1 + 1.0e-12 : 1 - 1.0e-12)), measured)
     end
@@ -115,7 +115,22 @@ end
     @test any(k -> F.Epol_mean[k] < 0.5 * 2 * mean_one[k], measured)
     pla.ne[open_in] .= 1.0e22
 
-    # a following without the second field: the mean of B/B_pol the lengths hold (p = 1)
+    # a line whose integral diverged passes a null: a measured zero, no ceiling to hold, not the node's own B_pol
+    pla.ne[open_in] .= 1.0e22
+    kept_integral = flf.second_integral_tot[weakest]
+    flf.second_integral_tot[weakest] = Inf
+    estimate_electrostatic_field_effects!(RP)
+    @test iszero(F.Epol_mean[weakest])
+    flf.second_integral_tot[weakest] = kept_integral
+
+    # the integrand is finite and scaled where B_pol vanishes or is tiny, in single precision too
+    @test all(isfinite, mean_sheet_line_integrand(RP))
+    Bpol_kept = F.Bpol[weakest]
+    F.Bpol[weakest] = 0.0
+    @test all(isfinite, mean_sheet_line_integrand(RP)) && mean_sheet_line_integrand(RP)[weakest] ≈ 1 / eps(Float64)
+    F.Bpol[weakest] = Bpol_kept
+
+    # a following without the second field: B/⟨B/B_pol⟩ from the lengths, an approximation until the next one
     flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
     @test !flf.has_second_integral && all(iszero, flf.second_integral_tot)
     estimate_electrostatic_field_effects!(RP)

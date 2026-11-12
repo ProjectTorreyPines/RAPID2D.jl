@@ -292,21 +292,20 @@ function my_sigmf(x, a, c)
 end
 
 """
-    update_space_charge_weights!(RP::RAPID{FT}) -> (; Epol_req, Epol_sat, E_Debye, E_para_drive) where {FT<:AbstractFloat}
+    update_space_charge_weights!(RP::RAPID{FT}) -> (; Epol_req, Epol_ref, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg) where {FT<:AbstractFloat}
 
-The open-line charge sheets' three ceilings and the space charge's regime, from the present state.
-The ceilings [V/m, magnitudes], which are returned:
+The space charge's regime from the present state, and the fields it is read off [V/m, magnitudes],
+which are returned for [`estimate_electrostatic_field_effects!`](@ref):
 - `Epol_req = |E∥,drive| B/B_pol`, the RZ field whose parallel part cancels the driven E∥
   ([`sheet_field_requirement`](@ref));
-- `Epol_sat`, the saturation ceiling of `flags.mean_sheet_field` ([`mean_sheet_saturation`](@ref)): what
-  the field's geometry lets the sheets sustain in the mean, however dense the plasma;
+- `Epol_ref`, `E₀ = |E∥,drive| B/⟨B_pol⟩`: the requirement at the in-wall mean ⟨B_pol⟩,
+  `Bpol_in_wall_avg` (zero without a poloidal field);
+- `Epol_sat_local = γ₀ E₀`, the local saturation ceiling, γ₀ `config.charge_sheet_shape_factor`;
 - `E_Debye = √(n e Tₑ/ε₀)`, the most the local plasma holds;
-with `E_para_drive`, the driven parallel field ([`driven_parallel_field`](@ref)).
-[`estimate_electrostatic_field_effects!`](@ref) takes the mean field as the least of the three.
+- `E_para_drive`, the driven parallel field ([`driven_parallel_field`](@ref)).
 
-The regime is read off one reference whatever the policy, the local ceiling
-`Epol_local = min(Epol_req, γ₀ E₀)` with `E₀ = |E∥,drive| B/⟨B_pol⟩` the requirement at the in-wall
-mean ⟨B_pol⟩ and γ₀ `config.charge_sheet_shape_factor`:
+The regime is read off one reference whatever the mean field's policy, the local ceiling
+`Epol_local = min(Epol_req, Epol_sat_local)`:
 - `nc_para = ε₀ Epol_local²/(e Tₑ)`, the density at which `E_Debye` reaches `Epol_local`; `nc_perp`,
   where the sheets' E×B drift outruns the parallel streaming projected on the RZ plane (Yoo et al.
   2018). Both infinite on a closed line, which carries no sheets;
@@ -327,7 +326,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     Bpol_in_wall_avg = mean(F.Bpol[G.nodes.in_wall_nids])
 
     # =========================================================================
-    # 1. The three ceilings of the sheets' mean field
+    # 1. The requirement, the local saturation ceiling, and what the plasma holds
     # =========================================================================
     E_para_drive = driven_parallel_field(RP)
     Epol_req = sheet_field_requirement(RP, E_para_drive)
@@ -371,12 +370,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         fill!(pla.ambipolar_weight, zero(FT))
     end
 
-    # =========================================================================
-    # 4. The mean field's saturation ceiling: the local one unless the policy says otherwise
-    # =========================================================================
-    Epol_sat = mean_sheet_saturation(RP.flags.mean_sheet_field, RP, Epol_ref, Epol_sat_local, Bpol_in_wall_avg)
-
-    return (; Epol_req, Epol_sat, E_Debye, E_para_drive)
+    return (; Epol_req, Epol_ref, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg)
 end
 
 """
@@ -415,18 +409,20 @@ function mean_sheet_saturation(policy::LineAvgSaturation, RP::RAPID{FT}, Epol_re
     Bpol_in_wall_avg > 0 || return Epol_sat
     p, coefficient = FT(policy.p), FT(policy.coefficient)
     @with_pool pool begin
-        # the line's effective B_pol: ⟨B_pol⁻ᵖ⟩^(-1/p) from the following's second integral, or the mean of B/B_pol
-        # its lengths hold (p = 1) when the following did not carry it
         Bpol_line = acquire!(pool, FT, size(Epol_sat)...)
         if flf.has_second_integral
-            @. Bpol_line = (flf.second_integral_tot / flf.Lpol_tot)^(-1 / p)
+            # the line's effective B_pol, ⟨B_pol⁻ᵖ⟩^(-1/p): the following integrated (⟨B_pol⟩/B_pol)ᵖ
+            @. Bpol_line = Bpol_in_wall_avg * (flf.second_integral_tot / flf.Lpol_tot)^(-1 / p)
         else
+            # a following that did not carry it: B/⟨B/B_pol⟩ from the lengths, the p = 1 mean where B is uniform
+            # along the line. An approximation, until the next following
             @. Bpol_line = F.Btot * flf.Lpol_tot / flf.Lc_tot
         end
-        # a line that was not measured: one that ends on a null (no RZ length to average over) has none, a node
-        # no line was followed from keeps its own
+        # zero is a measured value (the line's integral diverged: it passes a null). A line that was not
+        # measured: one that ends on a null (no RZ length to average over) has none, a node no line was followed
+        # from keeps its own
         @. Bpol_line = ifelse(
-            isfinite(Bpol_line) & (Bpol_line > 0), Bpol_line, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT))
+            isfinite(Bpol_line) & (Bpol_line >= 0), Bpol_line, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT))
         )
         @. Epol_sat = coefficient * Epol_ref * (Bpol_line / (Bpol_line + Bpol_in_wall_avg))
     end
@@ -437,13 +433,20 @@ end
     mean_sheet_line_integrand(RP) -> Union{Nothing, Matrix}
 
 The node field the mean field's policy has the field-line following integrate along every line
-(`second_integrand`, `flf.second_integral_tot`): `B_pol⁻ᵖ` for [`LineAvgSaturation`](@ref), nothing for
-the others. Infinite on a node where B_pol vanishes, which the following's linear interpolation leaves
-out of the cells around it.
+(`second_integrand`, `flf.second_integral_tot`): `(⟨B_pol⟩/B_pol)ᵖ` for [`LineAvgSaturation`](@ref),
+nothing for the others. Scaled by the in-wall mean so that it does not overflow, and finite where
+B_pol vanishes: B_pol is floored at `√eps ⟨B_pol⟩`, which leaves the line's effective B_pol far below
+any other on the grid.
 """
 mean_sheet_line_integrand(RP::RAPID) = mean_sheet_line_integrand(RP.flags.mean_sheet_field, RP)
 mean_sheet_line_integrand(::MeanSheetFieldPolicy, RP::RAPID) = nothing
-mean_sheet_line_integrand(policy::LineAvgSaturation, RP::RAPID) = RP.fields.Bpol .^ (-eltype(RP.fields.Bpol)(policy.p))
+function mean_sheet_line_integrand(policy::LineAvgSaturation, RP::RAPID)
+    Bpol = RP.fields.Bpol
+    FT = eltype(Bpol)
+    Bpol_in_wall_avg = mean(Bpol[RP.G.nodes.in_wall_nids])
+    Bpol_in_wall_avg > 0 || return zero(Bpol)
+    return @. (Bpol_in_wall_avg / max(Bpol, sqrt(eps(FT)) * Bpol_in_wall_avg))^FT(policy.p)
+end
 
 
 """
@@ -477,7 +480,8 @@ cancel the driven E∥ there, `|E∥,drive| B/B_pol`, capped at what the plasma 
 cap as the mean field's, applied before the line average so that no cell contributes more than
 `E_Debye Δx` of potential. The field-line following integrates it (`field_line_analysis!`'s
 `integrand`, `flf.integral_tot`); the step loop passes it at every refresh, the setup (before the plasma
-is set) none. Where B_pol vanishes the cap alone remains; an empty or cold cell gives zero.
+is set) none. Where B_pol vanishes the cap alone remains (nothing where nothing is driven); an empty or
+cold cell gives zero.
 """
 function sheet_mixing_integrand(RP::RAPID{FT}) where {FT}
     ne_SM = smooth_data_2D(RP.plasma.ne; num_SM = 2, weighting = RP.G.inVol2D)
@@ -517,7 +521,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     pla = RP.plasma
     F = RP.fields
     G = RP.G
-    (; Epol_req, Epol_sat, E_Debye, E_para_drive) = update_space_charge_weights!(RP)
+    (; Epol_req, Epol_ref, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg) = update_space_charge_weights!(RP)
     if !RP.flags.charge_sheet_field
         fill!(F.Epol_mean, zero(FT))
         fill!(F.Erad_fluc, zero(FT))
@@ -529,8 +533,10 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
         return RP
     end
 
-    # The open-line charge sheets' field (MATLAB lines 582-620): none on a closed line, before and
-    # after the boundary nodes take their neighbours' mean
+    # The open-line charge sheets' field (MATLAB lines 582-620): the least of the requirement, the policy's
+    # saturation ceiling and what the plasma holds; none on a closed line, before and after the boundary nodes
+    # take their neighbours' mean (their own state is not the plasma's, so the ceilings are not applied again)
+    Epol_sat = mean_sheet_saturation(RP.flags.mean_sheet_field, RP, Epol_ref, Epol_sat_local, Bpol_in_wall_avg)
     @. F.Epol_mean = ifelse(RP.flf.is_closed, zero(FT), min(Epol_req, Epol_sat, E_Debye))
     extrapolate_field_to_boundary_nodes!(G, F.Epol_mean)
     F.Epol_mean[RP.flf.closed_surface_nids] .= zero(FT)
