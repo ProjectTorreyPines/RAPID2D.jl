@@ -295,7 +295,7 @@ end
     update_space_charge_weights!(RP::RAPID{FT}) -> (Epol_target, E_Debye, E_para_drive) where {FT<:AbstractFloat}
 
 The space charge's regime from the present state: the shape factor `γ_shape_fac` (the field's shape
-alone, on closed lines too; the mean field's, under `flags.mean_sheet_field`), the critical densities of
+alone, on closed lines too), the critical densities of
 the open-line charge sheets (infinite on a closed line, which carries none) and the weights of the two
 closures that model what the code does not resolve, all three from the local pitch's shape
 γ = min(1, γ₀ B_pol/⟨B_pol⟩) whatever the mean field's policy:
@@ -310,8 +310,8 @@ closures that model what the code does not resolve, all three from the local pit
 
 Returns the fields from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets'
 mean field and mixing amplitude:
-- `Epol_target = γ Epol_req`, the RZ field that cancels the driven E∥, shaped by the mean field's γ
-  ([`mean_sheet_target`](@ref); the local pitch's by default);
+- `Epol_target`, the mean field's target before the Debye cap: the RZ field that cancels the driven E∥,
+  `Epol_req`, below the policy's ceiling ([`mean_sheet_target`](@ref); the local pitch's `γ Epol_req` by default);
 - `E_Debye`, the Debye field, the most the local plasma holds;
 - `E_para_drive`, the driven parallel field ([`driven_parallel_field`](@ref)).
 
@@ -401,7 +401,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
 
     # =========================================================================
-    # 5. The mean field's own target and shape: the local pitch's above unless the policy says otherwise
+    # 5. The mean field's own target: the local pitch's above unless the policy says otherwise
     # =========================================================================
     Epol_mean_target = mean_sheet_target(RP.flags.mean_sheet_field, RP, Epol_target, E_para_drive, Bpol_in_wall_avg)
 
@@ -411,93 +411,65 @@ end
 """
     mean_sheet_target(policy, RP, Epol_local, E_para_drive, Bpol_in_wall_avg) -> Matrix
 
-The mean field's target before the Debye cap, `γ Epol_req` [V/m, a magnitude], under the
-[`MeanSheetFieldPolicy`](@ref) `policy`, with its shape written to `γ_shape_fac`. `Epol_local` is the
-local pitch's target, which the default returns as it is. Without a poloidal field there is no shape
-and no target.
+The mean field's target before the Debye cap [V/m, a magnitude], under the
+[`MeanSheetFieldPolicy`](@ref) `policy`: never above the requirement `Epol_req = |E∥,drive| B/B_pol`.
+`Epol_local` is the local pitch's target, which the default returns as it is. `γ_shape_fac` stays the
+local pitch's shape under every policy. Without a poloidal field there is no target.
 """
 mean_sheet_target(::LocalPitch, RP::RAPID, Epol_local, E_para_drive, Bpol_in_wall_avg) = Epol_local
 
 function mean_sheet_target(::LineMinPitch, RP::RAPID{FT}, Epol_local, E_para_drive, Bpol_in_wall_avg) where {FT}
-    F, γ, flf = RP.fields, RP.plasma.γ_shape_fac, RP.flf
+    F, flf = RP.fields, RP.flf
     γ0 = RP.config.charge_sheet_shape_factor
-    if !(Bpol_in_wall_avg > 0)
-        fill!(γ, zero(FT))
-        return zero(Epol_local)
-    end
-    # the least B_pol met along the node's line; the node's own where no line was followed (outside the wall)
-    @. γ = min(one(FT), γ0 * (ifelse(isfinite(flf.min_Bpol), flf.min_Bpol, F.Bpol) / Bpol_in_wall_avg))
-    # where B_pol vanishes the line's least is the node's: the local pitch's limit
+    Bpol_in_wall_avg > 0 || return zero(Epol_local)
+    # the local pitch's shape with the least B_pol met along the node's line; the node's own where no line was
+    # followed (outside the wall) and where B_pol vanishes (the local pitch's limit)
     return @. ifelse(
-        F.Bpol > 0, γ * (abs(E_para_drive) * (F.Btot / F.Bpol)), γ0 * abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
+        F.Bpol > 0,
+        min(one(FT), γ0 * (ifelse(isfinite(flf.min_Bpol), flf.min_Bpol, F.Bpol) / Bpol_in_wall_avg)) *
+            (abs(E_para_drive) * (F.Btot / F.Bpol)),
+        γ0 * abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
     )
 end
 
-function mean_sheet_target(policy::LineAvgPitch, RP::RAPID{FT}, Epol_local, E_para_drive, Bpol_in_wall_avg) where {FT}
-    F, γ, flf = RP.fields, RP.plasma.γ_shape_fac, RP.flf
-    if !(Bpol_in_wall_avg > 0)
-        fill!(γ, zero(FT))
-        return zero(Epol_local)
-    end
-    p = FT(policy.p)
-    # the line's effective B_pol: ⟨B_pol⁻ᵖ⟩^(-1/p) from the following's second integral, or the mean of B/B_pol
-    # its lengths hold (p = 1) when the following did not carry it
-    if flf.has_second_integral
-        @. γ = (flf.second_integral_tot / flf.Lpol_tot)^(-1 / p)
-    else
-        @. γ = F.Btot * flf.Lpol_tot / flf.Lc_tot
-    end
-    # a line that was not measured: one that ends on a null (no RZ length to average over) has none, a node
-    # no line was followed from keeps its own
-    @. γ = ifelse(isfinite(γ) & (γ > 0), γ, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT)))
-    @. γ = γ / (γ + Bpol_in_wall_avg)
-    return @. ifelse(F.Bpol > 0, γ * (abs(E_para_drive) * (F.Btot / F.Bpol)), zero(FT))
-end
-
-function mean_sheet_target(policy::LineAvgRequirement, RP::RAPID{FT}, Epol_local, E_para_drive, Bpol_in_wall_avg) where {FT}
-    F, γ, flf = RP.fields, RP.plasma.γ_shape_fac, RP.flf
-    if !(Bpol_in_wall_avg > 0)
-        fill!(γ, zero(FT))
-        return zero(Epol_local)
-    end
-    p = FT(policy.p)
-    # the node's requirement, Epol_req = |E∥,drive| B/B_pol, and the same at the device's mean B_pol, E₀
-    Epol_req = @. abs(E_para_drive) * (F.Btot / F.Bpol)
+function mean_sheet_target(policy::LineAvgSaturation, RP::RAPID{FT}, Epol_local, E_para_drive, Bpol_in_wall_avg) where {FT}
+    F, flf = RP.fields, RP.flf
+    target = zero(Epol_local)
+    Bpol_in_wall_avg > 0 || return target
+    p, coefficient = FT(policy.p), FT(policy.coefficient)
     @with_pool pool begin
-        # the line's requirement: the p-mean of Epol_req the following integrated, or |E∥| L_c/L_pol (p = 1 with the
-        # node's drive, the mixing amplitude's own fallback) when the following did not carry it
-        line_req = acquire!(pool, FT, size(γ)...)
+        # the line's effective B_pol: ⟨B_pol⁻ᵖ⟩^(-1/p) from the following's second integral, or the mean of B/B_pol
+        # its lengths hold (p = 1) when the following did not carry it
+        Bpol_line = acquire!(pool, FT, size(target)...)
         if flf.has_second_integral
-            @. line_req = (flf.second_integral_tot / flf.Lpol_tot)^(1 / p)
+            @. Bpol_line = (flf.second_integral_tot / flf.Lpol_tot)^(-1 / p)
         else
-            @. line_req = abs(E_para_drive) * flf.Lc_tot / flf.Lpol_tot
+            @. Bpol_line = F.Btot * flf.Lpol_tot / flf.Lc_tot
         end
-        # a line that was not measured: one that ends on a null (no RZ length to average over) is not cancelled, a
-        # node no line was followed from takes its own requirement
-        @. line_req = ifelse(isfinite(line_req), line_req, ifelse(isfinite(flf.Lpol_tot), Epol_req, FT(Inf)))
-        # γ = E₀/(E₀ + line_req); nothing to shape where nothing is driven
-        @. γ = abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
-        @. γ = ifelse(γ > 0, γ / (γ + line_req), zero(FT))
+        # a line that was not measured: one that ends on a null (no RZ length to average over) has none, a node
+        # no line was followed from keeps its own
+        @. Bpol_line = ifelse(
+            isfinite(Bpol_line) & (Bpol_line > 0), Bpol_line, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT))
+        )
+        # the saturation ceiling, the node's requirement at ⟨B_pol⟩ times the line's factor; the requirement
+        # below it where B_pol is strong, the ceiling itself where B_pol vanishes
+        @. target = coefficient * (abs(E_para_drive) * F.Btot / Bpol_in_wall_avg) * (Bpol_line / (Bpol_line + Bpol_in_wall_avg))
+        @. target = ifelse(F.Bpol > 0, min(abs(E_para_drive) * (F.Btot / F.Bpol), target), target)
     end
-    return @. ifelse(F.Bpol > 0, γ * Epol_req, zero(FT))
+    return target
 end
 
 """
     mean_sheet_line_integrand(RP) -> Union{Nothing, Matrix}
 
 The node field the mean field's policy has the field-line following integrate along every line
-(`second_integrand`, `flf.second_integral_tot`): `B_pol⁻ᵖ` for [`LineAvgPitch`](@ref) (the field's
-geometry alone), `Epol_reqᵖ = (|E∥,drive| B/B_pol)ᵖ` for [`LineAvgRequirement`](@ref) (without the Debye
-cap the mixing's integrand carries), nothing for the others. Infinite on a node where B_pol vanishes,
-which the following's linear interpolation leaves out of the cells around it.
+(`second_integrand`, `flf.second_integral_tot`): `B_pol⁻ᵖ` for [`LineAvgSaturation`](@ref), nothing for
+the others. Infinite on a node where B_pol vanishes, which the following's linear interpolation leaves
+out of the cells around it.
 """
 mean_sheet_line_integrand(RP::RAPID) = mean_sheet_line_integrand(RP.flags.mean_sheet_field, RP)
 mean_sheet_line_integrand(::MeanSheetFieldPolicy, RP::RAPID) = nothing
-mean_sheet_line_integrand(policy::LineAvgPitch, RP::RAPID) = RP.fields.Bpol .^ (-eltype(RP.fields.Bpol)(policy.p))
-function mean_sheet_line_integrand(policy::LineAvgRequirement, RP::RAPID)
-    F = RP.fields
-    return @. (abs($(driven_parallel_field(RP))) * F.Btot / F.Bpol)^$(eltype(F.Bpol)(policy.p))
-end
+mean_sheet_line_integrand(policy::LineAvgSaturation, RP::RAPID) = RP.fields.Bpol .^ (-eltype(RP.fields.Bpol)(policy.p))
 
 
 """
