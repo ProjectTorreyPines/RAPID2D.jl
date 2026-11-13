@@ -42,6 +42,12 @@
     @test all(k -> F.Epol_mean[k] <= mean0[k] * (1 + 1.0e-12), interior)
     @test any(k -> F.Epol_mean[k] < 0.9 * mean0[k], interior)
 
+    # a tracer that leaves the starting node out of its minimum: the ceiling is still at most the local one
+    k = first(interior)
+    flf.min_Bpol[k] = 2 * F.Bpol[k]
+    estimate_electrostatic_field_effects!(RP)
+    @test F.Epol_mean[k] <= mean0[k] * (1 + 1.0e-12)
+
     # back to the default: bit for bit what it was
     RP.flags.mean_sheet_field = LocalPitch()
     estimate_electrostatic_field_effects!(RP)
@@ -71,11 +77,11 @@ end
         follow!()
         @test flf.has_second_integral
         estimate_electrostatic_field_effects!(RP)
-        B_eff = Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / p)
-        ceiling = 0.65 .* E0() .* (2 .* B_eff ./ (B_eff .+ Bpol_avg))
+        Bpol_eff = Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / p)
+        ceiling = 0.65 .* E0() .* (2 .* Bpol_eff ./ (Bpol_eff .+ Bpol_avg))
         @test F.Epol_mean[measured] ≈ min.(E_req(), ceiling)[measured]
         # a mean of 1/B_pol weighs the weak stretches: never below the line's least B_pol
-        @test all(k -> flf.min_Bpol[k] * (1 - 1.0e-9) <= B_eff[k], measured)
+        @test all(k -> flf.min_Bpol[k] * (1 - 1.0e-9) <= Bpol_eff[k], measured)
         # the ceiling binds somewhere and the requirement elsewhere
         @test any(k -> ceiling[k] < E_req()[k], measured)
         mean_of[p] = copy(F.Epol_mean)
@@ -98,8 +104,8 @@ end
     for fraction in (0.3, 1.0)
         RP.config.charge_sheet_saturation_fraction = fraction
         estimate_electrostatic_field_effects!(RP)
-        B_eff = Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)
-        @test F.Epol_mean[measured] ≈ min.(E_req(), fraction .* E0() .* (2 .* B_eff ./ (B_eff .+ Bpol_avg)))[measured]
+        Bpol_eff = Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)
+        @test F.Epol_mean[measured] ≈ min.(E_req(), fraction .* E0() .* (2 .* Bpol_eff ./ (Bpol_eff .+ Bpol_avg)))[measured]
         monotone = fraction < 0.65 ? (<=) : (>=)
         @test all(k -> monotone(F.Epol_mean[k], mean_one[k] * (fraction < 0.65 ? 1 + 1.0e-12 : 1 - 1.0e-12)), measured)
     end
@@ -126,7 +132,7 @@ end
     @test iszero(F.Epol_mean[weakest])
     flf.second_integral_tot[weakest] = kept_integral
 
-    # the integrand is finite and scaled where B_pol vanishes or is tiny, in single precision too
+    # the integrand is finite and scaled where B_pol vanishes
     @test all(isfinite, mean_sheet_line_integrand(RP))
     Bpol_kept = F.Bpol[weakest]
     F.Bpol[weakest] = 0.0
@@ -176,6 +182,7 @@ end
         @test all(x -> isapprox(x, fraction; rtol = 1.0e-6), cancelled(uniform))
         uniform.t_end_s = uniform.time_s + uniform.dt
         run_simulation!(uniform)
+        @test uniform.flf.has_second_integral == (policy isa LineAvgSaturation)   # the step loop's following carries it too
         uniform.plasma.ne .= 1.0e22
         estimate_electrostatic_field_effects!(uniform)
         @test all(x -> isapprox(x, fraction; rtol = 1.0e-6), cancelled(uniform))

@@ -166,7 +166,7 @@ function initialize!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # refresh in `run_simulation!` answers a different question ("has the field moved").
     # No mixing integrand here: the plasma it reads is set below; the step loop's first refresh
     # passes it (`sheet_mixing_integrand`), and until then the amplitude takes the uncapped line average.
-    # The mean field's policy reads the field and the prescribed drive alone, so its integrand goes with this following.
+    # The mean field's policy reads the poloidal field alone, so its integrand goes with this following.
     flf_analysis_field_lines_rz_plane!(RP; second_integrand = mean_sheet_line_integrand(RP))
     update_closed_surface_basis!(RP)
 

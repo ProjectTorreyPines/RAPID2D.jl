@@ -401,9 +401,11 @@ mean_sheet_saturation(::LocalPitch, RP::RAPID, Epol_sat_local, Bpol_in_wall_avg)
 
 function mean_sheet_saturation(::LineMinPitch, RP::RAPID{FT}, Epol_sat_local, Bpol_in_wall_avg) where {FT}
     F, flf = RP.fields, RP.flf
-    # the local ceiling lowered by the least B_pol met along the node's line against the node's own; as it
-    # is where no line was followed (outside the wall) and where B_pol vanishes
-    return @. Epol_sat_local * ifelse((F.Bpol > 0) & isfinite(flf.min_Bpol), flf.min_Bpol / F.Bpol, one(FT))
+    # the local ceiling lowered by the least B_pol met along the node's line against the node's own (at most 1: a
+    # tracer may leave the starting node out of its minimum); as it is where no line was followed (outside the
+    # wall) and where B_pol vanishes
+    return @. Epol_sat_local *
+        ifelse((F.Bpol > 0) & isfinite(flf.min_Bpol), min(one(FT), flf.min_Bpol / F.Bpol), one(FT))
 end
 
 function mean_sheet_saturation(policy::LineAvgSaturation, RP::RAPID{FT}, Epol_sat_local, Bpol_in_wall_avg) where {FT}
@@ -412,23 +414,23 @@ function mean_sheet_saturation(policy::LineAvgSaturation, RP::RAPID{FT}, Epol_sa
     Bpol_in_wall_avg > 0 || return Epol_sat
     p = FT(policy.p)
     @with_pool pool begin
-        Bpol_line = acquire!(pool, FT, size(Epol_sat)...)
+        Bpol_eff = acquire!(pool, FT, size(Epol_sat)...)
         if flf.has_second_integral
             # the line's effective B_pol, ⟨B_pol⁻ᵖ⟩^(-1/p): the following integrated (⟨B_pol⟩/B_pol)ᵖ
-            @. Bpol_line = Bpol_in_wall_avg * (flf.second_integral_tot / flf.Lpol_tot)^(-1 / p)
+            @. Bpol_eff = Bpol_in_wall_avg * (flf.second_integral_tot / flf.Lpol_tot)^(-1 / p)
         else
             # a following that did not carry it: B/⟨B/B_pol⟩ from the lengths, the p = 1 mean where B is uniform
             # along the line. An approximation, until the next following
-            @. Bpol_line = F.Btot * flf.Lpol_tot / flf.Lc_tot
+            @. Bpol_eff = F.Btot * flf.Lpol_tot / flf.Lc_tot
         end
         # zero is a measured value (the line's integral diverged: it passes a null). A line that was not
         # measured: one that ends on a null (no RZ length to average over) has none, a node no line was followed
         # from keeps its own
-        @. Bpol_line = ifelse(
-            isfinite(Bpol_line) & (Bpol_line >= 0), Bpol_line, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT))
+        @. Bpol_eff = ifelse(
+            isfinite(Bpol_eff) & (Bpol_eff >= 0), Bpol_eff, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT))
         )
-        # the local ceiling times 2 B_eff/(B_eff + ⟨B_pol⟩): 1 where the line's B_pol is the device's mean
-        @. Epol_sat = Epol_sat_local * (2 * Bpol_line / (Bpol_line + Bpol_in_wall_avg))
+        # the local ceiling times 2 Bpol_eff/(Bpol_eff + ⟨B_pol⟩): 1 where the line's B_pol is the device's mean
+        @. Epol_sat = Epol_sat_local * (2 * Bpol_eff / (Bpol_eff + Bpol_in_wall_avg))
     end
     return Epol_sat
 end

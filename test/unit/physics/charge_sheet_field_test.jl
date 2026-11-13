@@ -16,7 +16,7 @@
 
     @test !isempty(closed) && !isempty(open_in)
     # the mean field is the least of three ceilings: the requirement, the saturation (the local one by default,
-    # γ₀ times the requirement at the in-wall mean B_pol, on closed lines too) and what the plasma holds
+    # the saturation fraction times the requirement at the in-wall mean B_pol, on closed lines too) and what the plasma holds
     ceilings = RAPID2D.update_space_charge_weights!(RP)
     E_drive_abs = abs.(ceilings.E_para_drive)
     @test ceilings.Epol_req ≈ E_drive_abs .* F.Btot ./ F.Bpol
@@ -46,7 +46,7 @@ end
         (F.Epol_mean, F.Erad_fluc, F.Epol_para_pla, F.E_para_tot, pla.mean_ExB_R, pla.mean_ExB_Z, F.ER, F.EZ, tp.Dpol_turb),
     )
 
-    # an open node where Bpol vanishes: γ Epol_req at its limit 0.65 |E∥| B/⟨Bpol⟩ (γ → 0, Epol_req → ∞),
+    # an open node where Bpol vanishes: the requirement is infinite and the local ceiling binds, 0.65 |E∥| B/⟨Bpol⟩,
     # below the Debye field here
     k = open_in[length(open_in) ÷ 2]
     F.Bpol[k] = F.bpol_R[k] = F.bpol_Z[k] = 0.0
@@ -56,7 +56,7 @@ end
     @test F.Epol_mean[k] ≈ 0.65 * abs(E_drive) * F.Btot[k] / mean(F.Bpol[G.nodes.in_wall_nids])
     @test isfinite(pla.nc_perp[k])
 
-    # no poloidal field at all: no shape, no sheets
+    # no poloidal field at all: no ceiling, no sheets
     foreach(a -> fill!(a, 0.0), (F.Bpol, F.bpol_R, F.bpol_Z))
     estimate_electrostatic_field_effects!(RP)
     @test all(iszero, RAPID2D.update_space_charge_weights!(RP).Epol_sat_local) && all(iszero, F.Epol_mean) && all(iszero, F.Erad_fluc)
@@ -107,18 +107,18 @@ end
     open_in = setdiff(G.nodes.in_wall_nids, closed)
     pla.ne[open_in] .= [G.R2D[k] < R0 ? 1.0e10 : 1.0e17 for k in open_in]   # below and above nc_para
     ceilings = update_space_charge_weights!(RP)
-    Epol_target, E_Debye = min.(ceilings.Epol_req, ceilings.Epol_sat_local), ceilings.E_Debye
+    Epol_local, E_Debye = min.(ceilings.Epol_req, ceilings.Epol_sat_local), ceilings.E_Debye
     w = pla.ambipolar_weight
     n_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D)
 
     @test all(==(1), w[closed])
     # on open lines the share of the cancelling field the sheets hold, as the threshold gives it too
-    @test w[open_in] ≈ min.(1, E_Debye[open_in] ./ Epol_target[open_in])
+    @test w[open_in] ≈ min.(1, E_Debye[open_in] ./ Epol_local[open_in])
     @test w[open_in] ≈ min.(1, sqrt.(n_SM[open_in] ./ pla.nc_para[open_in]))
     @test any(x -> 0 < x < 1, w[open_in]) && any(==(1), w[open_in])
     # and the sheets' field is that share of what they would need
     estimate_electrostatic_field_effects!(RP)
-    @test F.Epol_mean[open_in] ≈ w[open_in] .* Epol_target[open_in]
+    @test F.Epol_mean[open_in] ≈ w[open_in] .* Epol_local[open_in]
     # the snapshots carry both weights, the 0D ones as density-weighted means
     s2, s0 = RAPID2D.measure_snap2D(RP), RAPID2D.measure_snap0D(RP)
     @test s2.ambipolar_weight == w && s2.turbulence_weight == pla.turbulence_weight
@@ -180,23 +180,23 @@ end
     @test all(==(1), pla.ambipolar_weight[closed])
 end
 
-@testitem "charge-sheet field: the shape factor at the mean B_pol must be finite and positive" begin
+@testitem "charge-sheet field: the saturation fraction must be finite and positive" begin
     using RAPID2D: validate_config!
-    config(γ0) = SimulationConfig{Float64}(;
+    config(fraction) = SimulationConfig{Float64}(;
         device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
         NR = 9, NZ = 9, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
         wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
         prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
-        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(), charge_sheet_saturation_fraction = γ0,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(), charge_sheet_saturation_fraction = fraction,
     )
     validate_config!(config(0.65))
     validate_config!(config(1.0))
-    for γ0 in (0.0, -0.65, Inf, NaN)
-        @test_throws ArgumentError validate_config!(config(γ0))
+    for fraction in (0.0, -0.65, Inf, NaN)
+        @test_throws ArgumentError validate_config!(config(fraction))
     end
 end
 
-@testitem "mixing amplitude: the line's held EMF over its RZ length, apart from the mean field and its γ" setup = [CurrentDisc] begin
+@testitem "mixing amplitude: the line's held EMF over its RZ length, apart from the mean field and its saturation" setup = [CurrentDisc] begin
     using RAPID2D: estimate_electrostatic_field_effects!, update_space_charge_weights!, shared_turbulent_channel,
         flf_analysis_field_lines_rz_plane!, sheet_mixing_integrand
     RP, _ = current_disc()
@@ -209,7 +209,7 @@ end
     # the field-line following with the plasma's capped cancelling field, as the step loop runs it
     flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
     ceilings = update_space_charge_weights!(RP)
-    Epol_target, E_Debye, E_drive = min.(ceilings.Epol_req, ceilings.Epol_sat_local), ceilings.E_Debye, ceilings.E_para_drive
+    Epol_local, E_Debye, E_drive = min.(ceilings.Epol_req, ceilings.Epol_sat_local), ceilings.E_Debye, ceilings.E_para_drive
     estimate_electrostatic_field_effects!(RP)
     on_wall = Set(G.nodes.on_wall_nids)
     interior = [k for k in open_in if !(k in on_wall) && flf.Lpol_tot[k] > 0]
@@ -229,14 +229,14 @@ end
     flf_analysis_field_lines_rz_plane!(RP; integrand = abs.(E_drive) .* F.Btot ./ max.(F.Bpol, 1.0e-12))
     @test capped[walls] ≈ flf.integral_tot[walls] rtol = 1.0e-2
     flf_analysis_field_lines_rz_plane!(RP; integrand = sheet_mixing_integrand(RP))
-    # the mean field is what it was: γ-shaped, capped
-    @test F.Epol_mean[open_in] ≈ min.(Epol_target[open_in], E_Debye[open_in])
+    # the mean field is what it was: the local ceiling, capped
+    @test F.Epol_mean[open_in] ≈ min.(Epol_local[open_in], E_Debye[open_in])
     # the diffusivity and the shared channel read the amplitude, not the mean field
     v = pla.turbulence_weight .* F.Erad_fluc ./ F.Btot
     @test tp.Dpol_turb ≈ 0.5 .* v .* tp.L_mixing
     @test shared_turbulent_channel(RP).v_para ≈ v
     @test any(k -> F.Erad_fluc[k] > 1.5 * F.Epol_mean[k], open_in)   # the amplitude exceeds the mean somewhere
-    # γ₀ moves the mean field only
+    # the saturation fraction moves the mean field only
     mean0, fluc0 = copy(F.Epol_mean), copy(F.Erad_fluc)
     RP.config.charge_sheet_saturation_fraction = 0.4
     estimate_electrostatic_field_effects!(RP)

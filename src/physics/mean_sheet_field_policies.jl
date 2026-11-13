@@ -41,17 +41,18 @@ struct LineMinPitch <: MeanSheetFieldPolicy end
 """
     LineAvgSaturation(; p = 2)
 
-Ceiling `f_sat E₀ 2 B_eff/(B_eff + ⟨B_pol⟩)`: the local ceiling times a factor of the line's geometry
-alone, with `B_eff = ⟨B_pol⁻ᵖ⟩^(-1/p)` the line's effective poloidal field averaged over its RZ
+Ceiling `f_sat E₀ 2 Bpol_eff/(Bpol_eff + ⟨B_pol⟩)`: the local ceiling times a factor of the line's geometry
+alone, with `Bpol_eff = ⟨B_pol⁻ᵖ⟩^(-1/p)` the line's effective poloidal field averaged over its RZ
 length. The factor is 1 on a line whose B_pol is the device's mean, below it on a line that passes a
 weak poloidal field (a smooth band along the separatrix, low all the way to the wall) and at most 2.
 The field stays finite at a null, where it is the ceiling itself.
 
 `p ≥ 1` weighs the line's weakest stretch: 1 is the harmonic mean, a large `p` approaches the least
 pitch. A choice of the model, not a constant of the physics. The field-line following integrates
-`(⟨B_pol⟩/B_pol)ᵖ` (`mean_sheet_line_integrand`). Until a following has carried it the lengths give
-`B/⟨B/B_pol⟩` in its place: the `p = 1` mean where B is uniform along the line, an approximation
-otherwise.
+`(⟨B_pol⟩/B_pol)ᵖ` (`mean_sheet_line_integrand`), so a changed `p` takes effect at the next following.
+Until a following has carried the integral the lengths give `B/⟨B/B_pol⟩` in its place: the `p = 1`
+mean where B is uniform along the line, an approximation otherwise. `p` of a few tens overflows the
+integrand near a null; that limit is [`LineMinPitch`](@ref).
 """
 struct LineAvgSaturation <: MeanSheetFieldPolicy
     p::Float64
