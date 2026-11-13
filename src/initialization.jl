@@ -46,11 +46,11 @@ function validate_config!(config::SimulationConfig{FT}) where {FT <: AbstractFlo
         throw(ArgumentError("prefilled_gas_pressure must be non-negative"))
     end
 
-    # γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩): at or below zero the charge sheets' target field would
+    # f_sat, the saturation ceiling as a share of E₀: at or below zero the charge sheets' mean field would
     # vanish or turn negative
-    γ0 = config.charge_sheet_shape_factor
-    (isfinite(γ0) && γ0 > 0) ||
-        throw(ArgumentError("charge_sheet_shape_factor = $γ0; it must be finite and positive"))
+    saturation_fraction = config.charge_sheet_saturation_fraction
+    (isfinite(saturation_fraction) && saturation_fraction > 0) ||
+        throw(ArgumentError("charge_sheet_saturation_fraction = $saturation_fraction; it must be finite and positive"))
 
     if !isnothing(config.R_min) && !isnothing(config.R_max) && config.R_min >= config.R_max
         throw(ArgumentError("R_min must be less than R_max"))

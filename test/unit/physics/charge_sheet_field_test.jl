@@ -20,8 +20,7 @@
     ceilings = RAPID2D.update_space_charge_weights!(RP)
     E_drive_abs = abs.(ceilings.E_para_drive)
     @test ceilings.Epol_req ≈ E_drive_abs .* F.Btot ./ F.Bpol
-    @test ceilings.Epol_ref ≈ E_drive_abs .* F.Btot ./ mean(F.Bpol[G.nodes.in_wall_nids])
-    @test ceilings.Epol_sat_local ≈ 0.65 .* ceilings.Epol_ref
+    @test ceilings.Epol_sat_local ≈ 0.65 .* E_drive_abs .* F.Btot ./ mean(F.Bpol[G.nodes.in_wall_nids])
     @test all(>(0), ceilings.Epol_sat_local[closed])
     on_wall = Set(G.nodes.on_wall_nids)
     interior = [k for k in open_in if !(k in on_wall)]
@@ -188,7 +187,7 @@ end
         NR = 9, NZ = 9, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
         wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
         prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
-        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(), charge_sheet_shape_factor = γ0,
+        snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(), charge_sheet_saturation_fraction = γ0,
     )
     validate_config!(config(0.65))
     validate_config!(config(1.0))
@@ -239,7 +238,7 @@ end
     @test any(k -> F.Erad_fluc[k] > 1.5 * F.Epol_mean[k], open_in)   # the amplitude exceeds the mean somewhere
     # γ₀ moves the mean field only
     mean0, fluc0 = copy(F.Epol_mean), copy(F.Erad_fluc)
-    RP.config.charge_sheet_shape_factor = 0.4
+    RP.config.charge_sheet_saturation_fraction = 0.4
     estimate_electrostatic_field_effects!(RP)
     @test F.Erad_fluc == fluc0
     @test any(k -> F.Epol_mean[k] != mean0[k], open_in)

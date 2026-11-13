@@ -111,12 +111,13 @@ Contains simulation configuration parameters.
     Dpara0::FT = FT(0.0)               # Base parallel diffusivity: a notional background added to every parallel coefficient [m²/s]
     Dperp0::FT = FT(0.0)               # Base perpendicular diffusivity: a notional background added to D⊥ [m²/s]
 
-    # γ₀: the local saturation ceiling of the open-line charge sheets' mean field, as a share of E₀, the field
-    # that would cancel the driven E∥ at the in-wall average B_pol (`update_space_charge_weights!`): the mean field
-    # reaches at most γ₀ E₀ under the default policy, and the critical densities read that ceiling under every
-    # policy. The potential is a global solution, and an open line between two points of one wall cannot shield its
-    # whole EMF. Tests of the parallel physics alone set 1.
-    charge_sheet_shape_factor::FT = FT(0.65)
+    # f_sat, the saturation fraction of the open-line charge sheets' mean field: in a uniform poloidal field the
+    # sheets sustain at most the share f_sat of the field that would cancel the driven E∥, whatever the density.
+    # In general the ceiling is f_sat E₀ times the policy's factor of the geometry (`flags.mean_sheet_field`), with
+    # E₀ the requirement at the in-wall average B_pol; the critical densities read f_sat E₀ under every policy
+    # (`update_space_charge_weights!`). The potential is a global solution, and an open line between two points of
+    # one wall cannot shield its whole EMF. Tests of the parallel physics alone set 1.
+    charge_sheet_saturation_fraction::FT = FT(0.65)
 
     # Fraction of ions the wall returns to the plasma. 0 = fully absorbing,
     # 1 = perfectly reflecting; the Robin coefficient is ¼v̄_n(1 − R).

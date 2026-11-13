@@ -7,7 +7,9 @@
 The closure of the open-line charge sheets' mean poloidal field `Epol_mean` (Ē_pol), held by
 `flags.mean_sheet_field`. The field is the least of three: the requirement that would cancel the
 driven E∥, `Epol_req = |E∥,drive| B/B_pol`; what the plasma holds, `E_Debye`; and the policy's
-saturation ceiling, what the field's geometry lets the sheets sustain in the mean. One field sets both
+saturation ceiling, what the field's geometry lets the sheets sustain in the mean: the share `f_sat`
+(`config.charge_sheet_saturation_fraction`) of the requirement at the in-wall mean B_pol, times the
+policy's factor of the geometry, which is 1 in a uniform poloidal field. One field sets both
 the residual E∥ (the heating) and the mean E×B drift across the lines; the cancelled share
 γ = Ē_pol B_pol/(|E∥,drive| B) is a result, not an input.
 
@@ -19,17 +21,17 @@ abstract type MeanSheetFieldPolicy end
 """
     LocalPitch()
 
-**The default.** Ceiling `γ₀ E₀`, the same share of `E₀` everywhere: `E₀ = |E∥,drive| B/⟨B_pol⟩` is the
-node's requirement at the in-wall mean ⟨B_pol⟩ and γ₀ `config.charge_sheet_shape_factor`. The
-cancellation fails in a round pocket around a poloidal null, where the requirement exceeds the
-ceiling, and is complete wherever B_pol exceeds ⟨B_pol⟩/γ₀.
+**The default.** Ceiling `f_sat E₀`, the same share of `E₀` everywhere: `E₀ = |E∥,drive| B/⟨B_pol⟩` is the
+node's requirement at the in-wall mean ⟨B_pol⟩ and `f_sat` the saturation fraction,
+`config.charge_sheet_saturation_fraction`. The cancellation fails in a round pocket around a poloidal
+null, where the requirement exceeds the ceiling, and is complete wherever B_pol exceeds ⟨B_pol⟩/f_sat.
 """
 struct LocalPitch <: MeanSheetFieldPolicy end
 
 """
     LineMinPitch()
 
-Ceiling `γ₀ E₀ min B_pol/B_pol`: the local ceiling lowered by the least poloidal field met along the
+Ceiling `f_sat E₀ min B_pol/B_pol`: the local ceiling lowered by the least poloidal field met along the
 node's whole line (`flf.min_Bpol`) against the node's own, so never above the local one. Where it
 binds the cancelled share is one value along a line: a line that passes a null is poorly cancelled all
 the way to the wall, a band along the separatrix. Sensitive to how close a traced line comes to the null.
@@ -37,33 +39,26 @@ the way to the wall, a band along the separatrix. Sensitive to how close a trace
 struct LineMinPitch <: MeanSheetFieldPolicy end
 
 """
-    LineAvgSaturation(; p = 2, coefficient = 1)
+    LineAvgSaturation(; p = 2)
 
-Ceiling `coefficient E₀ B_eff/(B_eff + ⟨B_pol⟩)`: the node's requirement at the in-wall mean,
-`E₀ = |E∥,drive| B/⟨B_pol⟩`, times a factor of the line's geometry alone, with
-`B_eff = ⟨B_pol⁻ᵖ⟩^(-1/p)` the line's effective poloidal field averaged over its RZ length. No shape
-factor γ₀. A line that passes a weak poloidal field saturates low all the way to the wall (a smooth band along
-the separatrix), and the field stays finite at a null, where it is the ceiling itself.
+Ceiling `f_sat E₀ 2 B_eff/(B_eff + ⟨B_pol⟩)`: the local ceiling times a factor of the line's geometry
+alone, with `B_eff = ⟨B_pol⁻ᵖ⟩^(-1/p)` the line's effective poloidal field averaged over its RZ
+length. The factor is 1 on a line whose B_pol is the device's mean, below it on a line that passes a
+weak poloidal field (a smooth band along the separatrix, low all the way to the wall) and at most 2.
+The field stays finite at a null, where it is the ceiling itself.
 
-- `p ≥ 1` weighs the line's weakest stretch: 1 is the harmonic mean, a large `p` approaches the least
-  pitch.
-- `coefficient > 0` scales the ceiling: with 1 a uniform poloidal field cancels one half of a uniform
-  drive, by construction; the requirement and the Debye field still bound the field above.
-
-Both are choices of the model, not constants of the physics. The field-line following integrates
+`p ≥ 1` weighs the line's weakest stretch: 1 is the harmonic mean, a large `p` approaches the least
+pitch. A choice of the model, not a constant of the physics. The field-line following integrates
 `(⟨B_pol⟩/B_pol)ᵖ` (`mean_sheet_line_integrand`). Until a following has carried it the lengths give
 `B/⟨B/B_pol⟩` in its place: the `p = 1` mean where B is uniform along the line, an approximation
 otherwise.
 """
 struct LineAvgSaturation <: MeanSheetFieldPolicy
     p::Float64
-    coefficient::Float64
-    function LineAvgSaturation(p::Real, coefficient::Real)
-        p, coefficient = Float64(p), Float64(coefficient)
+    function LineAvgSaturation(p::Real)
+        p = Float64(p)
         (isfinite(p) && p >= 1) || throw(ArgumentError("LineAvgSaturation: p = $p; it must be finite and at least 1"))
-        (isfinite(coefficient) && coefficient > 0) ||
-            throw(ArgumentError("LineAvgSaturation: coefficient = $coefficient; it must be finite and positive"))
-        return new(p, coefficient)
+        return new(p)
     end
 end
-LineAvgSaturation(; p::Real = 2.0, coefficient::Real = 1.0) = LineAvgSaturation(p, coefficient)
+LineAvgSaturation(; p::Real = 2.0) = LineAvgSaturation(p)

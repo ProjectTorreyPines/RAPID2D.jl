@@ -1,5 +1,6 @@
 # The policies of the open-line charge sheets' mean field (`flags.mean_sheet_field`): the local pitch
-# (the default), the line's least pitch, and the line-averaged saturation ceiling. A policy sets the mean field
+# (the default), the line's least pitch, and the line-averaged saturation ceiling; one saturation fraction for all,
+# and one ceiling in a uniform poloidal field. A policy sets the mean field
 # alone; the critical densities, the closures' weights and the mixing amplitude do not follow it.
 
 @testitem "mean sheet field: the default is the local pitch, and a policy moves the mean field alone" setup = [CurrentDisc] begin
@@ -22,7 +23,7 @@
 
     E_Debye = debye_field(RP, smooth_data_2D(pla.ne; num_SM = 2, weighting = G.inVol2D))
     E_req = abs.(F.Eϕ_para_presc .+ F.Eϕ_para_coils_pla) .* F.Btot ./ F.Bpol
-    for policy in (LineMinPitch(), LineAvgSaturation(), LineAvgSaturation(p = 4.0), LineAvgSaturation(coefficient = 3.0))
+    for policy in (LineMinPitch(), LineAvgSaturation(), LineAvgSaturation(p = 4.0))
         RP.flags.mean_sheet_field = policy
         estimate_electrostatic_field_effects!(RP)
         @test all(isfinite, F.Epol_mean) && all(>=(0), F.Epol_mean)
@@ -71,7 +72,7 @@ end
         @test flf.has_second_integral
         estimate_electrostatic_field_effects!(RP)
         B_eff = Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / p)
-        ceiling = E0() .* B_eff ./ (B_eff .+ Bpol_avg)
+        ceiling = 0.65 .* E0() .* (2 .* B_eff ./ (B_eff .+ Bpol_avg))
         @test F.Epol_mean[measured] ≈ min.(E_req(), ceiling)[measured]
         # a mean of 1/B_pol weighs the weak stretches: never below the line's least B_pol
         @test all(k -> flf.min_Bpol[k] * (1 - 1.0e-9) <= B_eff[k], measured)
@@ -83,24 +84,26 @@ end
     @test all(k -> mean_of[4.0][k] <= mean_of[2.0][k] * (1 + 1.0e-9), measured)
     @test any(k -> mean_of[4.0][k] < 0.99 * mean_of[2.0][k], measured)
 
-    # no spike where B_pol is weakest: the field there is bounded by the requirement at the mean B_pol, which
-    # the requirement itself far exceeds
+    # no spike where B_pol is weakest: the field is bounded by twice the local ceiling everywhere, which the
+    # requirement far exceeds there
     RP.flags.mean_sheet_field = LineAvgSaturation()
     follow!()
     estimate_electrostatic_field_effects!(RP)
     weakest = measured[argmin(F.Bpol[measured])]
-    @test all(k -> F.Epol_mean[k] <= E0()[k] * (1 + 1.0e-12), measured)
+    @test all(k -> F.Epol_mean[k] <= 2 * 0.65 * E0()[k] * (1 + 1.0e-12), measured)
     @test F.Epol_mean[weakest] < E_req()[weakest]
 
-    # the coefficient scales the ceiling, and the requirement still bounds the field
+    # the saturation fraction scales the ceiling, and the requirement still bounds the field
     mean_one = copy(F.Epol_mean)
-    for coefficient in (0.5, 3.0)
-        RP.flags.mean_sheet_field = LineAvgSaturation(; coefficient)
+    for fraction in (0.3, 1.0)
+        RP.config.charge_sheet_saturation_fraction = fraction
         estimate_electrostatic_field_effects!(RP)
-        @test F.Epol_mean[measured] ≈ min.(E_req(), coefficient .* E0() .* (Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)) ./ ((Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)) .+ Bpol_avg))[measured]
-        monotone = coefficient < 1 ? (<=) : (>=)
-        @test all(k -> monotone(F.Epol_mean[k], mean_one[k] * (coefficient < 1 ? 1 + 1.0e-12 : 1 - 1.0e-12)), measured)
+        B_eff = Bpol_avg .* (flf.second_integral_tot ./ flf.Lpol_tot) .^ (-1 / 2)
+        @test F.Epol_mean[measured] ≈ min.(E_req(), fraction .* E0() .* (2 .* B_eff ./ (B_eff .+ Bpol_avg)))[measured]
+        monotone = fraction < 0.65 ? (<=) : (>=)
+        @test all(k -> monotone(F.Epol_mean[k], mean_one[k] * (fraction < 0.65 ? 1 + 1.0e-12 : 1 - 1.0e-12)), measured)
     end
+    RP.config.charge_sheet_saturation_fraction = 0.65
 
     # the ceiling is the field's geometry times the present drive: the mean field scales with the drive
     RP.flags.mean_sheet_field = LineAvgSaturation()
@@ -135,18 +138,18 @@ end
     @test !flf.has_second_integral && all(iszero, flf.second_integral_tot)
     estimate_electrostatic_field_effects!(RP)
     B_len = F.Btot .* flf.Lpol_tot ./ flf.Lc_tot
-    @test F.Epol_mean[measured] ≈ min.(E_req(), E0() .* B_len ./ (B_len .+ Bpol_avg))[measured]
+    @test F.Epol_mean[measured] ≈ min.(E_req(), 0.65 .* E0() .* (2 .* B_len ./ (B_len .+ Bpol_avg)))[measured]
 end
 
-@testitem "mean sheet field: in a uniform poloidal field the least pitch is the local one, and the ceiling cancels half the coefficient" begin
+@testitem "mean sheet field: in a uniform poloidal field every policy cancels the saturation fraction" begin
     using RAPID2D: estimate_electrostatic_field_effects!, run_simulation!, LocalPitch, LineMinPitch, LineAvgSaturation
-    function vertical(policy)
+    function vertical(policy; fraction = 0.65)
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(BR = 0.0, BZ = 1.0e-3, Eϕ = 0.5),
             NR = 17, NZ = 17, R_min = 1.0, R_max = 2.0, Z_min = -0.5, Z_max = 0.5,
             wall_R = [1.15, 1.85, 1.85, 1.15], wall_Z = [-0.35, -0.35, 0.35, 0.35],
             prefilled_gas_pressure = 1.0e-2, R0B0 = 1.0, dt = 1.0e-6,
-            snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
+            snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(), charge_sheet_saturation_fraction = fraction,
         )
         RP = RAPID{Float64}(config)
         RP.flags.mean_sheet_field = policy
@@ -162,21 +165,20 @@ end
     line = vertical(LineMinPitch())
     estimate_electrostatic_field_effects!(line)
     @test line.fields.Epol_mean[k] ≈ ref.fields.Epol_mean[k]
-    # every line's B_pol is the device's mean: the ceiling is coefficient/2 of the requirement, the requirement
-    # itself from coefficient 2 on; at the setup's following and after a step's
+    # every line's B_pol is the device's mean: every policy's factor of the geometry is 1, and the cancelled share
+    # is the saturation fraction itself; at the setup's following and after a step's
     cancelled(RP) = (F = RP.fields; (F.Epol_mean .* F.Bpol ./ (abs.(F.Eϕ_para_presc) .* F.Btot))[k])
-    for p in (2.0, 4.0), coefficient in (0.5, 1.0, 3.0)
-        soft = vertical(LineAvgSaturation(; p, coefficient))
-        @test soft.flf.has_second_integral
-        soft.plasma.ne .= 1.0e22                   # the Debye cap out of the way
-        estimate_electrostatic_field_effects!(soft)
-        @test all(x -> isapprox(x, min(1, coefficient / 2); rtol = 1.0e-6), cancelled(soft))
-        soft.t_end_s = soft.time_s + soft.dt
-        run_simulation!(soft)
-        @test soft.flf.has_second_integral
-        soft.plasma.ne .= 1.0e22
-        estimate_electrostatic_field_effects!(soft)
-        @test all(x -> isapprox(x, min(1, coefficient / 2); rtol = 1.0e-6), cancelled(soft))
+    for fraction in (0.3, 0.65, 1.0), policy in (LocalPitch(), LineMinPitch(), LineAvgSaturation(), LineAvgSaturation(p = 4.0))
+        uniform = vertical(policy; fraction)
+        @test uniform.flf.has_second_integral == (policy isa LineAvgSaturation)
+        uniform.plasma.ne .= 1.0e22                   # the Debye cap out of the way
+        estimate_electrostatic_field_effects!(uniform)
+        @test all(x -> isapprox(x, fraction; rtol = 1.0e-6), cancelled(uniform))
+        uniform.t_end_s = uniform.time_s + uniform.dt
+        run_simulation!(uniform)
+        uniform.plasma.ne .= 1.0e22
+        estimate_electrostatic_field_effects!(uniform)
+        @test all(x -> isapprox(x, fraction; rtol = 1.0e-6), cancelled(uniform))
     end
     # the local pitch asks for no second field
     @test !ref.flf.has_second_integral
@@ -187,10 +189,7 @@ end
     @test_throws ArgumentError LineAvgSaturation(p = 0.5)
     @test_throws ArgumentError LineAvgSaturation(p = Inf)
     @test_throws ArgumentError LineAvgSaturation(p = big"1e400")
-    @test_throws ArgumentError LineAvgSaturation(coefficient = 0.0)
-    @test_throws ArgumentError LineAvgSaturation(coefficient = -1.0)
-    @test_throws ArgumentError LineAvgSaturation(coefficient = NaN)
-    @test LineAvgSaturation() == LineAvgSaturation(2, 1) && LineAvgSaturation().p === 2.0
+    @test LineAvgSaturation() == LineAvgSaturation(2) && LineAvgSaturation().p === 2.0
     for policy in (LineMinPitch(), LineAvgSaturation()), (BZ, Eϕ) in ((0.0, 0.5), (1.0e-3, 0.0))
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(; BR = 0.0, BZ, Eϕ),

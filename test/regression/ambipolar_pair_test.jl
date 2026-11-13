@@ -40,7 +40,7 @@
         τ = 2 * 1.05 * hypot(Bpol, 3.0 / R_BLOB) / Bpol / sqrt(QE * (Z̄ * TE + Ti) / m̄)
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(; R = (1.2, 2.0), BR = 0.0, BZ = field * Bpol, Eϕ),
-            NR = 17, NZ = 49, R0B0 = field * 3.0, prefilled_gas_pressure = 2.0e-5, charge_sheet_shape_factor = γ0,
+            NR = 17, NZ = 49, R0B0 = field * 3.0, prefilled_gas_pressure = 2.0e-5, charge_sheet_saturation_fraction = γ0,
             dt = something(dt, τ / 200), t_end_s = something(t_end, ntau * τ),
             snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
         )

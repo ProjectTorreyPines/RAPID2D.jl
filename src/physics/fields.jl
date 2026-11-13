@@ -292,15 +292,15 @@ function my_sigmf(x, a, c)
 end
 
 """
-    update_space_charge_weights!(RP::RAPID{FT}) -> (; Epol_req, Epol_ref, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg) where {FT<:AbstractFloat}
+    update_space_charge_weights!(RP::RAPID{FT}) -> (; Epol_req, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg) where {FT<:AbstractFloat}
 
 The space charge's regime from the present state, and the fields it is read off [V/m, magnitudes],
 which are returned for [`estimate_electrostatic_field_effects!`](@ref):
 - `Epol_req = |E∥,drive| B/B_pol`, the RZ field whose parallel part cancels the driven E∥
   ([`sheet_field_requirement`](@ref));
-- `Epol_ref`, `E₀ = |E∥,drive| B/⟨B_pol⟩`: the requirement at the in-wall mean ⟨B_pol⟩,
-  `Bpol_in_wall_avg` (zero without a poloidal field);
-- `Epol_sat_local = γ₀ E₀`, the local saturation ceiling, γ₀ `config.charge_sheet_shape_factor`;
+- `Epol_sat_local = f_sat E₀`, the local saturation ceiling: the share `f_sat`
+  (`config.charge_sheet_saturation_fraction`) of `E₀ = |E∥,drive| B/⟨B_pol⟩`, the requirement at the
+  in-wall mean ⟨B_pol⟩, `Bpol_in_wall_avg` (zero without a poloidal field);
 - `E_Debye = √(n e Tₑ/ε₀)`, the most the local plasma holds;
 - `E_para_drive`, the driven parallel field ([`driven_parallel_field`](@ref)).
 
@@ -322,7 +322,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     G = RP.G
     @unpack me, ee, eps0 = RP.config.constants
     closed = RP.flf.is_closed
-    γ0 = RP.config.charge_sheet_shape_factor
+    saturation_fraction = RP.config.charge_sheet_saturation_fraction
     Bpol_in_wall_avg = mean(F.Bpol[G.nodes.in_wall_nids])
 
     # =========================================================================
@@ -330,9 +330,12 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     # =========================================================================
     E_para_drive = driven_parallel_field(RP)
     Epol_req = sheet_field_requirement(RP, E_para_drive)
-    # E₀, the requirement at the in-wall mean B_pol (none without a poloidal field), and the local ceiling γ₀ E₀
-    Epol_ref = Bpol_in_wall_avg > 0 ? (@. abs(E_para_drive) * F.Btot / Bpol_in_wall_avg) : zero(E_para_drive)
-    Epol_sat_local = γ0 .* Epol_ref
+    # the local ceiling f_sat E₀, with E₀ the requirement at the in-wall mean B_pol (none without a poloidal field)
+    Epol_sat_local = if Bpol_in_wall_avg > 0
+        @. saturation_fraction * abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
+    else
+        zero(E_para_drive)
+    end
     ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
     E_Debye = debye_field(RP, ne_SM)
 
@@ -342,9 +345,9 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     Epol_local = @. min(Epol_req, Epol_sat_local)
     # E_Debye reaches Epol_local at nc_para: none where the plasma is cold, any where nothing is needed
     @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * Epol_local^2 / (ee * pla.Te_eV))
-    # |E∥,drive| B/Epol_local = max(Bpol, ⟨Bpol⟩/γ₀), written by the field's geometry so that it needs no drive
+    # |E∥,drive| B/Epol_local = max(Bpol, ⟨Bpol⟩/f_sat), written by the field's geometry so that it needs no drive
     @. pla.nc_perp = ifelse(
-        closed | (Bpol_in_wall_avg <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_in_wall_avg / γ0))^2
+        closed | (Bpol_in_wall_avg <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_in_wall_avg / saturation_fraction))^2
     )
 
     # =========================================================================
@@ -370,7 +373,7 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
         fill!(pla.ambipolar_weight, zero(FT))
     end
 
-    return (; Epol_req, Epol_ref, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg)
+    return (; Epol_req, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg)
 end
 
 """
@@ -387,27 +390,27 @@ function sheet_field_requirement(RP::RAPID{FT}, E_para_drive) where {FT}
 end
 
 """
-    mean_sheet_saturation(policy, RP, Epol_ref, Epol_sat_local, Bpol_in_wall_avg) -> Matrix
+    mean_sheet_saturation(policy, RP, Epol_sat_local, Bpol_in_wall_avg) -> Matrix
 
 The saturation ceiling `Epol_sat` of the sheets' mean field [V/m, a magnitude] under the
-[`MeanSheetFieldPolicy`](@ref) `policy`. `Epol_ref` is `E₀ = |E∥,drive| B/⟨B_pol⟩`, the requirement at
-the in-wall mean B_pol `Bpol_in_wall_avg` (zero without a poloidal field, and so is every ceiling); `Epol_sat_local` the
-local ceiling `γ₀ E₀`, which the default returns as it is.
+[`MeanSheetFieldPolicy`](@ref) `policy`: the local ceiling `Epol_sat_local = f_sat E₀` times the
+policy's factor of the field's geometry, which is 1 in a uniform poloidal field under every policy.
+`Bpol_in_wall_avg` is the in-wall mean ⟨B_pol⟩; without a poloidal field every ceiling is zero.
 """
-mean_sheet_saturation(::LocalPitch, RP::RAPID, Epol_ref, Epol_sat_local, Bpol_in_wall_avg) = Epol_sat_local
+mean_sheet_saturation(::LocalPitch, RP::RAPID, Epol_sat_local, Bpol_in_wall_avg) = Epol_sat_local
 
-function mean_sheet_saturation(::LineMinPitch, RP::RAPID{FT}, Epol_ref, Epol_sat_local, Bpol_in_wall_avg) where {FT}
+function mean_sheet_saturation(::LineMinPitch, RP::RAPID{FT}, Epol_sat_local, Bpol_in_wall_avg) where {FT}
     F, flf = RP.fields, RP.flf
     # the local ceiling lowered by the least B_pol met along the node's line against the node's own; as it
     # is where no line was followed (outside the wall) and where B_pol vanishes
     return @. Epol_sat_local * ifelse((F.Bpol > 0) & isfinite(flf.min_Bpol), flf.min_Bpol / F.Bpol, one(FT))
 end
 
-function mean_sheet_saturation(policy::LineAvgSaturation, RP::RAPID{FT}, Epol_ref, Epol_sat_local, Bpol_in_wall_avg) where {FT}
+function mean_sheet_saturation(policy::LineAvgSaturation, RP::RAPID{FT}, Epol_sat_local, Bpol_in_wall_avg) where {FT}
     F, flf = RP.fields, RP.flf
-    Epol_sat = zero(Epol_ref)
+    Epol_sat = zero(Epol_sat_local)
     Bpol_in_wall_avg > 0 || return Epol_sat
-    p, coefficient = FT(policy.p), FT(policy.coefficient)
+    p = FT(policy.p)
     @with_pool pool begin
         Bpol_line = acquire!(pool, FT, size(Epol_sat)...)
         if flf.has_second_integral
@@ -424,7 +427,8 @@ function mean_sheet_saturation(policy::LineAvgSaturation, RP::RAPID{FT}, Epol_re
         @. Bpol_line = ifelse(
             isfinite(Bpol_line) & (Bpol_line >= 0), Bpol_line, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT))
         )
-        @. Epol_sat = coefficient * Epol_ref * (Bpol_line / (Bpol_line + Bpol_in_wall_avg))
+        # the local ceiling times 2 B_eff/(B_eff + ⟨B_pol⟩): 1 where the line's B_pol is the device's mean
+        @. Epol_sat = Epol_sat_local * (2 * Bpol_line / (Bpol_line + Bpol_in_wall_avg))
     end
     return Epol_sat
 end
@@ -521,7 +525,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     pla = RP.plasma
     F = RP.fields
     G = RP.G
-    (; Epol_req, Epol_ref, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg) = update_space_charge_weights!(RP)
+    (; Epol_req, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg) = update_space_charge_weights!(RP)
     if !RP.flags.charge_sheet_field
         fill!(F.Epol_mean, zero(FT))
         fill!(F.Erad_fluc, zero(FT))
@@ -536,7 +540,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     # The open-line charge sheets' field (MATLAB lines 582-620): the least of the requirement, the policy's
     # saturation ceiling and what the plasma holds; none on a closed line, before and after the boundary nodes
     # take their neighbours' mean (their own state is not the plasma's, so the ceilings are not applied again)
-    Epol_sat = mean_sheet_saturation(RP.flags.mean_sheet_field, RP, Epol_ref, Epol_sat_local, Bpol_in_wall_avg)
+    Epol_sat = mean_sheet_saturation(RP.flags.mean_sheet_field, RP, Epol_sat_local, Bpol_in_wall_avg)
     @. F.Epol_mean = ifelse(RP.flf.is_closed, zero(FT), min(Epol_req, Epol_sat, E_Debye))
     extrapolate_field_to_boundary_nodes!(G, F.Epol_mean)
     F.Epol_mean[RP.flf.closed_surface_nids] .= zero(FT)
