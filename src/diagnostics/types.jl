@@ -343,7 +343,6 @@ All 3D array fields are automatically sized based on dim_R, dim_Z and dim_tt
     L_mixing::Matrix{FT} = zeros(FT, dims_RZ)       # Mixing length
     nc_para::Matrix{FT} = zeros(FT, dims_RZ)        # Parallel critical density
     nc_perp::Matrix{FT} = zeros(FT, dims_RZ)        # Perpendicular critical density
-    γ_shape_fac::Matrix{FT} = zeros(FT, dims_RZ)    # Gamma coefficient
     turbulence_weight::Matrix{FT} = zeros(FT, dims_RZ)  # w_turb, the turbulent E×B mixing's onset
     ambipolar_weight::Matrix{FT} = zeros(FT, dims_RZ)   # w_amb, the ambipolar coupling's weight in [0, 1]
 

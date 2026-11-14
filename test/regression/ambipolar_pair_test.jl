@@ -7,7 +7,7 @@
 # (internal/probes/transport/ambipolar_parallel_loss.jl); it falls with c_s whatever makes it.
 # Closed surfaces: a density nine times higher outboard evens out over each surface, the
 # null space of the parallel transport being ∇∥n = 0.
-# Under a loop voltage, the open-line test sets the sheets' shape factor to 1, so that they shield
+# Under a loop voltage, the open-line test sets the sheets' saturation fraction to 1, so that they shield
 # E∥ wherever the plasma holds the charge and the parallel physics is all there is; the code's
 # 0.65 stands for an EMF the global potential cannot shield. One fingerprint is red: the ions' own
 # parallel flow escapes the surface-flux constraint on closed surfaces.
@@ -31,16 +31,16 @@
     """
     A blob on straight open field lines (B_Z = B_pol, Bϕ = R0B0/R) of `species` in the given
     fractions, Tₑ and Tᵢ held, no sources, nearly no gas. `field` scales B_pol and Bϕ together:
-    the lines stay, Bohm falls as 1/B. `γ0` is the charge sheets' shape factor. Steps of 1/200 of
+    the lines stay, Bohm falls as 1/B. `saturation_fraction` is the charge sheets' own. Steps of 1/200 of
     L_c/c_s for `ntau` of them, c_s of the pair. Returns the run and the species' density planes.
     """
-    function open_line_blob(species, fractions; Ti = 1.0, Bpol = 0.3, Eϕ = 0.0, field = 1.0, γ0 = 0.65, ntau = 3.0, t_end = nothing, dt = nothing)
+    function open_line_blob(species, fractions; Ti = 1.0, Bpol = 0.3, Eϕ = 0.0, field = 1.0, saturation_fraction = 0.65, ntau = 3.0, t_end = nothing, dt = nothing)
         m̄ = sum(f * s.mass for (s, f) in zip(species, fractions))
         Z̄ = sum(f * s.charge for (s, f) in zip(species, fractions))
         τ = 2 * 1.05 * hypot(Bpol, 3.0 / R_BLOB) / Bpol / sqrt(QE * (Z̄ * TE + Ti) / m̄)
         config = SimulationConfig{Float64}(;
             device_Name = "manual", manual = ManualSetup{Float64}(; R = (1.2, 2.0), BR = 0.0, BZ = field * Bpol, Eϕ),
-            NR = 17, NZ = 49, R0B0 = field * 3.0, prefilled_gas_pressure = 2.0e-5, charge_sheet_shape_factor = γ0,
+            NR = 17, NZ = 49, R0B0 = field * 3.0, prefilled_gas_pressure = 2.0e-5, charge_sheet_saturation_fraction = saturation_fraction,
             dt = something(dt, τ / 200), t_end_s = something(t_end, ntau * τ),
             snap0D_Δt_s = 1.0, snap2D_Δt_s = 1.0, Output_path = mktempdir(),
         )
@@ -247,9 +247,9 @@ end
 end
 
 @testitem "open lines under a loop voltage, the sheets shielding E∥ fully: the pair stays together and leaves as without it" tags = [:regression] setup = [OpenLineBlob] begin
-    # γ = 1: the sheets' field reaches Epol_req wherever E_Debye does, and E∥ drives no current there
+    # saturation fraction 1: the sheets' field reaches Epol_req wherever E_Debye does, and E∥ drives no current there
     function loss(Eϕ)
-        RP, planes = open_line_blob([H2P], [1.0]; Bpol = 0.1, Eϕ, γ0 = 1.0, t_end = 2.0e-3, dt = 1.0e-6)
+        RP, planes = open_line_blob([H2P], [1.0]; Bpol = 0.1, Eϕ, saturation_fraction = 1.0, t_end = 2.0e-3, dt = 1.0e-6)
         G, pla = RP.G, RP.plasma
         inw = G.nodes.in_wall_nids
         inventory(n) = sum(n[inw] .* G.inVol2D[inw])

@@ -292,30 +292,29 @@ function my_sigmf(x, a, c)
 end
 
 """
-    update_space_charge_weights!(RP::RAPID{FT}) -> (Epol_target, E_Debye) where {FT<:AbstractFloat}
+    update_space_charge_weights!(RP::RAPID{FT}) -> (; Epol_req, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg) where {FT<:AbstractFloat}
 
-The space charge's regime from the present state: the shape factor `γ_shape_fac` (the field's shape
-alone, on closed lines too), the critical densities of the open-line charge sheets (infinite on a
-closed line, which carries none) and the weights of the two closures that model what the code does
-not resolve:
-- `nc_para = ε₀ (γ Epol_req)²/(e Tₑ)`, where the sheets' Debye field reaches the field that cancels
-  the driven E∥; `nc_perp`, where their E×B drift outruns the parallel streaming projected on the
-  RZ plane (Yoo et al. 2018);
+The space charge's regime from the present state, and the fields it is read off [V/m, magnitudes],
+which are returned for [`estimate_electrostatic_field_effects!`](@ref):
+- `Epol_req = |E∥,drive| B/B_pol`, the RZ field whose parallel part cancels the driven E∥
+  ([`sheet_field_requirement`](@ref));
+- `Epol_sat_local = f_sat E₀`, the local saturation ceiling: the share `f_sat`
+  (`config.charge_sheet_saturation_fraction`) of `E₀ = |E∥,drive| B/⟨B_pol⟩`, the requirement at the
+  in-wall mean ⟨B_pol⟩, `Bpol_in_wall_avg` (zero without a poloidal field);
+- `E_Debye = √(n e Tₑ/ε₀)`, the most the local plasma holds;
+- `E_para_drive`, the driven parallel field ([`driven_parallel_field`](@ref)).
+
+The regime is read off one reference whatever the mean field's policy, the local ceiling
+`Epol_local = min(Epol_req, Epol_sat_local)`:
+- `nc_para = ε₀ Epol_local²/(e Tₑ)`, the density at which `E_Debye` reaches `Epol_local`; `nc_perp`,
+  where the sheets' E×B drift outruns the parallel streaming projected on the RZ plane (Yoo et al.
+  2018). Both infinite on a closed line, which carries no sheets;
 - `turbulence_weight = min(1, √(n/nc_perp))`, the onset of the turbulent E×B mixing; zero without
   `charge_sheet_field` or `turb_ExB_mixing`;
 - `ambipolar_weight`, the ambipolar coupling of the species' parallel transport, in [0, 1]: 1 on closed
-  lines, `min(1, √(n/nc_para))` on open ones; zero without `ambipolar_coupling`. It splits the
-  electron pressure drive between u∥ and the ambipolar diffusion ([`electron_pressure_shares`](@ref)).
-
-Returns the fields from which [`estimate_electrostatic_field_effects!`](@ref) builds the sheets'
-mean field and mixing amplitude:
-- `Epol_target = γ Epol_req`, the RZ field that cancels the driven E∥, shaped by γ;
-- `E_Debye`, the Debye field, the most the local plasma holds;
-- `E_para_drive`, the driven parallel field ([`driven_parallel_field`](@ref)).
-
-The Debye cap on the mean field is the density gate `min(1, √(n/nc_para))` written as a field: a
-plasma that holds the shaped target cancels its share γ of the drive, and on an open line that
-share is `ambipolar_weight`.
+  lines, `min(1, E_Debye/Epol_local) = min(1, √(n/nc_para))` on open ones; zero without
+  `ambipolar_coupling`. It splits the electron pressure drive between u∥ and the ambipolar diffusion
+  ([`electron_pressure_shares`](@ref)).
 """
 function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     pla = RP.plasma
@@ -323,60 +322,36 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     G = RP.G
     @unpack me, ee, eps0 = RP.config.constants
     closed = RP.flf.is_closed
-
-    # =========================================================================
-    # 1. Shape factor γ_shape_fac: the field's shape alone, on closed lines too
-    # =========================================================================
-    # A closed line has no sheets; that is the source's topology, not a value of γ. Without a
-    # poloidal field there is no shape.
+    saturation_fraction = RP.config.charge_sheet_saturation_fraction
     Bpol_in_wall_avg = mean(F.Bpol[G.nodes.in_wall_nids])
-    # tan_θB = F.Bpol ./ F.Bϕ
-    # tan_θB_norm = tan_θB ./ maximum(tan_θB[G.nodes.in_wall_nids])
-
-    # # Calculate shape factor using sigmoid functions (MATLAB lines 554-556)
-    # term1 = my_sigmf(FT(1e4) * Bpol_norm, FT(20.0), FT(0.4))
-    # term2 = my_sigmf(tan_θB_norm, FT(5.0), FT(0.4))
-    # pla.γ_shape_fac = @. term1 * term2
-
-    # γ₀, the shape factor at ⟨B_pol⟩, the in-wall average (`config.charge_sheet_shape_factor`)
-    γ0 = RP.config.charge_sheet_shape_factor
-    if Bpol_in_wall_avg > 0
-        @. pla.γ_shape_fac = min(FT(1.0), γ0 * (F.Bpol / Bpol_in_wall_avg))
-    else
-        fill!(pla.γ_shape_fac, zero(FT))
-    end
 
     # =========================================================================
-    # 2. What the sheets would need, and what they can hold
+    # 1. The requirement, the local saturation ceiling, and what the plasma holds
     # =========================================================================
-    # - Epol_req = |E∥,drive| B/Bpol: the RZ field whose parallel part cancels the driven E∥
-    # - Epol_target = γ Epol_req: shaped by γ; where Bpol vanishes, its limit γ₀ |E∥,drive| B/⟨Bpol⟩
-    # - E_Debye = √(n e Tₑ/ε₀): the most the local plasma holds
     E_para_drive = driven_parallel_field(RP)
-    Epol_target = if Bpol_in_wall_avg > 0
-        @. ifelse(
-            F.Bpol > 0, pla.γ_shape_fac * (abs(E_para_drive) * (F.Btot / F.Bpol)),
-            γ0 * abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
-        )
+    Epol_req = sheet_field_requirement(RP, E_para_drive)
+    # the local ceiling f_sat E₀, with E₀ the requirement at the in-wall mean B_pol (none without a poloidal field)
+    Epol_sat_local = if Bpol_in_wall_avg > 0
+        @. saturation_fraction * abs(E_para_drive) * F.Btot / Bpol_in_wall_avg
     else
         zero(E_para_drive)
     end
-
     ne_SM = smooth_data_2D(pla.ne; num_SM = 2, weighting = RP.G.inVol2D)
     E_Debye = debye_field(RP, ne_SM)
 
     # =========================================================================
-    # 3. Critical densities of the open-line sheets
+    # 2. Critical densities of the open-line sheets, from the local ceiling
     # =========================================================================
-    # E_Debye reaches Epol_target at nc_para: none where the plasma is cold, any where nothing is needed
-    @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * Epol_target^2 / (ee * pla.Te_eV))
-    # Bpol/γ = max(Bpol, ⟨Bpol⟩/γ₀), finite where Bpol vanishes
+    Epol_local = @. min(Epol_req, Epol_sat_local)
+    # E_Debye reaches Epol_local at nc_para: none where the plasma is cold, any where nothing is needed
+    @. pla.nc_para = ifelse(closed | (pla.Te_eV <= 0), FT(Inf), eps0 * Epol_local^2 / (ee * pla.Te_eV))
+    # |E∥,drive| B/Epol_local = max(Bpol, ⟨Bpol⟩/f_sat), written by the field's geometry so that it needs no drive
     @. pla.nc_perp = ifelse(
-        closed | (Bpol_in_wall_avg <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_in_wall_avg / γ0))^2
+        closed | (Bpol_in_wall_avg <= 0), FT(Inf), eps0 / me * (F.Btot / F.Bϕ * max(F.Bpol, Bpol_in_wall_avg / saturation_fraction))^2
     )
 
     # =========================================================================
-    # 4. The closures' weights
+    # 3. The closures' weights
     # =========================================================================
     # The sheets' E×B drift outruns the parallel streaming projected on the RZ plane above nc_perp
     # (Yoo et al. 2018): the fluctuating field mixes from there on
@@ -387,19 +362,98 @@ function update_space_charge_weights!(RP::RAPID{FT}) where {FT <: AbstractFloat}
     end
     # The parallel pressure-driven flow of one species alone charges the plasma wherever its
     # divergence does not vanish, so the ambipolar field couples the species: always on a closed
-    # line; on an open line as far as the sheets' charge reaches, f∥ = min(1, E_Debye/Epol_target) — a
+    # line; on an open line as far as the sheets' charge reaches, min(1, E_Debye/Epol_local) — a
     # plasma that holds the sheets' charge holds the far smaller ambipolar charge
     if RP.flags.ambipolar_coupling
         @. pla.ambipolar_weight = ifelse(
             closed, one(FT),
-            ifelse(E_Debye > 0, ifelse(Epol_target > 0, min(one(FT), E_Debye / Epol_target), one(FT)), zero(FT))
+            ifelse(E_Debye > 0, ifelse(Epol_local > 0, min(one(FT), E_Debye / Epol_local), one(FT)), zero(FT))
         )
     else
         fill!(pla.ambipolar_weight, zero(FT))
     end
 
-    return Epol_target, E_Debye, E_para_drive
+    return (; Epol_req, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg)
 end
+
+"""
+    sheet_field_requirement(RP, E_para_drive) -> Matrix
+
+`Epol_req = |E∥,drive| B/B_pol` [V/m]: the RZ field along `b̂_pol` whose parallel part cancels the
+driven E∥. Where B_pol vanishes no finite field does (`Inf`); nothing where nothing is driven.
+"""
+function sheet_field_requirement(RP::RAPID{FT}, E_para_drive) where {FT}
+    F = RP.fields
+    return @. ifelse(
+        F.Bpol > 0, abs(E_para_drive) * (F.Btot / F.Bpol), ifelse(abs(E_para_drive) > 0, FT(Inf), zero(FT))
+    )
+end
+
+"""
+    mean_sheet_saturation(policy, RP, Epol_sat_local, Bpol_in_wall_avg) -> Matrix
+
+The saturation ceiling `Epol_sat` of the sheets' mean field [V/m, a magnitude] under the
+[`MeanSheetFieldPolicy`](@ref) `policy`: the local ceiling `Epol_sat_local = f_sat E₀` times the
+policy's factor of the field's geometry, which is 1 in a uniform poloidal field under every policy.
+`Bpol_in_wall_avg` is the in-wall mean ⟨B_pol⟩; without a poloidal field every ceiling is zero.
+"""
+mean_sheet_saturation(::LocalPitch, RP::RAPID, Epol_sat_local, Bpol_in_wall_avg) = Epol_sat_local
+
+function mean_sheet_saturation(::LineMinPitch, RP::RAPID{FT}, Epol_sat_local, Bpol_in_wall_avg) where {FT}
+    F, flf = RP.fields, RP.flf
+    # the local ceiling lowered by the least B_pol met along the node's line against the node's own (at most 1: a
+    # tracer may leave the starting node out of its minimum); as it is where no line was followed (outside the
+    # wall) and where B_pol vanishes
+    return @. Epol_sat_local *
+        ifelse((F.Bpol > 0) & isfinite(flf.min_Bpol), min(one(FT), flf.min_Bpol / F.Bpol), one(FT))
+end
+
+function mean_sheet_saturation(policy::LineAvgSaturation, RP::RAPID{FT}, Epol_sat_local, Bpol_in_wall_avg) where {FT}
+    F, flf = RP.fields, RP.flf
+    Epol_sat = zero(Epol_sat_local)
+    Bpol_in_wall_avg > 0 || return Epol_sat
+    p = FT(policy.p)
+    @with_pool pool begin
+        Bpol_eff = acquire!(pool, FT, size(Epol_sat)...)
+        if flf.has_second_integral
+            # the line's effective B_pol, ⟨B_pol⁻ᵖ⟩^(-1/p): the following integrated (⟨B_pol⟩/B_pol)ᵖ
+            @. Bpol_eff = Bpol_in_wall_avg * (flf.second_integral_tot / flf.Lpol_tot)^(-1 / p)
+        else
+            # a following that did not carry it: B/⟨B/B_pol⟩ from the lengths, the p = 1 mean where B is uniform
+            # along the line. An approximation, until the next following
+            @. Bpol_eff = F.Btot * flf.Lpol_tot / flf.Lc_tot
+        end
+        # zero is a measured value (the line's integral diverged: it passes a null). A line that was not
+        # measured: one that ends on a null (no RZ length to average over) has none, a node no line was followed
+        # from keeps its own
+        @. Bpol_eff = ifelse(
+            isfinite(Bpol_eff) & (Bpol_eff >= 0), Bpol_eff, ifelse(isfinite(flf.Lpol_tot), F.Bpol, zero(FT))
+        )
+        # the local ceiling times 2 Bpol_eff/(Bpol_eff + ⟨B_pol⟩): 1 where the line's B_pol is the device's mean
+        @. Epol_sat = Epol_sat_local * (2 * Bpol_eff / (Bpol_eff + Bpol_in_wall_avg))
+    end
+    return Epol_sat
+end
+
+"""
+    mean_sheet_line_integrand(RP) -> Union{Nothing, Matrix}
+
+The node field the mean field's policy has the field-line following integrate along every line
+(`second_integrand`, `flf.second_integral_tot`): `(⟨B_pol⟩/B_pol)ᵖ` for [`LineAvgSaturation`](@ref),
+nothing for the others. Scaled by the in-wall mean so that it does not overflow, and finite where
+B_pol vanishes: B_pol is floored at `√eps ⟨B_pol⟩`, which leaves the line's effective B_pol far below
+any other on the grid.
+"""
+mean_sheet_line_integrand(RP::RAPID) = mean_sheet_line_integrand(RP.flags.mean_sheet_field, RP)
+mean_sheet_line_integrand(::MeanSheetFieldPolicy, RP::RAPID) = nothing
+function mean_sheet_line_integrand(policy::LineAvgSaturation, RP::RAPID)
+    Bpol = RP.fields.Bpol
+    FT = eltype(Bpol)
+    Bpol_in_wall_avg = mean(Bpol[RP.G.nodes.in_wall_nids])
+    Bpol_in_wall_avg > 0 || return zero(Bpol)
+    return @. (Bpol_in_wall_avg / max(Bpol, sqrt(eps(FT)) * Bpol_in_wall_avg))^FT(policy.p)
+end
+
 
 """
     driven_parallel_field(RP) -> Matrix
@@ -432,14 +486,13 @@ cancel the driven E∥ there, `|E∥,drive| B/B_pol`, capped at what the plasma 
 cap as the mean field's, applied before the line average so that no cell contributes more than
 `E_Debye Δx` of potential. The field-line following integrates it (`field_line_analysis!`'s
 `integrand`, `flf.integral_tot`); the step loop passes it at every refresh, the setup (before the plasma
-is set) none. Where B_pol vanishes the cap alone remains; an empty or cold cell gives zero.
+is set) none. Where B_pol vanishes the cap alone remains (nothing where nothing is driven); an empty or
+cold cell gives zero.
 """
 function sheet_mixing_integrand(RP::RAPID{FT}) where {FT}
-    F = RP.fields
     ne_SM = smooth_data_2D(RP.plasma.ne; num_SM = 2, weighting = RP.G.inVol2D)
     E_Debye = debye_field(RP, ne_SM)
-    E_drive = driven_parallel_field(RP)
-    return @. ifelse(F.Bpol > 0, min(abs(E_drive) * F.Btot / F.Bpol, E_Debye), E_Debye)
+    return min.(sheet_field_requirement(RP, driven_parallel_field(RP)), E_Debye)
 end
 
 """
@@ -449,8 +502,10 @@ The open-line charge sheets' two fields and their effects on transport, from the
 (MATLAB `Estimate_E_self_effects`, c_RAPID.m lines 544–679, which had one): the regime and the
 closures' weights ([`update_space_charge_weights!`](@ref)); with `charge_sheet_field`,
 by component — "pol" along `b̂_pol` (the poloidal direction), "rad" along the flux-normal `∇ψ/|∇ψ| = φ̂ × b̂_pol` (across the lines) —
-- the **mean poloidal component**, `Epol_mean = min(γ Epol_req, E_Debye)` (Ē_pol, a magnitude; the
-  sign is set where it is applied): the time-averaged field the sheets sustain. It is the one
+- the **mean poloidal component**, `Epol_mean = min(Epol_req, Epol_sat, E_Debye)` (Ē_pol, a magnitude;
+  the sign is set where it is applied): the time-averaged field the sheets sustain, the least of the
+  requirement, the saturation ceiling of `flags.mean_sheet_field` ([`MeanSheetFieldPolicy`](@ref)) and
+  what the plasma holds. It is the one
   component that projects onto E∥ — `Epol_para_pla` cancels the driven E∥
   ([`calculate_parallel_electric_field!`](@ref)) — and its E×B drift is the mean drift **across** the lines;
 - the **fluctuating flux-normal component**, `Erad_fluc = min(⟨min(|E∥,drive| B/B_pol, E_Debye)⟩_line, E_Debye)`
@@ -459,7 +514,7 @@ by component — "pol" along `b̂_pol` (the poloidal direction), "rad" along the
   first following, the uncapped `|E∥| L_c/L_pol`). An effective amplitude, not an rms; its E×B drift is
   **along** `b̂_pol`, the turbulent mixing — `Dpol_turb` ([`update_turbulent_diffusivity!`](@ref)) and
   `shared_turbulent_channel` (the electron wall, the ion channels and their wall) read it, nothing
-  else. γ does not enter it: how much of the drive the mean field cancels and how hard the sheets
+  else. The saturation ceiling does not enter it: how much of the drive the mean field cancels and how hard the sheets
   fluctuate are separate questions. The other two components, a fluctuating one along `b̂_pol`
   (a fluctuating E∥) and a mean one across the lines (a mean flow along `b̂_pol`), are not modelled.
 
@@ -472,7 +527,7 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
     pla = RP.plasma
     F = RP.fields
     G = RP.G
-    Epol_target, E_Debye, E_para_drive = update_space_charge_weights!(RP)
+    (; Epol_req, Epol_sat_local, E_Debye, E_para_drive, Bpol_in_wall_avg) = update_space_charge_weights!(RP)
     if !RP.flags.charge_sheet_field
         fill!(F.Epol_mean, zero(FT))
         fill!(F.Erad_fluc, zero(FT))
@@ -484,9 +539,11 @@ function estimate_electrostatic_field_effects!(RP::RAPID{FT}) where {FT <: Abstr
         return RP
     end
 
-    # The open-line charge sheets' field (MATLAB lines 582-620): none on a closed line, before and
-    # after the boundary nodes take their neighbours' mean
-    @. F.Epol_mean = ifelse(RP.flf.is_closed, zero(FT), min(Epol_target, E_Debye))
+    # The open-line charge sheets' field (MATLAB lines 582-620): the least of the requirement, the policy's
+    # saturation ceiling and what the plasma holds; none on a closed line, before and after the boundary nodes
+    # take their neighbours' mean (their own state is not the plasma's, so the ceilings are not applied again)
+    Epol_sat = mean_sheet_saturation(RP.flags.mean_sheet_field, RP, Epol_sat_local, Bpol_in_wall_avg)
+    @. F.Epol_mean = ifelse(RP.flf.is_closed, zero(FT), min(Epol_req, Epol_sat, E_Debye))
     extrapolate_field_to_boundary_nodes!(G, F.Epol_mean)
     F.Epol_mean[RP.flf.closed_surface_nids] .= zero(FT)
 

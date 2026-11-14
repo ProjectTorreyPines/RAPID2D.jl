@@ -111,11 +111,13 @@ Contains simulation configuration parameters.
     Dpara0::FT = FT(0.0)               # Base parallel diffusivity: a notional background added to every parallel coefficient [m²/s]
     Dperp0::FT = FT(0.0)               # Base perpendicular diffusivity: a notional background added to D⊥ [m²/s]
 
-    # The open-line charge sheets' shape factor at the in-wall average B_pol, γ₀ in γ = min(1, γ₀ B_pol/⟨B_pol⟩):
-    # their field reaches at most γ Epol_req (`update_space_charge_weights!`). The potential is a global
-    # solution, and an open line between two points of one wall cannot shield its whole EMF. 1
-    # shields E∥ fully wherever the plasma holds the charge: tests of the parallel physics alone.
-    charge_sheet_shape_factor::FT = FT(0.65)
+    # f_sat, the saturation fraction of the open-line charge sheets' mean field: in a uniform poloidal field the
+    # sheets sustain at most the share f_sat of the field that would cancel the driven E∥, whatever the density.
+    # In general the ceiling is f_sat E₀ times the policy's factor of the geometry (`flags.mean_sheet_field`), with
+    # E₀ the requirement at the in-wall average B_pol; the critical densities read f_sat E₀ under every policy
+    # (`update_space_charge_weights!`). The potential is a global solution, and an open line between two points of
+    # one wall cannot shield its whole EMF. Tests of the parallel physics alone set 1.
+    charge_sheet_saturation_fraction::FT = FT(0.65)
 
     # Fraction of ions the wall returns to the plasma. 0 = fully absorbing,
     # 1 = perfectly reflecting; the Robin coefficient is ¼v̄_n(1 − R).
@@ -417,7 +419,6 @@ Contains the plasma state variables including density, temperature, and velocity
     # The space charge's regime (`update_space_charge_weights!`)
     nc_para::Matrix{FT} = zeros(FT, dims) # density at which the charge sheets' Debye field cancels the driven E∥ [m^-3]
     nc_perp::Matrix{FT} = zeros(FT, dims) # density at which their E×B drift outruns the parallel streaming in RZ [m^-3]
-    γ_shape_fac::Matrix{FT} = zeros(FT, dims) # shape factor of plasma
     # how much of what the code does not resolve a closure carries
     turbulence_weight::Matrix{FT} = zeros(FT, dims) # w_turb: the turbulent E×B mixing's onset, min(1, √(n/nc_perp))
     ambipolar_weight::Matrix{FT} = zeros(FT, dims)  # w_amb ∈ [0, 1]: the ambipolar coupling, 1 on closed lines, min(1, √(n/nc_para)) on open ones
@@ -1512,6 +1513,7 @@ Contains boolean flags that control various aspects of the simulation.
     field_line_tracer::FieldLineTracer = MarchingSquaresTracer()   # how field-line following traces: `numerics/field_lines/field_line_tracer_policies.jl`
     closed_surface_flow::ClosedSurfaceFlow = FreeParallelFlow()   # how electrons flow on closed surfaces: `numerics/field_lines/closed_surface_flux_types.jl`
     vertical_field_control::VerticalFieldControl = NoVerticalFieldControl()   # an ideal external vertical field holding the column: `control/ideal_vertical_field_types.jl`
+    mean_sheet_field::MeanSheetFieldPolicy = LocalPitch()   # how the open-line charge sheets' mean field is shaped: `physics/mean_sheet_field_policies.jl`
     Implicit::Bool = true                     # Use implicit methods
     # θ of the θ-scheme, one per family of terms, split by the sign and stiffness
     # of the operator — see `ImplicitWeights`. Replaces the single `Implicit_weight`
