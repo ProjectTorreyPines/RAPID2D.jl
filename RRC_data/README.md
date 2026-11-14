@@ -13,6 +13,14 @@ The `(T, u_d)` families average a **drifting** Maxwellian at temperature `T` and
 drift `u_d` against a target at rest. `eRRCs_EoverP_Erg.h5` averages a Boltzmann-solver
 EEDF parameterised by reduced field `E/p` and mean energy `Ē`.
 
+**`E/p` is `E/N` at 0.026 eV.** The rates are functions of `E/N`. BreakdownDynamics scans at
+`n_gas = p/(0.026 eV · e)`, so a point of the `EoverP` axis [V/(m·Pa)] is
+`E/N = EoverP · 0.026 eV · e`. RAPID2D asks the table by the gas **density**,
+`E/p = |E∥|/(n_gas · 0.026 eV · e)`, whatever the run's own `T_gas_eV`. A table scanned at
+another temperature says so in the file attribute `EoverP_T_gas_eV` [eV], which the loader
+reads (0.026 where the file has none). Another code's "4 mPa" is this table's 4 mPa only
+if its gas is at 0.026 eV: match the density, not the pressure.
+
 ## ⚠️ Axis order in the `(T, u_d)` files
 
 **Both are stored transposed** — index 1 is drift, index 2 is temperature — while the code

@@ -251,6 +251,10 @@ are the concrete types of its (E/p, Ē) and (T, u_d) surfaces.
 
 # Fields
 
+- `EoverP_T_gas_eV`: the gas temperature [eV] at which the table's pressure is a density,
+  `N = p/(T e)`: the `E/p` axis is `E/N` at it. The file's attribute of the same name,
+  0.026 where the file has none
+
 Three ledgers, three weightings of the same `⟨σv⟩` average. See
 `internal/docs/src/notes/design/bd-2026-08-governing-equations.md` §2 — read it before
 substituting one for another; none of them are interchangeable.
@@ -291,6 +295,9 @@ Never form `Kerg_x/K_x` at runtime: the DISS pair is deliberately asymmetric and
 - `Recomb_H3Ion`: Rate coefficient for H3+ recombination
 """
 struct Electron_RRCs{FT <: AbstractFloat, E <: RRC_EoverP_Erg{FT}, T <: RRC_T_ud{FT}} <: AbstractSpeciesRRCs{FT}
+    # ── the E/p axis is E/N at this gas temperature [eV]: N = p / (EoverP_T_gas_eV e)
+    EoverP_T_gas_eV::FT
+
     # ── particle ledger [m³/s] — count EVENTS
     K_iz::E
     K_diss_iz::E
@@ -327,6 +334,10 @@ struct Electron_RRCs{FT <: AbstractFloat, E <: RRC_EoverP_Erg{FT}, T <: RRC_T_ud
         h5fid = h5open(eRRC_EoverP_Erg_fileName, "r")
         EoverP = read(h5fid, "EoverP")
         Erg_eV = read(h5fid, "Erg_eV")
+        # BreakdownDynamics scans at n_gas = p / (ROOM_T_EV e), ROOM_T_EV = 0.026, and writes
+        # no attribute (yet): the tables without one are at that temperature.
+        EoverP_T_gas_eV = haskey(attrs(h5fid), "EoverP_T_gas_eV") ?
+            read_attribute(h5fid, "EoverP_T_gas_eV") : 0.026
 
         # THE BD ↔ RAPID2D NAME MAPPING LIVES HERE AND NOWHERE ELSE.
         # BD's `L_*` are renamed `Kerg_*` because `L_` is already length throughout this
@@ -379,6 +390,7 @@ struct Electron_RRCs{FT <: AbstractFloat, E <: RRC_EoverP_Erg{FT}, T <: RRC_T_ud
         FT = eltype(EoverP)  # Determine the floating-point type from the data
 
         return new{FT, typeof(K_iz), typeof(Halpha)}(
+            FT(EoverP_T_gas_eV),
             K_iz, K_diss_iz, K_exc, K_diss_exc,
             K_mom, K_mom_by_ela, K_mom_by_exc, K_mom_by_diss_exc,
             K_mom_by_iz, K_mom_by_diss_iz,
@@ -433,7 +445,8 @@ end
     _eRRC_query_point(RP) -> (E/p, Ē)
 
 Where every `RRC_EoverP_Erg` surface is evaluated: `Ē = (3/2)Tₑ + ½mₑu∥²/e` and
-`E/p = |E∥|/(n_gas·T_gas·e)`.
+`E/p = |E∥|/(n_gas·T_table·e)`, with the table's own gas temperature
+(`eRRCs.EoverP_T_gas_eV`): the gas density alone enters, never the run's `T_gas_eV`.
 
 One definition, because [`update_rate_jacobian!`](@ref) is a derivative of
 [`get_electron_RRC`](@ref) only if both ask the table the same question.
@@ -447,8 +460,9 @@ function _eRRC_query_point(RP::RAPID{FT}) where {FT <: AbstractFloat}
     me, ee = RP.config.constants.me, RP.config.constants.ee
     pla = RP.plasma
     mean_Ke_eV = @. FT(1.5) * pla.Te_eV + FT(0.5) * me * pla.ue_para^2 / ee
+    EoverP_T_gas_eV = RP.eRRCs.EoverP_T_gas_eV::FT
     abs_Epara_over_pGas = @. abs(
-        RP.fields.E_para_tot / (pla.n_H2_gas * pla.T_gas_eV * ee)
+        RP.fields.E_para_tot / (pla.n_H2_gas * EoverP_T_gas_eV * ee)
     )
     @. abs_Epara_over_pGas = ifelse(
         isfinite(abs_Epara_over_pGas), abs_Epara_over_pGas, zero(FT)

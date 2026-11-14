@@ -38,13 +38,58 @@ end
     pla, ee, me = RP.plasma, RP.config.constants.ee, RP.config.constants.me
     EoverP, Ē = _eRRC_query_point(RP)
 
-    # Ē = (3/2)Tₑ + ½mₑu∥²/e, and E/p = |E∥|/(n_gas·T_gas·e). Written out rather
-    # than read back from the source: a shared helper that shares the wrong formula
-    # is worse than two copies of the right one.
+    # Ē = (3/2)Tₑ + ½mₑu∥²/e, and E/p = |E∥|/(n_gas·T_table·e), with the gas temperature
+    # at which the TABLE's pressure is a density. Written out rather than read back from
+    # the source: a shared helper that shares the wrong formula is worse than two copies
+    # of the right one.
     @test Ē ≈ (1.5 .* pla.Te_eV .+ 0.5 .* me .* pla.ue_para .^ 2 ./ ee)
-    @test EoverP ≈ abs.(RP.fields.E_para_tot ./ (pla.n_H2_gas .* pla.T_gas_eV .* ee))
+    @test EoverP ≈ abs.(RP.fields.E_para_tot ./ (pla.n_H2_gas .* RP.eRRCs.EoverP_T_gas_eV .* ee))
+    # the shipped table carries no attribute: BreakdownDynamics scans at p / (0.026 eV e)
+    @test RP.eRRCs.EoverP_T_gas_eV == 0.026
     @test eltype(EoverP) === eltype(Ē) === Float64
     @test !all(iszero, EoverP)            # otherwise the guard test below is vacuous
+end
+
+@testitem "RRC query point: the run's gas temperature does not move it" setup = [QueryPointFixtures] begin
+    using RAPID2D: _eRRC_query_point, get_electron_RRC
+
+    # The rates are functions of E/N. The table's E/p axis is E/N at the table's own gas
+    # temperature, so at a given gas density and field the run's gas temperature cannot
+    # enter: a hotter gas at the same DENSITY collides exactly as often.
+    RP = qp_RAPID(; E_para = -1.0)        # E/p = 200, inside the table: K_iz can tell
+    EoverP_room, Ē_room = _eRRC_query_point(RP)
+    K_room = get_electron_RRC(RP, :K_iz)
+    @test !all(iszero, K_room)            # otherwise the comparison below is vacuous
+
+    RP.plasma.T_gas_eV = 2 * RP.plasma.T_gas_eV          # the density stays as it is
+    EoverP_hot, Ē_hot = _eRRC_query_point(RP)
+    @test EoverP_hot == EoverP_room
+    @test Ē_hot == Ē_room
+    @test get_electron_RRC(RP, :K_iz) == K_room
+end
+
+@testitem "RRC query point: the table's own gas temperature is read from the file" setup = [QueryPointFixtures] begin
+    using RAPID2D: _eRRC_query_point, Electron_RRCs, h5open, attrs
+
+    # A table scanned at another reference temperature says so in an attribute, and the
+    # query follows the table, not the run.
+    RP = qp_RAPID(; E_para = -1.0)
+    data_dir = joinpath(pkgdir(RAPID2D), "RRC_data")
+    path = joinpath(mktempdir(), "eRRCs_EoverP_Erg.h5")
+    cp(joinpath(data_dir, "eRRCs_EoverP_Erg.h5"), path)
+    chmod(path, 0o644)
+    T_table = 0.03
+    h5open(path, "r+") do fid
+        attrs(fid)["EoverP_T_gas_eV"] = T_table
+    end
+    EoverP_shipped, _ = _eRRC_query_point(RP)
+    RP.eRRCs = Electron_RRCs(path, joinpath(data_dir, "eRRCs_T_ud.h5"))
+    @test RP.eRRCs.EoverP_T_gas_eV == T_table
+
+    pla, ee = RP.plasma, RP.config.constants.ee
+    EoverP, _ = _eRRC_query_point(RP)
+    @test EoverP ≈ abs.(RP.fields.E_para_tot ./ (pla.n_H2_gas .* T_table .* ee))
+    @test EoverP ≈ EoverP_shipped .* (0.026 / T_table)
 end
 
 @testitem "RRC query point: the no-gas guard belongs to both callers" setup = [QueryPointFixtures] begin

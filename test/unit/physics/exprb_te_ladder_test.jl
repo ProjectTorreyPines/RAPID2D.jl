@@ -41,7 +41,7 @@
         RP.plasma.sptz_fac .= 0.0
         RP.plasma.ν_ei .= 0.0
         ee = RP.config.constants.ee
-        @. RP.fields.E_para_tot = -EoverP * RP.plasma.n_H2_gas * RP.plasma.T_gas_eV * ee
+        @. RP.fields.E_para_tot = -EoverP * RP.plasma.n_H2_gas * RP.eRRCs.EoverP_T_gas_eV * ee
         return RP
     end
 

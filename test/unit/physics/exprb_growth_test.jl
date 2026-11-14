@@ -32,7 +32,7 @@
         RP.plasma.ni .= n₀
         RP.plasma.ue_para .= u_para
         ee = RP.config.constants.ee
-        @. RP.fields.E_para_tot = -EoverP * RP.plasma.n_H2_gas * RP.plasma.T_gas_eV * ee
+        @. RP.fields.E_para_tot = -EoverP * RP.plasma.n_H2_gas * RP.eRRCs.EoverP_T_gas_eV * ee
         update_RRCs!(RP)
         return RP
     end
