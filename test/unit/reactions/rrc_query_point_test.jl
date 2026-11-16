@@ -43,9 +43,9 @@ end
     # the source: a shared helper that shares the wrong formula is worse than two copies
     # of the right one.
     @test Ē ≈ (1.5 .* pla.Te_eV .+ 0.5 .* me .* pla.ue_para .^ 2 ./ ee)
-    @test EoverP ≈ abs.(RP.fields.E_para_tot ./ (pla.n_H2_gas .* RP.eRRCs.EoverP_T_gas_eV .* ee))
-    # the shipped table carries no attribute: BreakdownDynamics scans at p / (0.026 eV e)
-    @test RP.eRRCs.EoverP_T_gas_eV == 0.026
+    @test EoverP ≈ abs.(RP.fields.E_para_tot ./ (pla.n_H2_gas .* RP.eRRCs.reference_T_gas_eV .* ee))
+    # the shipped table says it: BreakdownDynamics scans at n_gas = p / (0.026 eV e)
+    @test RP.eRRCs.reference_T_gas_eV == 0.026
     @test eltype(EoverP) === eltype(Ē) === Float64
     @test !all(iszero, EoverP)            # otherwise the guard test below is vacuous
 end
@@ -69,10 +69,10 @@ end
 end
 
 @testitem "RRC query point: the table's own gas temperature is read from the file" setup = [QueryPointFixtures] begin
-    using RAPID2D: _eRRC_query_point, Electron_RRCs, h5open, attrs
+    using RAPID2D: _eRRC_query_point, Electron_RRCs, h5open, delete_object
 
-    # A table scanned at another reference temperature says so in an attribute, and the
-    # query follows the table, not the run.
+    # A table scanned at another reference temperature says so, and the query follows the
+    # table, not the run.
     RP = qp_RAPID(; E_para = -1.0)
     data_dir = joinpath(pkgdir(RAPID2D), "RRC_data")
     path = joinpath(mktempdir(), "eRRCs_EoverP_Erg.h5")
@@ -80,16 +80,29 @@ end
     chmod(path, 0o644)
     T_table = 0.03
     h5open(path, "r+") do fid
-        attrs(fid)["EoverP_T_gas_eV"] = T_table
+        delete_object(fid, "reference_T_gas_eV")
+        fid["reference_T_gas_eV"] = T_table
     end
     EoverP_shipped, _ = _eRRC_query_point(RP)
     RP.eRRCs = Electron_RRCs(path, joinpath(data_dir, "eRRCs_T_ud.h5"))
-    @test RP.eRRCs.EoverP_T_gas_eV == T_table
+    @test RP.eRRCs.reference_T_gas_eV == T_table
 
     pla, ee = RP.plasma, RP.config.constants.ee
     EoverP, _ = _eRRC_query_point(RP)
     @test EoverP ≈ abs.(RP.fields.E_para_tot ./ (pla.n_H2_gas .* T_table .* ee))
     @test EoverP ≈ EoverP_shipped .* (0.026 / T_table)
+end
+
+@testitem "RRC query point: a table that does not name its gas temperature is refused" setup = [QueryPointFixtures] begin
+    using RAPID2D: Electron_RRCs, h5open, delete_object
+
+    # No default: without `reference_T_gas_eV` the table's E/p cannot be turned into E/N.
+    data_dir = joinpath(pkgdir(RAPID2D), "RRC_data")
+    path = joinpath(mktempdir(), "eRRCs_EoverP_Erg.h5")
+    cp(joinpath(data_dir, "eRRCs_EoverP_Erg.h5"), path)
+    chmod(path, 0o644)
+    h5open(fid -> delete_object(fid, "reference_T_gas_eV"), path, "r+")
+    @test_throws "reference_T_gas_eV" Electron_RRCs(path, joinpath(data_dir, "eRRCs_T_ud.h5"))
 end
 
 @testitem "RRC query point: the no-gas guard belongs to both callers" setup = [QueryPointFixtures] begin

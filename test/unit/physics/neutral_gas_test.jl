@@ -364,7 +364,7 @@ end
     RP.plasma.ue_para .= -1.0e6
     ee = RP.config.constants.ee
     EoverP = 100.0
-    @. RP.fields.E_para_tot = -EoverP * RP.plasma.n_H2_gas * RP.eRRCs.EoverP_T_gas_eV * ee
+    @. RP.fields.E_para_tot = -EoverP * RP.plasma.n_H2_gas * RP.eRRCs.reference_T_gas_eV * ee
     update_RRCs!(RP)
 
     inw = RP.G.nodes.in_wall_nids
