@@ -63,6 +63,7 @@
         h5open(path, "w") do fid
             fid["EoverP"] = EoverP
             fid["Erg_eV"] = Erg_eV
+            fid["reference_T_gas_eV"] = 0.026
             # Electron_RRCs now reads the full 2026-08 group ledger (Task B1); every
             # (E/p, Ē) surface it reads must exist in the file, even the ones this
             # test does not exercise, or the constructor throws on a missing dataset.
